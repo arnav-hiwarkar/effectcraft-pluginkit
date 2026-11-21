@@ -106,7 +106,7 @@ permissions it asks for. To load bundles every time the app starts while you dev
 The effect is now in Effects & Presets under Color Correction. Apply it, and Effect Controls shows the
 Color and Amount rows with stopwatches.
 
-Users install a bundle through **Plug-ins ▸ Manage Plug-ins**. The app copies the bundle into its plugin
+Users install a bundle through **Window ▸ Plug-ins ▸ Manage Plug-ins**. The app copies the bundle into its plugin
 folder and runs nothing until the user approves the permissions.
 
 
@@ -148,7 +148,7 @@ fn plugin() -> Plugin {
 }
 ```
 
-The panel appears in the **Plug-ins** menu. Its tab docks like the app's own panels.
+The panel appears in **Window ▸ Plug-ins**. Its tab docks like the app's own panels.
 
 ## Add a command
 
@@ -159,7 +159,7 @@ Plugin::new().command("add-null", "Add Control Null", || {
 })
 ```
 
-The command appears in the **Plug-ins** menu.
+The command appears in **Window ▸ Plug-ins**.
 
 ## Read and edit the project
 

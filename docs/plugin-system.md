@@ -9,8 +9,8 @@ built and why. To write a plugin, read [Write a plugin](plugin-sdk.md). For the 
 | Contribution | Where it shows up | What it is built from |
 |---|---|---|
 | Effect | Effects & Presets, Effect Controls, the timeline, saved projects | Parameters the app draws and keyframes, plus a CPU render function, GPU passes, or both |
-| Panel | A dockable tab, listed in the **Plug-ins** menu | A function the app calls every frame the tab is visible |
-| Command | The **Plug-ins** menu | A function that runs app commands |
+| Panel | A dockable tab, listed in **Window ▸ Plug-ins** | A function the app calls every frame the tab is visible |
+| Command | **Window ▸ Plug-ins** | A function that runs app commands |
 
 A plugin effect is registered in the same registry as the built-in effects. Nothing downstream can tell
 the two apart: Effect Controls, keyframes, expressions, presets, the render cache, and project files all
@@ -59,7 +59,8 @@ vendor library, running a licensing daemon, or driving a private GPU pipeline.
 ## Permissions and how they are enforced
 
 A plugin lists the permissions it wants in `plugin.json`. The user sees that list before the plugin runs.
-An update that asks for more waits for a new approval.
+An update that asks for more waits for a new approval. Approval of a native plugin covers one version: every
+update of a native plugin waits for a new approval.
 
 | Permission | Allows |
 |---|---|

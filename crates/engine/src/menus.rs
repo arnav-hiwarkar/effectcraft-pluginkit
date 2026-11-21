@@ -1245,13 +1245,6 @@ View
   ---
   Go to Time... | time.set
   Enter Full Screen | view.fullScreen
-Plug-ins
-  Manage Plug-ins... | window.plugins
-  Reload Plug-ins | plugin.reload
-  ---
-  @dynamic:pluginCommands
-  ---
-  @dynamic:pluginPanels
 Window
   Workspace
     Default | window.workspace {"name":"Default"} | Shift+F10
@@ -1316,6 +1309,13 @@ Window
   ---
   Create Nulls From Paths | window.panel {"panel":"createNullsFromPaths"}
   VR Comp Editor | window.panel {"panel":"vrCompEditor"}
+  Plug-ins
+    Manage Plug-ins... | window.plugins
+    Reload Plug-ins | plugin.reload
+    ---
+    @dynamic:pluginCommands
+    ---
+    @dynamic:pluginPanels
   @dynamic:scriptPanels
 Help
   EffectCraft Help... | help.docs {"page":"help"} | F1

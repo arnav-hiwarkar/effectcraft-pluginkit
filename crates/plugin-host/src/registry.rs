@@ -43,7 +43,7 @@ pub struct Consent {
     #[serde(default)]
     pub granted: BTreeSet<Permission>,
     #[serde(default)]
-    pub unsandboxed: bool,
+    pub unsandboxed: Option<String>,
 }
 
 pub struct Registry {
@@ -79,7 +79,7 @@ impl Registry {
     pub fn grants(&self, manifest: &Manifest) -> Option<BTreeSet<Permission>> {
         let consent = self.consents.get(&manifest.id)?;
         let covered = manifest.permissions.is_subset(&consent.granted);
-        let trusted = manifest.sandboxed() || consent.unsandboxed;
+        let trusted = manifest.sandboxed() || consent.unsandboxed.as_ref() == Some(&manifest.version);
         (consent.enabled && covered && trusted).then(|| manifest.permissions.clone())
     }
 
@@ -128,7 +128,8 @@ impl Registry {
     }
 
     pub fn approve(&mut self, manifest: &Manifest) -> Result<(), BundleError> {
-        let consent = Consent { enabled: true, granted: manifest.permissions.clone(), unsandboxed: !manifest.sandboxed() };
+        let unsandboxed = (!manifest.sandboxed()).then(|| manifest.version.clone());
+        let consent = Consent { enabled: true, granted: manifest.permissions.clone(), unsandboxed };
         let mut consents = self.consents.clone();
         consents.insert(manifest.id.clone(), consent);
         self.commit(consents)

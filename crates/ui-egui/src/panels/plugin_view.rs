@@ -62,9 +62,9 @@ fn not_running(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pa
     let contested: Vec<String> = claimants(app, kind).map(|item| item.plugin_name.clone()).collect();
     let owner = kind.plugin_owner().and_then(|key| super::plugin_manager::installed(app).into_iter().find(|p| plugin_key(&p.id) == key));
     let message = match owner {
-        _ if contested.len() > 1 => tr_args("{} claim the same panel. Disable one of them in Plug-ins ▸ Manage Plug-ins.", &[&contested.join(", ")]),
-        Some(plugin) => tr_args("{} is not running. Turn it on in Plug-ins ▸ Manage Plug-ins.", &[&plugin.name]),
-        None => tr("The plug-in that provides this panel is not installed. Install it in Plug-ins ▸ Manage Plug-ins.").to_string(),
+        _ if contested.len() > 1 => tr_args("{} claim the same panel. Disable one of them in Window ▸ Plug-ins ▸ Manage Plug-ins.", &[&contested.join(", ")]),
+        Some(plugin) => tr_args("{} is not running. Turn it on in Window ▸ Plug-ins ▸ Manage Plug-ins.", &[&plugin.name]),
+        None => tr("The plug-in that provides this panel is not installed. Install it in Window ▸ Plug-ins ▸ Manage Plug-ins.").to_string(),
     };
     let mut body = ui.new_child(UiBuilder::new().max_rect(rect.shrink(12.0)));
     body.label(RichText::new(message).color(app.tokens.text_dim));

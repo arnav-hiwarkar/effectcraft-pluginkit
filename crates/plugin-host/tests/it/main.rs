@@ -286,8 +286,11 @@ fn a_native_plugin_needs_explicit_trust_beyond_its_permissions() {
     assert!(!installed.manifest.sandboxed());
     assert_eq!(registry.grants(&installed.manifest), None);
     registry.approve(&installed.manifest).unwrap();
-    assert!(registry.consent("test.probe").is_some_and(|consent| consent.unsandboxed));
     assert_eq!(registry.grants(&installed.manifest), Some(BTreeSet::new()));
+
+    let mut next_version = installed.manifest.clone();
+    next_version.version = "1.0.1".into();
+    assert_eq!(registry.grants(&next_version), None, "a new native version waits for a new approval");
 }
 
 #[test]

@@ -196,7 +196,7 @@ fn plain_id(id: &str) -> bool {
 }
 
 fn covers(consent: &craft_plugin_host::Consent, manifest: &Manifest) -> bool {
-    manifest.permissions.is_subset(&consent.granted) && (manifest.sandboxed() || consent.unsandboxed)
+    manifest.permissions.is_subset(&consent.granted) && (manifest.sandboxed() || consent.unsandboxed.as_ref() == Some(&manifest.version))
 }
 
 fn reserved(manifest: &Manifest) -> Result<(), String> {

@@ -21,7 +21,7 @@ To load bundles when the app starts, list their folders in `EFFECTCRAFT_PLUGIN_P
 EFFECTCRAFT_PLUGIN_PATH="$PWD/plugins/dist/org.craftkit.lumen-glow:$PWD/plugins/dist/org.craftkit.glide" cargo run -p effectcraft
 ```
 
-To install a bundle for good, use **Plug-ins ▸ Manage Plug-ins ▸ Install Plug-in...** and approve it.
+To install a bundle for good, use **Window ▸ Plug-ins ▸ Manage Plug-ins ▸ Install Plug-in...** and approve it.
 
 `plugins/e2e.sh` builds every plugin here, loads the bundles in `effectcraft-cli`, renders a frame with each
 effect and runs `glide/verify.sh`.
