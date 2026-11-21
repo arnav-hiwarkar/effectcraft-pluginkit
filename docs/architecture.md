@@ -18,6 +18,8 @@ cpal or muda. Everything in L0 to L4, the egui UI and the web app also build for
 | L0 | `time` | `Tick` (254 016 000 000 per second), rational frame rates incl. NTSC, SMPTE and drop-frame timecode |
 | L0 | `geom` | Vectors, matrices, quaternions, the layer transform (anchor, position, scale, orientation, rotation) |
 | L0 | `color` | sRGB and linear, HSL/HSV, luminance, the 38 blend modes, label colors |
+| L0 | `craft-plugin` (`crates/plugin-sdk`) | The plugin SDK and the messages a plugin and the app exchange; no EffectCraft dependency ([plugin-system.md](plugin-system.md)) |
+| L0 | `craft-plugin-host` (`crates/plugin-host`) | The plugin runtime: Wasmtime for sandboxed plugins, a library loader for native ones, the permission check, the installed-plugin registry; no EffectCraft dependency; an empty engine on wasm32 |
 | L1 | `raster` | Premultiplied float images, sampling, affine and projective warps, blurs, compositing (parallel with rayon) |
 | L1 | `keyframe` | Animated values, keyframes with temporal ease and spatial Bezier, roving, hold, velocity |
 | L1 | `segment` | Swappable trained models for Roto Brush and face tracking: the `MaskModel` and `FaceModel` interfaces, a registry of open-licensed models (authors, licence, URL, size, SHA-256), PyTorch checkpoint and TensorFlow Lite readers (with an interpreter), SHA-256, MobileSAM (TinyViT + Segment Anything decoder) and MediaPipe Face Landmarker (BlazeFace + Face Mesh V2) on rayon and ndarray's safe GEMM |
@@ -44,6 +46,7 @@ cpal or muda. Everything in L0 to L4, the egui UI and the web app also build for
 | L4 | `host` | A fully wired `Session` (media, expressions, scripting, exporter) for the frontends |
 | L5 | `ui-egui` | The desktop interface: docking, panels, viewer, timeline, graph editor, dialogs, control channel |
 | L5 | `automation` | The MCP server, headless or bridged to the running app |
+| L5 | `plugin` | EffectCraft's side of the plugin system: plugin effects in the effect registry, plugin commands and panels over engine commands under the automation confinement, plugin management |
 | L6 | apps `effectcraft`, `effectcraft-cli`, `effectcraft-web` | Desktop app; command-line tool (render, exec, get/set, MCP); the browser app (wasm32, [web.md](web.md)) |
 
 Allowed same-layer edges: `path → keyframe, raster`, `text → path`, `pdf → svg, text`, `effects → project, text, path, track`,
