@@ -637,6 +637,10 @@ fn prefs_keys(params: &Value) -> Vec<&str> {
     keys
 }
 
+pub fn names_files(id: &str) -> bool {
+    [READS, MIXED_WRITES, WRITES].iter().any(|table| keys_of(table, id).is_some()) || IMPLICIT_WRITES.contains(&id) || QUEUES_AN_OUTPUT.contains(&id)
+}
+
 fn keys_of(table: &[(&str, &'static [&'static str])], id: &str) -> Option<&'static [&'static str]> {
     table.iter().find(|(c, _)| *c == id).map(|(_, k)| *k)
 }

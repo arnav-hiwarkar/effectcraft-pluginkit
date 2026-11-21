@@ -274,6 +274,43 @@ pub struct GpuPass {
     pub u: Vec<u32>,
 }
 
+impl GpuPlan {
+    pub fn new() -> Self {
+        GpuPlan::default()
+    }
+
+    pub fn scratch(&mut self, size: [u32; 2]) -> GpuImage {
+        self.images.push(size);
+        GpuImage::Scratch(self.images.len().saturating_sub(1) as u32)
+    }
+
+    pub fn pass(mut self, pass: GpuPass) -> Self {
+        self.passes.push(pass);
+        self
+    }
+}
+
+impl GpuPass {
+    pub fn new(kernel: &str, src: GpuImage, out: GpuImage) -> Self {
+        GpuPass { kernel: kernel.to_string(), src, aux: None, out, f: Vec::new(), u: Vec::new() }
+    }
+
+    pub fn aux(mut self, image: GpuImage) -> Self {
+        self.aux = Some(image);
+        self
+    }
+
+    pub fn floats(mut self, values: &[f32]) -> Self {
+        self.f = values.to_vec();
+        self
+    }
+
+    pub fn uints(mut self, values: &[u32]) -> Self {
+        self.u = values.to_vec();
+        self
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GpuImage {

@@ -15,7 +15,7 @@ pub struct Pixels {
 }
 
 pub trait Host {
-    fn access(&mut self, _command: &str, _params: &Value) -> Access {
+    fn access(&self, _command: &str, _params: &Value) -> Access {
         Access::Refused("commands are not available here".into())
     }
 

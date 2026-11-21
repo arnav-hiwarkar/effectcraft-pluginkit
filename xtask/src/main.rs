@@ -25,6 +25,7 @@ mod bench;
 mod ico;
 mod lock_patches;
 mod pdf_deps;
+mod plugin;
 mod version;
 
 use std::process::{Command, ExitCode};
@@ -607,6 +608,7 @@ fn main() -> ExitCode {
             if rest.iter().any(|a| a == "--affected") { affected::run(&root(), &rest) } else { ci() }
         }
         "audio-backend" => audio_backend(),
+        "plugin" => plugin::run(&root(), &std::env::args().skip(2).collect::<Vec<_>>()),
         "web" => web(&std::env::args().skip(2).collect::<Vec<_>>()),
         "bench" => bench::run(&root(), &std::env::args().skip(2).collect::<Vec<_>>()),
         "ico" => {
@@ -617,7 +619,7 @@ fn main() -> ExitCode {
             let rest: Vec<String> = std::env::args().skip(2).collect();
             version::run(&root(), &rest.iter().map(String::as_str).collect::<Vec<_>>())
         }
-        _ => Err("usage: cargo xtask <layers|assets|pdf-deps|lock-patches|aep-corpus [--dir DIR]|wasm|web [--dev] [--serve PORT]|ico OUT.ico IN.png…|version [set X.Y.Z]|ci [--affected [--base REV] [--dry-run]]|audio-backend|bench [--bin CLI] [--quick] [--project F --comp C] [--compare OLD.jsonl] (--help)>".into()),
+        _ => Err("usage: cargo xtask <layers|assets|plugin DIR [--native] [--out DIR]|pdf-deps|lock-patches|aep-corpus [--dir DIR]|wasm|web [--dev] [--serve PORT]|ico OUT.ico IN.png…|version [set X.Y.Z]|ci [--affected [--base REV] [--dry-run]]|audio-backend|bench [--bin CLI] [--quick] [--project F --comp C] [--compare OLD.jsonl] (--help)>".into()),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,

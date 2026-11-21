@@ -39,6 +39,12 @@ const EXT_ENTRIES: &[&str] = &["classic3d"];
 /// (the compositor's kernels, which declare `out` and helpers the effect files use).
 const BASE_WGSL: [&str; 2] = [include_str!("shaders/common.wgsl"), include_str!("shaders/kernels.wgsl")];
 
+const PLUGIN_PRELUDE: [&str; 2] = [include_str!("shaders/common.wgsl"), include_str!("shaders/plugin.wgsl")];
+
+const MAX_PLUGIN_KERNELS: usize = 256;
+
+const MAX_PLUGIN_REPORTS: usize = 16;
+
 /// The family whose module also gets the adapter's median implementation
 /// ([`crate::fx_noise::MedianKernel::source`]), chosen when the context is created.
 const MEDIAN_FAMILY: &str = "fx_noise";
@@ -86,12 +92,7 @@ fn kernel_module(device: &wgpu::Device, label: &str, files: &[&str]) -> Result<w
 }
 
 /// Compute pipeline `entry` of `module`; a shader compiler rejecting it (FXC, #613) is an `Err`.
-fn build_pipeline(
-    device: &wgpu::Device,
-    module: &wgpu::ShaderModule,
-    layout: &wgpu::PipelineLayout,
-    entry: &'static str,
-) -> Result<wgpu::ComputePipeline, String> {
+fn build_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, entry: &str) -> Result<wgpu::ComputePipeline, String> {
     init_resource(device, entry, || {
         device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(entry),
@@ -107,6 +108,13 @@ fn build_pipeline(
 /// Effect kernels by entry point: their family (index in `FAMILIES`) and, once asked for, the
 /// built pipeline or why it didn't build.
 type EffectPipelines = HashMap<&'static str, (usize, std::sync::OnceLock<Result<wgpu::ComputePipeline, String>>)>;
+
+struct PluginShader {
+    revision: u64,
+    module: Result<wgpu::ShaderModule, String>,
+    pipelines: HashMap<String, Result<wgpu::ComputePipeline, String>>,
+    reported: BTreeSet<String>,
+}
 
 /// Pixel format of every working texture: premultiplied RGBA, 32-bit float (32 bpc headroom;
 /// 8/16 bpc are emulated by clamping and quantising, as on the CPU).
@@ -690,6 +698,7 @@ pub struct GpuContext {
     /// Effect kernels, built on first dispatch (`GpuContext::pipeline`); one that doesn't build
     /// leaves its effects to the CPU.
     effect_pipelines: EffectPipelines,
+    plugin_shaders: Mutex<HashMap<String, PluginShader>>,
     display_bgl: wgpu::BindGroupLayout,
     display: wgpu::ComputePipeline,
     /// The display texture's next mip level from the one above (`display.wgsl` `mip`).
@@ -1019,6 +1028,7 @@ impl GpuContext {
             pipelines,
             unavailable,
             effect_pipelines,
+            plugin_shaders: Default::default(),
             display_bgl,
             display,
             display_mip,
@@ -1514,6 +1524,39 @@ impl GpuContext {
         built.as_ref().ok()
     }
 
+    pub(crate) fn plugin_pipelines(&self, effect: &str, revision: u64, wgsl: &str, kernels: &[&str]) -> Result<Vec<wgpu::ComputePipeline>, String> {
+        let mut shaders = self.plugin_shaders.lock().map_err(|_| "the plugin shader cache is poisoned".to_string())?;
+        let compile = || {
+            let source: String = PLUGIN_PRELUDE.iter().copied().chain([wgsl]).collect();
+            let module = init_resource(&self.device, effect, || {
+                self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(effect), source: wgpu::ShaderSource::Wgsl(source.into()) })
+            });
+            PluginShader { revision, module, pipelines: HashMap::new(), reported: BTreeSet::new() }
+        };
+        let shader = shaders.entry(effect.to_string()).or_insert_with(compile);
+        if shader.revision != revision {
+            *shader = compile();
+        }
+        let module = shader.module.clone()?;
+        let mut built = Vec::with_capacity(kernels.len());
+        for kernel in kernels {
+            if !shader.pipelines.contains_key(*kernel) && shader.pipelines.len() >= MAX_PLUGIN_KERNELS {
+                return Err(format!("more than {MAX_PLUGIN_KERNELS} kernel names"));
+            }
+            let pipeline = shader.pipelines.entry(kernel.to_string()).or_insert_with(|| build_pipeline(&self.device, &module, &self.layout, kernel)).clone()?;
+            built.push(pipeline);
+        }
+        Ok(built)
+    }
+
+    pub(crate) fn plugin_declined(&self, effect: &str, why: &str) {
+        let Ok(mut shaders) = self.plugin_shaders.lock() else { return };
+        let Some(shader) = shaders.get_mut(effect) else { return };
+        if shader.reported.len() < MAX_PLUGIN_REPORTS && shader.reported.insert(why.to_string()) {
+            log::warn!("gpu {}: plugin effect {effect} renders on the CPU: {why}", self.name);
+        }
+    }
+
     /// Family `family`'s module (`FAMILIES`), built the first time it is asked for.
     fn family_module(&self, family: usize) -> Result<&wgpu::ShaderModule, String> {
         let (Some((label, files, _)), Some(cell)) = (FAMILIES.get(family), self.modules.get(family)) else {
@@ -1589,6 +1632,7 @@ impl GpuContext {
             pipelines,
             unavailable,
             effect_pipelines,
+            plugin_shaders: Default::default(),
             display_bgl: self.display_bgl.clone(),
             display: self.display.clone(),
             display_mip: self.display_mip.clone(),
@@ -1929,6 +1973,18 @@ pub(crate) struct Enc<'g> {
     lent: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum Kernel<'a> {
+    Entry(&'a str),
+    Plugin { pipeline: &'a wgpu::ComputePipeline, label: &'a str },
+}
+
+impl<'a> From<&'a str> for Kernel<'a> {
+    fn from(entry: &'a str) -> Self {
+        Kernel::Entry(entry)
+    }
+}
+
 /// Images bound to a compute kernel's source, optional auxiliary and output slots.
 pub(crate) struct KernelImages<'a> {
     pub src: &'a GpuImage,
@@ -2047,14 +2103,14 @@ impl<'g> Enc<'g> {
     }
 
     /// Run kernel `entry` writing `out` (dispatched over `groups` workgroups).
-    pub fn dispatch(&mut self, entry: &str, p: &Params, images: KernelImages<'_>, data: Option<&wgpu::Buffer>, groups: (u32, u32)) {
-        self.dispatch_ext(entry, p, images, data, groups, None);
+    pub fn dispatch<'k>(&mut self, kernel: impl Into<Kernel<'k>>, p: &Params, images: KernelImages<'_>, data: Option<&wgpu::Buffer>, groups: (u32, u32)) {
+        self.dispatch_ext(kernel, p, images, data, groups, None);
     }
 
     /// [`Enc::dispatch`] for the kernels in `EXT_ENTRIES`, with their group 1 storage buffers.
-    pub fn dispatch_ext(
+    pub fn dispatch_ext<'k>(
         &mut self,
-        entry: &str,
+        kernel: impl Into<Kernel<'k>>,
         p: &Params,
         images: KernelImages<'_>,
         data: Option<&wgpu::Buffer>,
@@ -2063,9 +2119,15 @@ impl<'g> Enc<'g> {
     ) {
         let KernelImages { src, aux, out } = images;
         let g = self.g;
-        let Some(pipe) = g.pipeline(entry) else {
-            self.missing = true;
-            return;
+        let (pipe, entry) = match kernel.into() {
+            Kernel::Entry(entry) => match g.pipeline(entry) {
+                Some(pipe) => (pipe, entry),
+                None => {
+                    self.missing = true;
+                    return;
+                }
+            },
+            Kernel::Plugin { pipeline, label } => (pipeline, label),
         };
         let ub = g.buffer_init(None, &p.bytes(), wgpu::BufferUsages::UNIFORM);
         let sv = src.texture.create_view(&Default::default());

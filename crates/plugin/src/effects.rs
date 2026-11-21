@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use craft_plugin_host::{Call, EffectSpec, GpuImage, Host, Layout, MaskPath, Param, ParamKind, Pixels, RenderCx, Scene, Value as Wire};
 use effectcraft_engine::effects::dynamic::{self, DynamicEffect, DynamicParam, GpuPass, GpuProgram, GpuSlot, Grid};
-use effectcraft_engine::effects::{Buf, EffectCtx, Image, LayerPixels, MaskShape, Params, util};
+use effectcraft_engine::effects::{Buf, EffectCtx, Image, LayerPixels, MaskShape, util};
 use effectcraft_engine::keyframe::Value;
 use effectcraft_engine::project::ParamUi;
 
@@ -24,6 +24,7 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
             Box::new(move |ctx: &EffectCtx, grid: Grid| gpu_program(&plugin, &spec, ctx, grid)) as dynamic::GpuDyn
         });
         dynamic::register(DynamicEffect {
+            owner: plugin_id.clone(),
             id: effect_id(plugin_id, &spec.id),
             name: spec.name.clone(),
             category: spec.category.clone(),
@@ -40,7 +41,7 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
 }
 
 pub(crate) fn unregister(plugin: &str) {
-    dynamic::unregister(&effect_id(plugin, ""));
+    dynamic::unregister(plugin);
 }
 
 fn declare(param: &Param) -> DynamicParam {
@@ -72,10 +73,25 @@ fn to_px(grid: Grid, point: [f64; 2]) -> [f64; 2] {
     [point[0] * grid.scale + grid.offset[0], point[1] * grid.scale + grid.offset[1]]
 }
 
-fn wire_params(spec: &EffectSpec, params: &Params, grid: Grid) -> BTreeMap<String, Wire> {
-    let convert = |param: &Param| -> Option<Wire> {
-        let value = params.get(&param.id)?;
-        Some(match &param.kind {
+fn declared_default(param: &Param, layer_size: [f64; 2]) -> Value {
+    match declare(param).default {
+        Value::Vec2([x, y]) => Value::Vec2([x * layer_size[0], y * layer_size[1]]),
+        Value::Vec3([x, y, z]) => Value::Vec3([x * layer_size[0], y * layer_size[1], z]),
+        other => other,
+    }
+}
+
+fn wire_params(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> BTreeMap<String, Wire> {
+    let convert = |param: &Param| -> Wire {
+        let fallback;
+        let value = match ctx.params.get(&param.id) {
+            Some(value) => value,
+            None => {
+                fallback = declared_default(param, ctx.layer_size);
+                &fallback
+            }
+        };
+        match &param.kind {
             ParamKind::Slider { .. } | ParamKind::Percent { .. } | ParamKind::Angle { .. } => Wire::Number(value.as_f64()),
             ParamKind::Checkbox { .. } => Wire::Bool(value.as_bool()),
             ParamKind::Popup { .. } | ParamKind::Mask => Wire::Number(f64::from(value.as_enum())),
@@ -91,14 +107,14 @@ fn wire_params(spec: &EffectSpec, params: &Params, grid: Grid) -> BTreeMap<Strin
                 _ => Wire::Text(String::new()),
             },
             ParamKind::Layer => Wire::Bool(value.as_layer().is_some()),
-        })
+        }
     };
-    spec.params.iter().filter_map(|param| Some((param.id.clone(), convert(param)?))).collect()
+    spec.params.iter().map(|param| (param.id.clone(), convert(param))).collect()
 }
 
 fn render_cx(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> RenderCx {
     RenderCx {
-        params: wire_params(spec, ctx.params, grid),
+        params: wire_params(spec, ctx, grid),
         time: ctx.time,
         comp_time: ctx.env.comp_time,
         frame_rate: ctx.fps(),

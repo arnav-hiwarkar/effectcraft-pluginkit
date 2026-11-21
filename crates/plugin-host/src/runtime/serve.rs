@@ -104,6 +104,9 @@ fn resolve(plugin: &Identity, root: Root, path: &str) -> Result<PathBuf, String>
     }
     let base = base.canonicalize().map_err(|e| e.to_string())?;
     let joined = base.join(relative);
+    if joined.symlink_metadata().is_ok_and(|found| found.file_type().is_symlink()) {
+        return Err(format!("`{path}` is a link"));
+    }
     let anchor = if joined.exists() { joined.clone() } else { joined.parent().unwrap_or(&base).to_path_buf() };
     let anchor = anchor.canonicalize().map_err(|e| format!("{path}: {e}"))?;
     anchor.starts_with(&base).then_some(joined).ok_or(format!("`{path}` leaves the plugin's folder"))

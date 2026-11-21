@@ -53,7 +53,7 @@ macro_rules! export {
             pixels_len: usize,
             out: *mut [usize; 2],
         ) {
-            let plugin = CRAFT_PLUGIN.get_or_init($make);
+            let plugin = || CRAFT_PLUGIN.get_or_init($make);
             unsafe { $crate::abi::entry(plugin, ctx, request, request_len, pixels, pixels_len, out) }
         }
 

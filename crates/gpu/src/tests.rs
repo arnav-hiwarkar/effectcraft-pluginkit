@@ -57,6 +57,7 @@ mod fx_warp;
 mod init;
 mod inpaint;
 mod particles;
+mod plugin;
 mod three_d;
 mod wgsl_grammar;
 

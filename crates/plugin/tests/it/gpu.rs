@@ -1,0 +1,83 @@
+use effectcraft_engine::effects::{self, Buf, EffectCtx, EffectSpec, Params};
+use effectcraft_engine::keyframe::Value;
+use effectcraft_engine::raster::Image;
+use effectcraft_engine::render::{Accelerator, FxStep};
+use effectcraft_gpu::Gpu;
+
+use crate::app;
+
+const SIZE: [u32; 2] = [61, 43];
+
+fn gpu() -> Option<&'static Gpu> {
+    static GPU: std::sync::OnceLock<Result<Gpu, String>> = std::sync::OnceLock::new();
+    match GPU.get_or_init(Gpu::try_headless) {
+        Ok(gpu) => Some(gpu),
+        Err(why) if std::env::var("EFFECTCRAFT_REQUIRE_GPU").is_ok_and(|v| v == "1") => panic!("no GPU: {why}"),
+        Err(why) => {
+            eprintln!("no GPU ({why}); skipping the plugin GPU comparison");
+            None
+        }
+    }
+}
+
+fn picture() -> Buf {
+    let [w, h] = SIZE;
+    let mut img = Image::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let (u, v) = (x as f32 / w as f32, y as f32 / h as f32);
+            let alpha = if (x / 5 + y / 3) % 4 == 0 { 0.5 } else { 1.0 } * (1.0 - u * v * 0.6);
+            let checker = if (x / 4 + y / 4) % 2 == 0 { 0.9 } else { 0.1 };
+            img.set(x, y, [u * alpha, checker * alpha, (1.0 - v) * alpha, alpha]);
+        }
+    }
+    Buf { img, offset: [0.0, 0.0], scale: 1.0 }
+}
+
+fn params(spec: &EffectSpec, values: &[(&str, f64)]) -> Params {
+    let size = [f64::from(SIZE[0]), f64::from(SIZE[1])];
+    let mut params = Params { values: spec.params.iter().map(|p| (p.id.to_string(), effects::default_value(p, size))).collect() };
+    for (id, value) in values {
+        params.values.insert(id.to_string(), Value::Scalar(*value));
+    }
+    params
+}
+
+fn ctx(params: &Params) -> EffectCtx<'_> {
+    EffectCtx { params, time: 0.0, layer_size: [f64::from(SIZE[0]), f64::from(SIZE[1])], seed: 3, adjustment: false, env: Default::default() }
+}
+
+fn worst_difference(a: &Image, b: &Image) -> f32 {
+    a.data
+        .iter()
+        .zip(&b.data)
+        .flat_map(|(p, q)| p.iter().zip(q).map(|(x, y)| if x.is_nan() || y.is_nan() { f32::INFINITY } else { (x - y).abs() }))
+        .fold(0.0, f32::max)
+}
+
+#[test]
+fn probe_gpu_effects_render_on_the_gpu_as_their_cpu_render_does() {
+    let app = app("test.gpu-probe", &[]);
+    let Some(gpu) = gpu() else { return };
+    let chain = [("gpu-invert", vec![("amount", 0.8)]), ("gpu-soften", vec![("strength", 0.6)])];
+    let specs: Vec<&'static EffectSpec> =
+        chain.iter().map(|(local, _)| effects::find(&format!("{}.{local}", app.id)).expect("the probe registered its GPU effects")).collect();
+    let all_params: Vec<Params> = specs.iter().zip(&chain).map(|(spec, (_, values))| params(spec, values)).collect();
+    for (spec, params) in specs.iter().zip(&all_params) {
+        assert!(spec.gpu && gpu.supports_effect(spec.id), "{}: offered to the GPU", spec.id);
+        let cpu = effects::apply(spec, &ctx(params), picture());
+        assert_eq!(app.plugins.render_error(spec.id), None, "{}: the CPU render succeeded", spec.id);
+        let mut unchanged = picture();
+        unchanged.pad(cpu.offset[0] as u32);
+        assert!(worst_difference(&cpu.img, &unchanged.img) > 0.05, "{}: the effect changes the picture", spec.id);
+        let out = gpu.effects(&[FxStep { spec, ctx: ctx(params) }], &picture(), None).unwrap_or_else(|| panic!("{}: the GPU ran the plan", spec.id));
+        assert_eq!((out.offset, out.img.width, out.img.height), (cpu.offset, cpu.img.width, cpu.img.height), "{}: frame geometry", spec.id);
+        let worst = worst_difference(&cpu.img, &out.img);
+        assert!(worst < 1e-3, "{}: GPU and CPU differ by {worst}", spec.id);
+    }
+    let steps: Vec<FxStep> = specs.iter().zip(&all_params).map(|(spec, params)| FxStep { spec, ctx: ctx(params) }).collect();
+    let batched = gpu.effects(&steps, &picture(), None).expect("the chain runs on the GPU in one batch");
+    let cpu = specs.iter().zip(&all_params).fold(picture(), |buf, (spec, params)| effects::apply(spec, &ctx(params), buf));
+    let worst = worst_difference(&cpu.img, &batched.img);
+    assert!(worst < 1e-3, "the GPU chain differs from the CPU chain by {worst}");
+}

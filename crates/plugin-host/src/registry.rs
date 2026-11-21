@@ -63,7 +63,11 @@ impl Registry {
 
     pub fn bundles(&self) -> Vec<Result<Bundle, BundleError>> {
         let Ok(entries) = std::fs::read_dir(&self.root) else { return Vec::new() };
-        let mut dirs: Vec<PathBuf> = entries.filter_map(|entry| Some(entry.ok()?.path())).filter(|path| path.join(MANIFEST_FILE).is_file()).collect();
+        let mut dirs: Vec<PathBuf> = entries
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .filter(|path| path.file_name().is_some_and(|name| !name.to_string_lossy().starts_with('.')))
+            .filter(|path| path.join(MANIFEST_FILE).is_file())
+            .collect();
         dirs.sort();
         dirs.iter().map(|dir| Bundle::open(dir)).collect()
     }
@@ -88,38 +92,53 @@ impl Registry {
         incoming.entry_path()?;
         let target = self.root.join(&incoming.manifest.id);
         let staging = self.root.join(format!(".installing-{}", incoming.manifest.id));
+        let retired = self.root.join(format!(".replaced-{}", incoming.manifest.id));
         let io = |path: &Path| {
             let path = path.to_path_buf();
             move |e| BundleError::Io(path, e)
         };
-        if staging.exists() {
-            std::fs::remove_dir_all(&staging).map_err(io(&staging))?;
+        for leftover in [&staging, &retired] {
+            if leftover.exists() {
+                std::fs::remove_dir_all(leftover).map_err(io(leftover))?;
+            }
         }
         copy_dir(source, &staging).map_err(io(&staging))?;
-        if target.exists() {
-            std::fs::remove_dir_all(&target).map_err(io(&target))?;
+        let replaces = target.exists();
+        if replaces {
+            std::fs::rename(&target, &retired).map_err(io(&target))?;
         }
-        std::fs::rename(&staging, &target).map_err(io(&target))?;
+        if let Err(error) = std::fs::rename(&staging, &target) {
+            if replaces {
+                std::fs::rename(&retired, &target).map_err(io(&target))?;
+            }
+            return Err(BundleError::Io(target, error));
+        }
+        if replaces {
+            std::fs::remove_dir_all(&retired).map_err(io(&retired))?;
+        }
         Bundle::open(&target)
     }
 
     pub fn uninstall(&mut self, id: &str) -> Result<(), BundleError> {
         let target = self.installed_dir(id)?;
-        std::fs::remove_dir_all(&target).map_err(|e| BundleError::Io(target, e))?;
-        self.consents.remove(id);
-        self.save()
+        let mut consents = self.consents.clone();
+        consents.remove(id);
+        self.commit(consents)?;
+        std::fs::remove_dir_all(&target).map_err(|e| BundleError::Io(target, e))
     }
 
     pub fn approve(&mut self, manifest: &Manifest) -> Result<(), BundleError> {
         let consent = Consent { enabled: true, granted: manifest.permissions.clone(), unsandboxed: !manifest.sandboxed() };
-        self.consents.insert(manifest.id.clone(), consent);
-        self.save()
+        let mut consents = self.consents.clone();
+        consents.insert(manifest.id.clone(), consent);
+        self.commit(consents)
     }
 
     pub fn disable(&mut self, id: &str) -> Result<(), BundleError> {
         self.installed_dir(id)?;
-        self.consents.entry(id.to_string()).or_default().enabled = false;
-        self.save()
+        let mut consents = self.consents.clone();
+        consents.entry(id.to_string()).or_default().enabled = false;
+        self.commit(consents)
     }
 
     fn installed_dir(&self, id: &str) -> Result<PathBuf, BundleError> {
@@ -131,14 +150,16 @@ impl Registry {
             .ok_or_else(|| BundleError::NotInstalled(id.to_string()))
     }
 
-    fn save(&self) -> Result<(), BundleError> {
+    fn commit(&mut self, consents: BTreeMap<String, Consent>) -> Result<(), BundleError> {
         let file = self.root.join(STATE_FILE);
         let staging = self.root.join(format!("{STATE_FILE}.new"));
-        let text = serde_json::to_string_pretty(&self.consents).unwrap_or_default();
+        let text = serde_json::to_string_pretty(&consents).unwrap_or_default();
         std::fs::create_dir_all(&self.root)
             .and_then(|()| std::fs::write(&staging, text))
             .and_then(|()| std::fs::rename(&staging, &file))
-            .map_err(|e| BundleError::Io(file, e))
+            .map_err(|e| BundleError::Io(file, e))?;
+        self.consents = consents;
+        Ok(())
     }
 }
 

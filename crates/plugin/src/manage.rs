@@ -94,6 +94,9 @@ fn load(bundle: &Bundle, data_dir: PathBuf) -> Result<Arc<Loaded>, String> {
     (&bundle.manifest.version, &bytes).hash(&mut hasher);
     let grants = bundle.manifest.permissions.clone();
     let plugin = Plugin::load(bundle, grants, data_dir.clone(), Limits::default()).map_err(|e| e.to_string())?;
+    if let Some(effect) = plugin.contributions().effects.iter().find(|e| !plain_id(&e.id)) {
+        return Err(format!("effect id `{}` may only use lower case letters, digits, `-` and `_`", effect.id));
+    }
     let loaded = Loaded { bundle: bundle.clone(), plugin, data_dir, revision: hasher.finish(), render_errors: Mutex::new(BTreeMap::new()) };
     Ok(Arc::new(loaded))
 }
@@ -119,6 +122,12 @@ impl Inner {
         if self.loaded.remove(id).is_some() {
             effects::unregister(id);
         }
+    }
+
+    fn forget_session_copy(&mut self, id: &str) -> bool {
+        let before = self.session_only.len();
+        self.session_only.retain(|bundle| bundle.manifest.id != id);
+        self.session_only.len() != before
     }
 
     fn installed(&self) -> Vec<Bundle> {
@@ -178,6 +187,14 @@ impl Inner {
     }
 }
 
+fn local_effect<'a>(plugin: &str, loaded: &'a Loaded, effect_id: &str) -> Option<&'a str> {
+    loaded.plugin.contributions().effects.iter().map(|e| e.id.as_str()).find(|local| effects::effect_id(plugin, local) == effect_id)
+}
+
+fn plain_id(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
 fn covers(consent: &craft_plugin_host::Consent, manifest: &Manifest) -> bool {
     manifest.permissions.is_subset(&consent.granted) && (manifest.sandboxed() || consent.unsandboxed)
 }
@@ -202,7 +219,9 @@ impl Plugins {
 
     pub fn list(&self) -> Vec<PluginInfo> {
         let inner = self.lock();
-        let installed = inner.installed().into_iter().map(|bundle| inner.info(&bundle, false));
+        let for_session = |id: &str| inner.session_only.iter().any(|bundle| bundle.manifest.id == id);
+        let installed = inner.installed().into_iter().filter(|bundle| !for_session(&bundle.manifest.id));
+        let installed = installed.map(|bundle| inner.info(&bundle, false));
         let session_only = inner.session_only.iter().map(|bundle| inner.info(bundle, true));
         installed.chain(session_only).collect()
     }
@@ -214,8 +233,19 @@ impl Plugins {
     pub fn render_error(&self, effect_id: &str) -> Option<String> {
         let inner = self.lock();
         inner.loaded.iter().find_map(|(plugin, loaded)| {
-            let local = effect_id.strip_prefix(plugin.as_str())?.strip_prefix('.')?;
+            let local = local_effect(plugin, loaded, effect_id)?;
             loaded.render_errors.lock().ok()?.get(local).cloned()
+        })
+    }
+
+    pub fn designer(&self, effect_id: &str) -> Option<PluginItem> {
+        let inner = self.lock();
+        inner.loaded.iter().find_map(|(plugin, loaded)| {
+            let local = local_effect(plugin, loaded, effect_id)?;
+            let found = loaded.plugin.contributions();
+            let panel = found.effects.iter().find(|e| e.id == local)?.designer.as_ref()?;
+            let title = &found.panels.iter().find(|p| &p.id == panel)?.title;
+            Some(PluginItem { plugin: plugin.clone(), plugin_name: loaded.bundle.manifest.name.clone(), id: panel.clone(), title: title.clone(), panel: true })
         })
     }
 
@@ -224,6 +254,7 @@ impl Plugins {
         reserved(&incoming.manifest)?;
         let mut inner = self.lock();
         inner.stop(&incoming.manifest.id);
+        inner.session_only.retain(|b| b.manifest.id != incoming.manifest.id);
         let bundle = inner.registry.install(source).map_err(|e| e.to_string())?;
         if inner.registry.grants(&bundle.manifest).is_some() {
             inner.start(&bundle);
@@ -241,14 +272,19 @@ impl Plugins {
 
     pub fn disable(&self, id: &str) -> Result<(), String> {
         let mut inner = self.lock();
-        inner.registry.disable(id).map_err(|e| e.to_string())?;
         inner.stop(id);
-        Ok(())
+        if inner.forget_session_copy(id) {
+            return Ok(());
+        }
+        inner.registry.disable(id).map_err(|e| e.to_string())
     }
 
     pub fn uninstall(&self, id: &str) -> Result<(), String> {
         let mut inner = self.lock();
         inner.stop(id);
+        if inner.forget_session_copy(id) {
+            return Ok(());
+        }
         inner.registry.uninstall(id).map_err(|e| e.to_string())
     }
 

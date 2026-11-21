@@ -72,6 +72,7 @@ mod fx_lut;
 mod fx_noise;
 mod fx_particles;
 mod fx_pixel2;
+mod fx_plugin;
 mod fx_sim;
 mod fx_stylize;
 mod fx_text;

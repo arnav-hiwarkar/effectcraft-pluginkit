@@ -69,7 +69,9 @@ impl Engine {
                     None => module.instantiate()?,
                 };
                 let reply = guest.call(request, io, &mut cx, budget)?;
-                if let Ok(mut pool) = pool.lock() {
+                if let Ok(mut pool) = pool.lock()
+                    && pool.len() < rayon::current_num_threads()
+                {
                     pool.push(guest);
                 }
                 Ok(reply)

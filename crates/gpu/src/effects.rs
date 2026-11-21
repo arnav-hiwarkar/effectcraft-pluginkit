@@ -9,9 +9,11 @@ use crate::context::{Enc, GpuImage, Params};
 use crate::ops;
 
 /// Effects with a GPU implementation (must equal `effectcraft_effects::GPU_EFFECTS`), plus the
-/// expression controls (pass-throughs).
+/// expression controls (pass-throughs) and plugin effects that ship WGSL kernels.
 pub fn supports(id: &str) -> bool {
-    effectcraft_effects::GPU_EFFECTS.contains(&id) || id.starts_with("ec.control.")
+    effectcraft_effects::GPU_EFFECTS.contains(&id)
+        || id.starts_with("ec.control.")
+        || effectcraft_effects::dynamic::get(id).is_some_and(|r| r.effect.shader.is_some() && r.effect.gpu.is_some())
 }
 
 /// A layer buffer on the GPU (see [`Buf`]).
@@ -211,6 +213,9 @@ fn apply(e: &mut Enc, id: &str, ctx: &EffectCtx, b: GBuf) -> Option<GBuf> {
     // Controls the kernels do not implement render on the CPU.
     if !effectcraft_effects::catalog::gpu_supported(id, ctx) {
         return None;
+    }
+    if let Some(registered) = effectcraft_effects::dynamic::get(id) {
+        return crate::fx_plugin::apply(e, &registered, ctx, b);
     }
     match id {
         "ec.blur.gaussian" => gaussian(e, ctx, b),

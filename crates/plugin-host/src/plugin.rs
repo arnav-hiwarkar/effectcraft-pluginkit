@@ -86,17 +86,21 @@ impl Plugin {
         if pixels.len() != width * height {
             return Err(PluginError::Protocol(format!("{} pixels for a {width}x{height} frame", pixels.len())));
         }
-        let bands = (height / MIN_BAND_ROWS).min(rayon::current_num_threads());
-        let (Some(reach), true) = (reach, bands > 1 && self.engine.copies_pixels()) else {
+        if pixels.is_empty() {
+            return Ok(());
+        }
+        let band_rows = height.div_ceil((height / MIN_BAND_ROWS).clamp(1, rayon::current_num_threads()));
+        let banded = reach.filter(|reach| self.engine.copies_pixels() && band_rows < height && (*reach as usize) < band_rows);
+        let Some(reach) = banded else {
             let frame = FrameDesc { width: cx.size[0], height: cx.size[1], origin: [0, 0] };
             let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
             return self.call(&call, Some(pixels), &mut make_host());
         };
-        let band_rows = height.div_ceil(bands);
-        let rendered: Vec<Vec<Pixel>> = (0..bands)
+        let firsts: Vec<usize> = (0..height).step_by(band_rows).collect();
+        let rendered: Vec<Vec<Pixel>> = firsts
             .into_par_iter()
-            .map(|band| {
-                let (first, last) = (band * band_rows, ((band + 1) * band_rows).min(height));
+            .map(|first| {
+                let last = (first + band_rows).min(height);
                 let top = first.saturating_sub(reach as usize);
                 let bottom = (last + reach as usize).min(height);
                 let frame = FrameDesc { width: cx.size[0], height: (bottom - top) as u32, origin: [0, top as u32] };

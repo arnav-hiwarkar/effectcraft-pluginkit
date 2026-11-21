@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use craft_plugin::{ABI, Pixel};
+use craft_plugin::{ABI, Outcome, Pixel};
 use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc};
 
 use super::native;
@@ -59,7 +59,7 @@ impl WasmModule {
     }
 
     pub fn instantiate(&self) -> Result<WasmGuest, PluginError> {
-        let limits = StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).build();
+        let limits = StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).memories(1).instances(1).build();
         let mut store = Store::new(self.module.engine(), State { limits, ctx: 0, alloc: None });
         store.limiter(|state| &mut state.limits);
         store.set_epoch_deadline(ticks(Duration::from_secs(5)));
@@ -109,16 +109,27 @@ impl WasmGuest {
         self.memory.write(&mut self.store, pixels as usize, pixel_bytes)?;
 
         let request_at = self.alloc.call(&mut self.store, len(request)?)?;
+        if request_at == 0 {
+            wasmtime::bail!("the plugin could not allocate the request");
+        }
         self.memory.write(&mut self.store, request_at as usize, request)?;
+        self.memory.write(&mut self.store, self.out as usize, &[0; 8])?;
         let args = (0, request_at, len(request)?, pixels, len(pixel_bytes)?, self.out);
         self.call.call(&mut self.store, args)?;
         self.free.call(&mut self.store, (request_at, len(request)?))?;
 
         let mut out = [0u32; 2];
         self.memory.read(&self.store, self.out as usize, bytemuck::cast_slice_mut(&mut out))?;
-        let mut reply = vec![0u8; out[1] as usize];
-        self.memory.read(&self.store, out[0] as usize, &mut reply)?;
+        let reply = (out[0] as usize)
+            .checked_add(out[1] as usize)
+            .and_then(|end| self.memory.data(&self.store).get(out[0] as usize..end))
+            .filter(|_| out[0] != 0)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| wasmtime::format_err!("the plugin returned no reply"))?;
         self.free.call(&mut self.store, (out[0], out[1]))?;
+        if !succeeded(&reply) {
+            return Ok(reply);
+        }
 
         match io {
             Io::None => {}
@@ -173,6 +184,10 @@ fn host_call(mut caller: Caller<'_, State>, _ctx: u32, request: u32, request_len
     let [bulk_at, bulk_len] = place(bulk_out.bytes())?;
     memory.write(&mut caller, out as usize, bytemuck::cast_slice(&[reply_at, reply_len, bulk_at, bulk_len]))?;
     Ok(())
+}
+
+fn succeeded(reply: &[u8]) -> bool {
+    matches!(serde_json::from_slice::<Outcome<serde::de::IgnoredAny>>(reply), Ok(Outcome::Ok(_)))
 }
 
 fn len(bytes: &[u8]) -> wasmtime::Result<u32> {

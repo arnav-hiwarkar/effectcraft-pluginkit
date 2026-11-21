@@ -69,7 +69,7 @@ struct Recorder {
 }
 
 impl Host for Recorder {
-    fn access(&mut self, command: &str, _params: &Value) -> Access {
+    fn access(&self, command: &str, _params: &Value) -> Access {
         match command {
             "comp.info" => Access::Needs(vec![Permission::DocumentRead]),
             "script.run" => Access::Refused("plugins cannot run scripts".into()),
@@ -114,7 +114,7 @@ fn a_plugin_describes_its_effects_panels_and_commands() {
         let loaded = load(kind, &[]);
         let found = loaded.plugin.contributions();
         let effects: Vec<&str> = found.effects.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(effects, ["invert", "shift-down", "read-inputs", "spin"], "{kind:?}");
+        assert!(["invert", "shift-down", "read-inputs", "spin"].iter().all(|id| effects.contains(id)), "{kind:?} {effects:?}");
         assert_eq!(found.panels[0].title, "Counter");
         assert!(found.commands.iter().any(|c| c.id == "edit"));
     });
@@ -195,9 +195,9 @@ fn a_command_edits_the_document_only_with_the_permission_for_it() {
         let allowed = load(kind, &["document.write"]);
         let mut host = Recorder::default();
         command(&allowed, "edit", &mut host).unwrap();
-        assert_eq!(host.commands, ["layer.rename"]);
+        assert_eq!(host.commands, ["layer.newNull"]);
         let saved = std::fs::read_to_string(allowed.data.path().join("data/last-reply.json")).unwrap();
-        assert_eq!(serde_json::from_str::<Value>(&saved).unwrap(), json!({"echo": {"name": "from plugin"}}));
+        assert_eq!(serde_json::from_str::<Value>(&saved).unwrap(), json!({"echo": {"name": "From Plugin"}}));
     });
 }
 
@@ -288,4 +288,75 @@ fn a_native_plugin_needs_explicit_trust_beyond_its_permissions() {
     registry.approve(&installed.manifest).unwrap();
     assert!(registry.consent("test.probe").is_some_and(|consent| consent.unsandboxed));
     assert_eq!(registry.grants(&installed.manifest), Some(BTreeSet::new()));
+}
+
+#[test]
+fn bands_cover_every_row_whatever_the_thread_count_and_frame_height() {
+    let loaded = load(Kind::Wasm, &[]);
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(67).build().unwrap();
+    for (width, height) in [(3usize, 4289usize), (5, 129), (2, 64), (1, 1)] {
+        let source: Vec<Pixel> = (0..width * height).map(|i| [i as f32, 0.25, 0.5, 1.0]).collect();
+        let mut expected = vec![[0.0; 4]; width];
+        expected.extend_from_slice(&source[..width * (height - 1)]);
+        let mut rendered = source.clone();
+        pool.install(|| loaded.plugin.render("shift-down", &cx(width as u32, height as u32), Some(1), &mut rendered, Recorder::default)).unwrap();
+        assert!(rendered == expected, "{width}x{height} differs from the shifted source");
+    }
+}
+
+#[test]
+fn an_empty_frame_renders_to_nothing_without_failing() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let mut none: Vec<Pixel> = Vec::new();
+        for size in [[0, 0], [0, 720], [1280, 0]] {
+            let cx = RenderCx { size, scale: 1.0, ..Default::default() };
+            loaded.plugin.render("invert", &cx, Some(0), &mut none, Recorder::default).unwrap_or_else(|e| panic!("{kind:?} {size:?}: {e}"));
+        }
+    });
+}
+
+#[test]
+fn a_sandboxed_effect_that_fails_leaves_the_frame_as_it_was() {
+    let loaded = load(Kind::Wasm, &[]);
+    let mut pixels: Vec<Pixel> = vec![[0.1, 0.2, 0.3, 1.0]; 4];
+    let failed = loaded.plugin.render("half-done", &cx(2, 2), None, &mut pixels, Recorder::default).unwrap_err();
+    assert!(failed.to_string().contains("gave up half way"), "{failed}");
+    assert_eq!(pixels, vec![[0.1, 0.2, 0.3, 1.0]; 4]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_in_the_data_folder_cannot_redirect_a_write_outside_it() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("planted.txt");
+        let data = loaded.data.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::os::unix::fs::symlink(&target, data.join("link.txt")).unwrap();
+        assert!(command(&loaded, "write-link", &mut Recorder::default()).is_err(), "{kind:?}");
+        assert!(!target.exists(), "{kind:?} wrote through the link");
+    });
+}
+
+#[test]
+fn a_half_finished_install_is_not_treated_as_an_installed_plugin() {
+    let (source, _) = bundle(Kind::Wasm, &[]);
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = Registry::open(root.path());
+    let installed = registry.install(source.path()).unwrap();
+    registry.approve(&installed.manifest).unwrap();
+
+    let staged = root.path().join(".installing-test.probe");
+    std::fs::create_dir_all(&staged).unwrap();
+    for file in ["plugin.json", "probe.wasm"] {
+        std::fs::copy(source.path().join(file), staged.join(file)).unwrap();
+    }
+    let listed: Vec<_> = Registry::open(root.path()).bundles().into_iter().flatten().map(|b| b.dir).collect();
+    assert_eq!(listed, [installed.dir.clone()]);
+
+    let again = registry.install(source.path()).unwrap();
+    assert_eq!(again.dir, installed.dir);
+    assert!(!staged.exists(), "the leftover staging folder is cleaned up by the next install");
 }

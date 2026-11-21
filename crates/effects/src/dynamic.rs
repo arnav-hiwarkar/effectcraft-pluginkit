@@ -48,6 +48,7 @@ pub struct DynamicParam {
 }
 
 pub struct DynamicEffect {
+    pub owner: String,
     pub id: String,
     pub name: String,
     pub category: String,
@@ -93,12 +94,12 @@ pub fn register(effect: DynamicEffect) {
     registry.push(Arc::new(Registered { spec, effect }));
 }
 
-pub fn unregister(id_prefix: &str) {
+pub fn unregister(owner: &str) {
     let mut registry = REGISTRY.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-    for gone in registry.iter().filter(|r| r.spec.id.starts_with(id_prefix)) {
+    for gone in registry.iter().filter(|r| r.effect.owner == owner) {
         effectcraft_project::declare_reads_other_frames(gone.spec.id, false);
     }
-    registry.retain(|r| !r.spec.id.starts_with(id_prefix));
+    registry.retain(|r| r.effect.owner != owner);
 }
 
 pub fn get(id: &str) -> Option<Arc<Registered>> {

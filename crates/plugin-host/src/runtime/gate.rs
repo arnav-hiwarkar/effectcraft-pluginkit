@@ -4,7 +4,7 @@ use craft_plugin::{HostCall, Permission, Root};
 
 use crate::host::{Access, Host};
 
-fn access(call: &HostCall, host: &mut dyn Host) -> Access {
+fn access(call: &HostCall, host: &dyn Host) -> Access {
     match call {
         HostCall::Log { .. } | HostCall::Layer { .. } | HostCall::Source { .. } | HostCall::Masks | HostCall::Scene => Access::Free,
         HostCall::Command { id, params } => host.access(id, params),
@@ -15,7 +15,7 @@ fn access(call: &HostCall, host: &mut dyn Host) -> Access {
     }
 }
 
-pub(crate) fn check(call: &HostCall, host: &mut dyn Host, grants: &BTreeSet<Permission>) -> Result<(), String> {
+pub(crate) fn check(call: &HostCall, host: &dyn Host, grants: &BTreeSet<Permission>) -> Result<(), String> {
     match access(call, host) {
         Access::Free => Ok(()),
         Access::Refused(why) => Err(format!("refused: {why}")),

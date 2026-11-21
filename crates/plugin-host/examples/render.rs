@@ -165,7 +165,7 @@ fn run() -> Result<(), String> {
     let defaults = spec.params.iter().filter_map(|p| Some((p.id.clone(), default_value(&p.kind, width, height)?)));
     let params: BTreeMap<String, Value> = defaults.chain(params).collect();
 
-    let inputs = Inputs { width, height, source, masks };
+    let unpadded = Inputs { width, height, source, masks };
     let mut cx = RenderCx {
         params,
         time: number("--time", 0.0),
@@ -177,21 +177,25 @@ fn run() -> Result<(), String> {
         size: [width, height],
         instance: 1,
     };
-    let layout: Layout = plugin.call(&Call::Layout { effect: effect.clone(), cx: cx.clone() }, None, &mut &inputs).map_err(|e| e.to_string())?;
+    let layout: Layout = plugin.call(&Call::Layout { effect: effect.clone(), cx: cx.clone() }, None, &mut &unpadded).map_err(|e| e.to_string())?;
     let pad = layout.padding;
+    let shift = f64::from(pad);
     let (padded_w, padded_h) = (width + 2 * pad, height + 2 * pad);
     let mut padded = vec![[0.0; 4]; (padded_w * padded_h) as usize];
     for y in 0..height as usize {
         let at = (y + pad as usize) * padded_w as usize + pad as usize;
-        padded[at..at + width as usize].copy_from_slice(&inputs.source[y * width as usize..(y + 1) * width as usize]);
+        padded[at..at + width as usize].copy_from_slice(&unpadded.source[y * width as usize..(y + 1) * width as usize]);
     }
+    let masks =
+        unpadded.masks.iter().map(|mask| MaskPath { points: mask.points.iter().map(|p| [p[0] + shift, p[1] + shift]).collect(), ..mask.clone() }).collect();
+    let inputs = Inputs { width: padded_w, height: padded_h, source: padded.clone(), masks };
     cx.size = [padded_w, padded_h];
-    cx.offset = [f64::from(pad), f64::from(pad)];
+    cx.offset = [shift, shift];
     for value in cx.params.values_mut() {
         if let Value::List(point) = value
             && point.len() < 4
         {
-            point.iter_mut().take(2).for_each(|c| *c += f64::from(pad));
+            point.iter_mut().take(2).for_each(|c| *c += shift);
         }
     }
 

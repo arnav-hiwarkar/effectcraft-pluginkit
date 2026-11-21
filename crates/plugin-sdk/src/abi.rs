@@ -128,7 +128,15 @@ fn report_panics() {
 /// # Safety
 /// `request` must point to `request_len` readable bytes, `pixels` to `pixels_len` writable bytes aligned
 /// for `f32` (or be null), and `out` must be writable.
-pub unsafe fn entry(plugin: &Plugin, ctx: usize, request: *const u8, request_len: usize, pixels: *mut u8, pixels_len: usize, out: *mut [usize; 2]) {
+pub unsafe fn entry<'p>(
+    plugin: impl FnOnce() -> &'p Plugin,
+    ctx: usize,
+    request: *const u8,
+    request_len: usize,
+    pixels: *mut u8,
+    pixels_len: usize,
+    out: *mut [usize; 2],
+) {
     report_panics();
     // SAFETY: the caller guarantees `request` holds `request_len` readable bytes.
     let request = unsafe { std::slice::from_raw_parts(request, request_len) };
@@ -139,7 +147,7 @@ pub unsafe fn entry(plugin: &Plugin, ctx: usize, request: *const u8, request_len
         unsafe { std::slice::from_raw_parts_mut(pixels.cast::<Pixel>(), pixels_len / PIXEL_BYTES) }
     };
     let outer = CTX.replace(ctx);
-    let reply = catch_unwind(AssertUnwindSafe(|| plugin.dispatch(request, pixels)))
+    let reply = catch_unwind(AssertUnwindSafe(|| plugin().dispatch(request, pixels)))
         .unwrap_or_else(|_| serde_json::to_vec(&Outcome::<()>::Err("the plugin panicked".into())).unwrap_or_default());
     CTX.set(outer);
     // SAFETY: the caller guarantees `out` is writable.
