@@ -1,0 +1,63 @@
+name: Plugin kit
+
+# Checks for the plugin system on Linux: the kit and adapter tests against a real probe plugin, lint
+# for the crates the plugin system touches, the layer and web checks, and the end-to-end script that
+# bundles every plugin in plugins/ and runs it in the app. Run by hand.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pluginkit-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
+            libxcb1-dev libxcursor-dev libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev \
+            mesa-vulkan-drivers libgl1-mesa-dev libasound2-dev
+      - name: Install Rust targets and components
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Layers
+        run: cargo run --quiet --package xtask -- layers
+      - name: Format
+        run: cargo fmt --check -p craft-plugin -p craft-plugin-host -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-ui-egui -p effectcraft-engine -p effectcraft-automation -p xtask
+      - name: Kit and adapter tests
+        run: cargo test -p craft-plugin -p craft-plugin-host -p effectcraft-plugin
+      - name: Lint
+        run: cargo clippy -p craft-plugin -p craft-plugin-host -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-engine -p effectcraft-automation -p effectcraft-ui-egui -p xtask --all-targets -- -D warnings
+      - name: Tests of the crates the plugin system changed
+        run: |
+          cargo test -p effectcraft-effects --lib
+          cargo test -p effectcraft-automation
+          cargo test -p effectcraft-ui-egui --lib -- plugin i18n:: menus::
+          cargo test -p effectcraft-project --lib
+          cargo test -p effectcraft-gpu --lib plugin
+      - name: Web build
+        run: cargo run --quiet --package xtask -- wasm
+      - name: Desktop app builds
+        run: cargo check -p effectcraft
+      - name: Plugins end to end
+        run: ./plugins/e2e.sh
+      - name: Plugin crate tests
+        run: |
+          for manifest in plugins/*/Cargo.toml; do
+            cargo test --manifest-path "$manifest"
+          done
