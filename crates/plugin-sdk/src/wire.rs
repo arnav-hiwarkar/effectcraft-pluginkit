@@ -335,6 +335,7 @@ pub struct CommandSpec {
 #[serde(tag = "call", rename_all = "snake_case")]
 pub enum HostCall {
     Log { level: LogLevel, message: String },
+    Notify { message: String },
     Command { id: String, params: serde_json::Value },
     Layer { param: String, time: Option<f64> },
     Source { time: f64 },
@@ -457,6 +458,7 @@ pub enum TextStyle {
     Heading,
     Weak,
     Mono,
+    Error,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

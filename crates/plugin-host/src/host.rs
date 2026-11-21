@@ -23,6 +23,8 @@ pub trait Host {
         Err("commands are not available here".into())
     }
 
+    fn notify(&mut self, _message: &str) {}
+
     fn layer(&mut self, _param: &str, _comp_time: Option<f64>) -> Option<Pixels> {
         None
     }

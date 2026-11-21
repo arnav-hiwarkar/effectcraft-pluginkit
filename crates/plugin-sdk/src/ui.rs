@@ -66,6 +66,10 @@ impl<'a> Ui<'a> {
         self.text(text, TextStyle::Mono)
     }
 
+    pub fn error(&mut self, text: &str) {
+        self.text(text, TextStyle::Error)
+    }
+
     pub fn button(&mut self, text: &str) -> bool {
         self.button_enabled(text, true)
     }

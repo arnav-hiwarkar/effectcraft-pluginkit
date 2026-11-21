@@ -57,6 +57,10 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             log::log!(target: "plugin", level, "[{}] {message}", cx.plugin.id);
             plain(Value::Null)
         }
+        HostCall::Notify { message } => {
+            cx.host.notify(&message);
+            plain(Value::Null)
+        }
         HostCall::Command { id, params } => cx.host.command(&id, params).map(|value| (value, Bulk::None)),
         HostCall::Layer { param, time } => image(cx.host.layer(&param, time)),
         HostCall::Source { time } => image(cx.host.source(time)),

@@ -84,3 +84,19 @@ fn a_file_command_needs_both_file_permissions() {
     assert!(denied.contains("files.read"), "{denied}");
     assert!(!target.exists());
 }
+
+#[test]
+fn a_plugin_message_reaches_the_user_with_the_plugin_name() {
+    let mut app = app("test.gate-notify", &[]);
+    app.run("greet").unwrap();
+    let shown: Vec<String> = app
+        .session
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            effectcraft_engine::Event::Toast { message, error: false } => Some(message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shown, ["Probe: 3 layers renamed"]);
+}

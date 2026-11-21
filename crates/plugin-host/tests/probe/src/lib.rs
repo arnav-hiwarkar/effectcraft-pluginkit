@@ -257,6 +257,10 @@ fn make() -> Plugin {
         })
         .command("open-website", "Open Website", || host::command("help.website", json!({})).map(|_| ()))
         .command("write-link", "Write Through A Link", || host::write_file(Root::Data, "link.txt", b"x"))
+        .command("greet", "Greet", || {
+            host::notify("3 layers renamed");
+            Ok(())
+        })
         .command("run-script", "Run Script", || host::command("script.run", json!({"code": "1"})).map(|_| ()))
 }
 

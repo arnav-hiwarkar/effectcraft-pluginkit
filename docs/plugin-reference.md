@@ -126,7 +126,10 @@ pub trait Panel: Send + 'static {
 }
 ```
 
-Widgets: `label`, `heading`, `weak`, `mono`, `button`, `button_enabled`, `checkbox`, `slider`, `number`,
+Panels and commands of one plugin run in the same long-lived instance, so a `static` is shared between
+them. Effects do not see it: they run in pooled instances.
+
+Widgets: `label`, `heading`, `weak`, `mono`, `error`, `button`, `button_enabled`, `checkbox`, `slider`, `number`,
 `text_edit`, `popup`, `color`, `separator`, `space`, and the containers `row`, `column` and `group`.
 Value widgets take `&mut` state and return `true` on the frame the user changed it.
 
@@ -152,6 +155,7 @@ All are in `craft_plugin::host`.
 | `read_file(Root::User, path)`, `list_files(Root::User, path)` | `files.read` |
 | `write_file(Root::User, path, bytes)` | `files.write` |
 | `log(level, message)`, `info(message)` | None |
+| `notify(message)`: shows a short message to the user | None |
 
 A plugin may run the document commands (`layer.*`, `comp.*`, `prop.*`, `keys.*`, `effect.*`, `mask.*`,
 `text.*`, `shape.*`, and the other families in `DOCUMENT_FAMILIES` in `crates/plugin/src/gate.rs`) and the

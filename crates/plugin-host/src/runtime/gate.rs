@@ -6,7 +6,7 @@ use crate::host::{Access, Host};
 
 fn access(call: &HostCall, host: &dyn Host) -> Access {
     match call {
-        HostCall::Log { .. } | HostCall::Layer { .. } | HostCall::Source { .. } | HostCall::Masks | HostCall::Scene => Access::Free,
+        HostCall::Log { .. } | HostCall::Notify { .. } | HostCall::Layer { .. } | HostCall::Source { .. } | HostCall::Masks | HostCall::Scene => Access::Free,
         HostCall::Command { id, params } => host.access(id, params),
         HostCall::ReadFile { root: Root::User, .. } | HostCall::ListFiles { root: Root::User, .. } => Access::Needs(vec![Permission::FilesRead]),
         HostCall::WriteFile { root: Root::User, .. } => Access::Needs(vec![Permission::FilesWrite]),

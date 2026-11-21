@@ -22,6 +22,10 @@ pub fn info(message: impl Display) {
     log(LogLevel::Info, message)
 }
 
+pub fn notify(message: impl Display) {
+    let _ = call::<serde_json::Value>(&HostCall::Notify { message: message.to_string() }, &[]);
+}
+
 pub fn command(id: &str, params: impl Serialize) -> Result<serde_json::Value> {
     let params = serde_json::to_value(params)?;
     call(&HostCall::Command { id: id.into(), params }, &[]).map(|(value, _)| value)

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use craft_plugin_host::{Access, Host, Permission};
 use effectcraft_automation::confine::{self, Confinement, Lookup};
-use effectcraft_engine::{Session, commands};
+use effectcraft_engine::{Event, Session, commands};
 use serde_json::{Value, json};
 
 use crate::manage::Loaded;
@@ -37,6 +37,8 @@ const DOCUMENT_FAMILIES: &[&str] = &[
     "time",
     "timeline",
 ];
+
+const MAX_NOTICE: usize = 300;
 
 const FILE_PERMISSIONS: [Permission; 2] = [Permission::FilesRead, Permission::FilesWrite];
 
@@ -110,6 +112,12 @@ impl Host for SessionHost<'_> {
             Ok(()) => Access::Needs(needs.into_iter().collect()),
             Err(why) => Access::Refused(why),
         }
+    }
+
+    fn notify(&mut self, message: &str) {
+        let message: String = message.chars().take(MAX_NOTICE).collect();
+        let message = format!("{}: {message}", self.plugin.bundle.manifest.name);
+        self.session.events.push(Event::Toast { message, error: false });
     }
 
     fn command(&mut self, id: &str, params: Value) -> Result<Value, String> {

@@ -143,6 +143,7 @@ impl Renderer<'_> {
             TextStyle::Heading => RichText::new(text).font(Tokens::semibold(15.0)).color(t.text),
             TextStyle::Weak => RichText::new(text).font(Tokens::ui(12.0)).color(t.text_dim),
             TextStyle::Mono => RichText::new(text).font(Tokens::mono(12.0)).color(t.text),
+            TextStyle::Error => RichText::new(text).font(Tokens::ui(12.0)).color(t.danger),
         }
     }
 
