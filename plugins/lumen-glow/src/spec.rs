@@ -40,4 +40,5 @@ pub fn spec() -> EffectSpec {
                 Param::checkbox("dither", "Dither", true),
             ],
         )
+        .shader(include_str!("glow.wgsl"))
 }

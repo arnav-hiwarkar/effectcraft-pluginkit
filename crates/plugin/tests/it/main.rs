@@ -1,5 +1,6 @@
 mod gate;
 mod gpu;
+mod lumen;
 mod render;
 
 use std::path::{Path, PathBuf};
@@ -50,6 +51,12 @@ fn app(id: &str, permissions: &[&str]) -> App {
 impl App {
     fn run(&mut self, command: &str) -> Result<(), String> {
         effectcraft_plugin::run_command(&mut self.session, &self.id, command)
+    }
+
+    fn relay(&mut self, command: &str, params: serde_json::Value) -> Result<(), String> {
+        let request = json!({"command": command, "params": params});
+        std::fs::write(self.bundle.path().join("relay.json"), request.to_string()).expect("write the relayed command");
+        self.run("relay")
     }
 
     fn layer_names(&self) -> Vec<String> {

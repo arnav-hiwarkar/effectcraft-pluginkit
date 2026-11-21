@@ -103,6 +103,10 @@ impl Transfer {
         Transfer::Srgb(curves())
     }
 
+    pub fn is_srgb(self) -> bool {
+        matches!(self, Transfer::Srgb(_))
+    }
+
     pub fn decode(self, p: Pixel) -> Pixel {
         match self {
             Transfer::Linear => p,

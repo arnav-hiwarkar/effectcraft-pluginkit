@@ -7,7 +7,7 @@ const SIGMA_SPAN: f32 = 2.5;
 const NEGLIGIBLE_SIGMA: f32 = 0.2;
 const THREE_TAP_MAX_VARIANCE: f32 = 2.0 / 3.0;
 
-pub fn gaussian(sigma: f32) -> Vec<f32> {
+fn gaussian(sigma: f32) -> Vec<f32> {
     let variance = sigma * sigma;
     if variance <= THREE_TAP_MAX_VARIANCE {
         let side = variance / 2.0;
@@ -21,12 +21,25 @@ pub fn gaussian(sigma: f32) -> Vec<f32> {
     raw.iter().map(|w| w / total).collect()
 }
 
-pub fn blur(image: &mut Image, sigma: [f32; 2], padded: &mut Vec<Pixel>, copy: &mut Vec<Pixel>) {
-    if sigma[0] > NEGLIGIBLE_SIGMA {
-        blur_rows(image, &gaussian(sigma[0]), padded);
+pub fn taps(sigma: f32) -> Vec<f32> {
+    if sigma > NEGLIGIBLE_SIGMA {
+        gaussian(sigma)
+    } else {
+        vec![1.0]
     }
-    if sigma[1] > NEGLIGIBLE_SIGMA {
-        blur_columns(image, &gaussian(sigma[1]), copy);
+}
+
+pub fn blur(
+    image: &mut Image,
+    kernels: &[Vec<f32>; 2],
+    padded: &mut Vec<Pixel>,
+    copy: &mut Vec<Pixel>,
+) {
+    if kernels[0].len() > 1 {
+        blur_rows(image, &kernels[0], padded);
+    }
+    if kernels[1].len() > 1 {
+        blur_columns(image, &kernels[1], copy);
     }
 }
 
@@ -103,7 +116,12 @@ mod tests {
     fn blur_keeps_energy_of_an_interior_point() {
         let mut image = Image::new([21, 21]);
         image.pixels[10 * 21 + 10] = [1.0; 4];
-        blur(&mut image, [1.0, 2.0], &mut Vec::new(), &mut Vec::new());
+        blur(
+            &mut image,
+            &[taps(1.0), taps(2.0)],
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
         let energy: f32 = image.pixels.iter().map(|p| p[0]).sum();
         assert!((energy - 1.0).abs() < 1e-5);
         assert!(image.pixels[10 * 21 + 13][0] < image.pixels[13 * 21 + 10][0]);

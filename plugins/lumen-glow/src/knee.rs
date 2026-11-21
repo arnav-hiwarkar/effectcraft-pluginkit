@@ -17,6 +17,10 @@ impl Knee {
         }
     }
 
+    pub fn shape(&self) -> [f32; 2] {
+        [self.threshold, self.width]
+    }
+
     pub fn response(&self, brightness: f32) -> f32 {
         let above = brightness - self.threshold;
         if self.width <= 0.0 {

@@ -1,4 +1,5 @@
 mod dither;
+mod gpu;
 mod image;
 mod knee;
 mod passes;
@@ -22,7 +23,13 @@ impl Effect for LumenGlow {
     }
 
     fn layout(&self, cx: &Cx) -> Layout {
-        Layout::whole_frame().padded(Settings::from_cx(cx).padding())
+        let settings = Settings::from_cx(cx);
+        let padding = settings.frame_padding(cx.size);
+        let layout = Layout::whole_frame().padded(padding);
+        match gpu::plan(&settings, cx.size, padding) {
+            Some(plan) => layout.gpu(plan),
+            None => layout,
+        }
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {

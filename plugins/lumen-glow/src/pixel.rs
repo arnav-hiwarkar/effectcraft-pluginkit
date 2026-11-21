@@ -79,6 +79,10 @@ impl Mix {
         }
     }
 
+    pub fn columns(&self) -> [Pixel; 3] {
+        self.columns
+    }
+
     pub fn apply(&self, p: Pixel) -> Pixel {
         let [a, b, c] = &self.columns;
         mul_add(mul_add(scale(*a, p[0]), *b, p[1]), *c, p[2])

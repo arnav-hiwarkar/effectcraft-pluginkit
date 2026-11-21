@@ -7,6 +7,8 @@ use crate::transfer::Transfer;
 const MAX_STRETCH_OCTAVES: f32 = 5.0;
 const MAX_ABERRATION_OCTAVES: f32 = 1.0;
 const MAX_PADDING: f32 = 4096.0;
+const MIN_PIXEL_BUDGET: f64 = 16_777_216.0;
+const AREA_BUDGET: f64 = 4.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Blend {
@@ -92,7 +94,7 @@ impl Settings {
             source_opacity: unit("Output/source_opacity").clamp(0.0, 1.0),
             glow_opacity: unit("Output/glow_opacity").clamp(0.0, 1.0),
             transfer,
-            dither: cx.bool("Output/dither").then(|| Dither {
+            dither: (cx.bool("Output/dither") && !cx.float).then(|| Dither {
                 seed: (cx.instance ^ (cx.instance >> 32)) as u32,
                 origin: [cx.offset[0].round() as i64, cx.offset[1].round() as i64],
             }),
@@ -108,6 +110,18 @@ impl Settings {
         (Profile::tail_extent(self.profile.radius * widest) * self.scale)
             .ceil()
             .clamp(0.0, MAX_PADDING) as u32
+    }
+
+    pub fn frame_padding(&self, size: [u32; 2]) -> u32 {
+        let pad = self.padding();
+        let (w, h) = (f64::from(size[0]), f64::from(size[1]));
+        let budget = MIN_PIXEL_BUDGET.max(AREA_BUDGET * w * h);
+        let padded = |p: f64| (w + 2.0 * p) * (h + 2.0 * p);
+        if padded(f64::from(pad)) <= budget {
+            return pad;
+        }
+        let fit = (((w - h).powi(2) + 4.0 * budget).sqrt() - (w + h)) / 4.0;
+        (fit.floor().max(0.0) as u32).min(pad)
     }
 }
 
@@ -168,6 +182,23 @@ pub mod tests {
             ("Aberration/amount", Value::Number(100.0)),
         ]);
         assert_eq!(wide.padding(), 4096);
+    }
+
+    #[test]
+    fn frame_padding_keeps_the_padded_frame_within_the_pixel_budget() {
+        let settings = settings_with(&[("Glow/radius", Value::Number(3000.0))]);
+        for size in [[1u32, 1], [1920, 1080], [3840, 2160], [16000, 100]] {
+            let pad = settings.frame_padding(size);
+            let area = |p: u32| f64::from(size[0] + 2 * p) * f64::from(size[1] + 2 * p);
+            let budget = MIN_PIXEL_BUDGET.max(AREA_BUDGET * area(0));
+            assert!(
+                pad <= settings.padding() && area(pad) <= budget,
+                "{size:?}: {pad}"
+            );
+            assert!(area(pad + 1) > budget, "{size:?}: {pad} could be larger");
+        }
+        let small = settings_with(&[]);
+        assert_eq!(small.frame_padding([1920, 1080]), small.padding());
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::passes::blur::taps;
 use crate::pixel::{Mix, luma};
 use crate::profile::Profile;
 use crate::settings::{Settings, View};
@@ -31,6 +32,12 @@ pub enum Pass {
     Blur { level: usize },
     Accumulate { level: usize },
     Composite,
+}
+
+impl Level {
+    pub fn kernels(&self) -> [Vec<f32>; 2] {
+        self.blur.map(taps)
+    }
 }
 
 impl Plan {

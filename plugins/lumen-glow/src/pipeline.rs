@@ -55,7 +55,7 @@ pub fn render(settings: &Settings, pixels: &mut [Pixel], width: usize) {
             }
             Pass::Blur { level } => blur(
                 &mut levels[level],
-                plan.levels[level].blur,
+                &plan.levels[level].kernels(),
                 &mut scratch.padded,
                 &mut scratch.copy,
             ),
