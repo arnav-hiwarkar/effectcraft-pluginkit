@@ -1,0 +1,36 @@
+use serde_json::Value;
+
+use super::{CommandSpec, always, frontend};
+use crate::{EngineError, Result, Session, cmd, query};
+
+fn forward(s: &mut Session, id: &str, params: &Value) -> Result<Value> {
+    let run = s.plugin_commands.ok_or_else(|| EngineError::Other("plug-ins are not available in this session".into()))?;
+    run(s, id, params)
+}
+
+macro_rules! plugin {
+    ($id:literal, $label:literal, $params:literal) => {
+        query!($id, $label, $params, |s, p| forward(s, $id, p))
+    };
+}
+
+macro_rules! window {
+    ($id:literal, $label:literal, $params:literal) => {
+        cmd!($id, $label, [], None, $params, always, |s, p| frontend(s, $id, p))
+    };
+}
+
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        plugin!("plugin.list", "List Plug-ins", "{} — every plug-in with its state, permissions, effects, panels and commands"),
+        plugin!("plugin.install", "Install Plug-in...", "{path: plug-in folder} — copies it in; it runs after plugin.approve"),
+        plugin!("plugin.approve", "Allow and Enable Plug-in", "{id} — grants the permissions the plug-in asks for and starts it"),
+        plugin!("plugin.disable", "Disable Plug-in", "{id}"),
+        plugin!("plugin.uninstall", "Remove Plug-in", "{id}"),
+        plugin!("plugin.load", "Load Plug-in for This Session", "{path: plug-in folder} — development: runs it with the permissions it asks for until quit"),
+        plugin!("plugin.reload", "Reload Plug-ins", "{}"),
+        plugin!("plugin.run", "Run Plug-in Command", "{plugin, command}"),
+        window!("window.plugins", "Manage Plug-ins...", "{}"),
+        window!("window.pluginPanel", "Show Plug-in Panel", "{plugin, panel}"),
+    ]
+}

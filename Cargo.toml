@@ -60,11 +60,12 @@ effectcraft-aep = { path = "crates/aep" }
 effectcraft-svg = { path = "crates/svg" }
 effectcraft-engine = { path = "crates/engine" }
 effectcraft-host = { path = "crates/host" }
+effectcraft-plugin = { path = "crates/plugin" }
+craft-plugin = { path = "crates/plugin-sdk" }
+craft-plugin-host = { path = "crates/plugin-host" }
 effectcraft-ui-egui = { path = "crates/ui-egui" }
 effectcraft-automation = { path = "crates/automation" }
 effectcraft-script = { path = "crates/script" }
-effectcraft-plugin = { path = "crates/plugin" }
-effectcraft-helper-host = { path = "crates/helper-host" }
 
 # foundation
 thiserror = "2"
@@ -83,8 +84,6 @@ proptest = "1"
 
 # scripting (expressions)
 boa_engine = { version = "0.22", default-features = false }
-# WebAssembly effect plug-ins (sandboxed interpreter; MIT/Apache-2.0, pure Rust)
-wasmi = { version = "2", default-features = false, features = ["std", "validate", "wat", "deterministic", "portable-dispatch"] }
 
 # geometry / fonts
 kurbo = { version = "0.13", features = ["serde"] }
@@ -95,6 +94,8 @@ exr = "1.74"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 same-file = "1.0"
 tempfile = "3.27"
+libloading = "0.8"
+wasmtime = { version = "51", default-features = false, features = ["cranelift", "runtime", "std", "parallel-compilation"] }
 
 # codecs + containers shared by the Craft apps (crates/media, crates/export); keep all in sync.
 craft-media = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "587339c787682592ed46bab5a15cae52e60da2e3", default-features = false, features = ["isobmff", "matroska"] }
@@ -148,7 +149,7 @@ sys-locale = "0.3"
 # filmcraft-time = { path = "../filmcraft/crates/time" }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 cognitive_complexity = "deny"

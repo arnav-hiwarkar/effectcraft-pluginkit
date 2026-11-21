@@ -11,7 +11,7 @@
 //! folder. In a headless session the footage and other files a project or an imported file names
 //! are read only inside the roots ([`ConfinedFootage`], [`ConfinedServices`]). Commands that run
 //! code or open other applications (scripts, ScriptUI panels and the events that reach them,
-//! Execute File, effect helpers, Reveal in Finder…) are refused while confined, as is granting scripts the file
+//! Execute File, Reveal in Finder…) are refused while confined, as is granting scripts the file
 //! and network access the user withheld.
 
 use std::path::{Component, Path, PathBuf};
@@ -43,13 +43,16 @@ pub struct Confinement {
 /// Commands that run code, act outside the project or open other applications, besides the
 /// commands that run scripts ([`effectcraft_engine::commands::scripts::RUNS_SCRIPTS`]).
 const REFUSED: &[&str] = &[
+    "plugin.install",
+    "plugin.approve",
+    "plugin.load",
+    "plugin.uninstall",
+    "plugin.disable",
+    "plugin.reload",
+    "plugin.run",
     "file.installScript",
     "file.installScriptUIPanel",
     "file.uninstallScript",
-    // Copies a plug-in (and a bundle's ScriptUI panels) from a user-chosen path into the folders
-    // the app loads code from: an agent must not plant code that runs on every start, and its
-    // sources are checked no better than `file.installScript`'s.
-    "effect.plugins.install",
     // A ScriptUI panel's script runs when the panel opens, when an event reaches one of its
     // controls, and when one of its `app.scheduleTask` tasks comes due.
     "window.scriptPanel",
@@ -60,21 +63,12 @@ const REFUSED: &[&str] = &[
     "scriptui.mouse",
     "scriptui.close",
     "file.executeFile",
-    "effect.helpers.scan",
-    "effect.helpers.load",
     "file.revealInFinder",
     "layer.openSource",
     "help.revealLogFile",
     // Hands the footage file to the platform's default application.
     "edit.editOriginal",
     "file.autoSave",
-    // The Plug-in Library downloads code, installs it to load at start-up and reads `file://` catalogs.
-    "library.refresh",
-    "library.install",
-    "library.update",
-    "library.uninstall",
-    "library.loadInstalled",
-    "library.preview",
     // Watch Folder renders the projects it finds to the outputs they name and writes status
     // files into the watched folder: neither is a path the agent gives, so neither is checked.
     "file.watchFolder",
@@ -103,7 +97,6 @@ const READS: &[(&str, &[&str])] = &[
     ("essential.importTemplate", &["path"]),
     ("view.importGuides", &["path"]),
     ("shortcuts.import", &["path"]),
-    ("effect.plugins.load", &["path", "folder"]),
     ("mediaBrowser.go", &["path"]),
     ("mediaBrowser.addFavorite", &["path"]),
     // #1243: these read the files they are given but were missing, so a relative path went
@@ -873,26 +866,6 @@ mod tests {
         assert!(c.check_command("file.createProxy", &serde_json::json!({"output": "[compName]_proxy"})).is_ok(), "a template name");
         assert!(c.check_command("file.createProxy", &serde_json::json!({"output": p(&outside, "proxy.mov")})).is_err());
         let _ = std::fs::remove_dir_all(&base);
-    }
-
-    /// Installing a plug-in plants code the app runs at every start, so confinement refuses it
-    /// even when the file is inside a read root (like `file.installScript`).
-    #[test]
-    fn installing_plugins_is_refused_while_confined() {
-        let base = std::env::temp_dir().join(format!("ec-confine-plugins-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        let read = base.join("in");
-        std::fs::create_dir_all(&read).unwrap();
-        let c = Confinement::new(std::slice::from_ref(&read), &[]).unwrap();
-        let inside = read.join("a.wasm").to_string_lossy().into_owned();
-        for params in [
-            serde_json::json!({"path": inside}),
-            serde_json::json!({"folder": read.to_string_lossy()}),
-            serde_json::json!({"path": "a.wasm"}),
-            serde_json::json!({"bundle": true}),
-        ] {
-            assert!(c.check_command("effect.plugins.install", &params).is_err(), "{params}");
-        }
     }
 
     #[test]

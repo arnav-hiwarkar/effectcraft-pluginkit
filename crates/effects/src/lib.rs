@@ -29,6 +29,7 @@ mod distort;
 mod distort2;
 mod distort3;
 pub mod distort4;
+pub mod dynamic;
 pub mod face_track;
 pub mod fidelity;
 mod generate;
@@ -53,7 +54,6 @@ pub mod ocio_config;
 pub mod paint;
 mod perspective;
 mod perspective2;
-pub mod plugin;
 pub mod psim;
 pub mod puppet;
 pub mod roto;
@@ -756,31 +756,25 @@ pub fn registry() -> &'static [EffectSpec] {
     })
 }
 
-/// A built-in effect or a registered plug-in by id.
+/// A built-in effect by id.
 pub fn find(id: &str) -> Option<&'static EffectSpec> {
-    registry().iter().find(|s| s.id == id).or_else(|| plugin::plugins().into_iter().find(|s| s.id == id))
+    registry().iter().find(|s| s.id == id).or_else(|| dynamic::get(id).map(|r| r.spec))
 }
 
-/// Every effect: the built-ins ([`registry`]) and the registered plug-ins
-/// ([`plugin::register_plugin`]), sorted by category then name.
+/// Every effect ([`registry`]).
 pub fn all() -> Vec<&'static EffectSpec> {
-    let plugins = plugin::plugins();
-    let mut v: Vec<&'static EffectSpec> = registry().iter().collect();
-    if !plugins.is_empty() {
-        v.extend(plugins);
-        v.sort_by(|a, b| a.category.cmp(b.category).then(a.name.cmp(b.name)));
-    }
-    v
+    registry().iter().chain(dynamic::specs()).collect()
 }
 
-/// Effects & Presets categories: [`CATEGORIES`] then the plug-ins' own, alphabetically.
+/// Effects & Presets categories ([`CATEGORIES`]).
 pub fn categories() -> Vec<&'static str> {
-    let mut v: Vec<&'static str> = CATEGORIES.to_vec();
-    let mut extra: Vec<&'static str> = plugin::plugins().iter().map(|s| s.category).filter(|c| !CATEGORIES.contains(c)).collect();
-    extra.sort_unstable();
-    extra.dedup();
-    v.extend(extra);
-    v
+    let mut categories = CATEGORIES.to_vec();
+    for spec in dynamic::specs() {
+        if !categories.contains(&spec.category) {
+            categories.push(spec.category);
+        }
+    }
+    categories
 }
 
 /// Legacy display names accepted for saved scripts and searches. Never display these as
@@ -1520,7 +1514,19 @@ pub const TIME_DEPENDENT: &[&str] = &[
 pub fn is_time_dependent(id: &str) -> bool {
     // Simulations replay from layer time 0, so every frame differs even when the defaults
     // happen to look static at the test's two sample times.
-    id.starts_with("ec.sim.") || TIME_DEPENDENT.contains(&id) || (!id.starts_with("ec.") && plugin::reads_other_times(id))
+    id.starts_with("ec.sim.") || TIME_DEPENDENT.contains(&id) || dynamic::get(id).is_some_and(|r| r.effect.time_dependent || r.effect.reads_other_frames)
+}
+
+pub fn reads_comp_scene(id: &str) -> bool {
+    READS_COMP_SCENE.contains(&id) || dynamic::get(id).is_some_and(|r| r.effect.reads_comp_scene)
+}
+
+pub fn reads_other_frames(id: &str) -> bool {
+    dynamic::get(id).is_some_and(|r| r.effect.reads_other_frames)
+}
+
+pub fn revision(id: &str) -> u64 {
+    dynamic::get(id).map_or(0, |r| r.effect.revision)
 }
 
 /// Does effect `id` read its own parameters at earlier times (the stepped particle systems sample
@@ -1532,7 +1538,10 @@ pub fn reads_param_history(id: &str) -> bool {
 
 /// Run an effect on a buffer.
 pub fn apply(spec: &EffectSpec, ctx: &EffectCtx, buf: Buf) -> Buf {
-    (spec.render)(ctx, buf)
+    match dynamic::get(spec.id) {
+        Some(registered) => (registered.effect.render)(ctx, buf),
+        None => (spec.render)(ctx, buf),
+    }
 }
 
 /// Test helper: run effect `id` on `img` (scale 1, layer size = image size) with its defaults

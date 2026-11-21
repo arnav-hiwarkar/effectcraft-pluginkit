@@ -196,11 +196,24 @@ pub fn is_audio_effect(id: &str) -> bool {
 /// itself): the time effects (Echo, Posterize Time, Timewarp…), simulations, temporal smoothing
 /// and analysis (Remove Grain, Auto Levels, Color Stabilizer's reference frame, Warp Stabilizer,
 /// Roto Brush…) and Clone strokes with a time offset? On a precomp layer, a change at one nested
-/// time then reaches frames of the layer far from where it shows. Plug-in effects (every id
-/// outside `ec.`) count too: plug-in API 2 reads the input at other times (`PluginHost`).
+/// time then reaches frames of the layer far from where it shows.
 // ponytail: hand-kept list of the effects that call `self_at`; a new one must be added here.
 pub fn reads_other_frames(id: &str) -> bool {
-    !id.starts_with("ec.") || id.starts_with("ec.time.") || id.starts_with("ec.sim.") || READS_OTHER_FRAMES.contains(&id)
+    id.starts_with("ec.time.")
+        || id.starts_with("ec.sim.")
+        || READS_OTHER_FRAMES.contains(&id)
+        || DECLARED_FRAME_READERS.read().is_ok_and(|declared| declared.contains(id))
+}
+
+static DECLARED_FRAME_READERS: std::sync::RwLock<std::collections::BTreeSet<String>> = std::sync::RwLock::new(std::collections::BTreeSet::new());
+
+pub fn declare_reads_other_frames(id: &str, reads: bool) {
+    let Ok(mut declared) = DECLARED_FRAME_READERS.write() else { return };
+    if reads {
+        declared.insert(id.to_string());
+    } else {
+        declared.remove(id);
+    }
 }
 
 /// The effects outside `ec.time.` and `ec.sim.` that read their own layer at other times.

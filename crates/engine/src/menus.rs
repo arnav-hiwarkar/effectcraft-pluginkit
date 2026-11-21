@@ -170,6 +170,22 @@ pub fn dynamic(s: &Session, name: &str, cx: &DynCtx) -> (Vec<MenuEntry>, Option<
                 None,
             )
         }
+        "pluginCommands" => (
+            s.plugin_items
+                .iter()
+                .filter(|item| !item.panel)
+                .map(|item| dyn_entry(format!("{}: {}", item.plugin_name, item.title), "plugin.run", json!({"plugin": item.plugin, "command": item.id})))
+                .collect(),
+            Some("No Plug-in Commands"),
+        ),
+        "pluginPanels" => (
+            s.plugin_items
+                .iter()
+                .filter(|item| item.panel)
+                .map(|item| dyn_entry(item.title.clone(), "window.pluginPanel", json!({"plugin": item.plugin, "panel": item.id})))
+                .collect(),
+            Some("No Plug-in Panels"),
+        ),
         _ => (vec![], None),
     }
 }
@@ -1034,12 +1050,6 @@ Effect
   Remove All | effect.removeAll
   ---
   Manage Effects... | effect.manage
-  Load Effect Plug-in... | effect.plugins.load
-  Install Effect Plug-in... | effect.plugins.install
-  Install Effect Plug-in Bundle (Folder)... | effect.plugins.install {"bundle": true}
-  Load Plug-ins Through Helper... | effect.helpers.load
-  Scan for Effect Helpers | effect.helpers.scan
-  Plug-in Library... | prefs.open {"page":"library"}
   ---
   @effects
 Animation
@@ -1235,6 +1245,13 @@ View
   ---
   Go to Time... | time.set
   Enter Full Screen | view.fullScreen
+Plug-ins
+  Manage Plug-ins... | window.plugins
+  Reload Plug-ins | plugin.reload
+  ---
+  @dynamic:pluginCommands
+  ---
+  @dynamic:pluginPanels
 Window
   Workspace
     Default | window.workspace {"name":"Default"} | Shift+F10

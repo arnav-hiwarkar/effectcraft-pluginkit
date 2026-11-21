@@ -655,10 +655,6 @@ pub(super) fn file_dialog(app: &mut EffectcraftApp, id: &str, params: &Value) ->
         "render.saveCurrentPreview" => ("path", Ask::Save("Preview.mp4".into())),
         "file.runScript" if params.get("name").is_none() && params.get("recent").is_none() => ("path", Ask::Open(&["jsx", "js", "jsonl", "json", "txt"])),
         "file.installScript" | "file.installScriptUIPanel" => ("path", Ask::Open(&["jsx", "js"])),
-        "effect.plugins.load" if params.get("folder").is_none() => ("path", Ask::Open(&["wasm", "wat"])),
-        "effect.plugins.install" if params.get("bundle").is_some() => ("folder", Ask::Folder),
-        "effect.plugins.install" if params.get("folder").is_none() && params.get("path").is_none() => ("path", Ask::Open(&["wasm"])),
-        "effect.helpers.load" => ("path", Ask::Folder),
         "file.replaceFootage" => ("path", Ask::Import(&[])),
         "file.relinkFootage" => ("folder", Ask::Folder),
         "file.collectFiles" => ("folder", Ask::Save("Collected Files".into())),
@@ -773,8 +769,7 @@ pub(crate) fn dialog_answered(app: &mut EffectcraftApp, answer: crate::DialogAns
     }
 }
 
-/// A successful command can still report per-item problems in an `errors` array (Effect ▸
-/// Install Effect Plug-in Bundle does): show a short, readable report in the status line,
+/// A successful command can still report per-item problems in an `errors` array: show a short, readable report in the status line,
 /// without turning the success into an error. The full structured array stays in the result
 /// for scripts; the status line is single-line and short-lived, so it lists the first few
 /// problems and counts the rest instead of printing raw JSON.

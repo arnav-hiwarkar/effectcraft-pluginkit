@@ -788,7 +788,7 @@ fn reads_other_times(layer: &Layer, effects: Option<usize>) -> bool {
                     && matches!(&g.kind, effectcraft_project::GroupKind::Effect { effect }
                         if effect.starts_with("ec.time.")
                             || effectcraft_effects::reads_param_history(effect)
-                            || (!effect.starts_with("ec.") && effectcraft_effects::plugin::reads_other_times(effect)))
+                            || effectcraft_effects::reads_other_frames(effect))
             })
         })
 }
@@ -1008,6 +1008,9 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
     if effects != EffectScope::Footprint && reads_comp_scene(layer) {
         hash_debug(&mut h, &crate::comp_scene(ctx, layer));
     }
+    if effects != EffectScope::Footprint {
+        effect_revisions(layer).for_each(|revision| revision.hash(&mut h));
+    }
     Some(h.finish())
 }
 
@@ -1026,15 +1029,20 @@ pub(crate) fn reads_layers(ctx: &EvalCtx, layer: &Layer) -> bool {
     layer.switches.effects && layer.effects().is_some_and(|fx| fx.groups().any(|g| g.enabled && reads(ctx, layer, g, 0)))
 }
 
+fn effect_revisions(layer: &Layer) -> impl Iterator<Item = u64> {
+    layer.effects().into_iter().flat_map(|fx| fx.groups()).filter_map(|g| match &g.kind {
+        effectcraft_project::GroupKind::Effect { effect } => Some(effectcraft_effects::revision(effect)).filter(|r| *r != 0),
+        _ => None,
+    })
+}
+
 /// Does the layer run an effect that reads the comp camera or lights (Card Dance, CC Particle
 /// World…)?
 fn reads_comp_scene(layer: &Layer) -> bool {
     layer.switches.effects
         && layer.effects().is_some_and(|fx| {
-            fx.groups().any(|g| {
-                g.enabled
-                    && matches!(&g.kind, effectcraft_project::GroupKind::Effect { effect } if effectcraft_effects::READS_COMP_SCENE.contains(&effect.as_str()))
-            })
+            fx.groups()
+                .any(|g| g.enabled && matches!(&g.kind, effectcraft_project::GroupKind::Effect { effect } if effectcraft_effects::reads_comp_scene(effect)))
         })
 }
 
