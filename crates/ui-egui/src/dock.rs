@@ -55,6 +55,7 @@ pub enum PanelKind {
     CreateNullsFromPaths,
     /// Window ▸ VR Comp Editor (our own panel).
     VrCompEditor,
+    Plugin(u32),
 }
 
 impl PanelKind {
@@ -132,6 +133,7 @@ impl PanelKind {
             PanelKind::ContentAwareFill => "Content-Aware Fill",
             PanelKind::CreateNullsFromPaths => "Create Nulls From Paths",
             PanelKind::VrCompEditor => "VR Comp Editor",
+            PanelKind::Plugin(_) => "Plug-in Panel",
         }
     }
     pub fn id(self) -> String {
@@ -146,7 +148,19 @@ impl PanelKind {
     }
     pub fn from_name(s: &str) -> Option<PanelKind> {
         let n = s.to_ascii_lowercase().replace([' ', '_', '-', '&'], "");
+        if let Some(key) = n.strip_prefix("plugin(").and_then(|rest| rest.strip_suffix(')')) {
+            return key.parse().ok().map(PanelKind::Plugin);
+        }
         Self::ALL.iter().copied().find(|p| format!("{p:?}").to_ascii_lowercase() == n || p.title().to_ascii_lowercase().replace([' ', '&', '-'], "") == n)
+    }
+    pub fn plugin(plugin: &str, panel: &str) -> PanelKind {
+        PanelKind::Plugin(plugin_key(plugin) << 16 | fold16(panel))
+    }
+    pub fn plugin_owner(self) -> Option<u32> {
+        match self {
+            PanelKind::Plugin(key) => Some(key >> 16),
+            _ => None,
+        }
     }
     /// Window-menu shortcut.
     pub fn window_shortcut(self) -> Option<&'static str> {
@@ -169,6 +183,15 @@ impl PanelKind {
     pub fn compact(self) -> bool {
         false
     }
+}
+
+pub fn plugin_key(plugin: &str) -> u32 {
+    fold16(plugin)
+}
+
+fn fold16(text: &str) -> u32 {
+    let hash = text.bytes().fold(0x811c_9dc5_u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
+    (hash >> 16) ^ (hash & 0xffff)
 }
 
 /// The docked tree plus floating windows.
@@ -708,6 +731,20 @@ mod tests {
     fn apply(w: &mut Workspace, action: Action<PanelKind>) {
         w.apply(action, permissions).unwrap();
     }
+
+    #[test]
+    fn a_plugin_panel_keeps_its_id_across_runs_and_round_trips_by_name() {
+        let counter = PanelKind::plugin("test.probe", "counter");
+        assert_eq!(counter, PanelKind::Plugin(STABLE_PROBE_COUNTER));
+        assert_ne!(counter, PanelKind::plugin("test.probe", "graph"));
+        assert_ne!(counter, PanelKind::plugin("test.other", "counter"));
+        assert_eq!(counter.plugin_owner(), Some(plugin_key("test.probe")));
+        assert_eq!(PanelKind::from_name(&counter.id()), Some(counter));
+        let saved = serde_json::to_string(&counter).unwrap();
+        assert_eq!(serde_json::from_str::<PanelKind>(&saved).unwrap(), counter);
+    }
+
+    const STABLE_PROBE_COUNTER: u32 = 750_404_239;
 
     /// Only the title changes: existing saved workspace layouts still deserialize.
     #[test]

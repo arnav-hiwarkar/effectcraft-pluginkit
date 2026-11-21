@@ -38,6 +38,8 @@ pub mod object_matte_tool;
 pub mod paint_panels;
 pub mod panel_kit;
 pub mod path_vr_panels;
+pub mod plugin_manager;
+pub mod plugin_view;
 pub mod precomp;
 pub(crate) mod preview_merge;
 pub mod primitive_dialog;
@@ -301,6 +303,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: PanelKind, rect: Rec
         PanelKind::ContentAwareFill => content_fill_panel::show(app, ui, rect),
         PanelKind::CreateNullsFromPaths => path_vr_panels::create_nulls(app, ui, rect),
         PanelKind::VrCompEditor => path_vr_panels::vr_editor(app, ui, rect),
+        PanelKind::Plugin(_) => plugin_view::panel(app, ui, rect, p),
     }
 }
 

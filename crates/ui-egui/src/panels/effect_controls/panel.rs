@@ -195,6 +195,27 @@ fn drop_payload(ui: &egui::Ui, rect: Rect, p: &egui::Painter, t: &Tokens, layer_
     }
 }
 
+fn render_error_mark(app: &mut EffectcraftApp, ui: &mut egui::Ui, bp: &egui::Painter, effect: &str, g: &PropGroup, at: egui::Pos2) {
+    let Some(err) = effectcraft_plugin::plugins().and_then(|plugins| plugins.render_error(effect)) else { return };
+    let wr = bp.text(at, Align2::LEFT_CENTER, "⚠", Tokens::semibold(12.0), app.tokens.warning);
+    let resp = ui.interact(wr.expand(2.0), egui::Id::unique(("ec-fx-error", g.uid)), Sense::hover());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, crate::i18n::tr_args("Render error: {}", &[&err])));
+    app.auto.add(&format!("effectControls.effect.{}.error", g.uid), wr, &err);
+    resp.on_hover_text(err);
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+}
+
+fn designer_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, effect: &str, g: &PropGroup, row: Rect, actions: &mut Actions) -> f32 {
+    let Some(designer) = effectcraft_plugin::plugins().and_then(|plugins| plugins.designer(effect)) else { return 0.0 };
+    let label = crate::i18n::tr_args("Open {}", &[&designer.title]);
+    let resp = ui.scope_builder(egui::UiBuilder::new().max_rect(row), |ui| ui.button(&label)).inner;
+    app.auto.add_response(&format!("effectControls.effect.{}.designer", g.uid), &resp, &label);
+    if resp.clicked() {
+        actions.push(("window.pluginPanel".into(), json!({"plugin": designer.plugin, "panel": designer.id})));
+    }
+    ROW + 6.0
+}
+
 fn about_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, bp: &egui::Painter, t: &Tokens, effect: &str, g: &PropGroup, r: Rect) {
     // About…: the effect's name and category (AE's About dialog).
     let about = Rect::from_min_size(pos2(r.max.x - 50.0, r.center().y - 9.0), vec2(44.0, 18.0));
@@ -318,6 +339,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         } else {
             let name = bp.text(pos2(tw.max.x + 6.0, r.center().y), Align2::LEFT_CENTER, &shown, Tokens::semibold(12.0), t.text);
             app.auto.add(&format!("effectControls.effect.{}.name", g.uid), name, &g.name);
+            render_error_mark(app, ui, &bp, effect, g, pos2(name.max.x + 8.0, r.center().y));
         }
         let rresp = ui.interact(reset, egui::Id::unique(("ec-reset", g.uid)), Sense::click());
         bp.text(reset.center(), Align2::CENTER_CENTER, crate::i18n::tr("Reset"), Tokens::ui(11.5), if rresp.hovered() { t.hot_text } else { t.text_dim });
@@ -405,6 +427,14 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
             app.auto.add(&format!("effectControls.effect.{}.warning", g.uid), wr, &w);
             y += wr.height() + 6.0;
         }
+        y += designer_button(
+            app,
+            ui,
+            effect,
+            g,
+            Rect::from_min_size(pos2(body.min.x + 10.0, y + 3.0), vec2((body.width() - 20.0).max(60.0), ROW)),
+            &mut actions,
+        );
         if open {
             let eh = editor_height(effect, g, body.width());
             if eh > 0.0 {

@@ -466,6 +466,7 @@ pub struct EffectcraftApp {
     /// Pointer position in comp pixels (Info panel).
     pub(crate) pointer_comp: Option<[f32; 2]>,
     pub(crate) dialog_state: panels::dialogs::DialogState,
+    pub(crate) plugin_ui: panels::plugin_view::PluginUi,
     pub integrated_titlebar: bool,
     /// Audio preview while playing (audio clock drives playback).
     pub audio: Option<audio::AudioPlayback>,

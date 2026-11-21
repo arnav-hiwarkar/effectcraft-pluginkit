@@ -326,6 +326,9 @@ impl EffectcraftApp {
                 out.push((PanelKind::ScriptPanel(w.id), t));
             }
         }
+        for item in self.session.plugin_items.iter().filter(|item| item.panel) {
+            out.push((PanelKind::plugin(&item.plugin, &item.id), item.title.clone()));
+        }
         // Each Composition viewer is named after the comp it shows.
         for id in std::iter::once(0).chain(self.ui.viewers.keys().copied().filter(|v| *v != 0)) {
             if let Some(t) = panels::viewers::title(self, id) {

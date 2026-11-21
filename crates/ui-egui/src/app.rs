@@ -107,6 +107,7 @@ impl EffectcraftApp {
             command_inbox: None,
             pointer_comp: None,
             dialog_state: Default::default(),
+            plugin_ui: Default::default(),
             integrated_titlebar: false,
             audio: None,
             scrub: None,

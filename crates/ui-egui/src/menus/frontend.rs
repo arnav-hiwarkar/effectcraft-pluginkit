@@ -151,6 +151,20 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
             app.show_panel(PanelKind::ScriptPanel(id));
             json!({"window": id})
         }
+        "window.plugins" => {
+            app.plugin_ui.manager_open = true;
+            Value::Null
+        }
+        "window.pluginPanel" => {
+            let text = |key: &str| p.get(key).and_then(Value::as_str).ok_or(format!("`window.pluginPanel` needs a `{key}` string"));
+            let (plugin, panel) = (text("plugin")?, text("panel")?);
+            let kind = PanelKind::plugin(plugin, panel);
+            if crate::panels::plugin_view::running_panel(app, kind).is_none() {
+                return Err(format!("no running plug-in `{plugin}` has a panel `{panel}`"));
+            }
+            app.show_panel(kind);
+            json!({"panel": kind.id()})
+        }
         "layer.style.options" => {
             crate::panels::layer_styles_dialog::open(app, &p)?;
             Value::Null
@@ -657,6 +671,7 @@ pub(super) fn file_dialog(app: &mut EffectcraftApp, id: &str, params: &Value) ->
         "file.installScript" | "file.installScriptUIPanel" => ("path", Ask::Open(&["jsx", "js"])),
         "file.replaceFootage" => ("path", Ask::Import(&[])),
         "file.relinkFootage" => ("folder", Ask::Folder),
+        "plugin.install" | "plugin.load" => ("path", Ask::Folder),
         "file.collectFiles" => ("folder", Ask::Save("Collected Files".into())),
         // An open XML project gets ` copy` too: the copy never writes over the open file.
         "file.saveCopyAsXml" => {

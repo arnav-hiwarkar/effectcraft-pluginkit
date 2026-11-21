@@ -527,6 +527,7 @@ impl EffectcraftApp {
         updates_ui::show(self, &ctx);
         panels::scriptui_view::sync_panels(self);
         panels::scriptui_view::show_windows(self, &ctx);
+        panels::plugin_manager::show(self, &ctx);
         panels::learn::coach(self, &ctx);
         let lift = panels::media_panels::import_card(self, ui, full);
         self.draw_toast(ui, full, lift);
