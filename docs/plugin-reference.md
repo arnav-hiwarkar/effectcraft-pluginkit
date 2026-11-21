@@ -81,6 +81,8 @@ The render cache uses the three declarations. An effect that omits one shows sta
 | `cx.layer_size` | Layer size in layer pixels. |
 | `cx.time`, `cx.comp_time`, `cx.frame_rate` | Seconds and frames per second. |
 | `cx.instance` | Stable per effect instance. Use it as a random seed. |
+| `cx.float` | The project is 32 bpc. When false, the app rounds the result to 8 or 16 bpc. |
+| `cx.linear` | The working colour space is linear. When false, pixel values are display-encoded. |
 
 `cx.px(id)` is `cx.f(id) * cx.scale`.
 

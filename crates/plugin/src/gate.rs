@@ -13,7 +13,6 @@ const DOCUMENT_FAMILIES: &[&str] = &[
     "camera",
     "command",
     "comp",
-    "edit",
     "editor",
     "effect",
     "engine",

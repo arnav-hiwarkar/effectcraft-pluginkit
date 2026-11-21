@@ -123,6 +123,8 @@ fn render_cx(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> RenderCx {
         offset: grid.offset,
         size: [grid.width, grid.height],
         instance: u64::from(ctx.seed),
+        float: ctx.env.float_depth,
+        linear: ctx.env.working_linear,
     }
 }
 

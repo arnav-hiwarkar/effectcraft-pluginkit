@@ -6,7 +6,7 @@ use craft_plugin::{Call, Layout, MaskPath, Pixel, RenderCx, Scene, Value};
 use craft_plugin_host::{Bundle, Host, Limits, Pixels, Plugin};
 
 const USAGE: &str = "usage: render <bundle-dir> <effect-id> <out.png> [--size WxH] [--params JSON] [--masks JSON] \
-[--input in.png | --pattern shapes|text|empty] [--time SECONDS] [--scale F] [--over black|none] [--rounds N]
+[--input in.png | --pattern shapes|text|empty] [--time SECONDS] [--scale F] [--over black|none] [--rounds N] [--depth float]
 
 --params  {\"radius\": 40, \"tint\": [1, 0.5, 0, 1], \"mode\": 2, \"on\": true}
 --masks   [{\"points\": [[100,100],[500,300]], \"closed\": false}] in frame pixels
@@ -176,6 +176,8 @@ fn run() -> Result<(), String> {
         offset: [0.0, 0.0],
         size: [width, height],
         instance: 1,
+        float: option("--depth") == Some("float"),
+        linear: false,
     };
     let layout: Layout = plugin.call(&Call::Layout { effect: effect.clone(), cx: cx.clone() }, None, &mut &unpadded).map_err(|e| e.to_string())?;
     let pad = layout.padding;

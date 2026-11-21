@@ -211,6 +211,10 @@ pub struct RenderCx {
     pub offset: [f64; 2],
     pub size: [u32; 2],
     pub instance: u64,
+    #[serde(default)]
+    pub float: bool,
+    #[serde(default)]
+    pub linear: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]

@@ -1,0 +1,9 @@
+{
+  "id": "org.craftkit.lumen-glow",
+  "name": "Lumen Glow",
+  "version": "1.0.0",
+  "author": "Craft Kit",
+  "description": "Physically inspired multi-scale glow with a bright core, wide soft falloff, tint ramp and chromatic aberration.",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": []
+}
