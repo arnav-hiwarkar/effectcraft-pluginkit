@@ -1,0 +1,18 @@
+[package]
+name = "plasma-beam"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+craft-plugin = { path = "../../crates/plugin-sdk" }
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+
+[workspace]

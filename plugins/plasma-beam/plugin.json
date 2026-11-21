@@ -1,0 +1,9 @@
+{
+  "id": "org.craftkit.plasma-beam",
+  "name": "Plasma Beam",
+  "version": "1.0.0",
+  "author": "Craft Kit",
+  "description": "Energy beams and neon strokes: a white-hot core with layered coloured glow between two points or along layer masks, with animated distortion and flicker.",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": []
+}

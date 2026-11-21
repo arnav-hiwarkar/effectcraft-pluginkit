@@ -354,7 +354,7 @@ fn a_half_finished_install_is_not_treated_as_an_installed_plugin() {
         std::fs::copy(source.path().join(file), staged.join(file)).unwrap();
     }
     let listed: Vec<_> = Registry::open(root.path()).bundles().into_iter().flatten().map(|b| b.dir).collect();
-    assert_eq!(listed, [installed.dir.clone()]);
+    assert_eq!(listed, std::slice::from_ref(&installed.dir));
 
     let again = registry.install(source.path()).unwrap();
     assert_eq!(again.dir, installed.dir);
