@@ -261,6 +261,11 @@ fn make() -> Plugin {
             host::notify("3 layers renamed");
             Ok(())
         })
+        .command("relay", "Relay A Command", || {
+            let request: serde_json::Value = serde_json::from_slice(&host::read_file(Root::Bundle, "relay.json")?)?;
+            let command = request["command"].as_str().ok_or("relay.json names no command")?;
+            host::command(command, request["params"].clone()).map(|_| ())
+        })
         .command("run-script", "Run Script", || host::command("script.run", json!({"code": "1"})).map(|_| ()))
 }
 

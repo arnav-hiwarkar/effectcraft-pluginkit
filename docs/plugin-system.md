@@ -74,13 +74,18 @@ app sees it. For an app command, EffectCraft decides what the command needs in
 
 1. **Is the command one a plugin may run at all?** A plugin may run the commands of the document
    families (`layer`, `comp`, `prop`, `keys`, `effect`, `mask`, `text`, `shape`, and the others in
-   `DOCUMENT_FAMILIES`) and the commands that name a file to read or write. Every other command is
-   refused: scripts, settings, windows, help, render jobs, and plugin management.
+   `DOCUMENT_FAMILIES`) and the File menu commands that name a file to read or write. Every other
+   command is refused: scripts, settings, windows, help, render jobs, the clipboard, and plugin
+   management. A plugin cannot make a command wait for a background job.
 2. **Does the command change the project?** A command that is recorded in the undo history needs
    `document.write`. Any other command needs `document.read`.
 3. **Does the command name a file?** It then needs both `files.read` and `files.write`. Commands such as
    Save and Import read and write more files than the one they name, so one permission alone would not
    describe what they do.
+
+Without both file permissions, a plugin also cannot write a text-valued property, because some effects
+read such a property as a file path. In a batch, it cannot write an effect property on a layer the batch
+creates, because that property cannot be checked before the batch runs.
 
 An `engine.batch` needs everything its steps need. After the permissions pass, the command is checked
 by the automation confinement (`crates/automation/src/confine.rs`), the same rules that hold an AI agent

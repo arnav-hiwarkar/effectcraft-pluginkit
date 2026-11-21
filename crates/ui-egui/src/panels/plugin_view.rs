@@ -14,15 +14,23 @@ use crate::theme::Tokens;
 
 const MAX_EXTENT: f32 = 16_384.0;
 const MAX_FONT: f32 = 512.0;
+const MAX_LINE_POINTS: usize = 65_536;
 
 #[derive(Default)]
 pub(crate) struct PluginUi {
     pub events: HashMap<u32, Vec<UiEvent>>,
     pub manager_open: bool,
+    pub listed: Option<(std::time::Instant, Result<Vec<super::plugin_manager::Listed>, String>)>,
+}
+
+fn claimants(app: &EffectcraftApp, kind: PanelKind) -> impl Iterator<Item = &PluginItem> {
+    app.session.plugin_items.iter().filter(move |item| item.panel && PanelKind::plugin(&item.plugin, &item.id) == kind)
 }
 
 pub fn running_panel(app: &EffectcraftApp, kind: PanelKind) -> Option<&PluginItem> {
-    app.session.plugin_items.iter().find(|item| item.panel && PanelKind::plugin(&item.plugin, &item.id) == kind)
+    let mut claimants = claimants(app, kind);
+    let only = claimants.next()?;
+    claimants.next().is_none().then_some(only)
 }
 
 pub fn panel(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: PanelKind) {
@@ -51,8 +59,10 @@ pub fn panel(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pane
 }
 
 fn not_running(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: PanelKind) {
+    let contested: Vec<String> = claimants(app, kind).map(|item| item.plugin_name.clone()).collect();
     let owner = kind.plugin_owner().and_then(|key| super::plugin_manager::installed(app).into_iter().find(|p| plugin_key(&p.id) == key));
     let message = match owner {
+        _ if contested.len() > 1 => tr_args("{} claim the same panel. Disable one of them in Plug-ins ▸ Manage Plug-ins.", &[&contested.join(", ")]),
         Some(plugin) => tr_args("{} is not running. Turn it on in Plug-ins ▸ Manage Plug-ins.", &[&plugin.name]),
         None => tr("The plug-in that provides this panel is not installed. Install it in Plug-ins ▸ Manage Plug-ins.").to_string(),
     };
@@ -100,7 +110,7 @@ fn finite_or(value: f64, fallback: f64) -> f64 {
 }
 
 fn extent(value: f32) -> f32 {
-    value.clamp(0.0, MAX_EXTENT)
+    if value.is_finite() { value.clamp(0.0, MAX_EXTENT) } else { 0.0 }
 }
 
 fn font_size(size: f32) -> f32 {
@@ -259,39 +269,56 @@ impl Renderer<'_> {
         }
     }
 
-    fn shape(&self, painter: &egui::Painter, origin: egui::Pos2, shape: &Shape) {
-        let at = |p: [f32; 2]| origin + vec2(p[0], p[1]);
-        let stroke = |paint: Paint, width: f32| Stroke::new(width, self.paint(paint));
+    fn shape(&self, painter: &egui::Painter, origin: egui::Pos2, shape: &Shape) -> Option<()> {
+        let at = |p: [f32; 2]| Some(origin + vec2(drawable(p[0])?, drawable(p[1])?));
+        let stroke = |paint: Paint, width: f32| Stroke::new(extent(width), self.paint(paint));
         match shape {
             Shape::Line { points, color, width } => {
-                painter.add(egui::Shape::line(points.iter().copied().map(at).collect(), stroke(*color, *width)));
+                let points = points.iter().take(MAX_LINE_POINTS).copied().map(at).collect::<Option<Vec<_>>>()?;
+                painter.add(egui::Shape::line(points, stroke(*color, *width)));
             }
             Shape::Bezier { points, color, width } => {
-                painter.add(CubicBezierShape::from_points_stroke(points.map(at), false, Color32::TRANSPARENT, stroke(*color, *width)));
+                let points = [at(points[0])?, at(points[1])?, at(points[2])?, at(points[3])?];
+                painter.add(CubicBezierShape::from_points_stroke(points, false, Color32::TRANSPARENT, stroke(*color, *width)));
             }
             Shape::Rect { min, max, fill, stroke: outline, radius } => {
-                let rect = Rect::from_two_pos(at(*min), at(*max));
+                let rect = Rect::from_two_pos(at(*min)?, at(*max)?);
                 if let Some(fill) = fill {
-                    painter.rect_filled(rect, *radius, self.paint(*fill));
+                    painter.rect_filled(rect, extent(*radius), self.paint(*fill));
                 }
                 if let Some((paint, width)) = outline {
-                    painter.rect_stroke(rect, *radius, stroke(*paint, *width), StrokeKind::Inside);
+                    painter.rect_stroke(rect, extent(*radius), stroke(*paint, *width), StrokeKind::Inside);
                 }
             }
             Shape::Circle { center, radius, fill, stroke: outline } => {
                 let fill = fill.map_or(Color32::TRANSPARENT, |paint| self.paint(paint));
                 let outline = outline.map_or(Stroke::NONE, |(paint, width)| stroke(paint, width));
-                painter.circle(at(*center), *radius, fill, outline);
+                painter.circle(at(*center)?, extent(*radius), fill, outline);
             }
             Shape::Text { pos, text, color, size } => {
-                painter.text(at(*pos), Align2::LEFT_TOP, text, Tokens::ui(font_size(*size)), self.paint(*color));
+                painter.text(at(*pos)?, Align2::LEFT_TOP, text, Tokens::ui(font_size(*size)), self.paint(*color));
             }
         }
+        Some(())
     }
 }
 
+fn drawable(coordinate: f32) -> Option<f32> {
+    coordinate.is_finite().then(|| coordinate.clamp(-MAX_EXTENT, MAX_EXTENT))
+}
+
 fn pointer(ui: &egui::Ui, response: &egui::Response, origin: egui::Pos2) -> Option<Pointer> {
-    let (pressed, moving, at) = ui.input(|i| (i.pointer.primary_pressed(), i.pointer.is_moving(), i.pointer.interact_pos()));
+    let owed_release = response.id.with("owed-release");
+    if let Some(pos) = ui.data_mut(|data| data.remove_temp::<[f32; 2]>(owed_release)) {
+        return Some(Pointer { pos, phase: PointerPhase::Up });
+    }
+    let (pressed, released, moving, at) =
+        ui.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_released(), i.pointer.is_moving(), i.pointer.interact_pos()));
+    if pressed && released && response.contains_pointer() {
+        let local = at? - origin;
+        ui.data_mut(|data| data.insert_temp(owed_release, [local.x, local.y]));
+        ui.ctx().request_repaint();
+    }
     let phase = if pressed && response.contains_pointer() {
         PointerPhase::Down
     } else if response.clicked() || response.drag_stopped() {
@@ -347,5 +374,21 @@ mod tests {
         assert!(!events.is_empty());
         assert!(events.iter().all(|event| event.id == 7 && matches!(event.kind, UiEventKind::Number(_))), "{events:?}");
         assert_eq!(events.last().map(|event| &event.kind), Some(&UiEventKind::Number(10.0)));
+    }
+
+    #[test]
+    fn a_canvas_with_extreme_or_broken_coordinates_still_draws_in_bounded_time() {
+        let far = f32::MAX;
+        let shapes = vec![
+            Shape::Bezier { points: [[0.0, 0.0], [1e30, 1e30], [-1e30, 0.0], [10.0, 10.0]], color: Paint::Accent, width: 1e30 },
+            Shape::Bezier { points: [[0.0, 0.0], [f32::NAN, 1.0], [2.0, f32::INFINITY], [10.0, 10.0]], color: Paint::Accent, width: 1.0 },
+            Shape::Line { points: vec![[0.0, 0.0], [far, -far], [f32::NAN, 0.0]], color: Paint::Text, width: f32::NAN },
+            Shape::Circle { center: [5.0, 5.0], radius: f32::INFINITY, fill: Some(Paint::Error), stroke: None },
+            Shape::Rect { min: [-far, -far], max: [far, far], fill: Some(Paint::Surface), stroke: Some((Paint::Border, far)), radius: f32::NAN },
+            Shape::Text { pos: [f32::NAN, 0.0], text: "x".into(), color: Paint::Text, size: f32::INFINITY },
+        ];
+        let mut harness = harness(vec![Widget::Canvas { id: 7, size: [f32::INFINITY, f32::NAN], shapes }]);
+        harness.run();
+        assert!(harness.state().iter().all(|event| event.id == 7));
     }
 }

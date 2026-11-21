@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use craft_plugin_host::ui::{UiInput, Widget};
-use craft_plugin_host::{Bundle, Call, Limits, Manifest, Plugin, Registry};
+use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Plugin, Registry};
 use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -273,24 +273,29 @@ impl Plugins {
     pub fn disable(&self, id: &str) -> Result<(), String> {
         let mut inner = self.lock();
         inner.stop(id);
-        if inner.forget_session_copy(id) {
-            return Ok(());
+        let had_session_copy = inner.forget_session_copy(id);
+        match inner.registry.disable(id) {
+            Err(BundleError::NotInstalled(_)) if had_session_copy => Ok(()),
+            other => other.map_err(|e| e.to_string()),
         }
-        inner.registry.disable(id).map_err(|e| e.to_string())
     }
 
     pub fn uninstall(&self, id: &str) -> Result<(), String> {
         let mut inner = self.lock();
         inner.stop(id);
-        if inner.forget_session_copy(id) {
-            return Ok(());
+        let had_session_copy = inner.forget_session_copy(id);
+        match inner.registry.uninstall(id) {
+            Err(BundleError::NotInstalled(_)) if had_session_copy => Ok(()),
+            other => other.map_err(|e| e.to_string()),
         }
-        inner.registry.uninstall(id).map_err(|e| e.to_string())
     }
 
     pub fn load_for_session(&self, dir: &Path) -> Result<PluginInfo, String> {
         let bundle = Bundle::open(dir).map_err(|e| e.to_string())?;
         reserved(&bundle.manifest)?;
+        if !bundle.manifest.sandboxed() {
+            return Err("a native plugin runs only after it is installed and approved".into());
+        }
         let mut inner = self.lock();
         inner.session_only.retain(|b| b.manifest.id != bundle.manifest.id);
         inner.session_only.push(bundle.clone());

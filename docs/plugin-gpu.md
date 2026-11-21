@@ -37,9 +37,10 @@ A pass reads `src` and, optionally, `aux`, and writes `out`. Each names one of:
 | `GpuImage::Output` | The effect's result, the size of the frame. The last pass to write it gives the result. |
 | `plan.scratch([w, h])` | A working image of that size, declared on the plan. |
 
-The frame the passes see is the padded frame: `cx.size` plus `2 * padding` in each axis when the layout
-has `.padded(padding)`. Read sizes in the kernel with `out_size()` and `src_size()` instead of assuming
-them.
+`layout` runs before the frame is padded, so there `cx.size`, `cx.offset` and point parameters describe
+the frame without padding. The passes run on the padded frame. Build the plan from `cx.padded(padding)`,
+which is the context `render` gets: its `size` includes the padding and its `offset` and points are
+moved by it. Read sizes in the kernel with `out_size()` and `src_size()` instead of assuming them.
 
 Values reach a pass through `.floats(&[..])` (up to 48) and `.uints(&[..])` (up to 16). A kernel reads
 value `i` with `pass_f(i)` or `pass_u(i)`; values the pass did not give read as 0. Scale distances by
@@ -50,7 +51,8 @@ value `i` with `pass_f(i)` or `pass_u(i)`; values the pass did not give read as 
 The app checks every plan before running it and renders the frame on the CPU when one fails:
 
 - 1 to 64 passes;
-- at most 16 scratch images, each at least 1×1 and at most twice the padded frame in each axis;
+- at most 16 scratch images, each at least 1×1 and at most twice the padded frame in each axis, and
+  together at most 8 times the padded frame's area;
 - a pass reads only `Source` or an image an earlier pass wrote, never the image it writes;
 - no pass writes `Source`, and some pass writes `Output`;
 - at most 48 floats and 16 uints per pass.
@@ -73,8 +75,8 @@ Pixels are premultiplied RGBA, 32-bit float, in the project's working colour spa
 your CPU `render` sees in `frame.pixels`. Pixel `(0, 0)` is the top-left corner.
 
 Each pass runs its kernel over `out` in 16×16 workgroups. Declare `@compute @workgroup_size(16, 16)`,
-return early when `inside_out(id.xy)` is false, and write every pixel of `out`: a pixel the kernel
-skips holds undefined values.
+and return early when `inside_out(id.xy)` is false. A pixel of `out` the kernel does not write is
+transparent.
 
 These prelude functions are stable:
 
@@ -217,7 +219,8 @@ impl Effect for Soften {
 }
 ```
 
-`render` gets the padded frame too: `frame.width` is `cx.size[0] + 2 * PADDING`.
+`render` gets the padded frame too. There `cx.size` already includes the padding, so `frame.width` equals
+`cx.size[0]`.
 
 The probe plugin in `crates/plugin-host/tests/probe` carries both effects with CPU renders that match
 their kernels, and `crates/plugin/tests/it/gpu.rs` checks that the two paths agree.

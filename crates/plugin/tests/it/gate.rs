@@ -1,3 +1,5 @@
+use serde_json::json;
+
 use crate::app;
 
 #[test]
@@ -99,4 +101,60 @@ fn a_plugin_message_reaches_the_user_with_the_plugin_name() {
         })
         .collect();
     assert_eq!(shown, ["Probe: 3 layers renamed"]);
+}
+
+const EDITOR: &[&str] = &["document.read", "document.write"];
+const EVERYTHING: &[&str] = &["document.read", "document.write", "files.read", "files.write"];
+
+#[test]
+fn a_file_path_cannot_be_planted_in_an_effect_parameter_without_file_permissions() {
+    let mut app = app("test.gate-lut", EDITOR);
+    app.session.execute("layer.newSolid", json!({"name": "Graded"})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "ec.utility.applylut"})).unwrap();
+    let lut = |app: &mut crate::App| app.session.execute_checked("prop.get", json!({"path": "effects/#1/lut"})).unwrap()["value"].clone();
+
+    for (command, params) in [
+        ("prop.set", json!({"path": "effects/#1/lut", "value": "Users/someone/look.cube"})),
+        ("prop.setExpression", json!({"path": "effects/#1/lut", "expression": "'/Users' + '/someone/look.cube'"})),
+        ("prop.setExpression", json!({"expression": "'/Users' + '/someone/look.cube'"})),
+    ] {
+        let denied = app.relay(command, params).unwrap_err();
+        assert!(denied.contains("files.read"), "{command}: {denied}");
+    }
+    let batch = json!({"steps": [
+        {"command": "layer.newSolid", "params": {"name": "Another"}},
+        {"command": "prop.set", "params": {"layer": "$1.layer", "path": "effects/#1/lut", "value": "Users/someone/look.cube"}},
+    ]});
+    let denied = app.relay("engine.batch", batch).unwrap_err();
+    assert!(denied.contains("files.read"), "batch: {denied}");
+    assert_eq!(lut(&mut app), json!(""));
+
+    app.relay("prop.set", json!({"path": "transform/opacity", "value": 40.0})).expect("a number property is writable");
+}
+
+#[test]
+fn a_batch_can_still_rig_layers_it_creates() {
+    let mut app = app("test.gate-rig", EDITOR);
+    let batch = json!({"label": "Rig", "steps": [
+        {"command": "layer.newNull", "params": {"name": "Control"}},
+        {"command": "prop.setExpression", "params": {"layer": "$1.layer", "path": "transform/rotation", "expression": "time * 90"}},
+    ]});
+    app.relay("engine.batch", batch).expect("an expression on a new layer's transform is allowed");
+    assert_eq!(app.layer_names(), ["Control"]);
+}
+
+#[test]
+fn render_jobs_settings_and_waiting_are_refused_even_with_every_permission() {
+    let mut app = app("test.gate-jobs", EVERYTHING);
+    for (command, params) in [
+        ("renderQueue.render", json!({})),
+        ("shortcuts.export", json!({"path": "/tmp/shortcuts.json"})),
+        ("comp.savePreset", json!({"name": "Mine"})),
+        ("layer.revealInFinder", json!({})),
+        ("edit.purgeUndo", json!({})),
+        ("layer.sceneEditDetection", json!({"wait": true})),
+    ] {
+        let refused = app.relay(command, params).unwrap_err();
+        assert!(refused.contains("refused"), "{command}: {refused}");
+    }
 }

@@ -122,6 +122,7 @@ fn plans_beyond_the_limits_are_rejected() {
             plan(vec![[8, 8]], vec![tint(GpuSlot::Source, GpuSlot::Scratch(0)), tint(GpuSlot::Scratch(0), GpuSlot::Scratch(0)), finish.clone()]),
         ),
         ("writes-source", plan(vec![], vec![tint(GpuSlot::Source, GpuSlot::Source), finish.clone()])),
+        ("too-much-scratch", plan(vec![[2 * 53, 2 * 37]; 3], vec![finish.clone()])),
         ("too-many-floats", plan(vec![], vec![too_many_floats])),
         ("too-many-uints", plan(vec![], vec![too_many_uints])),
     ];
@@ -131,7 +132,9 @@ fn plans_beyond_the_limits_are_rejected() {
         assert!(run(&id).is_none(), "{name}: the plan is rejected");
     }
     assert!(g.ctx.check_health().is_ok());
-    let at_the_limits = plan(vec![[2 * 53, 2 * 37]; 16], std::iter::repeat_n(finish, 64).collect());
+    let mut images = vec![[2 * 53, 2 * 37], [53, 37], [53, 37], [53, 37]];
+    images.extend([[1, 1]; 12]);
+    let at_the_limits = plan(images, std::iter::repeat_n(finish, 64).collect());
     register("test.gpu.limit.ok", TINT_WGSL, at_the_limits);
     assert!(run("test.gpu.limit.ok").is_some(), "a plan at the limits runs");
 }

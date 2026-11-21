@@ -84,7 +84,8 @@ The render cache uses the three declarations. An effect that omits one shows sta
 | `cx.float` | The project is 32 bpc. When false, the app rounds the result to 8 or 16 bpc. |
 | `cx.linear` | The working colour space is linear. When false, pixel values are display-encoded. |
 
-`cx.px(id)` is `cx.f(id) * cx.scale`.
+`cx.px(id)` is `cx.f(id) * cx.scale`. In `layout`, `cx` describes the frame before padding.
+`cx.padded(n)` is the context `render` gets after `n` pixels of padding.
 
 | Call | Returns |
 |---|---|

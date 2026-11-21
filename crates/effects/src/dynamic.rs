@@ -77,7 +77,13 @@ fn keep(text: &str) -> &'static str {
     Box::leak(text.to_owned().into_boxed_str())
 }
 
-pub fn register(effect: DynamicEffect) {
+static SPECS: RwLock<Vec<(u64, &'static EffectSpec)>> = RwLock::new(Vec::new());
+
+fn spec_of(effect: &DynamicEffect) -> &'static EffectSpec {
+    let mut specs = SPECS.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((_, known)) = specs.iter().find(|(revision, spec)| *revision == effect.revision && spec.id == effect.id) {
+        return known;
+    }
     let params = effect.params.iter().map(|p| ParamSpec { id: keep(&p.id), name: keep(&p.name), default: p.default.clone(), ui: p.ui.clone() }).collect();
     let spec: &'static EffectSpec = Box::leak(Box::new(EffectSpec {
         id: keep(&effect.id),
@@ -88,6 +94,13 @@ pub fn register(effect: DynamicEffect) {
         gpu: effect.gpu.is_some(),
         float: true,
     }));
+    specs.retain(|(_, known)| known.id != spec.id);
+    specs.push((effect.revision, spec));
+    spec
+}
+
+pub fn register(effect: DynamicEffect) {
+    let spec = spec_of(&effect);
     effectcraft_project::declare_reads_other_frames(spec.id, effect.reads_other_frames);
     let mut registry = REGISTRY.write().unwrap_or_else(|poisoned| poisoned.into_inner());
     registry.retain(|r| r.spec.id != spec.id);

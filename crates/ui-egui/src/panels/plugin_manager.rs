@@ -6,7 +6,7 @@ use crate::EffectcraftApp;
 use crate::i18n::{tr, tr_args};
 use crate::theme::Tokens;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub(crate) struct Listed {
     pub id: String,
     pub name: String,
@@ -20,7 +20,7 @@ pub(crate) struct Listed {
     pub session_only: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub(crate) struct Permission {
     pub name: String,
     pub summary: String,
@@ -41,9 +41,17 @@ pub(crate) fn installed(app: &mut EffectcraftApp) -> Vec<Listed> {
     list(app).unwrap_or_default()
 }
 
+const LIST_AGE: std::time::Duration = std::time::Duration::from_secs(1);
+
 fn list(app: &mut EffectcraftApp) -> Result<Vec<Listed>, String> {
-    let listed = app.session.execute("plugin.list", json!({})).map_err(|e| e.to_string())?;
-    serde_json::from_value(listed).map_err(|e| e.to_string())
+    if let Some((read, listed)) = &app.plugin_ui.listed
+        && read.elapsed() < LIST_AGE
+    {
+        return listed.clone();
+    }
+    let listed = app.session.execute("plugin.list", json!({})).map_err(|e| e.to_string()).and_then(|v| serde_json::from_value(v).map_err(|e| e.to_string()));
+    app.plugin_ui.listed = Some((std::time::Instant::now(), listed.clone()));
+    listed
 }
 
 pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context) {
@@ -79,6 +87,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context) {
         });
     app.plugin_ui.manager_open &= open;
     for (id, params) in actions {
+        app.plugin_ui.listed = None;
         if let Err(error) = crate::menus::invoke(app, ctx, id, params) {
             app.ui.status = error;
         }

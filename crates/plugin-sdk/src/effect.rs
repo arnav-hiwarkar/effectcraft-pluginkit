@@ -40,6 +40,21 @@ impl Cx {
         }
     }
 
+    pub fn padded(&self, padding: u32) -> Cx {
+        let shift = f64::from(padding);
+        let mut padded = self.0.clone();
+        padded.size = padded.size.map(|side| side + 2 * padding);
+        padded.offset = padded.offset.map(|at| at + shift);
+        for value in padded.params.values_mut() {
+            if let Value::List(point) = value
+                && point.len() < 4
+            {
+                point.iter_mut().take(2).for_each(|c| *c += shift);
+            }
+        }
+        Cx(padded)
+    }
+
     pub fn px(&self, id: &str) -> f64 {
         self.f(id) * self.scale
     }

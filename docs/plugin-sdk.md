@@ -204,6 +204,13 @@ cargo xtask plugin plugins/my-plugin --native
 The bundle's `entry` then names the library for this platform. A native plugin renders in place with no
 copy and may use threads. The user sees a warning that it runs with full access before enabling it.
 
+`plugin.load` and `EFFECTCRAFT_PLUGIN_PATH` refuse a native bundle. Install it and approve it instead:
+
+```sh
+effectcraft-cli exec plugin.install '{"path": "plugins/dist/com.example.tint"}'
+effectcraft-cli exec plugin.approve '{"id": "com.example.tint"}'
+```
+
 ## Check your work
 
 - `effectcraft-cli exec plugin.list` shows each plugin's state and, when a plugin fails to load, the error.
