@@ -46,6 +46,7 @@ jobs:
       - name: Tests of the crates the plugin system changed
         run: |
           cargo test -p effectcraft-effects --lib
+          cargo test -p effectcraft-engine --lib
           cargo test -p effectcraft-automation
           cargo test -p effectcraft-ui-egui --lib -- plugin i18n:: menus::
           cargo test -p effectcraft-project --lib
