@@ -69,7 +69,7 @@ pub(crate) fn draw_marks(t: &Tokens, painter: &egui::Painter, map: &ViewerMap, m
                 outline(around.collect(), *fill, *stroke)
             }
             Shape::Polygon { points, fill } => {
-                if let Some(points) = path(points.clone()) {
+                if let Some(points) = path(points.clone(), 3) {
                     painter.add(crate::panels::plugin_view::filled_polygon(points, colour(t, *fill)));
                 }
             }
