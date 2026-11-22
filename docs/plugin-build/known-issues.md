@@ -41,6 +41,31 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **Glide: `keys.interpolation` runs on the whole selection**, so keys on properties Glide reports as skipped still lose their continuous and roving flags. (`plugins/glide/src/apply.rs`)
 - **A plugin render error keeps Effect Controls repainting every 500 ms** until the error clears.
 
+## From the second build and its reviews, not fixed
+
+- **A picked file is remembered by path.** If the file the user picked is later replaced by a link, the plugin reads what the link points to. (`crates/plugin-host/src/runtime/serve.rs`, Sol finding 5)
+- **A task answers against the project that is open when its request is served.** A task started in one project can edit another if the user opens it meanwhile. Tasks are not cancelled when a project opens. (`crates/plugin/src/manage.rs` `pump`, Sol finding 8)
+- **A failed band leaves a partly processed frame.** Pointwise bands render in place, so when one band fails the frame holds the other bands' output. The error is logged. (`crates/plugin-host/src/plugin.rs`, Sol finding 12)
+- **Another process of the same user can plant a compiled module.** The compiled cache is named by a SHA-256 of the module and plugins cannot write to it, but the files are not signed.
+- **A native task that ignores cancel keeps its thread.** Only a sandboxed task can be interrupted.
+- **In the CLI a task's document requests are answered only inside `plugin.tasks {wait}`.**
+- **`host::frame` of one layer hides every other layer**, including the layer's track matte.
+- **Effects cannot read audio.** The render path reaches footage audio, not the comp mix.
+- **A layer with its video switch off reads as empty through a layer parameter.**
+- **Plugin panels and custom controls cannot be fully used from the keyboard.** A canvas cannot take focus and custom controls get no key events. House rule 21 asks for this. (`crates/ui-egui/src/panels/plugin_view.rs`, Opus finding 8)
+- **The plan check exists twice.** The GPU path validates a plan in `crates/gpu/src/fx_plugin.rs` and the CPU path in `GpuPlan::check`.
+- **One `reach` covers a pass's `src` and `aux`.**
+- **Lumen Glow has no CPU fallback for a level that needs more than 48 floats**; its `render` returns an error there.
+- **Forge 3D draws only on the GPU.** Draw passes render to an `Rgba16Float` target that is created per frame and copied.
+- **Ember simulates from frame 0 on every render when a parameter has an expression**, because the history cannot be hashed. It reads the masks at the current time for every step.
+- **A Halo preset sets the look and resets the element controls.** It does not write absolute slider values.
+- **Curves keeps the selected channel per effect, not per instance of the effect**, unless the fix for Opus finding 7 landed (see the log).
+- **`polygon` on a canvas fills convex shapes only.**
+- **`plugin dev` was not run against a live app, and double-clicking a `.craftplugin` was not tried on a built app.**
+- **An 8-bit quantise pass runs after every CPU effect**, about a fifth of a five-effect stack in one profile. Advancing one frame re-composites every cached layer. Layer cache keys are built by formatting the property tree as text. (`pluginkit/reports/app-perf.md` in the build notes)
+- **No network host call.** A sandboxed plugin cannot open a connection; a native plugin can.
+- **The capability page names other companies' products as examples.** House rule 22 is about feature names; check `standards/naming.md` before this goes upstream.
+
 ## Seen while running the full Mac gate
 
 - **`effectcraft-media` integration tests hang on this Mac, on upstream `main` too.** `cargo test -p effectcraft-media --test it` stops at 0 % CPU with several `footage::` tests unfinished (`vp9_webm_frames`, `concurrent_requests`, `cache_budget_evicts`, `mxf_mpeg2_with_pcm_audio` and others, a different set each run). A sample shows the threads parked in `effectcraft_media::pool::Inner::frame_px` and `run_decode`, waiting on a channel. One of those tests passes in 0.2 s when run alone. The same suite hangs the same way in a worktree of untouched `main` (563fea65), and this branch does not change `crates/media`. So the full `cargo xtask ci` gate cannot finish on this Mac. Not investigated further.
