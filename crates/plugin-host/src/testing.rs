@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use craft_plugin::{
-    AppEvent, Call, EffectSpec, FrameRequest, GpuPass, GpuPlan, Layout, MaskPath, Overlay, PanelReply, ParamKind, ParamsAt, Pixel, RenderCx, Scene, TaskStatus,
+    AppEvent, Call, EffectSpec, FrameRequest, Layout, MaskPath, Overlay, PanelReply, ParamKind, ParamsAt, Pixel, Plan, PlanPass, RenderCx, Scene, TaskStatus,
     ToolEvent, ToolEventKind, UiEvent, UiEventKind, UiInput, Value, Widget,
 };
 pub use serde_json::json;
@@ -657,7 +657,7 @@ impl Render<'_> {
         let cx = self.cx(spec, &unpadded, [source.width, source.height], shift)?;
         let host = || self.host(&source, &layers, &masks, &cx);
         let plan = layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu());
-        let render = |reach: Option<u32>, plan: Option<&GpuPlan>| {
+        let render = |reach: Option<u32>, plan: Option<&Plan>| {
             let mut pixels = source.pixels.clone();
             let started = Instant::now();
             let layout = Layout { reach, ..layout.clone() };
@@ -673,13 +673,11 @@ impl Render<'_> {
             let (again, took) = render(layout.reach, plan)?;
             (picture, best) = (again, best.min(took));
         }
-        let unbanded = |plan: &GpuPlan| GpuPlan {
-            passes: plan.passes.iter().map(|pass| GpuPass { reach: None, aux_reach: None, ..pass.clone() }).collect(),
-            ..plan.clone()
-        };
+        let unbanded =
+            |plan: &Plan| Plan { passes: plan.passes.iter().map(|pass| PlanPass { reach: None, aux_reach: None, ..pass.clone() }).collect(), ..plan.clone() };
         let banded = match plan {
             Some(plan) if plan.passes.iter().any(|pass| pass.reach.is_some()) => {
-                Some(("its passes read with GpuPass::reach and GpuPass::aux_reach".to_string(), Some(unbanded(plan))))
+                Some(("its passes read with PlanPass::reach and PlanPass::aux_reach".to_string(), Some(unbanded(plan))))
             }
             None if !layout.maps_input => layout.reach.map(|reach| (format!("each row reads rows at most {reach} away"), None)),
             _ => None,

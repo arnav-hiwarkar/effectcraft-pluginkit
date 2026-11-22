@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use craft_plugin::{
-    BlendMode, Call, FrameDesc, GpuImage, GpuPass, GpuPlan, Layout, MaskPath, ParamsAt, Permission, Pixel, RenderCx, Taps, TaskState, TaskStatus, UiEvent,
+    BlendMode, Call, FrameDesc, Layout, MaskPath, ParamsAt, Permission, Pixel, Plan, PlanImage, PlanPass, RenderCx, Taps, TaskState, TaskStatus, UiEvent,
     UiEventKind, UiInput, Widget, native_target,
 };
 use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Rect, Registry, Retained};
@@ -1065,18 +1065,18 @@ fn ramp() -> Vec<Pixel> {
     (0..height).flat_map(|y| (0..width).map(move |x| [x as f32, y as f32, (x * y % 7) as f32, 1.0])).collect()
 }
 
-fn run_plan(kind: Kind, plan: &GpuPlan) -> Result<Vec<Pixel>, PluginError> {
+fn run_plan(kind: Kind, plan: &Plan) -> Result<Vec<Pixel>, PluginError> {
     let loaded = load(kind, &[]);
     let mut pixels = ramp();
     loaded.plugin.run_passes("passes", &cx(PASS_FRAME[0], PASS_FRAME[1]), plan, &mut pixels, Recorder::default)?;
     Ok(pixels)
 }
 
-fn halve_and_restore(reach: [Option<u32>; 2]) -> GpuPlan {
-    let mut plan = GpuPlan::new();
+fn halve_and_restore(reach: [Option<u32>; 2]) -> Plan {
+    let mut plan = Plan::new();
     let half = plan.scratch(PASS_FRAME.map(|side| side.div_ceil(2)));
-    let mut down = GpuPass::new("probe_down", GpuImage::Source, half);
-    let mut up = GpuPass::new("probe_up", half, GpuImage::Output);
+    let mut down = PlanPass::new("probe_down", PlanImage::Source, half);
+    let mut up = PlanPass::new("probe_up", half, PlanImage::Output);
     (down.reach, up.reach) = (reach[0], reach[1]);
     plan.pass(down).pass(up)
 }
@@ -1101,7 +1101,7 @@ fn a_two_pass_plan_gives_the_same_pixels_in_bands_as_in_one_call() {
 #[test]
 fn a_pass_reads_its_reach_across_band_edges() {
     each_kind(|kind| {
-        let tall = |reach| GpuPlan::new().pass(GpuPass { reach, ..GpuPass::new("probe_tall", GpuImage::Source, GpuImage::Output) });
+        let tall = |reach| Plan::new().pass(PlanPass { reach, ..PlanPass::new("probe_tall", PlanImage::Source, PlanImage::Output) });
         let banded = run_plan(kind, &tall(Some(3))).unwrap();
         assert_eq!(banded, run_plan(kind, &tall(None)).unwrap(), "{kind:?}");
         assert_eq!(at(&banded, 10, 0)[..2], [220.0, 38.0], "{kind:?}");
@@ -1113,8 +1113,8 @@ fn a_pass_reads_its_reach_across_band_edges() {
 
 #[test]
 fn aux_reads_its_own_reach_across_band_edges() {
-    let plan = |pass: GpuPass| GpuPlan::new().pass(pass);
-    let tall_aux = GpuPass::new("probe_tall_aux", GpuImage::Source, GpuImage::Output).aux(GpuImage::Source);
+    let plan = |pass: PlanPass| Plan::new().pass(pass);
+    let tall_aux = PlanPass::new("probe_tall_aux", PlanImage::Source, PlanImage::Output).aux(PlanImage::Source);
     each_kind(|kind| {
         let banded = run_plan(kind, &plan(tall_aux.clone().reach(0).aux_reach(3))).unwrap();
         assert_eq!(banded, run_plan(kind, &plan(tall_aux.clone())).unwrap(), "{kind:?}");
@@ -1127,25 +1127,25 @@ fn aux_reads_its_own_reach_across_band_edges() {
 #[test]
 fn host_kernel_passes_run_in_the_app_between_plugin_passes() {
     each_kind(|kind| {
-        let mut plan = GpuPlan::new();
+        let mut plan = Plan::new();
         let tall = plan.scratch(PASS_FRAME);
         let swizzle = [[0.5, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
-        let plan = plan.pass(GpuPass::new("probe_tall", GpuImage::Source, tall).reach(3)).pass(GpuPass::matrix(tall, GpuImage::Output, swizzle));
+        let plan = plan.pass(PlanPass::new("probe_tall", PlanImage::Source, tall).reach(3)).pass(PlanPass::matrix(tall, PlanImage::Output, swizzle));
         assert_eq!(at(&run_plan(kind, &plan).unwrap(), 10, 75), [140.0, 28.0, 70.0, 28.0], "{kind:?}");
     });
 }
 
 #[test]
 fn a_native_pass_is_handed_its_target_as_the_passes_before_it_left_it() {
-    let mut plan = GpuPlan::new();
+    let mut plan = Plan::new();
     let (a, b) = (plan.scratch(PASS_FRAME), plan.scratch(PASS_FRAME));
     let half = [[0.5, 0.0, 0.0, 0.0], [0.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 0.5]];
     let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
     let plan = plan
-        .pass(GpuPass::matrix(GpuImage::Source, a, half))
-        .pass(GpuPass::matrix(a, b, identity))
-        .pass(GpuPass::new("probe_nothing", b, a))
-        .pass(GpuPass::matrix(a, GpuImage::Output, identity));
+        .pass(PlanPass::matrix(PlanImage::Source, a, half))
+        .pass(PlanPass::matrix(a, b, identity))
+        .pass(PlanPass::new("probe_nothing", b, a))
+        .pass(PlanPass::matrix(a, PlanImage::Output, identity));
     assert_eq!(at(&run_plan(Kind::Native, &plan).unwrap(), 10, 75), [5.0, 37.5, 0.5, 0.5]);
     assert_eq!(at(&run_plan(Kind::Wasm, &plan).unwrap(), 10, 75), [0.0; 4], "a sandboxed pass starts from a clear target");
 }
@@ -1153,21 +1153,21 @@ fn a_native_pass_is_handed_its_target_as_the_passes_before_it_left_it() {
 #[test]
 fn a_plugin_pass_on_a_new_image_starts_clear_although_an_image_of_its_size_is_no_longer_needed() {
     each_kind(|kind| {
-        let mut plan = GpuPlan::new();
+        let mut plan = Plan::new();
         let (a, b) = (plan.scratch(PASS_FRAME), plan.scratch(PASS_FRAME));
         let half = [[0.5, 0.0, 0.0, 0.0], [0.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 0.5]];
         let plan = plan
-            .pass(GpuPass::matrix(GpuImage::Source, a, half))
-            .pass(GpuPass::convolve(a, GpuImage::Output, Taps::Separable { x: vec![1.0], y: vec![1.0] }))
-            .pass(GpuPass::new("probe_nothing", GpuImage::Source, b))
-            .pass(GpuPass::blend_images(GpuImage::Output, b, GpuImage::Output, BlendMode::Add, 1.0));
+            .pass(PlanPass::matrix(PlanImage::Source, a, half))
+            .pass(PlanPass::convolve(a, PlanImage::Output, Taps::Separable { x: vec![1.0], y: vec![1.0] }))
+            .pass(PlanPass::new("probe_nothing", PlanImage::Source, b))
+            .pass(PlanPass::blend_images(PlanImage::Output, b, PlanImage::Output, BlendMode::Add, 1.0));
         assert_eq!(at(&run_plan(kind, &plan).unwrap(), 10, 75), [5.0, 37.5, 0.5, 0.5], "{kind:?}");
     });
 }
 
 #[test]
 fn a_pass_with_too_little_reach_is_missing_rows_at_band_edges() {
-    let short = GpuPlan::new().pass(GpuPass::new("probe_tall", GpuImage::Source, GpuImage::Output).reach(2));
+    let short = Plan::new().pass(PlanPass::new("probe_tall", PlanImage::Source, PlanImage::Output).reach(2));
     let pixels = run_plan(Kind::Wasm, &short).unwrap();
     assert_eq!(at(&pixels, 10, 74)[..2], [280.0, 2100.0]);
     assert_eq!(at(&pixels, 10, 75)[..2], [210.0, 1582.0]);
@@ -1176,26 +1176,26 @@ fn a_pass_with_too_little_reach_is_missing_rows_at_band_edges() {
 #[test]
 fn a_plan_naming_an_image_it_does_not_declare_is_refused() {
     each_kind(|kind| {
-        let writes = GpuPlan::new().pass(GpuPass::new("probe_tall", GpuImage::Source, GpuImage::Scratch(3)));
+        let writes = Plan::new().pass(PlanPass::new("probe_tall", PlanImage::Source, PlanImage::Scratch(3)));
         assert_eq!(run_plan(kind, &writes), Err(PluginError::Failed("pass 0 writes Scratch(3), which the plan does not declare".into())));
-        let reads = GpuPlan::new().pass(GpuPass::new("probe_tall", GpuImage::Scratch(1), GpuImage::Output));
+        let reads = Plan::new().pass(PlanPass::new("probe_tall", PlanImage::Scratch(1), PlanImage::Output));
         assert_eq!(run_plan(kind, &reads), Err(PluginError::Failed("pass 0 reads Scratch(1), which the plan does not declare".into())));
     });
 }
 
 #[test]
 fn a_pass_writing_the_image_it_reads_is_refused() {
-    let tall = |src| GpuPass::new("probe_tall", src, GpuImage::Output).reach(3);
-    let plan = GpuPlan::new().pass(tall(GpuImage::Source)).pass(tall(GpuImage::Output));
+    let tall = |src| PlanPass::new("probe_tall", src, PlanImage::Output).reach(3);
+    let plan = Plan::new().pass(tall(PlanImage::Source)).pass(tall(PlanImage::Output));
     assert_eq!(run_plan(Kind::Wasm, &plan), Err(PluginError::Failed("pass 1 reads the image it writes".into())));
 }
 
 #[test]
 fn a_pass_that_writes_nothing_leaves_its_image_transparent() {
     each_kind(|kind| {
-        let mut plan = GpuPlan::new();
+        let mut plan = Plan::new();
         let scratch = plan.scratch(PASS_FRAME);
-        let plan = plan.pass(GpuPass::new("probe_red", GpuImage::Source, scratch)).pass(GpuPass::new("probe_nothing", scratch, GpuImage::Output));
+        let plan = plan.pass(PlanPass::new("probe_red", PlanImage::Source, scratch)).pass(PlanPass::new("probe_nothing", scratch, PlanImage::Output));
         let pixels = run_plan(kind, &plan).unwrap();
         assert_eq!(pixels, vec![[0.0; 4]; pixels.len()], "{kind:?}");
     });
@@ -1217,7 +1217,7 @@ fn a_render_call_through_the_generic_entry_point_is_refused_and_writes_nothing()
 #[test]
 fn a_failing_pass_fails_the_render() {
     each_kind(|kind| {
-        let plan = GpuPlan::new().pass(GpuPass::new("nope", GpuImage::Source, GpuImage::Output).reach(0));
+        let plan = Plan::new().pass(PlanPass::new("nope", PlanImage::Source, PlanImage::Output).reach(0));
         assert_eq!(run_plan(kind, &plan), Err(PluginError::Failed("no probe kernel `nope`".into())));
     });
 }

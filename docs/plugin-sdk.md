@@ -285,7 +285,7 @@ does this for a slider measured in layer pixels.
 Check a plan in a unit test with the same check the app runs:
 
 ```rust
-let plan = GpuPlan::new().pass(GpuPass::new("tint_apply", GpuImage::Source, GpuImage::Output).floats(&[1.0, 0.8, 0.6]));
+let plan = Plan::new().pass(PlanPass::new("tint_apply", PlanImage::Source, PlanImage::Output).floats(&[1.0, 0.8, 0.6]));
 assert_eq!(plan.validate([1920, 1080]), Ok(()));
 ```
 
@@ -302,14 +302,14 @@ fn layout(&self, cx: &Cx) -> Layout {
     let radius = (cx.px("radius") as f32).clamp(0.0, 2048.0);
     let padding = radius.ceil() as u32;
     let frame = cx.padded(padding).size;
-    let mut plan = GpuPlan::new();
+    let mut plan = Plan::new();
     let quarter = frame.map(|side| side.div_ceil(4));
     let (small, blurred, glow) = (plan.scratch(quarter), plan.scratch(quarter), plan.scratch(frame));
     let plan = plan
-        .pass(GpuPass::resample(GpuImage::Source, small, Filter::Bilinear))
-        .pass(GpuPass::blur(small, blurred, [radius / 4.0; 2]))
-        .pass(GpuPass::resample(blurred, glow, Filter::Bilinear))
-        .pass(GpuPass::blend_images(GpuImage::Source, glow, GpuImage::Output, BlendMode::Screen, cx.f("amount") as f32));
+        .pass(PlanPass::resample(PlanImage::Source, small, Filter::Bilinear))
+        .pass(PlanPass::blur(small, blurred, [radius / 4.0; 2]))
+        .pass(PlanPass::resample(blurred, glow, Filter::Bilinear))
+        .pass(PlanPass::blend_images(PlanImage::Source, glow, PlanImage::Output, BlendMode::Screen, cx.f("amount") as f32));
     Layout::whole_frame().padded(padding).passes(plan)
 }
 ```
@@ -323,15 +323,15 @@ one pass over the frame however many steps it has. Keep only the highlights, tin
 in sRGB with dither:
 
 ```rust
-let mut plan = GpuPlan::new();
+let mut plan = Plan::new();
 let work = plan.scratch(cx.size);
 let (curve, range) = (vec![0.0, 0.0, 0.0, 1.0, 2.0], 2.0);
 let plan = plan
-    .pass(GpuPass::to_linear(GpuImage::Source, work))
-    .pass(GpuPass::brightness_curve(work, work, Measure::MaxChannel, curve, range))
-    .pass(GpuPass::matrix(work, work, [[1.0, 0.0, 0.0, 0.0], [0.0, 0.8, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 1.0]]))
-    .pass(GpuPass::to_srgb(work, work))
-    .pass(GpuPass::dither(work, GpuImage::Output, cx.instance as u32, [0, 0]));
+    .pass(PlanPass::to_linear(PlanImage::Source, work))
+    .pass(PlanPass::brightness_curve(work, work, Measure::MaxChannel, curve, range))
+    .pass(PlanPass::matrix(work, work, [[1.0, 0.0, 0.0, 0.0], [0.0, 0.8, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 1.0]]))
+    .pass(PlanPass::to_srgb(work, work))
+    .pass(PlanPass::dither(work, PlanImage::Output, cx.instance as u32, [0, 0]));
 ```
 
 Light that can go negative (a glow of signed colour) keeps the sRGB curve's straight segment below zero
@@ -339,9 +339,9 @@ instead of mirroring it, and `BlendMode::ScreenHdr` screens a base outside 0 to 
 
 ```rust
 let plan = plan
-    .pass(GpuPass::transfer(GpuImage::Source, work, Encoding::Linear, Negatives::Linear))
-    .pass(GpuPass::blend_images(work, glow, work, BlendMode::ScreenHdr, 1.0))
-    .pass(GpuPass::transfer(work, GpuImage::Output, Encoding::Srgb, Negatives::Linear));
+    .pass(PlanPass::transfer(PlanImage::Source, work, Encoding::Linear, Negatives::Linear))
+    .pass(PlanPass::blend_images(work, glow, work, BlendMode::ScreenHdr, 1.0))
+    .pass(PlanPass::transfer(work, PlanImage::Output, Encoding::Srgb, Negatives::Linear));
 ```
 
 ## Fast maths

@@ -32,7 +32,7 @@ To write a plugin, read [Write a plugin](plugin-sdk.md). For the design, read
 | Change pixels on the GPU | `Layout::gpu` with compute kernels | None |
 | Use every CPU core for multi-step work | `Layout::passes` and `Effect::pass` | None |
 | Sample another layer on the GPU | `plan.layer(param)` | None |
-| Draw 3D geometry | `GpuPass::draw` with buffers from the cache | None |
+| Draw 3D geometry | `PlanPass::draw` with buffers from the cache | None |
 | Match the comp's 3D space | `cx.scene()`: camera matrices and lights | None |
 | Keep data between frames | `cx.remember` and `cx.recall` | None |
 | Read its parameters at another time | `cx.at(time)` | None |

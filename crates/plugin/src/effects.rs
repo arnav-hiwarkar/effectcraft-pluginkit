@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use craft_plugin_host::kernels::{self, Lowered, StepImage};
 use craft_plugin_host::{
-    Blend, Call, Camera, Cull, Draw, EffectSpec, GpuData, GpuImage, Host, Layout, Light, LightKind, MaskPath, Param, ParamKind, ParamsAt, Pixels, Rect,
+    Blend, Call, Camera, Cull, Draw, EffectSpec, Host, Layout, Light, LightKind, MaskPath, Param, ParamKind, ParamsAt, Pixels, PlanData, PlanImage, Rect,
     RenderCx, Scene, Value as Wire,
 };
 use effectcraft_engine::effects::dynamic::{
@@ -54,7 +54,7 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
     }
 }
 
-fn plan_runs_on_gpu(spec: &EffectSpec, plan: &craft_plugin_host::GpuPlan) -> bool {
+fn plan_runs_on_gpu(spec: &EffectSpec, plan: &craft_plugin_host::Plan) -> bool {
     spec.shader.is_some() || plan.passes.iter().all(|pass| pass.host.is_some())
 }
 
@@ -346,12 +346,12 @@ fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) 
         loaded.report(&spec.id, Some(format!("the GPU plan was refused: {why}")));
         return None;
     }
-    let slot = |image: GpuImage| match image {
-        GpuImage::Source => GpuSlot::Source,
-        GpuImage::Output => GpuSlot::Output,
-        GpuImage::Scratch(index) => GpuSlot::Scratch(index as usize),
-        GpuImage::Texture(index) => GpuSlot::Texture(index as usize),
-        GpuImage::Layer(index) => GpuSlot::Layer(index as usize),
+    let slot = |image: PlanImage| match image {
+        PlanImage::Source => GpuSlot::Source,
+        PlanImage::Output => GpuSlot::Output,
+        PlanImage::Scratch(index) => GpuSlot::Scratch(index as usize),
+        PlanImage::Texture(index) => GpuSlot::Texture(index as usize),
+        PlanImage::Layer(index) => GpuSlot::Layer(index as usize),
     };
     let draw = |draw: Draw| GpuDraw {
         vertices: draw.vertices as usize,
@@ -421,9 +421,9 @@ fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) 
         .enumerate()
         .map(|(index, data)| {
             Some(match data {
-                GpuData::Cache(key) => GpuBytes { bytes: cached(&key)?, name: key },
-                GpuData::Floats(values) => GpuBytes { name: format!("#{index}"), bytes: values.iter().flat_map(|v| v.to_le_bytes()).collect() },
-                GpuData::Indices(values) => GpuBytes { name: format!("#{index}"), bytes: values.iter().flat_map(|v| v.to_le_bytes()).collect() },
+                PlanData::Cache(key) => GpuBytes { bytes: cached(&key)?, name: key },
+                PlanData::Floats(values) => GpuBytes { name: format!("#{index}"), bytes: values.iter().flat_map(|v| v.to_le_bytes()).collect() },
+                PlanData::Indices(values) => GpuBytes { name: format!("#{index}"), bytes: values.iter().flat_map(|v| v.to_le_bytes()).collect() },
             })
         })
         .collect::<Option<_>>()?;

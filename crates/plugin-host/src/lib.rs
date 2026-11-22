@@ -17,8 +17,8 @@ mod runtime;
 pub mod testing;
 
 pub use craft_plugin::{
-    AudioRequest, Blend, Call, Camera, CommandSpec, Contributions, ControlsReply, Cull, Draw, EffectSpec, Entry, FrameDesc, FrameRequest, GpuData, GpuImage,
-    GpuPass, GpuPlan, Layout, Light, LightKind, Manifest, MaskPath, PanelReply, PanelSpec, Param, ParamKind, ParamsAt, Permission, PickFile, Pixel, Rect,
+    AudioRequest, Blend, Call, Camera, CommandSpec, Contributions, ControlsReply, Cull, Draw, EffectSpec, Entry, FrameDesc, FrameRequest, Layout, Light,
+    LightKind, Manifest, MaskPath, PanelReply, PanelSpec, Param, ParamKind, ParamsAt, Permission, PickFile, Pixel, Plan, PlanData, PlanImage, PlanPass, Rect,
     RenderCx, RunMode, Scene, TaskSpec, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Value, Widget, applied_padding,
 };
 pub use host::{Access, Host, Origin, Pixels, Samples};

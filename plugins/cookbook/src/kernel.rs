@@ -25,7 +25,7 @@ impl Effect for Posterize {
 
     fn layout(&self, cx: &Cx) -> Layout {
         let levels = Settings::read(cx).levels as f32;
-        let plan = GpuPlan::new().pass(GpuPass::new("posterize", GpuImage::Source, GpuImage::Output).floats(&[levels]));
+        let plan = Plan::new().pass(PlanPass::new("posterize", PlanImage::Source, PlanImage::Output).floats(&[levels]));
         Layout::pointwise().passes(plan)
     }
 

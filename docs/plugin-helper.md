@@ -360,7 +360,7 @@ AppContainer cannot be given "every file", hence the table's `files.*` row.
 
 ## GPU and the web build
 
-- **GPU plans keep running in the app.** A `GpuPlan` comes back over the lane as JSON and the app's
+- **GPU plans keep running in the app.** A `Plan` comes back over the lane as JSON and the app's
   device runs the WGSL, as today. The helper has no GPU access unless the plugin has `system`.
 - **Web build:** no helper. `runtime` is `unavailable.rs` there today; the helper is
   `cfg(not(target_family = "wasm"))`. WebAssembly plugins on the web run in-process with epoch checks.

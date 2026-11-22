@@ -114,8 +114,8 @@ impl Effect for GpuInvert {
     }
 
     fn layout(&self, cx: &Cx) -> Layout {
-        let pass = GpuPass::new("probe_invert", GpuImage::Source, GpuImage::Output).floats(&[cx.f("amount") as f32]);
-        Layout::pointwise().gpu(GpuPlan::new().pass(pass))
+        let pass = PlanPass::new("probe_invert", PlanImage::Source, PlanImage::Output).floats(&[cx.f("amount") as f32]);
+        Layout::pointwise().gpu(Plan::new().pass(pass))
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
@@ -154,10 +154,10 @@ impl Effect for GpuFill {
     }
 
     fn layout(&self, cx: &Cx) -> Layout {
-        let mut plan = GpuPlan::new();
-        let corners = plan.buffer(GpuData::Floats(vec![-1.0, -1.0, 3.0, -1.0, -1.0, 3.0]));
-        let triangle = plan.buffer(GpuData::Indices(vec![0, 1, cx.f("last_index") as u32]));
-        let fill = GpuPass::draw("probe_fill", GpuImage::Output).vertices(corners, &[2]).indices(triangle).floats(&FILL);
+        let mut plan = Plan::new();
+        let corners = plan.buffer(PlanData::Floats(vec![-1.0, -1.0, 3.0, -1.0, -1.0, 3.0]));
+        let triangle = plan.buffer(PlanData::Indices(vec![0, 1, cx.f("last_index") as u32]));
+        let fill = PlanPass::draw("probe_fill", PlanImage::Output).vertices(corners, &[2]).indices(triangle).floats(&FILL);
         if !cx.bool("onto_scratch") {
             return Layout::pointwise().gpu(plan.pass(fill.clear()));
         }
@@ -166,10 +166,10 @@ impl Effect for GpuFill {
         let from_alpha = [[0.0, 0.0, 0.0, 0.5], [0.0, 0.0, 0.0, 0.25], [0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]];
         let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
         let plan = plan
-            .pass(GpuPass::matrix(GpuImage::Source, a, from_alpha))
-            .pass(GpuPass::matrix(a, b, identity))
-            .pass(GpuPass { out: a, ..fill.count(0) })
-            .pass(GpuPass::matrix(a, GpuImage::Output, identity));
+            .pass(PlanPass::matrix(PlanImage::Source, a, from_alpha))
+            .pass(PlanPass::matrix(a, b, identity))
+            .pass(PlanPass { out: a, ..fill.count(0) })
+            .pass(PlanPass::matrix(a, PlanImage::Output, identity));
         Layout::pointwise().gpu(plan)
     }
 
@@ -195,9 +195,9 @@ impl Effect for GpuMatte {
     }
 
     fn layout(&self, _cx: &Cx) -> Layout {
-        let mut plan = GpuPlan::new();
+        let mut plan = Plan::new();
         let matte = plan.layer("matte");
-        Layout::pointwise().gpu(plan.pass(GpuPass::new("probe_matte", GpuImage::Source, GpuImage::Output).aux(matte)))
+        Layout::pointwise().gpu(plan.pass(PlanPass::new("probe_matte", PlanImage::Source, PlanImage::Output).aux(matte)))
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
@@ -270,11 +270,11 @@ impl Effect for GpuSoften {
     fn layout(&self, cx: &Cx) -> Layout {
         let pad = 2 * SOFTEN_PADDING;
         let [w, h] = GpuSoften::half([(cx.size[0] + pad) as usize, (cx.size[1] + pad) as usize]);
-        let mut plan = GpuPlan::new();
+        let mut plan = Plan::new();
         let half = plan.scratch([w as u32, h as u32]);
         let plan = plan
-            .pass(GpuPass::new("probe_down", GpuImage::Source, half))
-            .pass(GpuPass::new("probe_up", GpuImage::Source, GpuImage::Output).aux(half).floats(&[cx.f("strength") as f32]));
+            .pass(PlanPass::new("probe_down", PlanImage::Source, half))
+            .pass(PlanPass::new("probe_up", PlanImage::Source, PlanImage::Output).aux(half).floats(&[cx.f("strength") as f32]));
         Layout::whole_frame().padded(SOFTEN_PADDING).gpu(plan)
     }
 
@@ -355,65 +355,65 @@ impl Effect for HostKernels {
 
     fn layout(&self, cx: &Cx) -> Layout {
         let frame = cx.padded(KERNEL_PADDING).size;
-        let (source, output) = (GpuImage::Source, GpuImage::Output);
-        let mut plan = GpuPlan::new();
+        let (source, output) = (PlanImage::Source, PlanImage::Output);
+        let mut plan = Plan::new();
         let (half, soft) = (plan.scratch(frame.map(|side| side.div_ceil(2))), plan.scratch(frame));
-        let blurred = GpuPass::blur(source, soft, [3.0, 5.0]);
+        let blurred = PlanPass::blur(source, soft, [3.0, 5.0]);
         let curve: Vec<Pixel> = (0..17).map(|i| i as f32 / 16.0).map(|t| [t * t, t.sqrt(), 1.0 - t, t]).collect();
         let plan = match cx.index("kernel") {
-            0 => plan.pass(GpuPass::blur(source, output, [4.0, 2.5])),
-            1 => plan.pass(GpuPass::box_blur(source, output, [2.5, 0.0])),
-            2 => plan.pass(GpuPass::resample(source, half, Filter::Bilinear)).pass(GpuPass::resample(half, output, Filter::Bicubic)),
-            3 => plan.pass(blurred).pass(GpuPass::blend_images(source, soft, output, BlendMode::ALL[cx.index("mode").min(9)], 0.8)),
-            4 => plan.pass(GpuPass::curves(source, output, &curve)),
-            5 => plan.pass(GpuPass::convolve(source, output, craft_plugin::Taps::Separable { x: vec![-0.5, 2.0, -0.5], y: vec![0.25, 0.5, 0.25] })),
-            6 => plan.pass(GpuPass::convolve(
+            0 => plan.pass(PlanPass::blur(source, output, [4.0, 2.5])),
+            1 => plan.pass(PlanPass::box_blur(source, output, [2.5, 0.0])),
+            2 => plan.pass(PlanPass::resample(source, half, Filter::Bilinear)).pass(PlanPass::resample(half, output, Filter::Bicubic)),
+            3 => plan.pass(blurred).pass(PlanPass::blend_images(source, soft, output, BlendMode::ALL[cx.index("mode").min(9)], 0.8)),
+            4 => plan.pass(PlanPass::curves(source, output, &curve)),
+            5 => plan.pass(PlanPass::convolve(source, output, craft_plugin::Taps::Separable { x: vec![-0.5, 2.0, -0.5], y: vec![0.25, 0.5, 0.25] })),
+            6 => plan.pass(PlanPass::convolve(
                 source,
                 output,
                 craft_plugin::Taps::Full { width: 3, weights: vec![0.0, -1.0, 0.0, -1.0, 5.0, -1.0, 0.0, -1.0, 0.0] },
             )),
-            7 => plan.pass(blurred).pass(GpuPass::warp(source, soft, output, [6.0, -4.0])),
-            8 => plan.pass(GpuPass::matrix(source, output, [[0.0, 0.0, 1.0, 0.0], [0.3, 0.6, 0.1, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]])),
-            10 => plan.pass(GpuPass::to_linear(source, output)),
-            11 => plan.pass(GpuPass::to_srgb(source, output)),
-            12 => plan.pass(GpuPass::brightness_curve(source, output, Measure::MaxChannel, vec![0.0, 0.0, 0.3, 1.2], 1.5)),
-            13 => plan.pass(GpuPass::dither(source, output, 5, [-3, 9])),
+            7 => plan.pass(blurred).pass(PlanPass::warp(source, soft, output, [6.0, -4.0])),
+            8 => plan.pass(PlanPass::matrix(source, output, [[0.0, 0.0, 1.0, 0.0], [0.3, 0.6, 0.1, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]])),
+            10 => plan.pass(PlanPass::to_linear(source, output)),
+            11 => plan.pass(PlanPass::to_srgb(source, output)),
+            12 => plan.pass(PlanPass::brightness_curve(source, output, Measure::MaxChannel, vec![0.0, 0.0, 0.3, 1.2], 1.5)),
+            13 => plan.pass(PlanPass::dither(source, output, 5, [-3, 9])),
             14 => plan
-                .pass(GpuPass::matrix(source, soft, [[3.0, 0.0, 0.0, 0.0], [0.0, 3.0, 0.0, 0.0], [0.0, 0.0, 3.0, 0.0], [0.0; 4]]))
-                .pass(GpuPass::light_alpha(soft, output)),
+                .pass(PlanPass::matrix(source, soft, [[3.0, 0.0, 0.0, 0.0], [0.0, 3.0, 0.0, 0.0], [0.0, 0.0, 3.0, 0.0], [0.0; 4]]))
+                .pass(PlanPass::light_alpha(soft, output)),
             15 => plan
                 .pass(blurred)
-                .pass(GpuPass::brightness_curve(soft, soft, Measure::Luma, vec![0.0, 0.1, 0.9], 1.0))
-                .pass(GpuPass::blend_images(soft, source, soft, BlendMode::Screen, 0.9))
-                .pass(GpuPass::to_srgb(soft, soft))
-                .pass(GpuPass::dither(soft, soft, 2, [0, 0]))
-                .pass(GpuPass::light_alpha(soft, output)),
-            16 => plan.pass(GpuPass::blur(source, output, [1e-30, 0.0])),
+                .pass(PlanPass::brightness_curve(soft, soft, Measure::Luma, vec![0.0, 0.1, 0.9], 1.0))
+                .pass(PlanPass::blend_images(soft, source, soft, BlendMode::Screen, 0.9))
+                .pass(PlanPass::to_srgb(soft, soft))
+                .pass(PlanPass::dither(soft, soft, 2, [0, 0]))
+                .pass(PlanPass::light_alpha(soft, output)),
+            16 => plan.pass(PlanPass::blur(source, output, [1e-30, 0.0])),
             17 => {
-                let far = GpuPass::matrix(source, soft, [[1e33, 0.0, 0.0, 1e33], [0.0; 4], [0.0; 4], [0.0; 4]]);
-                plan.pass(far).pass(GpuPass::warp(source, soft, output, [4096.0, 0.0]))
+                let far = PlanPass::matrix(source, soft, [[1e33, 0.0, 0.0, 1e33], [0.0; 4], [0.0; 4], [0.0; 4]]);
+                plan.pass(far).pass(PlanPass::warp(source, soft, output, [4096.0, 0.0]))
             }
-            18 => plan.pass(GpuPass::host(HostKernel::Resample { filter: Filter::Bicubic, scale: Some([0.5, 1.0]) }, source, output)),
+            18 => plan.pass(PlanPass::host(HostKernel::Resample { filter: Filter::Bicubic, scale: Some([0.5, 1.0]) }, source, output)),
             19 | 20 => {
                 let (top, amount) = if cx.index("kernel") == 19 { ([0.0, 0.0, 1.0, 0.0], 1.0) } else { ([1e38, 0.0, 0.0, 0.0], 0.0) };
-                let top_image = GpuPass::matrix(source, soft, [top, [0.0; 4], [0.0; 4], [0.0, 0.0, 0.0, 1.0]]);
-                plan.pass(top_image).pass(GpuPass::blend_images(source, soft, output, BlendMode::Over, amount))
+                let top_image = PlanPass::matrix(source, soft, [top, [0.0; 4], [0.0; 4], [0.0, 0.0, 0.0, 1.0]]);
+                plan.pass(top_image).pass(PlanPass::blend_images(source, soft, output, BlendMode::Over, amount))
             }
             21 => {
                 let ramp = (0..4096).map(|i| i as f32 / 4095.0 * 1e-36).collect();
-                plan.pass(GpuPass::brightness_curve(source, output, Measure::MaxChannel, ramp, 1e-36))
+                plan.pass(PlanPass::brightness_curve(source, output, Measure::MaxChannel, ramp, 1e-36))
             }
-            22 => plan.pass(GpuPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some([2.0, 2.0]) }, source, output)),
-            23 => plan.pass(GpuPass::to_linear(source, output)),
-            24 => plan.pass(GpuPass::transfer(source, output, Encoding::Linear, Negatives::Linear)),
-            25 => plan.pass(GpuPass::transfer(source, output, Encoding::Srgb, Negatives::Linear)),
+            22 => plan.pass(PlanPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some([2.0, 2.0]) }, source, output)),
+            23 => plan.pass(PlanPass::to_linear(source, output)),
+            24 => plan.pass(PlanPass::transfer(source, output, Encoding::Linear, Negatives::Linear)),
+            25 => plan.pass(PlanPass::transfer(source, output, Encoding::Srgb, Negatives::Linear)),
             _ => {
                 let quarter = frame.map(|side| side.div_ceil(4));
                 let (small, blurred) = (plan.scratch(quarter), plan.scratch(quarter));
-                plan.pass(GpuPass::resample(source, small, Filter::Bilinear))
-                    .pass(GpuPass::blur(small, blurred, [1.5; 2]))
-                    .pass(GpuPass::resample(blurred, soft, Filter::Bilinear))
-                    .pass(GpuPass::blend_images(source, soft, output, BlendMode::Screen, 0.7))
+                plan.pass(PlanPass::resample(source, small, Filter::Bilinear))
+                    .pass(PlanPass::blur(small, blurred, [1.5; 2]))
+                    .pass(PlanPass::resample(blurred, soft, Filter::Bilinear))
+                    .pass(PlanPass::blend_images(source, soft, output, BlendMode::Screen, 0.7))
             }
         };
         Layout::whole_frame().padded(KERNEL_PADDING).passes(plan)
@@ -483,7 +483,7 @@ impl Effect for Swap {
 
     fn layout(&self, cx: &Cx) -> Layout {
         if cx.bool("planned") {
-            Layout::pointwise().passes(GpuPlan::new().pass(GpuPass::matrix(GpuImage::Source, GpuImage::Output, SWAP)))
+            Layout::pointwise().passes(Plan::new().pass(PlanPass::matrix(PlanImage::Source, PlanImage::Output, SWAP)))
         } else {
             Layout::pointwise()
         }

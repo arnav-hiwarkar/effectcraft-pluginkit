@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use craft_plugin::{GpuImage, GpuPass, GpuPlan, HostKernel, Pixel};
+use craft_plugin::{HostKernel, Pixel, Plan, PlanImage, PlanPass};
 
 use super::{CLEAR, Image, each_row, pointwise};
 
@@ -23,8 +23,8 @@ pub struct Op<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fused<'a> {
     pub passes: Range<usize>,
-    pub inputs: Vec<GpuImage>,
-    pub out: GpuImage,
+    pub inputs: Vec<PlanImage>,
+    pub out: PlanImage,
     pub ops: Vec<Op<'a>>,
 }
 
@@ -34,7 +34,7 @@ pub enum Step<'a> {
     Fused(Fused<'a>),
 }
 
-fn pointwise(pass: &GpuPass) -> Option<&HostKernel> {
+fn pointwise(pass: &PlanPass) -> Option<&HostKernel> {
     pass.host.as_ref().filter(|kernel| kernel.pointwise() && pass.draw.is_none())
 }
 
@@ -42,11 +42,11 @@ fn reads_aux(kernel: &HostKernel) -> bool {
     matches!(kernel, HostKernel::Blend { .. })
 }
 
-fn keeps_target(pass: &GpuPass) -> bool {
+fn keeps_target(pass: &PlanPass) -> bool {
     pass.host.is_none() && pass.draw.as_ref().is_none_or(|draw| !draw.clear)
 }
 
-pub(crate) fn live_after(passes: &[GpuPass], image: GpuImage) -> bool {
+pub(crate) fn live_after(passes: &[PlanPass], image: PlanImage) -> bool {
     for pass in passes {
         if pass.src == image || pass.aux == Some(image) || (pass.out == image && keeps_target(pass)) {
             return true;
@@ -55,16 +55,16 @@ pub(crate) fn live_after(passes: &[GpuPass], image: GpuImage) -> bool {
             return false;
         }
     }
-    image == GpuImage::Output
+    image == PlanImage::Output
 }
 
-fn group<'a>(plan: &'a GpuPlan, passes: Range<usize>) -> Option<Fused<'a>> {
+fn group<'a>(plan: &'a Plan, passes: Range<usize>) -> Option<Fused<'a>> {
     let members = &plan.passes[passes.clone()];
-    let mut inputs: Vec<GpuImage> = Vec::new();
+    let mut inputs: Vec<PlanImage> = Vec::new();
     let mut ops = Vec::with_capacity(members.len());
     for (k, pass) in members.iter().enumerate() {
         let kernel = pointwise(pass)?;
-        let mut resolve = |image: GpuImage| match members[..k].iter().rposition(|earlier| earlier.out == image) {
+        let mut resolve = |image: PlanImage| match members[..k].iter().rposition(|earlier| earlier.out == image) {
             Some(j) => Ref::Pass(j),
             None => Ref::Input(inputs.iter().position(|known| *known == image).unwrap_or_else(|| {
                 inputs.push(image);
@@ -82,8 +82,8 @@ fn group<'a>(plan: &'a GpuPlan, passes: Range<usize>) -> Option<Fused<'a>> {
     (inputs.len() <= MAX_FUSED_INPUTS && !intermediate_live).then_some(Fused { passes, inputs, out, ops })
 }
 
-pub fn steps(plan: &GpuPlan, frame: [u32; 2]) -> Vec<Step<'_>> {
-    let size = |pass: &GpuPass| plan.size_of(pass.out, frame);
+pub fn steps(plan: &Plan, frame: [u32; 2]) -> Vec<Step<'_>> {
+    let size = |pass: &PlanPass| plan.size_of(pass.out, frame);
     let mut steps = Vec::new();
     let mut start = 0;
     while start < plan.passes.len() {

@@ -1,4 +1,4 @@
-use craft_plugin::{BlendMode, BlurShape, Encoding, Filter, GpuImage, GpuPass, GpuPlan, HostKernel, Measure, Negatives, Pixel, Taps};
+use craft_plugin::{BlendMode, BlurShape, Encoding, Filter, HostKernel, Measure, Negatives, Pixel, Plan, PlanImage, PlanPass, Taps};
 
 use super::{Image, Lowered, Ref, Step, StepImage, blur_taps, lower, run, run_fused, steps};
 
@@ -316,15 +316,15 @@ fn light_alpha_raises_alpha_to_the_brightest_channel() {
     assert_eq!(got, [[0.3, 0.6, 0.1, 0.6], [2.0, 0.0, 0.0, 1.0], [0.1, 0.1, 0.1, 0.9], [-1.0, -2.0, -3.0, 0.0]]);
 }
 
-fn sequential(plan: &GpuPlan, source: &[Pixel]) -> Vec<Pixel> {
+fn sequential(plan: &Plan, source: &[Pixel]) -> Vec<Pixel> {
     let mut images: Vec<Vec<Pixel>> = vec![Vec::new(); plan.images.len() + 1];
-    let index = |image: GpuImage| match image {
-        GpuImage::Output => 0,
-        GpuImage::Scratch(i) => i as usize + 1,
+    let index = |image: PlanImage| match image {
+        PlanImage::Output => 0,
+        PlanImage::Scratch(i) => i as usize + 1,
         _ => usize::MAX,
     };
     for pass in &plan.passes {
-        let read = |image: GpuImage| Image { size: SIZE, pixels: if image == GpuImage::Source { source } else { &images[index(image)] } };
+        let read = |image: PlanImage| Image { size: SIZE, pixels: if image == PlanImage::Source { source } else { &images[index(image)] } };
         let mut out = vec![[0.0; 4]; source.len()];
         run(pass.host.as_ref().expect("a host kernel"), read(pass.src), pass.aux.map(read), SIZE, &mut out);
         images[index(pass.out)] = out;
@@ -332,17 +332,17 @@ fn sequential(plan: &GpuPlan, source: &[Pixel]) -> Vec<Pixel> {
     std::mem::take(&mut images[0])
 }
 
-fn fused(plan: &GpuPlan, source: &[Pixel]) -> Vec<Pixel> {
+fn fused(plan: &Plan, source: &[Pixel]) -> Vec<Pixel> {
     let mut images: Vec<Vec<Pixel>> = vec![vec![[0.0; 4]; source.len()]; plan.images.len() + 1];
-    let index = |image: GpuImage| match image {
-        GpuImage::Output => 0,
-        GpuImage::Scratch(i) => i as usize + 1,
+    let index = |image: PlanImage| match image {
+        PlanImage::Output => 0,
+        PlanImage::Scratch(i) => i as usize + 1,
         _ => usize::MAX,
     };
     for step in steps(plan, SIZE) {
         let Step::Fused(group) = step else { panic!("only pointwise kernels in this plan") };
         let inputs: Vec<Image> =
-            group.inputs.iter().map(|image| Image { size: SIZE, pixels: if *image == GpuImage::Source { source } else { &images[index(*image)] } }).collect();
+            group.inputs.iter().map(|image| Image { size: SIZE, pixels: if *image == PlanImage::Source { source } else { &images[index(*image)] } }).collect();
         let mut out = vec![[0.0; 4]; source.len()];
         run_fused(&group, &inputs, SIZE[0] as usize, &mut out);
         images[index(group.out)] = out;
@@ -353,19 +353,19 @@ fn fused(plan: &GpuPlan, source: &[Pixel]) -> Vec<Pixel> {
 #[test]
 fn fused_pointwise_passes_give_exactly_what_they_give_one_by_one() {
     let source = picture(SIZE);
-    let mut plan = GpuPlan::new();
+    let mut plan = Plan::new();
     let [a, b, c] = [plan.scratch(SIZE), plan.scratch(SIZE), plan.scratch(SIZE)];
     let rows = [[0.5, 0.2, 0.0, 0.0], [0.0, 1.0, 0.3, 0.0], [0.1, 0.0, 0.7, 0.0], [0.0, 0.0, 0.0, 1.0]];
     let plan = plan
-        .pass(GpuPass::to_linear(GpuImage::Source, a))
-        .pass(GpuPass::matrix(a, b, rows))
-        .pass(GpuPass::brightness_curve(a, a, Measure::Luma, vec![0.0, 0.2, 1.5], 1.0))
-        .pass(GpuPass::blend_images(b, a, c, BlendMode::Screen, 0.8))
-        .pass(GpuPass::blend_images(c, GpuImage::Source, c, BlendMode::Lighten, 1.0))
-        .pass(GpuPass::to_srgb(c, c))
-        .pass(GpuPass::dither(c, c, 9, [2, 2]))
-        .pass(GpuPass::light_alpha(c, b))
-        .pass(GpuPass::curves(b, GpuImage::Output, &[[0.0; 4], [1.0, 0.5, 1.0, 1.0]]));
+        .pass(PlanPass::to_linear(PlanImage::Source, a))
+        .pass(PlanPass::matrix(a, b, rows))
+        .pass(PlanPass::brightness_curve(a, a, Measure::Luma, vec![0.0, 0.2, 1.5], 1.0))
+        .pass(PlanPass::blend_images(b, a, c, BlendMode::Screen, 0.8))
+        .pass(PlanPass::blend_images(c, PlanImage::Source, c, BlendMode::Lighten, 1.0))
+        .pass(PlanPass::to_srgb(c, c))
+        .pass(PlanPass::dither(c, c, 9, [2, 2]))
+        .pass(PlanPass::light_alpha(c, b))
+        .pass(PlanPass::curves(b, PlanImage::Output, &[[0.0; 4], [1.0, 0.5, 1.0, 1.0]]));
     assert_eq!(plan.validate(SIZE), Ok(()), "pointwise host kernels may write the image they read");
     let groups: Vec<usize> = steps(&plan, SIZE).iter().map(|step| if let Step::Fused(group) = step { group.ops.len() } else { 0 }).collect();
     assert_eq!(groups, [9], "the whole chain is one loop");
@@ -375,14 +375,14 @@ fn fused_pointwise_passes_give_exactly_what_they_give_one_by_one() {
 #[test]
 fn a_fused_loop_reads_an_overwritten_image_and_one_read_twice_as_written_at_that_point() {
     let source = vec![[0.25, 0.5, 0.75, 1.0]; (SIZE[0] * SIZE[1]) as usize];
-    let mut plan = GpuPlan::new();
+    let mut plan = Plan::new();
     let [a, b] = [plan.scratch(SIZE), plan.scratch(SIZE)];
     let double = [[2.0, 0.0, 0.0, 0.0], [0.0, 2.0, 0.0, 0.0], [0.0, 0.0, 2.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
     let plan = plan
-        .pass(GpuPass::matrix(GpuImage::Source, a, double))
-        .pass(GpuPass::blend_images(a, GpuImage::Source, b, BlendMode::Add, 1.0))
-        .pass(GpuPass::matrix(a, a, [[0.5, 0.0, 0.0, 0.0], [0.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 0.5]]))
-        .pass(GpuPass::blend_images(b, a, GpuImage::Output, BlendMode::Subtract, 1.0));
+        .pass(PlanPass::matrix(PlanImage::Source, a, double))
+        .pass(PlanPass::blend_images(a, PlanImage::Source, b, BlendMode::Add, 1.0))
+        .pass(PlanPass::matrix(a, a, [[0.5, 0.0, 0.0, 0.0], [0.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 0.5]]))
+        .pass(PlanPass::blend_images(b, a, PlanImage::Output, BlendMode::Subtract, 1.0));
     assert_eq!(steps(&plan, SIZE).len(), 1, "one loop");
     let out = fused(&plan, &source);
     assert!(out.iter().all(|p| *p == [0.5, 1.0, 1.5, 1.5]), "{:?}", out[0]);
@@ -390,17 +390,17 @@ fn a_fused_loop_reads_an_overwritten_image_and_one_read_twice_as_written_at_that
 
 #[test]
 fn a_fused_loop_ends_where_a_value_is_read_later_or_a_third_image_is_needed() {
-    let mut plan = GpuPlan::new();
+    let mut plan = Plan::new();
     let [a, b, c, d] = [plan.scratch(SIZE), plan.scratch(SIZE), plan.scratch(SIZE), plan.scratch(SIZE)];
     let half = plan.scratch([19, 12]);
     let plan = plan
-        .pass(GpuPass::to_linear(GpuImage::Source, a))
-        .pass(GpuPass::to_srgb(a, b))
-        .pass(GpuPass::resample(a, half, Filter::Bilinear))
-        .pass(GpuPass::blend_images(b, GpuImage::Source, c, BlendMode::Add, 1.0))
-        .pass(GpuPass::blend_images(c, a, d, BlendMode::Add, 1.0))
-        .pass(GpuPass::resample(half, b, Filter::Bilinear))
-        .pass(GpuPass::blend_images(d, b, GpuImage::Output, BlendMode::Add, 1.0));
+        .pass(PlanPass::to_linear(PlanImage::Source, a))
+        .pass(PlanPass::to_srgb(a, b))
+        .pass(PlanPass::resample(a, half, Filter::Bilinear))
+        .pass(PlanPass::blend_images(b, PlanImage::Source, c, BlendMode::Add, 1.0))
+        .pass(PlanPass::blend_images(c, a, d, BlendMode::Add, 1.0))
+        .pass(PlanPass::resample(half, b, Filter::Bilinear))
+        .pass(PlanPass::blend_images(d, b, PlanImage::Output, BlendMode::Add, 1.0));
     let shape: Vec<(Vec<usize>, Vec<Ref>)> = steps(&plan, SIZE)
         .into_iter()
         .map(|step| match step {
@@ -424,12 +424,12 @@ fn a_fused_loop_ends_where_a_value_is_read_later_or_a_third_image_is_needed() {
 
 #[test]
 fn on_the_gpu_a_resample_read_only_by_the_next_fused_loop_is_sampled_inside_it() {
-    let mut plan = GpuPlan::new();
+    let mut plan = Plan::new();
     let (half, up) = (plan.scratch([19, 12]), plan.scratch(SIZE));
     let plan = plan
-        .pass(GpuPass::resample(GpuImage::Source, half, Filter::Bilinear))
-        .pass(GpuPass::resample(half, up, Filter::Bicubic))
-        .pass(GpuPass::blend_images(GpuImage::Source, up, GpuImage::Output, BlendMode::Screen, 1.0));
+        .pass(PlanPass::resample(PlanImage::Source, half, Filter::Bilinear))
+        .pass(PlanPass::resample(half, up, Filter::Bicubic))
+        .pass(PlanPass::blend_images(PlanImage::Source, up, PlanImage::Output, BlendMode::Screen, 1.0));
     let (lowered, temps) = lower(&plan, SIZE);
     let steps: Vec<(&str, StepImage, Option<StepImage>, Vec<u32>, bool)> = lowered
         .iter()
@@ -443,8 +443,8 @@ fn on_the_gpu_a_resample_read_only_by_the_next_fused_loop_is_sampled_inside_it()
     assert_eq!(
         steps,
         [
-            ("craft_resample", StepImage::Plan(GpuImage::Source), None, vec![0], false),
-            ("craft_pointwise", StepImage::Plan(GpuImage::Source), Some(StepImage::Plan(half)), vec![], true),
+            ("craft_resample", StepImage::Plan(PlanImage::Source), None, vec![0], false),
+            ("craft_pointwise", StepImage::Plan(PlanImage::Source), Some(StepImage::Plan(half)), vec![], true),
         ]
     );
     assert!(temps.is_empty());
@@ -488,14 +488,14 @@ fn a_blend_at_full_amount_is_the_blend_and_at_none_the_base() {
 
 #[test]
 fn on_the_gpu_blurs_of_one_size_share_one_temporary() {
-    let mut plan = GpuPlan::new();
+    let mut plan = Plan::new();
     let (soft, small, smaller) = (plan.scratch(SIZE), plan.scratch([5, 4]), plan.scratch([5, 4]));
-    let mut plan = plan.pass(GpuPass::blur(GpuImage::Source, soft, [2.0; 2]));
+    let mut plan = plan.pass(PlanPass::blur(PlanImage::Source, soft, [2.0; 2]));
     for k in 0..62 {
-        let (src, out) = if k % 2 == 0 { (soft, GpuImage::Output) } else { (GpuImage::Output, soft) };
-        plan = plan.pass(GpuPass::blur(src, out, [2.0; 2]));
+        let (src, out) = if k % 2 == 0 { (soft, PlanImage::Output) } else { (PlanImage::Output, soft) };
+        plan = plan.pass(PlanPass::blur(src, out, [2.0; 2]));
     }
-    let plan = plan.pass(GpuPass::resample(soft, small, Filter::Bilinear)).pass(GpuPass::blur(small, smaller, [1.0; 2]));
+    let plan = plan.pass(PlanPass::resample(soft, small, Filter::Bilinear)).pass(PlanPass::blur(small, smaller, [1.0; 2]));
     assert_eq!(plan.validate(SIZE), Ok(()));
     let (lowered, temps) = lower(&plan, SIZE);
     assert_eq!(lowered.len(), 2 * 64 + 1);
@@ -505,13 +505,13 @@ fn on_the_gpu_blurs_of_one_size_share_one_temporary() {
 #[test]
 fn on_the_gpu_a_fused_loop_is_straight_line_code_whose_numbers_stay_in_its_data() {
     let plan = |amount: f32, mode: BlendMode, curve: Vec<f32>| {
-        let mut plan = GpuPlan::new();
+        let mut plan = Plan::new();
         let soft = plan.scratch(SIZE);
-        plan.pass(GpuPass::brightness_curve(GpuImage::Source, soft, Measure::Luma, curve, 2.0))
-            .pass(GpuPass::blend_images(soft, GpuImage::Source, soft, mode, amount))
-            .pass(GpuPass::light_alpha(soft, GpuImage::Output))
+        plan.pass(PlanPass::brightness_curve(PlanImage::Source, soft, Measure::Luma, curve, 2.0))
+            .pass(PlanPass::blend_images(soft, PlanImage::Source, soft, mode, amount))
+            .pass(PlanPass::light_alpha(soft, PlanImage::Output))
     };
-    let step = |plan: &GpuPlan| match lower(plan, SIZE).0.as_slice() {
+    let step = |plan: &Plan| match lower(plan, SIZE).0.as_slice() {
         [Lowered::Host(step)] => step.clone(),
         other => panic!("one fused step: {other:?}"),
     };

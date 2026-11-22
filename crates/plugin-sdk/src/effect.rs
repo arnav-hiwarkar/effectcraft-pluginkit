@@ -27,7 +27,7 @@ pub trait Effect: Send + Sync + 'static {
 
     fn pass(&self, _cx: &Cx, pass: &Pass, _out: &mut Frame) -> Result<()> {
         Err(format!(
-            "the plan names the kernel `{}` but this effect has no CPU code for it; handle it in Effect::pass or use a host kernel such as GpuPass::blur",
+            "the plan names the kernel `{}` but this effect has no CPU code for it; handle it in Effect::pass or use a host kernel such as PlanPass::blur",
             pass.kernel
         )
         .into())
