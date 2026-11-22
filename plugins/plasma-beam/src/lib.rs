@@ -38,7 +38,8 @@ impl Effect for PlasmaBeam {
 
     fn overlay(&self, cx: &Cx, overlay: &mut Overlay) {
         if cx.index(spec::CORE_TYPE) == 0 {
-            overlay.line(&[cx.point(spec::CORE_START), cx.point(spec::CORE_END)]);
+            let core = spec::CoreControls::read(cx);
+            overlay.line(&[core.start, core.end]);
             overlay.point(cx, spec::CORE_START).point(cx, spec::CORE_END);
         }
     }
@@ -59,6 +60,8 @@ craft_plugin::export!(plugin);
 #[cfg(test)]
 mod tests {
     use craft_plugin::{Bind, RenderCx, Value};
+    use craft_plugin_host::assert_frame;
+    use craft_plugin_host::testing::TestPlugin;
 
     use super::*;
 
@@ -77,5 +80,16 @@ mod tests {
         let point = |param: &str| Bind::Point { param: param.into() };
         assert_eq!(handles, vec![([80.0, 72.0], point(spec::CORE_START)), ([80.0, 18.0], point(spec::CORE_END))]);
         assert_eq!(overlay(1.0), Overlay::new());
+    }
+
+    #[test]
+    fn the_default_beam_matches_its_stored_frame() {
+        assert_frame!(TestPlugin::of(plugin), "beam", { "preset": 0 }, "default");
+    }
+
+    #[test]
+    fn the_electric_preset_with_a_wider_distortion_matches_its_stored_frame() {
+        let plugin = TestPlugin::of(plugin);
+        assert_frame!(plugin.render("beam").time(1.25).set("preset", 2.0).set("Distortion/amount", 250.0), "electric-distorted");
     }
 }
