@@ -1,6 +1,6 @@
 use craft_plugin::prelude::*;
+use craft_plugin_host::testing::{Picture, TestPlugin};
 
-use crate::crt::{self, Crt};
 use crate::neon::{self, Neon};
 
 const SIZE: [usize; 2] = [96, 54];
@@ -17,38 +17,36 @@ fn source() -> Vec<Pixel> {
         .collect()
 }
 
-fn sampled_bytes(render: impl Fn(&mut Frame)) -> Vec<u8> {
-    let input = source();
-    let mut pixels = vec![[0.0; 4]; input.len()];
-    let mut frame = Frame::whole(SIZE[0], SIZE[1], &input, &mut pixels);
-    render(&mut frame);
+fn sampled_bytes(pixels: &[Pixel]) -> Vec<u8> {
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
     (0..ROWS).flat_map(|j| (0..COLUMNS).map(move |i| (4 + 9 * j) * SIZE[0] + 6 + 12 * i)).flat_map(|at| pixels[at].into_iter().take(3).map(byte)).collect()
 }
 
-fn crt_bytes(mask: u32) -> Vec<u8> {
-    let crt = Crt {
-        size: [96, 54],
-        curvature: 0.1,
-        corner: 0.05,
-        mask,
-        pitch: 2.0,
-        mask_strength: 0.6,
-        scan_strength: 0.5,
-        scan_period: 3.0,
-        roll: 0.7,
-        convergence: 1.0,
-        glow: 0.4,
-        glow_sigma: 6.0,
-        glow_threshold: 0.4,
-        vignette: 0.3,
-        noise: 0.0,
-        flicker: 0.0,
-        compensation: 1.0,
-        contrast: 1.1,
-        frame: 3,
-    };
-    sampled_bytes(|frame| crt::render(&crt, frame))
+fn crt_bytes(mask: f64) -> Vec<u8> {
+    let plugin = TestPlugin::of(crate::plugin);
+    let input = Picture { width: SIZE[0] as u32, height: SIZE[1] as u32, pixels: source() };
+    let render = plugin
+        .render("crt")
+        .input(input)
+        .time(0.7 / 3.0)
+        .set("Screen/curvature", 0.1)
+        .set("Screen/corner", 0.05)
+        .set("Screen/vignette", 30.0)
+        .set("Mask/mask", mask)
+        .set("Mask/pitch", 2.0)
+        .set("Mask/mask_strength", 60.0)
+        .set("Scanlines/scan_strength", 50.0)
+        .set("Scanlines/scan_period", 3.0)
+        .set("Scanlines/roll", 1.0)
+        .set("Signal/convergence", 1.0)
+        .set("Signal/noise", 0.0)
+        .set("Signal/flicker", 0.0)
+        .set("Phosphor Glow/glow", 40.0)
+        .set("Phosphor Glow/glow_radius", 6.0)
+        .set("Phosphor Glow/glow_threshold", 0.4)
+        .set("Compensation/compensation", 100.0)
+        .set("Compensation/contrast", 1.1);
+    sampled_bytes(&render.run().unwrap().pixels)
 }
 
 fn neon_bytes() -> Vec<u8> {
@@ -67,7 +65,10 @@ fn neon_bytes() -> Vec<u8> {
         lines_only: false,
         frame: 3,
     };
-    sampled_bytes(|frame| neon::render(&neon, frame))
+    let input = source();
+    let mut pixels = vec![[0.0; 4]; input.len()];
+    neon::render(&neon, &mut Frame::whole(SIZE[0], SIZE[1], &input, &mut pixels));
+    sampled_bytes(&pixels)
 }
 
 const SLOT_BYTES: [u8; 144] = [
@@ -93,22 +94,22 @@ const NEON_BYTES: [u8; 144] = [
     175, 236, 212, 207, 236, 34, 239, 238, 36,
 ];
 
-fn assert_within_one_level(now: Vec<u8>, golden: &[u8; 144]) {
+fn assert_within(levels: u8, now: Vec<u8>, golden: &[u8; 144]) {
     let worst = now.iter().zip(golden).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
-    assert!(worst <= 1, "largest 8-bit difference {worst}");
+    assert!(worst <= levels, "largest 8-bit difference {worst}");
 }
 
 #[test]
-fn the_slot_mask_crt_matches_the_output_made_with_the_standard_library_within_one_level() {
-    assert_within_one_level(crt_bytes(1), &SLOT_BYTES);
+fn the_slot_mask_crt_matches_the_output_of_its_own_glow_blur_within_one_level() {
+    assert_within(1, crt_bytes(1.0), &SLOT_BYTES);
 }
 
 #[test]
-fn the_dot_mask_crt_matches_the_output_made_with_the_standard_library_within_one_level() {
-    assert_within_one_level(crt_bytes(2), &DOT_BYTES);
+fn the_dot_mask_crt_matches_the_output_of_its_own_glow_blur_within_one_level() {
+    assert_within(1, crt_bytes(2.0), &DOT_BYTES);
 }
 
 #[test]
 fn neon_outline_matches_the_output_made_with_the_standard_library_within_one_level() {
-    assert_within_one_level(neon_bytes(), &NEON_BYTES);
+    assert_within(1, neon_bytes(), &NEON_BYTES);
 }

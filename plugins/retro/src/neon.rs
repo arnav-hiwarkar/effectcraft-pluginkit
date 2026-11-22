@@ -37,7 +37,7 @@ params! {
         }
         "Bloom" {
             intensity: f32 = slider("Intensity", 2.0, 0.0..=10.0),
-            radius: f32 = slider("Radius", 20.0, 1.0..=80.0),
+            radius: f32 = slider("Radius", 20.0, 1.0..=80.0).log(),
             falloff: f32 = percent("Falloff", 60.0),
             flicker: f32 = percent("Flicker", 0.0),
         }
