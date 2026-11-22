@@ -186,8 +186,8 @@ pub(crate) fn check_draw(n: usize, draw: &GpuDraw, program: &GpuProgram, scan_in
             let bytes = buffer(index, "index")?;
             let count = whole(bytes, 4, "indices")?;
             let used = draw.count.unwrap_or(count).min(count) as usize;
-            let outside = |index: &[u8]| u32::from_le_bytes([index[0], index[1], index[2], index[3]]) >= vertices;
-            if scan_indices && bytes.chunks_exact(4).take(used).any(outside) {
+            let outside = |index: &[u8; 4]| u32::from_le_bytes(*index) >= vertices;
+            if scan_indices && bytes.as_chunks::<4>().0.iter().take(used).any(outside) {
                 return Err(format!("pass {n} has an index past its {vertices} vertices"));
             }
             count
