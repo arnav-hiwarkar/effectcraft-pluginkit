@@ -1148,5 +1148,7 @@ fn a_panic_in_a_sandboxed_plugin_logs_its_file_and_line_before_the_trap() {
     let error = command(&loaded, "panic", &mut Recorder::default()).unwrap_err().to_string();
     assert!(error.contains("unreachable"), "{error}");
     let logs: Vec<String> = loaded.plugin.logs(0).into_iter().map(|line| line.message).collect();
-    assert_eq!(logs.first().map(String::as_str), Some("the plugin panicked at src/lib.rs:848:39: oops"), "{logs:?}");
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/probe/src/lib.rs")).unwrap();
+    let (line, column) = source.lines().enumerate().find_map(|(n, text)| Some((n + 1, text.find("panic!(\"oops\")")? + 1))).unwrap();
+    assert_eq!(logs.first().cloned(), Some(format!("the plugin panicked at src/lib.rs:{line}:{column}: oops")), "{logs:?}");
 }
