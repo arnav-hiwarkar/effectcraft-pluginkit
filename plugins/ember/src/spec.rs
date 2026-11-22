@@ -5,9 +5,6 @@ pub const POSITION: &str = "Emitter/position";
 pub const EMITTER_SIZE_X: &str = "Emitter/size_x";
 pub const EMITTER_SIZE_Y: &str = "Emitter/size_y";
 pub const EMITTER_SIZE_Z: &str = "Emitter/size_z";
-pub const EMITTER_SPEED_X: &str = "Emitter/motion_x";
-pub const EMITTER_SPEED_Y: &str = "Emitter/motion_y";
-pub const EMITTER_SPEED_Z: &str = "Emitter/motion_z";
 pub const RATE: &str = "Emitter/rate";
 pub const EMISSION: &str = "Emitter/emission";
 pub const DIRECTION: &str = "Emitter/direction";
@@ -81,9 +78,6 @@ pub fn effect() -> EffectSpec {
                 slider(EMITTER_SIZE_X, "Size X", 100.0, 0.0, 10000.0),
                 slider(EMITTER_SIZE_Y, "Size Y", 100.0, 0.0, 10000.0),
                 slider(EMITTER_SIZE_Z, "Size Z", 100.0, 0.0, 10000.0),
-                slider(EMITTER_SPEED_X, "Emitter Motion X", 0.0, -10000.0, 10000.0),
-                slider(EMITTER_SPEED_Y, "Emitter Motion Y", 0.0, -10000.0, 10000.0),
-                slider(EMITTER_SPEED_Z, "Emitter Motion Z", 0.0, -10000.0, 10000.0),
                 Param::popup(key(EMISSION), "Emission", &EMISSIONS, 0),
                 slider(RATE, "Particles/sec", 300.0, 0.0, 200000.0),
                 Param::angle(key(DIRECTION), "Direction", 0.0),
@@ -142,5 +136,6 @@ pub fn effect() -> EffectSpec {
             ],
         )
         .time_dependent()
+        .reads_param_history()
         .reads_scene()
 }

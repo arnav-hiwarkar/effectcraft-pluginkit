@@ -20,7 +20,6 @@ pub struct Sim {
     pub emitter: Emitter,
     pub position: Vec3,
     pub extent: Vec3,
-    pub motion: Vec3,
     pub rate: f32,
     pub burst: bool,
     pub direction: Vec3,
@@ -139,7 +138,6 @@ impl Settings {
             emitter,
             position: [xy[0], xy[1], quantise(finite(position3[2]))],
             extent: read.vec3([EMITTER_SIZE_X, EMITTER_SIZE_Y, EMITTER_SIZE_Z]).map(f32::abs),
-            motion: read.vec3([EMITTER_SPEED_X, EMITTER_SPEED_Y, EMITTER_SPEED_Z]),
             rate: read.number(RATE).clamp(0.0, 200_000.0),
             burst: cx.index(EMISSION) == 1,
             direction: direction(read.number(DIRECTION), read.number(ELEVATION)),
@@ -224,8 +222,15 @@ impl Hash {
 }
 
 impl Sim {
-    pub fn hash(&self) -> u64 {
+    pub fn fixed_hash(&self, history: u64) -> u64 {
         let mut h = Hash::new();
+        h.u32((history >> 32) as u32).u32(history as u32);
+        self.hash_emitter(&mut h);
+        h.u32(u32::from(self.burst)).u32(self.seed).u32(self.max_particles).u32(self.pre_run_frames).f32(self.frame_rate);
+        h.finish()
+    }
+
+    fn hash_emitter(&self, h: &mut Hash) {
         match &self.emitter {
             Emitter::Point => h.u32(0),
             Emitter::Box => h.u32(1),
@@ -238,10 +243,15 @@ impl Sim {
                         h.f32s(p);
                     });
                 });
-                &mut h
+                h
             }
         };
-        h.f32s(&self.position).f32s(&self.extent).f32s(&self.motion).f32(self.rate).u32(u32::from(self.burst)).f32s(&self.direction);
+    }
+
+    pub fn hash(&self) -> u64 {
+        let mut h = Hash::new();
+        self.hash_emitter(&mut h);
+        h.f32s(&self.position).f32s(&self.extent).f32(self.rate).u32(u32::from(self.burst)).f32s(&self.direction);
         h.f32(self.spread).f32(self.speed).f32(self.speed_random).f32(self.inherit).u32(self.seed);
         h.u32(self.max_particles).u32(self.pre_run_frames).f32(self.gravity).f32s(&self.wind).f32(self.drag);
         h.f32(self.turbulence).f32(self.turbulence_scale).f32(self.turbulence_evolution);

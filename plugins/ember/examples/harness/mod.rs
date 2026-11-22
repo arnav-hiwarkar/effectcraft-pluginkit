@@ -47,7 +47,7 @@ pub fn camera(size: [f64; 2], turn: f64, zoom: f64) -> Scene {
     let x = [zoom * cos, 0.0, zoom * sin, -zoom * cos * centre[0]];
     let y = [0.0, zoom, 0.0, -zoom * centre[1]];
     let add = |a: [f64; 4], k: f64| std::array::from_fn(|i| a[i] + k * w[i]);
-    Scene { projection: Some([add(x, centre[0]), add(y, centre[1]), w]), camera_layer: true }
+    Scene { projection: Some([add(x, centre[0]), add(y, centre[1]), w]), camera_layer: true, ..Default::default() }
 }
 
 #[derive(Clone)]
