@@ -1,4 +1,5 @@
 use craft_plugin::Frame;
+use craft_plugin::math::sin_cos;
 
 use crate::draw::{BIN_ROWS, DrawList, SPARK_LENGTH, Sprite};
 use crate::settings::Shape;
@@ -29,7 +30,7 @@ fn coverage(shape: Shape, sprite: &Sprite, (sin, cos): (f32, f32), centre: [f32;
 fn draw(list: &DrawList, sprite: &Sprite, layer: &mut [[f32; 4]], width: usize, rows: (usize, usize), row_base: usize) {
     let samples = list.samples.max(1);
     let weight = 1.0 / samples as f32;
-    let trig = sprite.angle.sin_cos();
+    let trig = sin_cos(sprite.angle);
     let (left, right) = sprite.columns();
     let x0 = left.max(0.0) as usize;
     let x1 = (right.ceil().max(0.0) as usize).min(width);
