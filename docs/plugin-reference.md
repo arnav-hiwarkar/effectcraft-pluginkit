@@ -140,7 +140,7 @@ A parameter declared without these behaves as before. `effect.list` reports `sli
 `params! { struct Name { field: Type = builder(name, …), "Group" { field: Type = builder(…), … }, … } }`
 makes a struct with one field per parameter and two functions: `Name::params()`, the `Vec<Param>` for
 `EffectSpec::params`, and `Name::read(cx)`, the struct filled from `cx`. The builder is any `Param` builder
-above without its first argument; the id is the field name, or `Group/field` inside a group. `Name::IDS`
+above without its first argument; the id is the field name, or `Group/field` inside a group. Range builders chain after it: `gain: f64 = slider("Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log()`. `Name::IDS`
 lists the ids. A field type implements `FromParam`:
 
 | Type | Read with | For |

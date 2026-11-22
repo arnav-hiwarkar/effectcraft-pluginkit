@@ -68,6 +68,7 @@ call. The field name is the parameter id; a quoted name opens a group, whose ids
 params! {
     struct Settings {
         radius: f64 = slider("Radius", 20.0, 0.0..=200.0),
+        gain: f64 = slider("Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log(),
         "Colour" {
             tint: [f32; 4] = color("Tint", [1.0, 0.5, 0.25, 1.0]),
             mode: usize = popup("Mode", &["Add", "Screen"], 1),
@@ -81,7 +82,7 @@ fn spec(&self) -> EffectSpec {
 }
 
 fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-    let Settings { radius, tint, mode, matte } = Settings::read(cx);
+    let Settings { radius, gain, tint, mode, matte } = Settings::read(cx);
     let radius = radius * cx.scale;
     …
 }
