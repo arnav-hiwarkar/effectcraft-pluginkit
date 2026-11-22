@@ -302,7 +302,7 @@ A timer the next reply does not ask for is stopped.
 | `c.pointers` | Every pointer event over the canvas since the last call, in order |
 | `c.pointer` | The last of `c.pointers` |
 | `c.keys` | Every key pressed while the canvas had the keyboard focus: `Key { name, modifiers }`. Names are egui key names: `Left`, `Right`, `Up`, `Down`, `Enter`, `Escape`, `Delete`, `Backspace`, `Space`, `A` to `Z`, `0` to `9`, `F1` … |
-| `ui.drop_target(key, \|ui\| …) -> Option<&Dropped>` | `Dropped::Files { paths }`, `Dropped::Items { ids }` (project items) or `Dropped::Data { plugin, data }` |
+| `ui.drop_target(key, \|ui\| …) -> Option<&Dropped>` | `Dropped::Files { paths }`, `Dropped::Items { ids }` (project items) or `Dropped::Data { plugin, data }`. A dropped file is readable through `Root::User` as if the user had picked it, with no `files.read`; its folder stays closed and it is not writable |
 | `ui.drag_source(key, drag, \|ui\| …)` | Lets the user drag its contents. `Drag::File { root, path }` drags a file from `Root::Bundle` or `Root::Data` (or `Root::User` with `files.read`); `Drag::Data { data }` drags text to a plugin drop target |
 
 A panel's widgets have the automation ids `plugin.<plugin>.<panel>.<widget id>`, and its labels

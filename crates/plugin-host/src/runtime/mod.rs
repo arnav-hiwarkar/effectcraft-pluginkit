@@ -121,6 +121,10 @@ impl Engine {
         }
     }
 
+    pub fn accept_drop(&self, path: &Path) -> Result<(), String> {
+        self.identity.remember_pick(path.to_path_buf(), false)
+    }
+
     pub fn know_tasks(&self, names: Vec<String>) {
         self.identity.tasks.know(names);
     }

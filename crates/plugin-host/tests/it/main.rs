@@ -741,6 +741,29 @@ fn a_picked_file_becomes_readable_without_the_files_permission_but_not_writable(
     });
 }
 
+#[test]
+fn a_dropped_file_is_readable_like_a_picked_one_but_not_writable_and_its_folder_stays_closed() {
+    each_kind(|kind| {
+        let outside = tempfile::tempdir().unwrap();
+        let (dropped, sibling) = (outside.path().join("dropped.txt"), outside.path().join("sibling.txt"));
+        std::fs::write(&dropped, "dropped by the user").unwrap();
+        std::fs::write(&sibling, "next to it").unwrap();
+        let loaded = load(kind, &[]);
+        let target = |path: &Path| std::fs::write(loaded._dir.path().join("user-target.txt"), path.to_str().unwrap()).unwrap();
+        let mut host = Recorder::default();
+        loaded.plugin.accept_drop(&dropped).unwrap();
+        target(&dropped);
+        command(&loaded, "read-user", &mut host).unwrap();
+        assert_eq!(std::fs::read_to_string(loaded.data.path().join("data/read.txt")).unwrap(), "dropped by the user", "{kind:?}");
+        let error = command(&loaded, "write-user", &mut host).unwrap_err().to_string();
+        assert!(error.contains("files.write"), "{kind:?} {error}");
+        target(&sibling);
+        let error = command(&loaded, "read-user", &mut host).unwrap_err().to_string();
+        assert!(error.contains("files.read"), "{kind:?} {error}");
+        assert_eq!(std::fs::read_to_string(&dropped).unwrap(), "dropped by the user", "{kind:?}");
+    });
+}
+
 #[cfg(unix)]
 #[test]
 fn a_picked_file_replaced_by_a_link_is_refused_and_a_new_save_target_is_not_followed() {

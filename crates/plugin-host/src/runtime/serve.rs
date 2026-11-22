@@ -78,7 +78,7 @@ impl Identity {
         self.picked.lock().is_ok_and(|picked| picked.iter().any(|chosen| chosen.matches(Path::new(path), write)))
     }
 
-    fn remember_pick(&self, path: PathBuf, writable: bool) -> Result<(), String> {
+    pub fn remember_pick(&self, path: PathBuf, writable: bool) -> Result<(), String> {
         user_path(self, &path)?;
         let held = Handle::from_path(&path).ok().map(Arc::new);
         let folder = match (writable, &held, path.parent()) {

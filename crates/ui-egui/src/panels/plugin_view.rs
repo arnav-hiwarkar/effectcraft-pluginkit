@@ -371,7 +371,7 @@ impl Renderer<'_> {
         let files: Vec<String> =
             ui.input(|i| i.raw.dropped_files.iter().map(|file| file.path().to_string_lossy().into_owned()).filter(|path| !path.is_empty()).collect());
         if !files.is_empty() {
-            self.emit(id, UiEventKind::Drop(Dropped::Files { paths: files }));
+            self.dropped(id, Dropped::Files { paths: files });
         }
         if !ui.input(|i| i.pointer.any_released()) {
             return;
@@ -384,8 +384,15 @@ impl Renderer<'_> {
         });
         if let Some(dropped) = dropped {
             egui::DragAndDrop::clear_payload(ui.ctx());
-            self.emit(id, UiEventKind::Drop(dropped));
+            self.dropped(id, dropped);
         }
+    }
+
+    fn dropped(&mut self, id: u64, dropped: Dropped) {
+        if let Dropped::Files { paths } = &dropped {
+            effectcraft_plugin::accept_drop(self.source.plugin, paths);
+        }
+        self.emit(id, UiEventKind::Drop(dropped));
     }
 
     fn drag_source(&mut self, ui: &mut egui::Ui, id: u64, drag: &Drag, children: &[Widget]) {
@@ -599,15 +606,65 @@ mod tests {
     use egui_kittest::kittest::Queryable;
 
     fn harness(widgets: Vec<Widget>) -> Harness<'static, Vec<UiEvent>> {
+        harness_for("test", widgets)
+    }
+
+    fn harness_for(plugin: &'static str, widgets: Vec<Widget>) -> Harness<'static, Vec<UiEvent>> {
         let tokens = Tokens::for_kind(Default::default());
         Harness::new_ui_state(
             move |ui, events: &mut Vec<UiEvent>| {
                 let mut auto = Registry::default();
                 let mut images = Images::default();
-                events.extend(draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin: "test", images: &mut images }));
+                events.extend(draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin, images: &mut images }));
             },
             Vec::new(),
         )
+    }
+
+    fn probe_bundle(id: &str) -> tempfile::TempDir {
+        let probe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugin-host/tests/probe");
+        let status = std::process::Command::new(env!("CARGO"))
+            .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
+            .arg(probe.join("Cargo.toml"))
+            .status()
+            .expect("cargo runs");
+        assert!(status.success(), "the probe builds");
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::copy(probe.join("target/wasm32-unknown-unknown/release/probe.wasm"), dir.path().join("probe.wasm")).expect("copy the probe");
+        let manifest = json!({"id": id, "name": "Probe", "version": "1.0.0", "entry": {"wasm": "probe.wasm"}, "permissions": []});
+        std::fs::write(dir.path().join("plugin.json"), manifest.to_string()).expect("write the manifest");
+        dir
+    }
+
+    #[test]
+    fn a_file_dropped_on_a_plugin_drop_target_becomes_readable_by_that_plugin_without_files_read() {
+        const PROBE: &str = "test.drop-probe";
+        let outside = tempfile::tempdir().unwrap();
+        let dropped = outside.path().join("footage.txt");
+        std::fs::write(&dropped, "dropped footage").unwrap();
+        let mut session = super::glide_tests::session_with(&[]);
+        let bundle = probe_bundle(PROBE);
+        let plugins = effectcraft_plugin::plugins().unwrap();
+        plugins.load_for_session(bundle.path()).unwrap();
+        std::fs::write(bundle.path().join("user-target.txt"), dropped.to_str().unwrap()).unwrap();
+        let refused = effectcraft_plugin::run_command(&mut session, PROBE, "read-user").unwrap_err();
+        assert!(refused.contains("files.read"), "{refused}");
+
+        let target = Widget::DropTarget { id: 5, children: vec![Widget::Label { text: "Drop a file".into(), style: TextStyle::Body }] };
+        let mut harness = harness_for(PROBE, vec![target]);
+        harness.run();
+        let at = harness.get_all_by_value("Drop a file").next().map(|node| node.rect().center()).unwrap_or_default();
+        let path = dropped.to_string_lossy().into_owned();
+        egui::DragAndDrop::set_payload(&harness.ctx, crate::panels::DragPayload::Files(vec![path.clone()]));
+        harness.hover_at(at);
+        harness.run();
+        harness.drop_at(at);
+        harness.run();
+        assert_eq!(harness.state(), &vec![UiEvent { id: 5, kind: UiEventKind::Drop(Dropped::Files { paths: vec![path] }) }]);
+
+        effectcraft_plugin::run_command(&mut session, PROBE, "read-user").unwrap();
+        let data = plugins.get(PROBE).unwrap().data_dir.join("read.txt");
+        assert_eq!(std::fs::read_to_string(data).unwrap(), "dropped footage");
     }
 
     #[test]
