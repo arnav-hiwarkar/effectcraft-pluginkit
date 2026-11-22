@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use craft_plugin_host::kernels::{self, StepImage};
 use craft_plugin_host::{
     Blend, Call, Camera, Cull, Draw, EffectSpec, GpuData, GpuImage, Host, Layout, Light, LightKind, MaskPath, Param, ParamKind, ParamsAt, Pixels, RenderCx,
     Scene, Value as Wire,
@@ -14,7 +15,6 @@ use effectcraft_engine::keyframe::Value;
 use effectcraft_engine::project::ParamUi;
 
 use crate::manage::Loaded;
-use craft_plugin_host::kernels::{self, StepImage};
 
 const MAX_PADDING: u32 = 4096;
 const MAX_STAMPED_FILES: usize = 256;

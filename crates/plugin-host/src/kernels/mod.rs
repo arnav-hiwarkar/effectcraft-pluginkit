@@ -173,11 +173,11 @@ fn support(filter: Filter) -> f32 {
 }
 
 struct AxisTaps {
-    first: isize,
+    first: usize,
     weights: Vec<f32>,
 }
 
-fn axis_taps(filter: Filter, scale: f32, out_len: usize) -> Vec<AxisTaps> {
+fn axis_taps(filter: Filter, scale: f32, out_len: usize, src_len: usize) -> Vec<AxisTaps> {
     let widen = scale.max(1.0);
     let reach = support(filter) * widen;
     (0..out_len)
@@ -185,9 +185,13 @@ fn axis_taps(filter: Filter, scale: f32, out_len: usize) -> Vec<AxisTaps> {
             let centre = (i as f32 + 0.5) * scale - 0.5;
             let first = (centre - reach).floor() as isize + 1;
             let last = (centre + reach).ceil() as isize - 1;
-            let raw: Vec<f32> = (first..=last).map(|s| filter_weight(filter, (s as f32 - centre) / widen)).collect();
-            let total: f32 = raw.iter().sum();
-            AxisTaps { first, weights: raw.iter().map(|w| w / total).collect() }
+            let raw: Vec<(isize, f32)> = (first..=last).map(|s| (s, filter_weight(filter, (s as f32 - centre) / widen))).collect();
+            let total: f32 = raw.iter().map(|(_, w)| w).sum();
+            let inside: Vec<(isize, f32)> = raw.into_iter().filter(|(s, _)| (0..src_len as isize).contains(s)).collect();
+            let start = inside.iter().position(|(_, w)| *w != 0.0).unwrap_or(inside.len());
+            let end = inside.iter().rposition(|(_, w)| *w != 0.0).map_or(start, |last| last + 1);
+            let held = &inside[start..end];
+            AxisTaps { first: held.first().map_or(0, |(s, _)| *s as usize), weights: held.iter().map(|(_, w)| w / total).collect() }
         })
         .collect()
 }
@@ -195,7 +199,7 @@ fn axis_taps(filter: Filter, scale: f32, out_len: usize) -> Vec<AxisTaps> {
 fn resample(src: Image, filter: Filter, scale: [f32; 2], size: [u32; 2], out: &mut [Pixel]) {
     let [width, height] = size.map(|side| side as usize);
     let [src_width, src_height] = src.size.map(|side| side as usize);
-    let (across_taps, down_taps) = (axis_taps(filter, scale[0], width), axis_taps(filter, scale[1], height));
+    let (across_taps, down_taps) = (axis_taps(filter, scale[0], width, src_width), axis_taps(filter, scale[1], height, src_height));
     let mut across = vec![CLEAR; width * src_height];
     each_row(
         &mut across,
@@ -205,11 +209,7 @@ fn resample(src: Image, filter: Filter, scale: [f32; 2], size: [u32; 2], out: &m
             let held = src.row(y);
             for (o, taps) in row.iter_mut().zip(&across_taps) {
                 *o = CLEAR;
-                for (k, w) in taps.weights.iter().enumerate() {
-                    if let Some(p) = usize::try_from(taps.first + k as isize).ok().filter(|x| *x < src_width).map(|x| &held[x]) {
-                        mul_add(o, p, *w);
-                    }
-                }
+                taps.weights.iter().zip(&held[taps.first..]).for_each(|(w, p)| mul_add(o, p, *w));
             }
         },
     );
@@ -222,7 +222,7 @@ fn resample(src: Image, filter: Filter, scale: [f32; 2], size: [u32; 2], out: &m
             row.fill(CLEAR);
             let taps = &down_taps[y];
             for (k, w) in taps.weights.iter().enumerate() {
-                let Some(from) = usize::try_from(taps.first + k as isize).ok().filter(|from| *from < src_height) else { continue };
+                let from = taps.first + k;
                 row.iter_mut().zip(&across[from * width..(from + 1) * width]).for_each(|(o, p)| mul_add(o, p, *w));
             }
             if clamp {
