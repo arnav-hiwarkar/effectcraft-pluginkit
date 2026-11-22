@@ -52,14 +52,8 @@ impl Engine {
         Ok(Engine::with(kind, &bundle.manifest.id, bundle.dir.clone(), grants, data_dir))
     }
 
-    pub fn in_process(
-        exports: craft_plugin::abi::Exports,
-        id: &str,
-        dir: PathBuf,
-        grants: BTreeSet<Permission>,
-        data_dir: PathBuf,
-    ) -> Result<Arc<Engine>, PluginError> {
-        Ok(Engine::with(Kind::Native(NativeGuest::in_process(exports)?), id, dir, grants, data_dir))
+    pub fn in_process(plugin: craft_plugin::Plugin, id: &str, dir: PathBuf, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Arc<Engine> {
+        Engine::with(Kind::Native(NativeGuest::in_process(plugin)), id, dir, grants, data_dir)
     }
 
     fn with(kind: Kind, id: &str, dir: PathBuf, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Arc<Engine> {

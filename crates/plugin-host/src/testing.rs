@@ -374,14 +374,15 @@ impl Host for TestHost<'_> {
 pub struct TestPlugin {
     plugin: Plugin,
     recorder: Mutex<Recorder>,
+    data: tempfile::TempDir,
 }
 
 fn manifest_dir() -> Result<PathBuf, String> {
     std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from).ok_or_else(|| "CARGO_MANIFEST_DIR is not set; run the test with cargo test".into())
 }
 
-fn data_dir(id: &str) -> PathBuf {
-    std::env::temp_dir().join("craft-plugin-test").join(format!("{id}-{}", std::process::id()))
+fn data_dir(id: &str) -> Result<tempfile::TempDir, String> {
+    tempfile::Builder::new().prefix(&format!("craft-plugin-test-{id}-")).tempdir().map_err(|e| format!("no temporary data folder: {e}"))
 }
 
 impl TestPlugin {
@@ -392,20 +393,23 @@ impl TestPlugin {
     pub fn in_process(plugin: fn() -> craft_plugin::Plugin) -> Result<TestPlugin, String> {
         let dir = manifest_dir()?;
         let manifest = Bundle::manifest_of(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let data = data_dir(&manifest.id);
-        let exports = craft_plugin::abi::in_process(plugin);
-        let plugin = Plugin::in_process(manifest, exports, dir, data, Limits::default()).map_err(|e| e.to_string())?;
-        Ok(TestPlugin { plugin, recorder: Mutex::default() })
+        let data = data_dir(&manifest.id)?;
+        let plugin = Plugin::in_process(manifest, plugin(), dir, data.path().join("data"), Limits::default()).map_err(|e| e.to_string())?;
+        Ok(TestPlugin { plugin, recorder: Mutex::default(), data })
     }
 
     pub fn load(bundle: &Bundle) -> Result<TestPlugin, String> {
-        let data = data_dir(&bundle.manifest.id);
-        let plugin = Plugin::load(bundle, bundle.manifest.permissions.clone(), data, Limits::default()).map_err(|e| e.to_string())?;
-        Ok(TestPlugin { plugin, recorder: Mutex::default() })
+        let data = data_dir(&bundle.manifest.id)?;
+        let plugin = Plugin::load(bundle, bundle.manifest.permissions.clone(), data.path().join("data"), Limits::default()).map_err(|e| e.to_string())?;
+        Ok(TestPlugin { plugin, recorder: Mutex::default(), data })
     }
 
     pub fn plugin(&self) -> &Plugin {
         &self.plugin
+    }
+
+    pub fn data_dir(&self) -> PathBuf {
+        self.data.path().join("data")
     }
 
     pub fn render(&self, effect: &str) -> Render<'_> {

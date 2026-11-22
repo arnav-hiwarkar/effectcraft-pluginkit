@@ -170,3 +170,15 @@ fn the_pin_tool_adds_a_null_where_it_is_clicked_and_rings_the_pointer() {
     let Shape::Circle { center, radius, .. } = &overlay.marks[1].shape else { panic!("{:?}", overlay.marks) };
     assert_eq!((*center, *radius), ([10.0, 20.0], 8.0));
 }
+
+#[test]
+fn two_harnesses_in_one_test_each_have_their_own_plugin_and_data_folder() {
+    let (first, second) = (TestPlugin::of(crate::plugin), TestPlugin::of(crate::plugin));
+    for plugin in [&first, &second] {
+        plugin.answer("layer.newNull", json!({ "layer": 3 }));
+        plugin.tool("pin", pointer(ToolEventKind::Down, [1.0, 1.0])).unwrap();
+    }
+    let named = |plugin: &TestPlugin| plugin.commands().into_iter().find(|(id, _)| id == "layer.newNull").map(|(_, params)| params);
+    assert_eq!((named(&first), named(&second)), (Some(json!({ "name": "Pin 1" })), Some(json!({ "name": "Pin 1" }))));
+    assert_ne!(first.data_dir(), second.data_dir());
+}
