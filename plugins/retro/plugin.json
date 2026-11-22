@@ -1,0 +1,9 @@
+{
+  "id": "org.craftkit.retro",
+  "name": "Retro",
+  "version": "0.1.0",
+  "author": "Craft Kit",
+  "description": "CRT Display and Neon Outline effects with matching GPU and CPU renders.",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": []
+}

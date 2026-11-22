@@ -11,6 +11,7 @@ Each folder here is one plugin: a standalone Rust crate outside the workspace, b
 | [Halo Flares](halo) | Effect | A lens flare from a light point: core glow, star rays, anamorphic streak, chromatic ring, iris ghosts along the line through the centre, lens-dirt bloom and a hoop, with six looks, edge trigger, shimmer, occlusion by another layer and Add or Screen compositing |
 | [Forge 3D](forge-3d) | Effect | Lit, depth-correct 3D models over a layer, drawn by GPU draw passes: a cube, sphere, torus, extruded star or the bundled OBJ model, a grid or ring replicator with a colour ramp, a material, and the comp's camera and lights |
 | [Curves](curves) | Effect and panel | Tone curves for RGB, red, green, blue and alpha drawn as a graph in Effect Controls, and a Curve Presets panel of thumbnails |
+| [Retro](retro) | Effects | CRT Display (curvature, aperture grille, slot or dot mask, rolling scanlines, convergence error, phosphor glow, noise and flicker) and Neon Outline (luma or alpha edges with a three-radius bloom), each with matching GPU kernels and a banded CPU render; `retro/bench.sh` times both |
 | [Glide](glide) | Panel and commands | A cubic-bezier easing editor with a preset library that applies the curve to the selected keyframes in one undo step |
 | [Pulse](pulse) | Panel and task | Analyses a frequency band of a layer's audio in a cancellable background task and writes its energy per frame as slider keyframes in one undo step |
 
@@ -109,3 +110,20 @@ The Curve Presets panel shows a scrollable grid of preset thumbnails. A click se
 the selected layer, and adds one first if the layer has none.
 
 `curves/verify.sh` builds the bundle, applies the effect in `effectcraft-cli` and checks rendered pixels.
+## Retro
+
+`plugins/retro` holds two effects in one plugin, both under Stylize.
+
+- **CRT Display** bends the picture into a curved screen with rounded black corners, then applies an aperture
+  grille, slot mask or dot mask at a pitch in layer pixels, scanlines that roll slowly over time, a
+  horizontal red and blue convergence error, a phosphor glow of the bright parts, a vignette, animated noise
+  and flicker, and a brightness gain that makes up for the light the mask and scanlines remove.
+- **Neon Outline** finds edges on luma or alpha, shapes them with a threshold, softness and thickness,
+  colours the line core, and adds a bloom made from three blur radii summed with a falloff. It draws over
+  the source or, with Lines Only, on its own.
+
+Both do their wide blurs at a half, quarter or eighth of the resolution and declare
+`Layout::neighbourhood(reach)`, so the app renders the CPU path in bands on all cores when the reach fits a
+band. The GPU path is four compute passes per effect. `plugins/retro/check` tests the two paths against
+each other through the real host (`cargo test --manifest-path plugins/retro/check/Cargo.toml`), and
+`plugins/retro/bench.sh` prints the CPU sandboxed, CPU native and GPU times at 1920×1080.
