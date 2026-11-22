@@ -714,7 +714,9 @@ fn custom_control(
             }
         }
         Err(error) => {
-            body.label(egui::RichText::new(error).font(Tokens::ui(12.0)).color(app.tokens.text_dim));
+            body.label(
+                egui::RichText::new(crate::i18n::tr_args("The plug-in control failed: {}", &[&error])).font(Tokens::ui(12.0)).color(app.tokens.text_dim),
+            );
         }
     }
     let height = body.min_rect().height().max(ROW);
