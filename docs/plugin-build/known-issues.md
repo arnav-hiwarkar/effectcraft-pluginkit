@@ -86,3 +86,7 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
   taller bands, or a pass plan, would repeat less. (`Plugin::render` in `crates/plugin-host/src/plugin.rs`)
 - **Timeout checks cost 8 to 35 % of sandboxed compute** (Plasma Beam 4.44 → 3.23 ms with them off, Halo
   25 → 17.5 ms). They are needed to stop a plugin that hangs; the options are in the study.
+- **A light native effect pays for a copy of the frame.** Every render now writes a new frame that replaces
+  the old one only when all bands succeed. A native band copies its input rows into that frame and renders
+  there, so native Probe went from 0.54 to 1.23 ms and native Plasma Beam from 2.23 to 2.60 ms at 1080p. The
+  cure is a frame with separate rows to read and rows to write, which the region-of-interest work brings.
