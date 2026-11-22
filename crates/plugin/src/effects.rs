@@ -407,7 +407,7 @@ fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) 
                 u: step.u,
                 data: step.data,
                 draw: None,
-                host: Some(String::new()),
+                host: Some(step.wgsl),
             },
         })
         .collect();

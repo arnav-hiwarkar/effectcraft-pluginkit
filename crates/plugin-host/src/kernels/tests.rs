@@ -401,18 +401,20 @@ fn on_the_gpu_a_resample_read_only_by_the_next_fused_loop_is_sampled_inside_it()
         .pass(GpuPass::resample(half, up, Filter::Bicubic))
         .pass(GpuPass::blend_images(GpuImage::Source, up, GpuImage::Output, BlendMode::Screen, 1.0));
     let (lowered, temps) = lower(&plan, SIZE);
-    let steps: Vec<(&str, StepImage, Option<StepImage>, Vec<u32>)> = lowered
+    let steps: Vec<(&str, StepImage, Option<StepImage>, Vec<u32>, bool)> = lowered
         .iter()
         .map(|step| match step {
-            Lowered::Host(step) => (step.entry, step.src, step.aux, step.u.clone()),
+            Lowered::Host(step) => {
+                (step.entry, step.src, step.aux, step.u.clone(), step.wgsl.contains("craft_resampled(aux, p, vec2<f32>(pass_f(0u), pass_f(1u)), true)"))
+            }
             Lowered::Plugin(pass) => panic!("no plugin pass in this plan: {pass:?}"),
         })
         .collect();
     assert_eq!(
         steps,
         [
-            ("craft_resample", StepImage::Plan(GpuImage::Source), None, vec![0]),
-            ("craft_pointwise", StepImage::Plan(GpuImage::Source), Some(StepImage::Plan(half)), vec![2, 1]),
+            ("craft_resample", StepImage::Plan(GpuImage::Source), None, vec![0], false),
+            ("craft_pointwise", StepImage::Plan(GpuImage::Source), Some(StepImage::Plan(half)), vec![], true),
         ]
     );
     assert!(temps.is_empty());
@@ -468,4 +470,38 @@ fn on_the_gpu_blurs_of_one_size_share_one_temporary() {
     let (lowered, temps) = lower(&plan, SIZE);
     assert_eq!(lowered.len(), 2 * 64 + 1);
     assert_eq!(temps, vec![SIZE, [5, 4]]);
+}
+
+#[test]
+fn on_the_gpu_a_fused_loop_is_straight_line_code_whose_numbers_stay_in_its_data() {
+    let plan = |amount: f32, mode: BlendMode, curve: Vec<f32>| {
+        let mut plan = GpuPlan::new();
+        let soft = plan.scratch(SIZE);
+        plan.pass(GpuPass::brightness_curve(GpuImage::Source, soft, Measure::Luma, curve, 2.0))
+            .pass(GpuPass::blend_images(soft, GpuImage::Source, soft, mode, amount))
+            .pass(GpuPass::light_alpha(soft, GpuImage::Output))
+    };
+    let step = |plan: &GpuPlan| match lower(plan, SIZE).0.as_slice() {
+        [Lowered::Host(step)] => step.clone(),
+        other => panic!("one fused step: {other:?}"),
+    };
+    let screen = step(&plan(0.5, BlendMode::Screen, vec![0.0, 0.25, 2.0]));
+    assert_eq!(
+        screen.wgsl,
+        "@compute @workgroup_size(16, 16)
+fn craft_pointwise(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    let p = vec2<i32>(id.xy);
+    let i0 = texel(src, p);
+    let v0 = craft_brightness_curve(0u, i0);
+    let v1 = craft_amount(v0, v0 + i0 - v0 * i0, craft_data(6u));
+    let v2 = craft_light_alpha(v1);
+    store(id.xy, v2);
+}
+"
+    );
+    assert_eq!(screen.data, [1.0, 3.0, 1.0, 0.0, 0.25, 2.0, 0.5]);
+    let other_numbers = step(&plan(0.75, BlendMode::Screen, vec![0.0, 0.5, 1.0]));
+    assert_eq!((other_numbers.wgsl == screen.wgsl, other_numbers.data[6]), (true, 0.75));
+    assert!(step(&plan(0.5, BlendMode::Multiply, vec![0.0, 0.25, 2.0])).wgsl.contains("craft_amount(v0, v0 * i0, craft_data(6u))"));
 }
