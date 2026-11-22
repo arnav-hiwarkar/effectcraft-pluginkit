@@ -63,10 +63,27 @@ pooled instance, so values stored outside `cx` are not shared between calls.
 | `.time_dependent()` | The output changes with `cx.time` when no parameter is animated. |
 | `.reads_other_frames()` | The effect calls `cx.source_at` or `cx.layer_at`. |
 | `.reads_scene()` | The effect calls `cx.scene`. |
+| `.reads_param_history()` | The effect calls `cx.at` or `cx.param_history`. A layer whose other effects or masks have expressions is then not cached, because the key cannot see what an expression returned at another time. |
+| `.preset(name, [(id, Value), …])` | A named set of parameter values, see [Presets](#presets). |
 | `.shader(wgsl)` | WGSL kernels for GPU passes. See [GPU effects](plugin-gpu.md). |
 | `.designer(panel_id)` | Effect Controls shows a button that opens this panel. |
 
-The render cache uses the three declarations. An effect that omits one shows stale frames.
+The render cache uses the four declarations. An effect that omits one shows stale frames. The
+layer's cache key already holds every keyframe and expression of the effect, not only the values at
+the current time (`hash_debug(&mut h, c)` in `crates/render/src/cache.rs`, `key_any`), so a keyframe
+moved at frame 12 also redraws frame 40.
+
+### Presets
+
+`.preset("Sun", [("look", Value::Number(1.0)), ("Glow/brightness", Value::Number(120.0))])` names a
+set of values. Ids are the full parameter ids, including the group prefix. Values have the form `cx`
+reads them in, except points: a point is a fraction of the layer, like a parameter's default. Ids
+the effect does not declare, and layer and mask parameters, are ignored.
+
+The engine lists them with `effect.presets {layer?, effect}` → `{presets: [name]}` and applies one
+with `effect.applyPreset {layer?, effect, preset}`. Applying sets every value at the current layer
+time in one undo step: a keyframed parameter gets a keyframe, a static one changes its value.
+Panels, commands, the CLI and automation all use these two commands.
 
 ### Parameters
 
@@ -95,7 +112,7 @@ The render cache uses the three declarations. An effect that omits one shows sta
 | `cx.offset` | Frame pixel where layer pixel (0, 0) sits. Padding moves it. |
 | `cx.layer_size` | Layer size in layer pixels. |
 | `cx.time`, `cx.comp_time`, `cx.frame_rate` | Seconds and frames per second. |
-| `cx.instance` | Stable per effect instance. Use it as a random seed. |
+| `cx.instance` | Identifies this applied effect: different for every effect on every layer, and the same across frames, sessions and reopening the project. It is built from the layer id and the effect's property-group uid. `cx.recall` and `cx.remember` key on it, and it makes a good random seed. |
 | `cx.float` | The project is 32 bpc. When false, the app rounds the result to 8 or 16 bpc. |
 | `cx.linear` | The working colour space is linear. When false, pixel values are display-encoded. |
 
@@ -107,6 +124,8 @@ The render cache uses the three declarations. An effect that omits one shows sta
 | `cx.layer("matte")` | The layer chosen in a layer parameter, resampled onto this frame's grid. |
 | `cx.layer_at("matte", comp_time)` | The same at another time. |
 | `cx.source_at(layer_time)` | This effect's input at another time. Declare `.reads_other_frames()`. |
+| `cx.at(layer_time)` | The same `Cx` with every parameter evaluated at another layer time, keyframes and expressions applied as the app renders that time. `time` becomes `layer_time` and `comp_time` moves by the same amount; the frame fields stay. `None` outside the app. Declare `.reads_param_history()`. |
+| `cx.param_history()` | A hash of everything that sets this effect's parameters over time (values, keyframes, expression text), the same in every frame and session. `None` when a parameter has an expression, whose values at other times the hash cannot see, or outside the app. Use it to key caches of a simulation. |
 | `cx.masks()` | The layer's masks as polylines in frame pixels. |
 | `cx.scene()` | The comp's camera and lights, see [Scene](#scene). Declare `.reads_scene()`. |
 
@@ -114,6 +133,14 @@ These calls also work in `layout`, for example to size the padding from the mask
 
 `cx.layer`, `cx.layer_at`, and `cx.source_at` return `Option<Image>`. `Image` has `width`, `height`,
 `pixels()`, `at(x, y)`, and bilinear `sample(x, y)`.
+
+The image is exactly `cx.size` and lies on the frame's own pixel grid: its pixel (x, y) is frame
+pixel (x, y), at the same `cx.scale` and `cx.offset`. In `render` that is the padded frame; in
+`layout` it is the frame before padding. Another layer is centred on this layer, not stretched, and
+what lies outside it is transparent. `cx.layer` and `cx.layer_at` give the other layer as its layer
+parameter's source choice says (by default with its masks and effects). `cx.source_at` gives this
+layer at that layer time through its masks and the effects above this one, in the same space as the
+frame `render` gets.
 
 ### Scene
 
@@ -123,11 +150,11 @@ with the layer on the plane z = 0. They do not change with `cx.scale` or padding
 
 | Field or call | Meaning |
 |---|---|
-| `scene.projection` | Rows X, Y and W of the camera: a layer point `[x, y, z, 1]` shows at layer pixel `X / W`, `Y / W`. |
+| `scene.projection` | Rows X, Y and W of a 3x4 matrix from a layer point `[x, y, z, 1]` (layer pixels, z away from the viewer) to where it shows on the layer: layer pixel `X / W`, `Y / W`. Turn that into a frame pixel with `* cx.scale + cx.offset`. |
 | `scene.project(point)` | That layer pixel, or `None` behind the camera. |
 | `scene.view_projection(cx)` | The same camera as a column-major 4x4 clip matrix for a draw pass on a frame of `cx.size`. It lands a point on the pixel `project` gives, times `cx.scale`, plus `cx.offset`. Depth is 1 at `Scene::NEAR` (one layer pixel from the camera) and falls towards 0 with distance, which is what the depth buffer expects. |
 | `scene.camera_layer` | The camera is a camera layer, not the comp's default view. |
-| `scene.camera` | `view` (rows of the layer-to-camera matrix; camera space has z along the view), `position`, and `zoom` (the distance in pixels at which one unit covers one pixel). The app has no near or far distance. |
+| `scene.camera` | `view` (rows of a 4x4 matrix from layer pixels to camera space, which has its origin at the camera, x right, y down and z along the view, in the same pixel units), `position` (the camera in layer pixels), and `zoom` (the distance in pixels at which one unit covers one pixel). The app has no near or far distance. |
 | `scene.lights` | Every light layer that is switched on. |
 | `Scene::centred(cx.layer_size)` | A camera facing the middle of the layer that leaves the plane z = 0 where it is. Use it when `cx.scene()` is `None`. |
 
