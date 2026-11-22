@@ -45,9 +45,9 @@ params! {
     }
 }
 
-struct MyTint;
+struct Tint;
 
-impl Effect for MyTint {
+impl Effect for Tint {
     fn spec(&self) -> EffectSpec {
         EffectSpec::new("my-tint", "My Tint", "Color Correction").params(Settings::params())
     }

@@ -1,21 +1,26 @@
 use craft_plugin::prelude::*;
 
 #[derive(Default)]
-struct {{Ident}} {
+struct MeasurePanel {
     running: Option<u64>,
     state: Option<TaskState>,
+    error: Option<String>,
 }
 
-impl Panel for {{Ident}} {
+impl Panel for MeasurePanel {
     fn ui(&mut self, ui: &mut Ui) {
         if let Some(id) = self.running
             && ui.every("progress", 100)
-            && let Ok(state) = host::task(id)
         {
-            if state.status != TaskStatus::Running {
-                self.running = None;
+            match host::task(id) {
+                Ok(state) => {
+                    if state.status != TaskStatus::Running {
+                        self.running = None;
+                    }
+                    self.state = Some(state);
+                }
+                Err(error) => (self.running, self.error) = (None, Some(format!("Lost the measurement: {error}"))),
             }
-            self.state = Some(state);
         }
         match &self.state {
             Some(TaskState { status: TaskStatus::Running, progress, message, .. }) => ui.progress(*progress as f32, message),
@@ -24,12 +29,20 @@ impl Panel for {{Ident}} {
             _ => {}
         }
         if let Some(id) = self.running {
-            if ui.button("Cancel") {
-                let _ = host::cancel(id);
+            if ui.button("Cancel")
+                && let Err(error) = host::cancel(id)
+            {
+                self.error = Some(format!("Could not cancel: {error}"));
             }
         } else if ui.button("Measure") {
-            self.running = host::start("measure", json!({ "frames": 10 })).ok();
+            match host::start("measure", json!({ "frames": 10 })) {
+                Ok(id) => (self.running, self.state, self.error) = (Some(id), None, None),
+                Err(error) => self.error = Some(format!("Could not start measuring: {error}")),
+            }
             ui.every("progress", 100);
+        }
+        if let Some(error) = &self.error {
+            ui.error(error);
         }
     }
 }
@@ -47,7 +60,7 @@ fn measure(task: &Task) -> Result<serde_json::Value> {
 }
 
 fn plugin() -> Plugin {
-    Plugin::new().panel("{{name}}", "{{Title}}", {{Ident}}::default()).task("measure", "Measure Brightness", measure)
+    Plugin::new().panel("{{name}}", "{{Title}}", MeasurePanel::default()).task("measure", "Measure Brightness", measure)
 }
 
 craft_plugin::export!(plugin);
