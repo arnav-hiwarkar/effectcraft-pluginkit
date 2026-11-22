@@ -279,11 +279,11 @@ impl Plugins {
     }
 
     pub fn install(&self, source: &Path) -> Result<PluginInfo, String> {
-        let incoming = Bundle::open(source).map_err(|e| e.to_string())?;
-        reserved(&incoming.manifest)?;
+        let incoming = Bundle::manifest_of(source).map_err(|e| e.to_string())?;
+        reserved(&incoming)?;
         let mut inner = self.lock();
-        inner.stop(&incoming.manifest.id);
-        inner.session_only.retain(|b| b.manifest.id != incoming.manifest.id);
+        inner.stop(&incoming.id);
+        inner.session_only.retain(|b| b.manifest.id != incoming.id);
         let bundle = inner.registry.install(source).map_err(|e| e.to_string())?;
         if inner.registry.grants(&bundle.manifest).is_some() {
             inner.start(&bundle);

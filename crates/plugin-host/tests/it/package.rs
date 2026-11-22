@@ -227,3 +227,9 @@ fn unsandboxed_cannot_be_chosen_without_a_native_build_for_this_machine() {
     assert!(matches!(registry.set_unsandboxed(&installed.manifest, true), Err(BundleError::NoNativeBuild(id)) if id == "test.probe"));
     assert_eq!(registry.mode(&installed.manifest), RunMode::Sandboxed);
 }
+
+#[test]
+fn a_package_gives_its_manifest_without_being_unpacked() {
+    let (_dir, file) = crafted(|_| {});
+    assert_eq!(craft_plugin_host::Bundle::manifest_of(&file).unwrap().id, "test.crafted");
+}

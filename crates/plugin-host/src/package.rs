@@ -40,6 +40,18 @@ fn safe_relative(name: &str) -> Option<PathBuf> {
     Some(relative)
 }
 
+const MAX_MANIFEST_BYTES: u64 = 1 << 20;
+
+pub fn manifest_text(archive: &Path) -> Result<String, PackageError> {
+    let broken = |e: String| PackageError::Archive(archive.to_path_buf(), e);
+    let file = File::open(archive).map_err(|e| PackageError::Io(archive.to_path_buf(), e))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| broken(e.to_string()))?;
+    let entry = zip.by_name(craft_plugin::MANIFEST_FILE).map_err(|e| broken(e.to_string()))?;
+    let mut text = String::new();
+    entry.take(MAX_MANIFEST_BYTES).read_to_string(&mut text).map_err(|e| broken(e.to_string()))?;
+    Ok(text)
+}
+
 pub fn unpack(archive: &Path, destination: &Path) -> Result<(), PackageError> {
     let io = |path: &Path| {
         let path = path.to_path_buf();

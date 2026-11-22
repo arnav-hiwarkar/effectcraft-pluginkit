@@ -42,6 +42,13 @@ impl Bundle {
         Ok(Bundle { dir: dir.to_path_buf(), manifest, mode })
     }
 
+    pub fn manifest_of(source: &Path) -> Result<Manifest, BundleError> {
+        if source.is_file() {
+            return Ok(Manifest::parse(&package::manifest_text(source)?)?);
+        }
+        Bundle::open(source).map(|bundle| bundle.manifest)
+    }
+
     pub fn with_mode(mut self, mode: RunMode) -> Bundle {
         self.mode = mode;
         self
