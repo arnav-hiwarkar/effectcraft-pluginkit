@@ -1525,6 +1525,10 @@ pub const READS_COMP_SCENE: &[&str] = &["ec.sim.carddance", "ec.sim.shatter", "e
 pub const TIME_DEPENDENT: &[&str] = &[
     "ec.distort.wavewarp",
     "ec.distort.ripple",
+    "ec.distort.ccripplepulse",
+    "ec.generate.scribble",
+    "ec.generate.writeon",
+    "ec.key.ccsimplewireremoval",
     "ec.generate.radiowaves",
     "ec.stylize.scatter",
     "ec.stylize.strobe",
@@ -1845,6 +1849,61 @@ mod tests {
             }
         }
         assert!(missing.is_empty(), "these depend on time but are not in TIME_DEPENDENT: {missing:?}");
+    }
+
+    struct Clock(Params);
+    impl EffectHost for Clock {
+        fn layer(&self, _: u64, _: bool) -> Option<LayerPixels> {
+            None
+        }
+        fn audio(&self, _: u64, _: f64, _: usize, _: u32) -> Option<Vec<f32>> {
+            None
+        }
+        fn self_at(&self, t: f64, _: usize) -> Option<Buf> {
+            Some(Buf { img: Image::filled(40, 30, [t as f32 / 4.0, 0.2, 0.3, 1.0]), offset: [0.0; 2], scale: 1.0 })
+        }
+        fn params_at(&self, t: f64) -> Option<Params> {
+            let mut p = self.0.clone();
+            p.values.insert("brushPosition".into(), Value::Vec2([5.0 + 10.0 * t, 15.0]));
+            Some(p)
+        }
+    }
+
+    #[test]
+    fn effects_that_read_time_only_with_a_host_masks_or_settings_are_declared() {
+        let img = Image::filled(40, 30, [0.2, 0.5, 0.8, 1.0]);
+        let masks = [MaskShape { name: "Mask 1".into(), points: vec![[6.0, 5.0], [34.0, 5.0], [34.0, 25.0], [6.0, 25.0]], closed: true, inverted: false }];
+        let cases: [(&str, &[(&str, Value)]); 4] = [
+            ("ec.distort.ccripplepulse", &[("pulseLevel", Value::Scalar(100.0)), ("renderBump", Value::Bool(true))]),
+            ("ec.generate.scribble", &[]),
+            ("ec.generate.writeon", &[]),
+            ("ec.key.ccsimplewireremoval", &[("removalStyle", Value::Enum(1)), ("frameOffset", Value::Scalar(2.0))]),
+        ];
+        let (mut changes, mut undeclared) = (vec![], vec![]);
+        for (id, set) in cases {
+            let s = find(id).unwrap();
+            let mut params = Params { values: s.params.iter().map(|p| (p.id.to_string(), p.default.clone())).collect() };
+            for p in &s.params {
+                if let (ParamUi::Point, Value::Vec2(v)) = (&p.ui, &p.default) {
+                    params.values.insert(p.id.to_string(), Value::Vec2([v[0] * 40.0, v[1] * 30.0]));
+                }
+            }
+            for (k, v) in set {
+                params.values.insert(k.to_string(), v.clone());
+            }
+            let host = Clock(params.clone());
+            let run = |t: f64| {
+                let env = EffectEnv { host: Some(&host), masks: &masks, frame_rate: 10.0, ..Default::default() };
+                let ctx = EffectCtx { params: &params, time: t, layer_size: [40.0, 30.0], seed: 7, adjustment: false, env };
+                apply(s, &ctx, Buf { img: img.clone(), offset: [0.0, 0.0], scale: 1.0 }).img
+            };
+            changes.push(run(0.0) != run(1.37));
+            if !is_time_dependent(id) {
+                undeclared.push(id);
+            }
+        }
+        assert_eq!(changes, [true; 4]);
+        assert_eq!(undeclared, Vec::<&str>::new());
     }
 
     /// A host that tags the returned pixels with the requested mode (R = 0 source, 0.5 masks,
