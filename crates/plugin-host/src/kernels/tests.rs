@@ -413,3 +413,11 @@ fn on_the_gpu_a_resample_read_only_by_the_next_fused_loop_is_sampled_inside_it()
     );
     assert!(temps.is_empty());
 }
+
+#[test]
+fn a_gaussian_too_small_to_matter_keeps_the_image() {
+    assert_eq!(blur_taps(BlurShape::Gaussian, 1e-30), vec![0.0, 1.0, 0.0]);
+    let src = [[0.5, 0.25, 0.125, 1.0]];
+    let got = host(HostKernel::Blur { shape: BlurShape::Gaussian, radius: [1e-30, 0.0] }, &src, [1, 1], None, [1, 1]);
+    assert_eq!(got, src);
+}

@@ -42,6 +42,7 @@ pub(crate) fn blur_taps(shape: BlurShape, radius: f32) -> Vec<f32> {
         return vec![1.0];
     }
     let weight = |i: isize| match shape {
+        BlurShape::Gaussian if i == 0 => 1.0,
         BlurShape::Gaussian => {
             let sigma = radius / 3.0;
             (-((i * i) as f32) / (2.0 * sigma * sigma)).exp()
