@@ -18,8 +18,8 @@ use effectcraft_color::{BlendMode, blend_pixel};
 use rayon::prelude::*;
 
 pub use blur::{
-    RADIAL_BLUR_SAMPLES, box_blur, directional_blur, gaussian_blur, gaussian_blur_exact, gaussian_blur_unbounded, gaussian_blur_unbounded_at,
-    gaussian_is_exact, radial_blur, radial_blur_spin_degrees, radial_blur_zoom_scale,
+    RADIAL_BLUR_SAMPLES, box_blur, directional_blur, gaussian_blur, gaussian_blur_exact, gaussian_blur_quantized, gaussian_blur_unbounded,
+    gaussian_blur_unbounded_at, gaussian_is_exact, radial_blur, radial_blur_spin_degrees, radial_blur_zoom_scale,
 };
 pub use channels3d::AuxChannels;
 pub use warp::{Sampling, WarpOpts, accumulate_warp, composite_warp, composite_warp_changed, composite_warp_reference, resample};
@@ -37,6 +37,23 @@ pub const MAX_PADDED_SIDE: u32 = 30_000;
 #[inline(always)]
 pub fn quantize_px(p: &mut Px, levels: f32, inv: f32) {
     *p = quantize_levels(*p, levels, inv).map(|n| n * inv);
+}
+
+pub fn quantize_slice(px: &mut [Px], levels: f32) {
+    let inv = 1.0 / levels;
+    // Runs of all-zero pixels (+0.0 in every channel) quantise to themselves: skip them a
+    // cache line at a time (sparse shape, precomp and glow buffers are mostly empty).
+    let (blocks, rest) = px.as_chunks_mut::<4>();
+    for b in blocks {
+        if b.as_flattened().iter().fold(0, |a, v| a | v.to_bits()) != 0 {
+            for p in b {
+                quantize_px(p, levels, inv);
+            }
+        }
+    }
+    for p in rest {
+        quantize_px(p, levels, inv);
+    }
 }
 
 /// [`quantize_px`]'s steps: the whole number of `levels` each channel rounds to (0..=levels).

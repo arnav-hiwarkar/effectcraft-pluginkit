@@ -11,9 +11,10 @@ use crate::{Image, Px};
 
 /// One horizontal box pass of radius `r` (window 2r+1) over each row of `src` (width `w`) into
 /// `out`; `repeat` = edge pixels extend, otherwise transparent.
-fn box_h_into(src: &[Px], out: &mut [Px], w: usize, r: usize, repeat: bool) {
+fn box_h_into(src: &[Px], out: &mut [Px], w: usize, r: usize, repeat: bool, levels: Option<f32>) {
     if r == 0 {
         out.copy_from_slice(src);
+        quantize_all(out, levels);
         return;
     }
     let norm = 1.0 / (2 * r + 1) as f32;
@@ -54,13 +55,17 @@ fn box_h_into(src: &[Px], out: &mut [Px], w: usize, r: usize, repeat: bool) {
                 acc[c] += add[c] - sub[c];
             }
         }
+        if let Some(l) = levels {
+            crate::quantize_slice(o, l);
+        }
     });
 }
 
 /// One vertical box pass (same semantics as [`box_h_into`] along columns).
-fn box_v_into(src: &[Px], out: &mut [Px], w: usize, h: usize, r: usize, repeat: bool) {
+fn box_v_into(src: &[Px], out: &mut [Px], w: usize, h: usize, r: usize, repeat: bool, levels: Option<f32>) {
     if r == 0 {
         out.copy_from_slice(src);
+        quantize_all(out, levels);
         return;
     }
     let norm = 1.0 / (2 * r + 1) as f32;
@@ -104,6 +109,9 @@ fn box_v_into(src: &[Px], out: &mut [Px], w: usize, h: usize, r: usize, repeat: 
             for (o, a) in o.iter_mut().zip(&acc) {
                 *o = a.map(|v| v * norm);
             }
+            if let Some(l) = levels {
+                crate::quantize_slice(o, l);
+            }
             match (row(y + r as isize + 1), row(y - r as isize)) {
                 (Some(add), Some(sub)) => {
                     for ((a, p), q) in acc.iter_mut().zip(add).zip(sub) {
@@ -133,24 +141,34 @@ fn box_v_into(src: &[Px], out: &mut [Px], w: usize, h: usize, r: usize, repeat: 
 }
 
 /// Run horizontal passes with radii `rx` then vertical passes with radii `ry`.
-fn box_passes(img: &Image, rx: &[usize], ry: &[usize], repeat: bool) -> Image {
+fn box_passes(img: &Image, rx: &[usize], ry: &[usize], repeat: bool, levels: Option<f32>) -> Image {
     let (w, h) = (img.width as usize, img.height as usize);
     let passes: Vec<(bool, usize)> = rx.iter().map(|&r| (false, r)).chain(ry.iter().map(|&r| (true, r))).filter(|p| p.1 > 0).collect();
     if passes.is_empty() || w == 0 || h == 0 {
-        return img.clone();
+        let mut out = img.clone();
+        quantize_all(&mut out.data, levels);
+        return out;
     }
     let mut a = Image::new(img.width, img.height);
     let mut b = Image::new(img.width, img.height);
+    let last = passes.len() - 1;
     for (i, &(vertical, r)) in passes.iter().enumerate() {
         let src: &[Px] = if i == 0 { &img.data } else { &a.data };
+        let levels = if i == last { levels } else { None };
         if vertical {
-            box_v_into(src, &mut b.data, w, h, r, repeat);
+            box_v_into(src, &mut b.data, w, h, r, repeat, levels);
         } else {
-            box_h_into(src, &mut b.data, w, r, repeat);
+            box_h_into(src, &mut b.data, w, r, repeat, levels);
         }
         std::mem::swap(&mut a, &mut b);
     }
     a
+}
+
+fn quantize_all(px: &mut [Px], levels: Option<f32>) {
+    if let Some(l) = levels {
+        px.par_chunks_mut(2048).for_each(|c| crate::quantize_slice(c, l));
+    }
 }
 
 /// Box radii for `n` passes approximating a Gaussian of `sigma` (Kovesi / "boxes for Gauss").
@@ -172,14 +190,18 @@ fn box_radii(sigma: f64, n: usize) -> Vec<usize> {
 /// Separable box blur with given radii, `iterations` passes.
 pub fn box_blur(img: &Image, rx: usize, ry: usize, iterations: usize, repeat: bool) -> Image {
     let n = iterations.max(1);
-    box_passes(img, &vec![rx; n], &vec![ry; n], repeat)
+    box_passes(img, &vec![rx; n], &vec![ry; n], repeat, None)
 }
 
 /// Gaussian blur with standard deviations in pixels (3 box passes per axis).
 pub fn gaussian_blur(img: &Image, sigma_x: f64, sigma_y: f64, repeat: bool) -> Image {
+    gaussian_blur_quantized(img, sigma_x, sigma_y, repeat, None)
+}
+
+pub fn gaussian_blur_quantized(img: &Image, sigma_x: f64, sigma_y: f64, repeat: bool, levels: Option<f32>) -> Image {
     let rx = if sigma_x > 0.05 { box_radii(sigma_x, 3) } else { vec![] };
     let ry = if sigma_y > 0.05 { box_radii(sigma_y, 3) } else { vec![] };
-    box_passes(img, &rx, &ry, repeat)
+    box_passes(img, &rx, &ry, repeat, levels)
 }
 
 /// [`gaussian_blur`] with transparent edges, as if the image went on with transparency on
@@ -572,9 +594,9 @@ mod tests {
         let mut src = vec![[1.0f32; 4]; 81];
         src[80] = [f32::NAN; 4];
         let mut out = vec![[0.0f32; 4]; 81];
-        box_h_into(&src, &mut out, 9, 1, true);
+        box_h_into(&src, &mut out, 9, 1, true, None);
         assert!(out[0].iter().all(|v| v.is_finite()), "{:?}", out[0]);
-        box_v_into(&src, &mut out, 9, 9, 1, true);
+        box_v_into(&src, &mut out, 9, 9, 1, true, None);
         assert!(out[0].iter().all(|v| v.is_finite()), "{:?}", out[0]);
     }
 
@@ -592,8 +614,8 @@ mod tests {
         for repeat in [true, false] {
             for r in [1usize, 3, 6, 9, 40] {
                 let (mut hx, mut vx) = (vec![[0.0; 4]; w * h], vec![[0.0; 4]; w * h]);
-                box_h_into(&src, &mut hx, w, r, repeat);
-                box_v_into(&src, &mut vx, w, h, r, repeat);
+                box_h_into(&src, &mut hx, w, r, repeat, None);
+                box_v_into(&src, &mut vx, w, h, r, repeat, None);
                 for y in 0..h as isize {
                     for x in 0..w as isize {
                         let (mut eh, mut ev) = ([0.0f32; 4], [0.0f32; 4]);
@@ -615,8 +637,8 @@ mod tests {
         }
         // A radius of 2^40 finishes at once.
         let mut out = vec![[0.0; 4]; w * h];
-        box_h_into(&src, &mut out, w, 1 << 40, true);
-        box_v_into(&src, &mut out.clone(), w, h, 1 << 40, true);
+        box_h_into(&src, &mut out, w, 1 << 40, true, None);
+        box_v_into(&src, &mut out.clone(), w, h, 1 << 40, true, None);
     }
 
     #[test]
@@ -678,7 +700,7 @@ mod tests {
         }
         for repeat in [false, true] {
             for (rx, ry) in [(0, 3), (2, 0), (5, 9), (40, 70), (1, 200)] {
-                let fast = box_passes(&img, &[rx, rx + 1], &[ry, ry / 2], repeat);
+                let fast = box_passes(&img, &[rx, rx + 1], &[ry, ry / 2], repeat, None);
                 let mut slow = img.clone();
                 for r in [rx, rx + 1] {
                     slow = box_ref(&slow, r, false, repeat);

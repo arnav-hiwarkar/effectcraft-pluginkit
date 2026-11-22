@@ -866,6 +866,8 @@ impl<'a> Renderer<'a> {
             shutter: self.mb_on(ctx, layer).then_some((ctx.comp.shutter_angle, ctx.comp.shutter_phase, ctx.comp.motion_blur_samples)),
             layer_span: crate::eval::layer_span(self.project, layer),
             instance: 0,
+            quantize_output: None,
+            input_quantized: false,
         };
         // Video effects in stack order (index, group, spec); disabled and audio effects skipped.
         let stack: Vec<(usize, &effectcraft_project::PropGroup, &'static effectcraft_effects::EffectSpec)> = fx
@@ -880,6 +882,7 @@ impl<'a> Renderer<'a> {
             .filter(|(_, _, s)| !effectcraft_effects::audio_fx::is_audio_effect(s.id))
             .collect();
         let accel = self.active_accel();
+        let mut input_quantized = false;
         let mut k = 0;
         while k < stack.len() {
             let (i, g, spec) = stack[k];
@@ -914,21 +917,26 @@ impl<'a> Renderer<'a> {
                         v.extend(run.iter().map(|(_, _, s)| (format!("{} (gpu)", s.id), ms)));
                     }
                     k += run.len();
+                    input_quantized = false;
                     continue;
                 }
             }
             k += 1;
             let params = self.effect_params(ctx, layer, g);
             let host = FxHost { index: i, ..host };
-            let env = EffectEnv { host: Some(&host), effect_index: i, instance: effect_instance(layer, g), ..env };
+            let quantize_output = self.pipe.levels.filter(|_| spec.quantizes_output());
+            let env = EffectEnv { host: Some(&host), effect_index: i, instance: effect_instance(layer, g), quantize_output, input_quantized, ..env };
             let ectx = EffectCtx { params: &params, time: lt.seconds(), layer_size, seed: g.uid as u32, adjustment, env };
             let t0 = web_time::Instant::now();
             target.cpu(&mut |buf| {
                 let mut buf = effectcraft_effects::apply(spec, &ectx, buf);
                 // 8/16 bpc effects write integer pixels.
-                self.pipe.quantize(&mut buf.img);
+                if quantize_output.is_none() {
+                    self.pipe.quantize(&mut buf.img);
+                }
                 buf
             });
+            input_quantized = self.pipe.levels.is_some();
             if let Some(v) = timing.as_deref_mut() {
                 v.push((spec.id.to_string(), t0.elapsed().as_secs_f64() * 1e3));
             }

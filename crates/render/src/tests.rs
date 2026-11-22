@@ -22,6 +22,7 @@ mod motion_tile;
 mod nested;
 mod paint;
 mod proxy_cache;
+mod quantize_fusion;
 mod raster_clip;
 mod remap;
 mod roi;
