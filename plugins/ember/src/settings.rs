@@ -1,6 +1,6 @@
 use craft_plugin::Cx;
 
-use crate::spec::*;
+use crate::spec::{Controls, EMITTER_TYPE};
 
 pub type Vec3 = [f32; 3];
 
@@ -90,30 +90,17 @@ fn quantise(value: f32) -> f32 {
     (value / QUANTUM).round() * QUANTUM
 }
 
-struct Reader<'a>(&'a Cx);
+fn ratio(value: f64) -> f32 {
+    finite(value) / 100.0
+}
 
-impl Reader<'_> {
-    fn number(&self, id: &str) -> f32 {
-        finite(self.0.f(id))
-    }
+fn to_layer(cx: &Cx, frame_px: [f64; 2]) -> [f32; 2] {
+    let scale = cx.scale.max(1e-6);
+    [0, 1].map(|axis| quantise(finite((frame_px[axis] - cx.offset[axis]) / scale)))
+}
 
-    fn ratio(&self, id: &str) -> f32 {
-        self.number(id) / 100.0
-    }
-
-    fn to_layer(&self, frame_px: [f64; 2]) -> [f32; 2] {
-        let scale = self.0.scale.max(1e-6);
-        [0, 1].map(|axis| quantise(finite((frame_px[axis] - self.0.offset[axis]) / scale)))
-    }
-
-    fn vec3(&self, ids: [&str; 3]) -> Vec3 {
-        ids.map(|id| self.number(id))
-    }
-
-    fn colour(&self, id: &str) -> Vec3 {
-        let c = self.0.color(id);
-        [c[0], c[1], c[2]].map(|v| if v.is_finite() { v.max(0.0) } else { 0.0 })
-    }
+fn colour(c: [f32; 4]) -> Vec3 {
+    [c[0], c[1], c[2]].map(|v| if v.is_finite() { v.max(0.0) } else { 0.0 })
 }
 
 pub fn direction(azimuth_deg: f32, elevation_deg: f32) -> Vec3 {
@@ -123,66 +110,65 @@ pub fn direction(azimuth_deg: f32, elevation_deg: f32) -> Vec3 {
 
 impl Settings {
     pub fn read(cx: &Cx, masks: Vec<Vec<[f64; 2]>>) -> Settings {
-        let read = Reader(cx);
+        let c = Controls::read(cx);
         let frame_rate = if cx.frame_rate.is_finite() && cx.frame_rate > 0.0 { cx.frame_rate } else { DEFAULT_FRAME_RATE };
-        let position3 = cx.point3(POSITION);
-        let xy = read.to_layer([position3[0], position3[1]]);
+        let xy = to_layer(cx, [c.position[0], c.position[1]]);
         let emitter = match cx.index(EMITTER_TYPE) {
             0 => Emitter::Point,
             1 => Emitter::Box,
             2 => Emitter::Sphere,
-            _ => Emitter::Masks(masks.into_iter().map(|points| points.into_iter().map(|p| read.to_layer(p)).collect()).collect()),
+            _ => Emitter::Masks(masks.into_iter().map(|points| points.into_iter().map(|p| to_layer(cx, p)).collect()).collect()),
         };
-        let pre_run = read.number(PRE_RUN).clamp(0.0, 10.0);
+        let pre_run = finite(c.pre_run).clamp(0.0, 10.0);
         let sim = Sim {
             emitter,
-            position: [xy[0], xy[1], quantise(finite(position3[2]))],
-            extent: read.vec3([EMITTER_SIZE_X, EMITTER_SIZE_Y, EMITTER_SIZE_Z]).map(f32::abs),
-            rate: read.number(RATE).clamp(0.0, 200_000.0),
-            burst: cx.index(EMISSION) == 1,
-            direction: direction(read.number(DIRECTION), read.number(ELEVATION)),
-            spread: read.ratio(SPREAD).clamp(0.0, 1.0),
-            speed: read.number(SPEED).max(0.0),
-            speed_random: read.ratio(SPEED_RANDOM).clamp(0.0, 1.0),
-            inherit: read.ratio(INHERIT),
-            seed: read.number(SEED).max(0.0) as u32,
+            position: [xy[0], xy[1], quantise(finite(c.position[2]))],
+            extent: [c.size_x, c.size_y, c.size_z].map(|v| finite(v).abs()),
+            rate: finite(c.rate).clamp(0.0, 200_000.0),
+            burst: c.emission == 1,
+            direction: direction(finite(c.direction), finite(c.elevation)),
+            spread: ratio(c.spread).clamp(0.0, 1.0),
+            speed: finite(c.speed).max(0.0),
+            speed_random: ratio(c.speed_random).clamp(0.0, 1.0),
+            inherit: ratio(c.inherit),
+            seed: finite(c.seed).max(0.0) as u32,
             pre_run_frames: (f64::from(pre_run) * frame_rate).round() as u32,
-            max_particles: read.number(MAX_PARTICLES).clamp(0.0, 500_000.0) as u32,
-            gravity: read.number(GRAVITY),
-            wind: read.vec3([WIND_X, WIND_Y, WIND_Z]),
-            drag: read.number(DRAG).max(0.0),
-            turbulence: read.number(TURBULENCE).max(0.0),
-            turbulence_scale: read.number(TURBULENCE_SCALE).max(1.0),
-            turbulence_evolution: read.number(TURBULENCE_EVOLUTION).max(0.0),
-            life: read.number(LIFE).max(0.01),
-            life_random: read.ratio(LIFE_RANDOM).clamp(0.0, 1.0),
+            max_particles: finite(c.max_particles).clamp(0.0, 500_000.0) as u32,
+            gravity: finite(c.gravity),
+            wind: [c.wind_x, c.wind_y, c.wind_z].map(finite),
+            drag: finite(c.drag).max(0.0),
+            turbulence: finite(c.turbulence).max(0.0),
+            turbulence_scale: finite(c.turbulence_scale).max(1.0),
+            turbulence_evolution: finite(c.turbulence_evolution).max(0.0),
+            life: finite(c.life).max(0.01),
+            life_random: ratio(c.life_random).clamp(0.0, 1.0),
             frame_rate: frame_rate as f32,
         };
         let look = Look {
-            shape: match cx.index(SHAPE) {
+            shape: match c.shape {
                 0 => Shape::Disc,
                 1 => Shape::Streak,
                 _ => Shape::Spark,
             },
-            size: read.number(SIZE).max(0.0),
-            size_random: read.ratio(SIZE_RANDOM).clamp(0.0, 1.0),
-            size_curve: match cx.index(SIZE_OVER_LIFE) {
+            size: finite(c.size).max(0.0),
+            size_random: ratio(c.size_random).clamp(0.0, 1.0),
+            size_curve: match c.size_over_life {
                 0 => SizeCurve::Constant,
                 1 => SizeCurve::Shrink,
                 2 => SizeCurve::Grow,
                 _ => SizeCurve::Swell,
             },
-            streak: read.ratio(STREAK).max(0.0),
-            colours: [COLOUR_BIRTH, COLOUR_MIDDLE, COLOUR_DEATH].map(|id| read.colour(id).map(|c| c * read.number(INTENSITY).max(0.0))),
-            opacity: read.ratio(OPACITY).clamp(0.0, 1.0),
-            fade_in: read.ratio(FADE_IN).clamp(0.0, 1.0),
-            fade_out: read.ratio(FADE_OUT).clamp(0.0, 1.0),
-            additive: cx.index(BLEND) == 0,
-            camera: cx.index(VIEW) == 0,
-            shutter: if cx.bool(MOTION_BLUR) { read.number(SHUTTER).clamp(0.0, 720.0) / 360.0 } else { 0.0 },
-            samples: if cx.bool(MOTION_BLUR) { read.number(SAMPLES).clamp(1.0, 32.0) as u32 } else { 1 },
-            spin: read.number(SPIN).to_radians(),
-            spin_random: read.ratio(SPIN_RANDOM).clamp(0.0, 1.0),
+            streak: ratio(c.streak).max(0.0),
+            colours: [c.colour_birth, c.colour_middle, c.colour_death].map(|rgba| colour(rgba).map(|v| v * finite(c.intensity).max(0.0))),
+            opacity: ratio(c.opacity).clamp(0.0, 1.0),
+            fade_in: ratio(c.fade_in).clamp(0.0, 1.0),
+            fade_out: ratio(c.fade_out).clamp(0.0, 1.0),
+            additive: c.blend == 0,
+            camera: c.view == 0,
+            shutter: if c.motion_blur { finite(c.shutter).clamp(0.0, 720.0) / 360.0 } else { 0.0 },
+            samples: if c.motion_blur { finite(c.samples).clamp(1.0, 32.0) as u32 } else { 1 },
+            spin: finite(c.spin).to_radians(),
+            spin_random: ratio(c.spin_random).clamp(0.0, 1.0),
         };
         let frame = (cx.time * frame_rate).round();
         let frame = if frame.is_finite() { frame.max(-1.0) } else { -1.0 };

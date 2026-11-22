@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 craft-plugin = { path = "../../crates/plugin-sdk" }
 
 [dev-dependencies]
-craft-plugin-host = { path = "../../crates/plugin-host" }
+craft-plugin-host = { path = "../../crates/plugin-host", features = ["testing"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [profile.release]

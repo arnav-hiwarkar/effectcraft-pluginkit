@@ -388,4 +388,18 @@ mod tests {
         let worst = block_means(37).iter().zip(BLOCK_MEANS).map(|(a, b)| a.abs_diff(b)).max().unwrap();
         assert!(worst <= 1, "largest 8-bit difference {worst}");
     }
+
+    #[test]
+    fn the_default_fountain_matches_its_stored_frame() {
+        let plugin = craft_plugin_host::testing::TestPlugin::of(plugin);
+        craft_plugin_host::assert_frame!(plugin.render("ember").time(1.0).set("Physics/turbulence", 300.0), "fountain");
+    }
+
+    #[test]
+    fn a_burst_of_sparks_from_a_box_matches_its_stored_frame() {
+        let plugin = craft_plugin_host::testing::TestPlugin::of(plugin);
+        let render =
+            plugin.render("ember").time(0.8).set("Emitter/type", 1.0).set("Emitter/emission", 1.0).set("Emitter/rate", 4000.0).set("Particle/shape", 2.0);
+        craft_plugin_host::assert_frame!(render, "sparks");
+    }
 }
