@@ -185,7 +185,7 @@ pub fn linear_to_srgb(linear: f32) -> f32 {
     encoded.copysign(linear)
 }
 
-/// Cheaper forms of [`sin`], [`cos`], [`exp`] and [`ln`] for loops that call several of them per pixel: shorter
+/// Cheaper forms of [`sin`], [`cos`], [`exp`], [`exp2`] and [`ln`] for loops that call several of them per pixel: shorter
 /// polynomials, a one-step range reduction and no guards, so fewer constants and instructions. Each lists its tested
 /// worst error, which is far below one level of a 16-bit channel.
 pub mod fast {
@@ -221,6 +221,17 @@ pub mod fast {
         let whole = (t + 0.5).floor();
         let f = t - whole;
         let poly = 1.0 + f * (0.693_136_7 + f * (0.240_221_68 + f * (0.055_838_33 + f * 0.009_676_043)));
+        f32::from_bits(((whole as i32 + 127) as u32) << 23) * poly
+    }
+
+    /// `2^x` for `x` in `-126..=126`; inputs outside are clamped to it. Largest relative error against `f32::exp2`
+    /// over that range: 3.3e-6.
+    #[inline(always)]
+    pub fn exp2(x: f32) -> f32 {
+        let x = x.clamp(-126.0, 126.0);
+        let whole = (x + 0.5).floor();
+        let f = x - whole;
+        let poly = 1.0 + f * (std::f32::consts::LN_2 + f * (0.240_226_5 + f * (0.055_504_1 + f * (0.009_618_1 + f * 0.001_333_4))));
         f32::from_bits(((whole as i32 + 127) as u32) << 23) * poly
     }
 
@@ -449,6 +460,17 @@ mod tests {
         assert_eq!(fast::exp(0.0), 1.0);
         assert_eq!(fast::exp(500.0), fast::exp(88.0));
         assert!(fast::exp(-500.0) > 0.0);
+    }
+
+    #[test]
+    fn fast_exp2_is_within_4e_6_relative_over_its_range() {
+        let error = worst(sweep(-126.0, 126.0, 400_000), |x| relative(fast::exp2(x), f64::from(x).exp2()));
+        assert!(error < 4e-6, "{error:e}");
+        assert_eq!(fast::exp2(0.0), 1.0);
+        assert_eq!(fast::exp2(10.0), 1024.0);
+        assert_eq!(fast::exp2(-1.0), 0.5);
+        assert_eq!(fast::exp2(1000.0), fast::exp2(126.0));
+        assert_eq!(fast::exp2(-1000.0), fast::exp2(-126.0));
     }
 
     #[test]
