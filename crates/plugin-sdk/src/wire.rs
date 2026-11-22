@@ -115,6 +115,11 @@ impl EffectSpec {
         self
     }
 
+    pub fn params(mut self, params: impl IntoIterator<Item = Param>) -> Self {
+        self.params.extend(params);
+        self
+    }
+
     pub fn group(mut self, group: &str, params: impl IntoIterator<Item = Param>) -> Self {
         self.params.extend(params.into_iter().map(|mut p| {
             p.id = format!("{group}/{}", p.id);

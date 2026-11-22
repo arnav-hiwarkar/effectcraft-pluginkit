@@ -12,6 +12,7 @@ use std::time::Duration;
 use craft_plugin::{Call, Outcome, Permission, RunMode, TaskState};
 use serde_json::Value;
 
+pub use self::native::Exports;
 use self::native::NativeGuest;
 use self::serve::{HostCx, Identity};
 use self::tasks::{PROJECT_CLOSED, Project, Slot, Tasks};
@@ -49,9 +50,17 @@ impl Engine {
         } else {
             Kind::Native(NativeGuest::load(&entry)?)
         };
+        Ok(Engine::with(kind, &bundle.manifest.id, bundle.dir.clone(), grants, data_dir))
+    }
+
+    pub fn in_process(exports: Exports, id: &str, dir: PathBuf, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Result<Arc<Engine>, PluginError> {
+        Ok(Engine::with(Kind::Native(NativeGuest::in_process(exports)?), id, dir, grants, data_dir))
+    }
+
+    fn with(kind: Kind, id: &str, dir: PathBuf, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Arc<Engine> {
         let identity = Identity {
-            id: bundle.manifest.id.clone(),
-            dir: bundle.dir.clone(),
+            id: id.into(),
+            dir,
             app_folders: app_folders(&data_dir),
             data_dir,
             grants,
@@ -59,8 +68,13 @@ impl Engine {
             tasks: Tasks::default(),
             picked: Mutex::new(Vec::new()),
             images: Images::new(IMAGE_BUDGET),
+            journal: Default::default(),
         };
-        Ok(Arc::new(Engine { identity, kind }))
+        Arc::new(Engine { identity, kind })
+    }
+
+    pub fn journal(&self) -> &crate::journal::Journal {
+        &self.identity.journal
     }
 
     pub fn cached(&self, key: &str) -> Option<Arc<[u8]>> {
@@ -133,8 +147,12 @@ impl Engine {
         let request = serde_json::to_vec(&Call::Task { task: task.into(), args }).map_err(|e| e.to_string())?;
         let (id, slot) = self.identity.tasks.add(task, project)?;
         let (engine, running) = (self.clone(), slot.clone());
+        let name = task.to_string();
         let spawned = std::thread::Builder::new().name(format!("craft-plugin-task-{id}")).spawn(move || {
             let outcome = engine.run_task(&request, &running);
+            if let Err(error) = &outcome {
+                engine.identity.journal.push(craft_plugin::LogLevel::Error, format!("task `{name}` failed: {error}"));
+            }
             running.finish(outcome);
         });
         if let Err(error) = spawned {

@@ -10,12 +10,12 @@ use libloading::Library;
 use super::serve::{Bulk, HostCx, serve};
 use crate::plugin::PluginError;
 
-type AbiFn = unsafe extern "C" fn() -> u32;
-type AllocFn = unsafe extern "C" fn(usize) -> *mut u8;
-type FreeFn = unsafe extern "C" fn(*mut u8, usize);
-type CallFn = unsafe extern "C" fn(usize, *const u8, usize, *mut u8, usize, *mut [usize; 2]);
-type HostFn = unsafe extern "C" fn(usize, *const u8, usize, *const u8, usize, *mut [usize; 4]);
-type InitFn = unsafe extern "C" fn(HostFn);
+pub type AbiFn = unsafe extern "C" fn() -> u32;
+pub type AllocFn = unsafe extern "C" fn(usize) -> *mut u8;
+pub type FreeFn = unsafe extern "C" fn(*mut u8, usize);
+pub type CallFn = unsafe extern "C" fn(usize, *const u8, usize, *mut u8, usize, *mut [usize; 2]);
+pub type HostFn = unsafe extern "C" fn(usize, *const u8, usize, *const u8, usize, *mut [usize; 4]);
+pub type InitFn = unsafe extern "C" fn(HostFn);
 
 pub(crate) fn guarded(cx: &mut HostCx, request: &[u8], bulk: &[u8]) -> (Vec<u8>, Bulk) {
     catch_unwind(AssertUnwindSafe(|| serve(cx, request, bulk))).unwrap_or_else(|_| refusal("the app failed to answer"))
@@ -58,7 +58,16 @@ pub(crate) struct NativeGuest {
     call: CallFn,
     alloc: AllocFn,
     free: FreeFn,
-    _library: Library,
+    _library: Option<Library>,
+}
+
+#[derive(Clone, Copy)]
+pub struct Exports {
+    pub abi: AbiFn,
+    pub init: InitFn,
+    pub call: CallFn,
+    pub alloc: AllocFn,
+    pub free: FreeFn,
 }
 
 struct NativeCall<'a, 'b> {
@@ -84,8 +93,20 @@ impl NativeGuest {
             let alloc = *library.get::<AllocFn>(b"craft_plugin_alloc\0").map_err(failed)?;
             let free = *library.get::<FreeFn>(b"craft_plugin_free\0").map_err(failed)?;
             init(host_call);
-            Ok(NativeGuest { call, alloc, free, _library: library })
+            Ok(NativeGuest { call, alloc, free, _library: Some(library) })
         }
+    }
+
+    pub fn in_process(exports: Exports) -> Result<NativeGuest, PluginError> {
+        // SAFETY: `exports` are the functions `craft_plugin::export!` defines in this same program, with exactly
+        // these signatures; calling them is calling ordinary Rust code of this process.
+        let found = unsafe { (exports.abi)() };
+        if found != ABI {
+            return Err(PluginError::Load(format!("plugin speaks ABI {found}, this app speaks ABI {ABI}")));
+        }
+        // SAFETY: as above; `host_call` has the signature `init` expects.
+        unsafe { (exports.init)(host_call) };
+        Ok(NativeGuest { call: exports.call, alloc: exports.alloc, free: exports.free, _library: None })
     }
 
     pub fn call(&self, request: &[u8], pixels: Option<&mut [Pixel]>, cx: &mut HostCx) -> Vec<u8> {

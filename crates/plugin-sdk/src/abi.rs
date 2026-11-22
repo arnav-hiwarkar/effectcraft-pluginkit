@@ -139,10 +139,26 @@ pub(crate) fn spread(table: &mut [Pixel]) -> Option<(&[Pixel], &[Pixel], &mut [P
     }
 }
 
+thread_local! {
+    static PANIC: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 fn report_panics() {
     static HOOK: std::sync::Once = std::sync::Once::new();
     HOOK.call_once(|| {
-        std::panic::set_hook(Box::new(|info| crate::host::log(LogLevel::Error, format!("plugin panicked: {info}"))));
+        let outside = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if CTX.get() == 0 {
+                return outside(info);
+            }
+            let message = info.payload_as_str().unwrap_or("no message");
+            let report = match info.location() {
+                Some(at) => format!("the plugin panicked at {}:{}:{}: {message}", at.file(), at.line(), at.column()),
+                None => format!("the plugin panicked: {message}"),
+            };
+            crate::host::log(LogLevel::Error, &report);
+            PANIC.set(Some(report));
+        }));
     });
 }
 
@@ -168,8 +184,10 @@ pub unsafe fn entry<'p>(
         unsafe { std::slice::from_raw_parts_mut(pixels.cast::<Pixel>(), pixels_len / PIXEL_BYTES) }
     };
     let outer = CTX.replace(ctx);
-    let reply = catch_unwind(AssertUnwindSafe(|| plugin().dispatch(request, pixels)))
-        .unwrap_or_else(|_| serde_json::to_vec(&Outcome::<()>::Err("the plugin panicked".into())).unwrap_or_default());
+    let reply = catch_unwind(AssertUnwindSafe(|| plugin().dispatch(request, pixels))).unwrap_or_else(|_| {
+        let report = PANIC.take().unwrap_or_else(|| "the plugin panicked".into());
+        serde_json::to_vec(&Outcome::<()>::Err(report)).unwrap_or_default()
+    });
     CTX.set(outer);
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { *out = Buffer::copy_of(&reply).into_raw() };

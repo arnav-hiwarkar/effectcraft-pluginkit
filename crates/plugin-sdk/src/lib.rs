@@ -5,6 +5,7 @@ mod kernels;
 mod manifest;
 pub mod math;
 mod plugin;
+mod typed;
 mod ui;
 mod viewer;
 mod wire;
@@ -13,6 +14,7 @@ pub use effect::{Cx, Effect, Frame, Image, Pass, Rows};
 pub use kernels::*;
 pub use manifest::{Entry, MANIFEST_FILE, Manifest, ManifestError, Permission, RunMode, native_target};
 pub use plugin::{Error, Plugin, Result, Task};
+pub use typed::{FromParam, LayerParam};
 pub use ui::{Canvas, Panel, Ui};
 pub use viewer::{Bind, Cursor, Handle, Mark, Overlay, Space, Tool, ToolEvent, ToolEventKind, ToolSpec};
 pub use wire::*;
@@ -20,10 +22,28 @@ pub use wire::*;
 pub mod prelude {
     pub use crate::host;
     pub use crate::{
-        AppEvent, AudioRequest, Blend, BlendMode, BlurShape, Camera, Canvas, Cull, Cx, Drag, Dropped, Effect, EffectSpec, Error, Filter, Frame, FrameRequest,
-        GpuData, GpuImage, GpuPass, GpuPlan, HostKernel, Image, Key, Layout, Light, LightKind, MaskPath, Modifiers, Overlay, Paint, Panel, Param, Pass,
-        PickFile, Pixel, Plugin, Pointer, PointerPhase, Rect, Result, Root, Rows, Scene, Space, Taps, Task, TaskState, TaskStatus, Tool, ToolEvent,
-        ToolEventKind, Topic, Ui,
+        AppEvent, AudioRequest, Bind, Blend, BlendMode, BlurShape, Camera, Canvas, Cull, Cursor, Cx, Drag, Dropped, Effect, EffectSpec, Error, Filter, Frame,
+        FrameRequest, GpuData, GpuImage, GpuPass, GpuPlan, Handle, HostKernel, Image, Key, LayerParam, Layout, Light, LightKind, LogLevel, Mark, MaskPath,
+        Modifiers, Overlay, Paint, Panel, Param, Pass, PickFile, Pixel, Plugin, Pointer, PointerPhase, Rect, Result, Root, Rows, Scene, Space, Taps, Task,
+        TaskState, TaskStatus, Tool, ToolEvent, ToolEventKind, Topic, Ui, Value,
+    };
+    pub use crate::{log, params};
+    pub use serde_json::json;
+}
+
+#[macro_export]
+macro_rules! log {
+    (error, $($message:tt)+) => {
+        $crate::host::log($crate::LogLevel::Error, ::std::format_args!("{}:{}: {}", ::std::file!(), ::std::line!(), ::std::format_args!($($message)+)))
+    };
+    (warn, $($message:tt)+) => {
+        $crate::host::log($crate::LogLevel::Warn, ::std::format_args!("{}:{}: {}", ::std::file!(), ::std::line!(), ::std::format_args!($($message)+)))
+    };
+    (info, $($message:tt)+) => {
+        $crate::host::log($crate::LogLevel::Info, ::std::format_args!("{}:{}: {}", ::std::file!(), ::std::line!(), ::std::format_args!($($message)+)))
+    };
+    ($($message:tt)+) => {
+        $crate::log!(info, $($message)+)
     };
 }
 

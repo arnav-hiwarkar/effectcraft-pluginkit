@@ -5,12 +5,13 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use craft_plugin::{
-    Call, Contributions, FrameDesc, GpuImage, GpuPass, GpuPlan, Layout, Manifest, Outcome, Permission, Pixel, Rect, RenderCx, TaskState, Window,
+    Call, Contributions, FrameDesc, GpuImage, GpuPass, GpuPlan, Layout, LogLevel, Manifest, Outcome, Permission, Pixel, Rect, RenderCx, TaskState, Window,
 };
 use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 
 use crate::host::{Host, Origin};
+use crate::journal::LogLine;
 use crate::kernels::{self, Image};
 use crate::registry::Bundle;
 use crate::runtime::Engine;
@@ -78,7 +79,17 @@ impl Host for NoHost {}
 impl Plugin {
     pub fn load(bundle: &Bundle, grants: BTreeSet<Permission>, data_dir: PathBuf, limits: Limits) -> Result<Plugin, PluginError> {
         let engine = Engine::open(bundle, grants, data_dir)?;
-        let mut plugin = Plugin { manifest: bundle.manifest.clone(), engine, limits, contributions: Contributions::default() };
+        Plugin::described(bundle.manifest.clone(), engine, limits)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub fn in_process(manifest: Manifest, exports: crate::runtime::Exports, dir: PathBuf, data_dir: PathBuf, limits: Limits) -> Result<Plugin, PluginError> {
+        let engine = Engine::in_process(exports, &manifest.id, dir, manifest.permissions.clone(), data_dir)?;
+        Plugin::described(manifest, engine, limits)
+    }
+
+    fn described(manifest: Manifest, engine: Arc<Engine>, limits: Limits) -> Result<Plugin, PluginError> {
+        let mut plugin = Plugin { manifest, engine, limits, contributions: Contributions::default() };
         plugin.contributions = plugin.call(&Call::Describe, None, &mut NoHost)?;
         plugin.engine.know_tasks(plugin.contributions.tasks.iter().map(|task| task.id.clone()).collect());
         Ok(plugin)
@@ -314,7 +325,19 @@ impl Plugin {
         }
     }
 
+    pub fn logs(&self, after: u64) -> Vec<LogLine> {
+        self.engine.journal().after(after)
+    }
+
     fn exchange<R: DeserializeOwned>(&self, call: &Call, io: Io, host: &mut dyn Host) -> Result<R, PluginError> {
+        let answered = self.answer(call, io, host);
+        if let Err(error) = &answered {
+            self.engine.journal().push(LogLevel::Error, format!("{} failed: {error}", what(call)));
+        }
+        answered
+    }
+
+    fn answer<R: DeserializeOwned>(&self, call: &Call, io: Io, host: &mut dyn Host) -> Result<R, PluginError> {
         let request = serde_json::to_vec(call).map_err(|e| PluginError::Protocol(e.to_string()))?;
         let reply = self.engine.call(&request, io, host, origin(call), self.budget(call))?;
         let outcome: Outcome<R> = serde_json::from_slice(&reply).map_err(|e| PluginError::Protocol(e.to_string()))?;
@@ -325,6 +348,22 @@ impl Plugin {
 impl Drop for Plugin {
     fn drop(&mut self) {
         self.engine.cancel_all();
+    }
+}
+
+fn what(call: &Call) -> String {
+    match call {
+        Call::Describe => "describing the plugin".into(),
+        Call::Layout { effect, .. } => format!("layout of effect `{effect}`"),
+        Call::Render { effect, .. } => format!("render of effect `{effect}`"),
+        Call::Pass { effect, kernel, .. } => format!("pass `{kernel}` of effect `{effect}`"),
+        Call::Panel { panel, .. } => format!("panel `{panel}`"),
+        Call::Command { command } => format!("command `{command}`"),
+        Call::Task { task, .. } => format!("task `{task}`"),
+        Call::Controls { effect, param, .. } => format!("controls of `{param}` in effect `{effect}`"),
+        Call::Overlay { effect, .. } => format!("overlay of effect `{effect}`"),
+        Call::Drag { effect, key, .. } => format!("drag of handle `{key}` in effect `{effect}`"),
+        Call::Tool { tool, .. } => format!("tool `{tool}`"),
     }
 }
 

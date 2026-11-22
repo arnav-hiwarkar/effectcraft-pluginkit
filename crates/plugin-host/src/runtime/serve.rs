@@ -25,6 +25,7 @@ pub(crate) struct Identity {
     pub tasks: Tasks,
     pub picked: Mutex<Vec<Picked>>,
     pub images: Images,
+    pub journal: crate::journal::Journal,
 }
 
 pub(crate) struct Picked {
@@ -187,13 +188,14 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
     gate::check(&call, cx.host, cx.plugin, cx.origin)?;
     let plain = |value: Value| Ok((value, Bulk::None));
     match call {
-        HostCall::Log { level, message } => {
-            let level = match level {
+        HostCall::Log { level: asked, message } => {
+            let level = match asked {
                 LogLevel::Info => log::Level::Info,
                 LogLevel::Warn => log::Level::Warn,
                 LogLevel::Error => log::Level::Error,
             };
             log::log!(target: "plugin", level, "[{}] {message}", cx.plugin.id);
+            cx.plugin.journal.push(asked, message);
             plain(Value::Null)
         }
         HostCall::Notify { message } => {
