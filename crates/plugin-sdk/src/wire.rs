@@ -474,6 +474,8 @@ impl Layout {
 pub const MAX_PASSES: usize = 128;
 pub const MAX_SCRATCH_IMAGES: usize = 32;
 pub const MAX_SCRATCH_FRAMES: u64 = 8;
+const DRAW_PIXEL_BYTES: u64 = 8;
+const DEPTH_PIXEL_BYTES: u64 = 4;
 pub const MAX_PASS_FLOATS: usize = 96;
 pub const MAX_PASS_UINTS: usize = 16;
 pub const MAX_BUFFERS: usize = 64;
@@ -618,6 +620,25 @@ impl GpuPlan {
         self.validate(frame)
     }
 
+    fn working_images(&self, frame: [u32; 2]) -> Vec<([u32; 2], u64)> {
+        let mut working: Vec<(u8, [u32; 2], u64)> = Vec::new();
+        for pass in &self.passes {
+            let (Some(src), Some(out)) = (self.size_of(pass.src, frame), self.size_of(pass.out, frame)) else { continue };
+            let needs = match (&pass.host, &pass.draw) {
+                (Some(kernel), _) if kernel.needs_temporary() => vec![(0, out, PIXEL_BYTES as u64)],
+                (Some(HostKernel::Resample { .. }), _) => vec![(1, [out[0], src[1]], PIXEL_BYTES as u64)],
+                (None, Some(draw)) => std::iter::once((2, out, DRAW_PIXEL_BYTES)).chain(draw.depth.then_some((3, out, DEPTH_PIXEL_BYTES))).collect(),
+                _ => Vec::new(),
+            };
+            for need in needs {
+                if !working.contains(&need) {
+                    working.push(need);
+                }
+            }
+        }
+        self.images.iter().map(|size| (*size, PIXEL_BYTES as u64)).chain(working.into_iter().map(|(_, size, bytes)| (size, bytes))).collect()
+    }
+
     pub fn validate(&self, frame: [u32; 2]) -> Result<(), String> {
         let passes = self.passes.len();
         if !(1..=MAX_PASSES).contains(&passes) {
@@ -633,15 +654,11 @@ impl GpuPlan {
             }
         }
         let area = |[w, h]: [u32; 2]| u64::from(w) * u64::from(h);
-        let mut temporaries: Vec<[u32; 2]> = Vec::new();
-        for pass in self.passes.iter().filter(|pass| pass.host.as_ref().is_some_and(HostKernel::needs_temporary)) {
-            if let Some(size) = self.size_of(pass.out, frame).filter(|size| !temporaries.contains(size)) {
-                temporaries.push(size);
-            }
-        }
-        let scratch_area = self.images.iter().chain(&temporaries).copied().map(area).fold(0, u64::saturating_add);
-        if scratch_area > MAX_SCRATCH_FRAMES.saturating_mul(area(frame)) {
-            return Err(format!("the scratch images and blur temporaries together exceed {MAX_SCRATCH_FRAMES} times the {fw}x{fh} padded frame"));
+        let scratch_bytes = self.working_images(frame).iter().map(|(size, bytes)| area(*size).saturating_mul(*bytes)).fold(0, u64::saturating_add);
+        if scratch_bytes > MAX_SCRATCH_FRAMES.saturating_mul(area(frame)).saturating_mul(PIXEL_BYTES as u64) {
+            return Err(format!(
+                "the scratch images and the images the passes work in (blur temporaries, resample intermediates, draw targets) together exceed {MAX_SCRATCH_FRAMES} times the {fw}x{fh} padded frame"
+            ));
         }
         if self.buffers.len() > MAX_BUFFERS {
             return Err(format!("a plan has at most {MAX_BUFFERS} buffers, this one has {}", self.buffers.len()));
@@ -1510,6 +1527,18 @@ mod tests {
         let small_top = plan(vec![[8, 8]], vec![tint(source, scratch), GpuPass::blend_images(source, scratch, output, BlendMode::Add, 1.0)]);
         let drawing_blur = plan(vec![], vec![GpuPass { draw: Some(Draw::default()), ..GpuPass::blur(source, output, [1.0; 2]) }]);
         let separable = |x: usize, y: usize| Taps::Separable { x: vec![0.5; x], y: vec![0.5; y] };
+        let (tall, wide) = (GpuImage::Scratch(0), GpuImage::Scratch(1));
+        let resampled_through_tall_and_wide = plan(
+            vec![[53, 74], [106, 37], [106, 74]],
+            vec![
+                GpuPass::resample(source, tall, Filter::Bilinear),
+                GpuPass::resample(tall, wide, Filter::Bilinear),
+                GpuPass::resample(wide, output, Filter::Bilinear),
+            ],
+        );
+        let mut scratch_and_draw = plan(vec![[53, 37]; 8], vec![]);
+        let mesh = scratch_and_draw.buffer(GpuData::Floats(vec![0.0; 9]));
+        scratch_and_draw.passes = vec![GpuPass::draw("mesh", output).vertices(mesh, &[3])];
         let cases = [
             ("no passes", plan(vec![], vec![]), "1 to 128 passes"),
             ("129 passes", plan(vec![], vec![finish(); 129]), "1 to 128 passes"),
@@ -1527,8 +1556,10 @@ mod tests {
             (
                 "scratch at the limit and a blur temporary",
                 plan(vec![[53, 37]; 8], vec![GpuPass::blur(source, scratch, [1.0; 2]), finish()]),
-                "the scratch images and blur temporaries together exceed 8 times",
+                "the scratch images and the images the passes work in (blur temporaries, resample intermediates, draw targets) together exceed 8 times",
             ),
+            ("scratch at the limit and a resample's intermediate", resampled_through_tall_and_wide, "together exceed 8 times"),
+            ("scratch at the limit and a draw target", scratch_and_draw, "together exceed 8 times"),
             ("97 floats", plan(vec![], vec![finish().floats(&[0.0; 97])]), "97 floats"),
             ("17 uints", plan(vec![], vec![finish().uints(&[0; 17])]), "17 uints"),
             ("17 pictures", too_many_pictures, "at most 16 textures and layers"),

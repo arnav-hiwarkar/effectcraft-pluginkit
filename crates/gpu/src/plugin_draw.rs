@@ -276,6 +276,7 @@ pub(crate) struct Stage<'a> {
     pub wgsl: &'a str,
     pub program: &'a GpuProgram,
     depth: Option<wgpu::Texture>,
+    colours: Vec<([u32; 2], wgpu::Texture)>,
     canvas: Option<Canvas>,
 }
 
@@ -288,7 +289,7 @@ pub(crate) struct Target<'a> {
 
 impl<'a> Stage<'a> {
     pub fn new(effect: &'a str, revision: u64, wgsl: &'a str, program: &'a GpuProgram) -> Self {
-        Stage { effect, revision, wgsl, program, depth: None, canvas: None }
+        Stage { effect, revision, wgsl, program, depth: None, colours: Vec::new(), canvas: None }
     }
 
     pub fn texture(&self, g: &GpuContext, index: usize) -> Option<GpuImage> {
@@ -330,6 +331,15 @@ impl<'a> Stage<'a> {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         })
+    }
+
+    fn colour(&mut self, g: &GpuContext, size: [u32; 2]) -> wgpu::Texture {
+        if let Some((_, kept)) = self.colours.iter().find(|(kept, _)| *kept == size) {
+            return kept.clone();
+        }
+        let colour = Self::attachment(g, size, COLOUR);
+        self.colours.push((size, colour.clone()));
+        colour
     }
 
     fn bind(g: &GpuContext, params: &Params, src: &wgpu::Texture, aux: Option<&wgpu::Texture>) -> wgpu::BindGroup {
@@ -389,7 +399,10 @@ impl<'a> Stage<'a> {
             _ => None,
         };
         let load = if open.is_some() || underlay.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT) };
-        let colour = open.map_or_else(|| Self::attachment(g, target.size, COLOUR), |canvas| canvas.colour);
+        let colour = match open {
+            Some(canvas) => canvas.colour,
+            None => self.colour(g, target.size),
+        };
         let fresh_depth = draw.depth && self.depth.is_none();
         if fresh_depth {
             self.depth = Some(Self::attachment(g, target.size, DEPTH));

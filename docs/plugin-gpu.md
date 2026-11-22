@@ -67,8 +67,10 @@ device and the stored bytes (image sizes the GPU holds, buffer and texture byte 
 
 - 1 to 128 passes;
 - at most 32 scratch images, each at least 1×1 and at most twice the padded frame in each axis, and
-  together at most 8 times the padded frame's area, counting one more image for each size that a blur
-  or separable convolve writes (its intermediate pass);
+  together at most 8 times the padded frame's memory, counting the images the passes work in: one
+  for each size that a blur or separable convolve writes, one for each size of a resample's
+  intermediate (the output's width by the source's height), and for each size a draw writes a colour
+  target of half an image and, with depth, a depth buffer of a quarter;
 - a pass reads only `Source` or an image an earlier pass wrote, and never the image it writes unless it
   is a [pointwise host kernel](#host-kernels);
 - no pass writes `Source` or a texture, and some pass writes `Output`;
