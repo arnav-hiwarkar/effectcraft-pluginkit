@@ -50,7 +50,7 @@ fn defaults(plugin: &Plugin, effect: &str, size: [u32; 2]) -> BTreeMap<String, V
                 ParamKind::Point { default } => Value::List(vec![default[0] * f64::from(size[0]), default[1] * f64::from(size[1])]),
                 ParamKind::Point3 { default } => Value::List(default.to_vec()),
                 ParamKind::Color { default } => Value::List(default.to_vec()),
-                ParamKind::Text { default } => Value::Text(default.clone()),
+                ParamKind::Text { default } | ParamKind::Custom { default } => Value::Text(default.clone()),
                 ParamKind::Layer | ParamKind::Mask => return None,
             };
             Some((p.id.clone(), value))
