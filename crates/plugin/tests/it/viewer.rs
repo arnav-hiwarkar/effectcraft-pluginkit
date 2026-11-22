@@ -263,3 +263,16 @@ fn a_tool_event_queued_behind_a_slow_call_is_dropped_when_its_project_closes() {
     settle(&mut app, &mut panels);
     assert_eq!(gesture(&mut app, &mut panels, &[(ToolEventKind::Key, [8.0, 9.0])]), ["Key 8.0 9.0"]);
 }
+
+#[test]
+fn a_tool_event_of_an_earlier_activation_is_dropped_when_the_tool_is_picked_again() {
+    let mut app = app("test.viewer-tool-again", &["document.read", "document.write"]);
+    let mut panels = Panels::default();
+    hold_the_worker(&mut app, &mut panels);
+    panels.tool(&app.session, &app.id, "stamp", event(ToolEventKind::Key, [2.0, 2.0])).unwrap();
+    panels.put_tool_away();
+    panels.tool(&app.session, &app.id, "stamp", event(ToolEventKind::Key, [3.0, 3.0])).unwrap();
+    crate::panels::release(&app);
+    settle(&mut app, &mut panels);
+    assert_eq!(gesture(&mut app, &mut panels, &[]), ["Key 3.0 3.0"]);
+}

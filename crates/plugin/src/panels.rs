@@ -101,7 +101,7 @@ impl Bound {
         Bound { loaded, project: session.project_closed.clone(), surface }
     }
 
-    fn asked_by(&self, surface: &Arc<()>) -> bool {
+    pub(crate) fn asked_by(&self, surface: &Arc<()>) -> bool {
         std::ptr::eq(self.surface.as_ptr(), Arc::as_ptr(surface))
     }
 
@@ -349,6 +349,7 @@ pub(crate) struct Overlaid {
 pub(crate) struct Tooling {
     pub(crate) key: Key,
     pub(crate) loaded: Arc<Loaded>,
+    pub(crate) open: Arc<()>,
     pub(crate) overlay: Overlay,
     pub(crate) gesture: Option<Gesture>,
 }
@@ -622,7 +623,7 @@ impl Panels {
                 }
             }
             (Call::Tool { .. }, Ok(Reply::Overlay(overlay))) => {
-                if let Some(tool) = self.tool.as_mut().filter(|tool| tool.key == key && Arc::ptr_eq(&tool.loaded, &bound.loaded)) {
+                if let Some(tool) = self.tool.as_mut().filter(|tool| bound.asked_by(&tool.open)) {
                     tool.overlay = overlay;
                 }
             }

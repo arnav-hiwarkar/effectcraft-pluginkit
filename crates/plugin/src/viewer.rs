@@ -153,7 +153,7 @@ impl Panels {
         if self.tool.as_ref().is_some_and(|state| state.key != key || !Arc::ptr_eq(&state.loaded, &loaded)) {
             self.tool = None;
         }
-        let state = self.tool.get_or_insert_with(|| Tooling { key: key.clone(), loaded: loaded.clone(), overlay: Overlay::default(), gesture: None });
+        let state = self.tool.get_or_insert_with(|| Tooling { key: key.clone(), loaded: loaded.clone(), open: Arc::default(), overlay: Overlay::default(), gesture: None });
         if event.kind == ToolEventKind::Down {
             state.gesture = Some(Gesture::new(&name));
         }
@@ -161,8 +161,8 @@ impl Panels {
             ToolEventKind::Up => state.gesture.take(),
             _ => state.gesture.clone(),
         };
+        let bound = Bound::of(loaded, session, Arc::downgrade(&state.open));
         let call = Call::Tool { tool: tool.to_string(), event };
-        let bound = Bound::of(loaded, session, self.surface());
         self.post(Request { key, bound, call, edit: None, gesture });
         Ok(())
     }
