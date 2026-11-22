@@ -211,8 +211,8 @@ fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {
 reads. `reach(0)` is pointwise. The source and the output of a pass may differ in size: the matching
 source row of output row `y` is `y * src_height / out_height`, rounded down, and the same reach applies
 to `aux` with its own height. `GpuPass::aux_reach(n)` gives `aux` a reach of its own, for example
-`.reach(0).aux_reach(2)` for a pass that reads its source pointwise and a half-size `aux` two rows around. A band gets the source rows matching its first and last output rows, widened
-by the reach. Rows outside that read as transparent, so a reach that is too small shows as dark lines at
+`.reach(0).aux_reach(2)` for a pass that reads its source pointwise and a half-size `aux` two rows
+around. A band gets the source rows matching its first and last output rows, widened by the reach. Rows outside that read as transparent, so a reach that is too small shows as dark lines at
 band edges; when sizes are odd the matching row can be one less than `2 * y` or `y / 2` suggests, so
 allow one row more. A pass without a reach needs its whole source and runs as one call on one core.
 
