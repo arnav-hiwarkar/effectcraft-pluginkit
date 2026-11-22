@@ -30,6 +30,7 @@ fn load(scratch: &Path, subject: &Subject, wasm: bool) -> Plugin {
     std::fs::create_dir_all(&dir).unwrap();
     let from = built(subject, wasm);
     let file = from.file_name().unwrap().to_str().unwrap().to_string();
+    let _ = std::fs::remove_file(dir.join(&file));
     std::fs::copy(&from, dir.join(&file)).unwrap_or_else(|e| panic!("{}: {e}", from.display()));
     let entry = if wasm { json!({"wasm": file}) } else { json!({"native": {native_target(): file}}) };
     let manifest = json!({"id": format!("bench.{}", subject.library.replace('_', "-")), "name": subject.name, "version": "1", "entry": entry});
