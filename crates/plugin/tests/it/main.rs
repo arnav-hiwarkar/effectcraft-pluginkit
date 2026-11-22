@@ -3,6 +3,7 @@ mod gate;
 mod gpu;
 mod lumen;
 mod media;
+mod params;
 mod render;
 
 use std::path::{Path, PathBuf};

@@ -73,6 +73,8 @@ pub struct EffectSpec {
     pub shader: Option<String>,
     #[serde(default)]
     pub designer: Option<String>,
+    #[serde(default)]
+    pub reads_param_history: bool,
 }
 
 impl EffectSpec {
@@ -115,6 +117,11 @@ impl EffectSpec {
 
     pub fn designer(mut self, panel: &str) -> Self {
         self.designer = Some(panel.into());
+        self
+    }
+
+    pub fn reads_param_history(mut self) -> Self {
+        self.reads_param_history = true;
         self
     }
 }
@@ -542,6 +549,14 @@ pub enum HostCall {
     Frame { request: FrameRequest },
     Audio { request: AudioRequest },
     PickFile { request: PickFile },
+    ParamsAt { time: f64 },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct ParamsAt {
+    pub params: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub history: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

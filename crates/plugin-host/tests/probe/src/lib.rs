@@ -226,6 +226,23 @@ impl Effect for Recurse {
     }
 }
 
+struct Report;
+
+impl Effect for Report {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("report", "Report", "Probe").param(Param::slider("level", "Level", 10.0, 0.0..=100.0)).reads_param_history()
+    }
+
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let at_zero = cx.at(0.0).ok_or("no parameters at time 0")?;
+        let history = cx.param_history();
+        let report = json!({"instance": cx.instance.to_string(), "now": cx.f("level"), "at_zero": at_zero.f("level"), "at_zero_time": at_zero.time, "history": history.map(|h| h.to_string())});
+        host::write_file(Root::Data, &format!("report-{}.json", cx.instance), report.to_string().as_bytes())?;
+        frame.pixels[0] = [cx.f("level") as f32, at_zero.f("level") as f32, at_zero.time as f32, f32::from(u8::from(history.is_some()))];
+        Ok(())
+    }
+}
+
 struct HalfDone;
 
 impl Effect for HalfDone {
@@ -279,6 +296,7 @@ fn make() -> Plugin {
         .effect(Spin)
         .effect(HalfDone)
         .effect(Recurse)
+        .effect(Report)
         .effect(GpuInvert)
         .effect(GpuSoften)
         .effect(GpuFill)
@@ -353,7 +371,8 @@ fn make() -> Plugin {
         .task("frame", "Read A Frame", |task: &Task| {
             let args = task.args();
             let layer = args["layer"].as_str().map(String::from);
-            let request = craft_plugin::FrameRequest { comp: None, layer, time: args["time"].as_f64().unwrap_or(0.0), scale: args["scale"].as_f64().unwrap_or(1.0) };
+            let request =
+                craft_plugin::FrameRequest { comp: None, layer, time: args["time"].as_f64().unwrap_or(0.0), scale: args["scale"].as_f64().unwrap_or(1.0) };
             let image = host::frame(request)?;
             let center = image.at(image.width as isize / 2, image.height as isize / 2);
             Ok(json!({"width": image.width, "height": image.height, "center": center}))

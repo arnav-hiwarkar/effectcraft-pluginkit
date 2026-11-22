@@ -3,7 +3,7 @@ use std::ops::Deref;
 use crate::Result;
 use crate::abi::Buffer;
 use crate::host;
-use crate::wire::{EffectSpec, HostCall, ImageDesc, Layout, MaskPath, Pixel, RenderCx, Scene, Value};
+use crate::wire::{EffectSpec, HostCall, ImageDesc, Layout, MaskPath, ParamsAt, Pixel, RenderCx, Scene, Value};
 
 pub trait Effect: Send + Sync + 'static {
     fn spec(&self) -> EffectSpec;
@@ -122,9 +122,26 @@ impl Cx {
         host::cache_put(&format!("{}/{name}", self.instance), bytes)
     }
 
+    pub fn at(&self, layer_time: f64) -> Option<Cx> {
+        let answer = params_at(layer_time)?;
+        let mut cx = self.0.clone();
+        cx.comp_time += layer_time - cx.time;
+        cx.time = layer_time;
+        cx.params = answer.params;
+        Some(Cx(cx))
+    }
+
+    pub fn param_history(&self) -> Option<u64> {
+        params_at(self.time)?.history
+    }
+
     pub fn scene(&self) -> Option<Scene> {
         host::call(&HostCall::Scene, &[]).ok().map(|(scene, _)| scene)
     }
+}
+
+fn params_at(time: f64) -> Option<ParamsAt> {
+    host::call(&HostCall::ParamsAt { time }, &[]).ok().map(|(answer, _)| answer)
 }
 
 fn image(call: &HostCall) -> Option<Image> {

@@ -3,13 +3,13 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use craft_plugin_host::{
-    Blend, Call, Camera, Cull, Draw, EffectSpec, GpuData, GpuImage, Host, Layout, Light, LightKind, MaskPath, Param, ParamKind, Pixels, RenderCx, Scene,
-    Value as Wire,
+    Blend, Call, Camera, Cull, Draw, EffectSpec, GpuData, GpuImage, Host, Layout, Light, LightKind, MaskPath, Param, ParamKind, ParamsAt, Pixels, RenderCx,
+    Scene, Value as Wire,
 };
 use effectcraft_engine::effects::dynamic::{
     self, DynamicEffect, DynamicParam, GpuBlend, GpuBytes, GpuCull, GpuDraw, GpuPass, GpuPicture, GpuProgram, GpuSlot, Grid,
 };
-use effectcraft_engine::effects::{Buf, EffectCtx, Image, LayerPixels, MaskShape, SceneLightKind, util};
+use effectcraft_engine::effects::{Buf, EffectCtx, Image, LayerPixels, MaskShape, Params, SceneLightKind, util};
 use effectcraft_engine::keyframe::Value;
 use effectcraft_engine::project::ParamUi;
 
@@ -43,6 +43,7 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
             time_dependent: spec.time_dependent,
             reads_other_frames: spec.reads_other_frames,
             reads_comp_scene: spec.reads_scene,
+            reads_param_history: spec.reads_param_history,
             revision: loaded.revision,
             files: Some(folders_stamp(vec![loaded.bundle.dir.clone(), loaded.data_dir.clone()])),
         });
@@ -124,13 +125,13 @@ fn declared_default(param: &Param, layer_size: [f64; 2]) -> Value {
     }
 }
 
-fn wire_params(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> BTreeMap<String, Wire> {
+fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 2], grid: Grid) -> BTreeMap<String, Wire> {
     let convert = |param: &Param| -> Wire {
         let fallback;
-        let value = match ctx.params.get(&param.id) {
+        let value = match params.get(&param.id) {
             Some(value) => value,
             None => {
-                fallback = declared_default(param, ctx.layer_size);
+                fallback = declared_default(param, layer_size);
                 &fallback
             }
         };
@@ -157,7 +158,7 @@ fn wire_params(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> BTreeMap<Strin
 
 fn render_cx(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> RenderCx {
     RenderCx {
-        params: wire_params(spec, ctx, grid),
+        params: wire_params(spec, ctx.params, ctx.layer_size, grid),
         time: ctx.time,
         comp_time: ctx.env.comp_time,
         frame_rate: ctx.fps(),
@@ -165,7 +166,7 @@ fn render_cx(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> RenderCx {
         layer_size: ctx.layer_size,
         offset: grid.offset,
         size: [grid.width, grid.height],
-        instance: u64::from(ctx.seed),
+        instance: ctx.env.instance,
         float: ctx.env.float_depth,
         linear: ctx.env.working_linear,
     }
@@ -174,6 +175,7 @@ fn render_cx(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> RenderCx {
 struct RenderHost<'a, 'b> {
     ctx: &'a EffectCtx<'b>,
     grid: Grid,
+    spec: &'a EffectSpec,
 }
 
 impl RenderHost<'_, '_> {
@@ -212,6 +214,12 @@ impl Host for RenderHost<'_, '_> {
         self.ctx.env.masks.iter().map(convert).collect()
     }
 
+    fn params_at(&mut self, layer_time: f64) -> Option<ParamsAt> {
+        let host = self.ctx.env.host?;
+        let params = host.params_at(layer_time)?;
+        Some(ParamsAt { params: wire_params(self.spec, &params, self.ctx.layer_size, self.grid), history: host.param_history() })
+    }
+
     fn scene(&mut self) -> Option<Scene> {
         let scene = self.ctx.env.host?.comp_scene()?;
         let camera = scene.view.map(|camera| Camera { view: camera.layer_to_camera_rows, position: camera.eye, zoom: camera.zoom });
@@ -235,7 +243,7 @@ impl Host for RenderHost<'_, '_> {
 
 fn layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Layout {
     let call = Call::Layout { effect: spec.id.clone(), cx: render_cx(spec, ctx, grid) };
-    let mut layout: Layout = loaded.plugin.call(&call, None, &mut RenderHost { ctx, grid }).unwrap_or_default();
+    let mut layout: Layout = loaded.plugin.call(&call, None, &mut RenderHost { ctx, grid, spec }).unwrap_or_default();
     layout.padding = layout.padding.min(MAX_PADDING);
     layout
 }
@@ -247,7 +255,7 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
     }
     let grid = grid_of(&buf);
     let cx = render_cx(spec, ctx, grid);
-    let rendered = loaded.plugin.render(&spec.id, &cx, layout.reach, &mut buf.img.data, || RenderHost { ctx, grid });
+    let rendered = loaded.plugin.render(&spec.id, &cx, layout.reach, &mut buf.img.data, || RenderHost { ctx, grid, spec });
     loaded.report(&spec.id, rendered.err().map(|e| e.to_string()));
     buf
 }

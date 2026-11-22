@@ -565,6 +565,9 @@ pub trait EffectHost: Sync {
     fn params_at(&self, _layer_time: f64) -> Option<Params> {
         None
     }
+    fn param_history(&self) -> Option<u64> {
+        None
+    }
     /// Parameter `id` (a [`flatten_params`] id such as `birthRate`) of effect `effect_index` in
     /// the layer's stack (the running effect's [`EffectEnv::effect_index`]) at another **layer
     /// time**: Particle Emitter 3D samples its Birth Rate at every step it simulates (#1373).
@@ -612,6 +615,7 @@ pub struct EffectEnv<'a> {
     /// source has no duration (stills, solids, text, shapes) or the renderer does not know it.
     /// Retimers clamp their source requests to it.
     pub layer_span: Option<(f64, f64)>,
+    pub instance: u64,
 }
 
 /// What an effect gets to render with.
@@ -1514,7 +1518,9 @@ pub const TIME_DEPENDENT: &[&str] = &[
 pub fn is_time_dependent(id: &str) -> bool {
     // Simulations replay from layer time 0, so every frame differs even when the defaults
     // happen to look static at the test's two sample times.
-    id.starts_with("ec.sim.") || TIME_DEPENDENT.contains(&id) || dynamic::get(id).is_some_and(|r| r.effect.time_dependent || r.effect.reads_other_frames)
+    id.starts_with("ec.sim.")
+        || TIME_DEPENDENT.contains(&id)
+        || dynamic::get(id).is_some_and(|r| r.effect.time_dependent || r.effect.reads_other_frames || r.effect.reads_param_history)
 }
 
 pub fn reads_comp_scene(id: &str) -> bool {
@@ -1537,6 +1543,7 @@ pub fn revision(id: &str) -> u64 {
 /// expression returned then.
 pub fn reads_param_history(id: &str) -> bool {
     matches!(id, "ec.sim.ccparticleworld" | "ec.sim.ccparticlesystems2" | "ec.sim.ccmrmercury")
+        || dynamic::get(id).is_some_and(|r| r.effect.reads_param_history)
 }
 
 /// Run an effect on a buffer.

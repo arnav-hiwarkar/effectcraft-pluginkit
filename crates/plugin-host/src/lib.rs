@@ -12,8 +12,8 @@ mod runtime;
 
 pub use craft_plugin::{
     AudioRequest, Blend, Call, Camera, CommandSpec, Contributions, Cull, Draw, EffectSpec, Entry, FrameDesc, FrameRequest, GpuData, GpuImage, GpuPass, GpuPlan,
-    Layout, Light, LightKind, Manifest, MaskPath, PanelSpec, Param, ParamKind, Permission, PickFile, Pixel, RenderCx, RunMode, Scene, TaskSpec, TaskState,
-    TaskStatus, UiEvent, UiEventKind, UiInput, Value, Widget,
+    Layout, Light, LightKind, Manifest, MaskPath, PanelSpec, Param, ParamKind, ParamsAt, Permission, PickFile, Pixel, RenderCx, RunMode, Scene, TaskSpec,
+    TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Value, Widget,
 };
 pub use host::{Access, Host, Origin, Pixels, Samples};
 pub use package::{EXTENSION as PACKAGE_EXTENSION, MAX_ENTRIES as PACKAGE_MAX_ENTRIES, MAX_UNPACKED_BYTES as PACKAGE_MAX_BYTES, PackageError, unpack};

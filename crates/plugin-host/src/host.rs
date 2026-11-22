@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use craft_plugin::{AudioRequest, FrameRequest, MaskPath, Permission, PickFile, Pixel, Scene};
+use craft_plugin::{AudioRequest, FrameRequest, MaskPath, ParamsAt, Permission, PickFile, Pixel, Scene};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,5 +66,9 @@ pub trait Host {
 
     fn pick_file(&mut self, _request: &PickFile) -> Result<Option<PathBuf>, String> {
         Err("a file dialog is not available here".into())
+    }
+
+    fn params_at(&mut self, _layer_time: f64) -> Option<ParamsAt> {
+        None
     }
 }

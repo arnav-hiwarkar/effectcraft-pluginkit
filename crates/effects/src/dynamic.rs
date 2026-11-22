@@ -107,6 +107,7 @@ pub struct DynamicEffect {
     pub time_dependent: bool,
     pub reads_other_frames: bool,
     pub reads_comp_scene: bool,
+    pub reads_param_history: bool,
     pub revision: u64,
     pub files: Option<StampDyn>,
 }

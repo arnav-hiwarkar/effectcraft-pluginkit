@@ -151,6 +151,7 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             names.sort();
             plain(json!(names))
         }
+        HostCall::ParamsAt { time } => cx.host.params_at(time).map(|answer| (json!(answer), Bulk::None)).ok_or("no parameters at that time".into()),
     }
 }
 
