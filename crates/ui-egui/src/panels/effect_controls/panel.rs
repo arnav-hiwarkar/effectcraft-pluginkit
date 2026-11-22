@@ -410,6 +410,14 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 }
             });
             item(ui, "Reset", true, "effect.reset", json!({"layer": lid, "effect": g.uid}));
+            let presets = effectcraft_engine::effects::presets(effect);
+            if !presets.is_empty() {
+                ui.menu_button(crate::i18n::tr("Presets"), |ui| {
+                    for (name, _) in &presets {
+                        item(ui, name, true, "effect.applyPreset", json!({"layer": lid, "effect": g.uid, "preset": name}));
+                    }
+                });
+            }
             item(ui, "Remove", true, "effect.remove", json!({"layer": lid, "effect": g.uid}));
             ui.separator();
             item(ui, "Move Up", fi > 0, "effect.reorder", json!({"layer": lid, "effect": g.uid, "index": fi.max(1)}));

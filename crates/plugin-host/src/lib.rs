@@ -13,8 +13,8 @@ mod runtime;
 
 pub use craft_plugin::{
     AudioRequest, Blend, Call, Camera, CommandSpec, Contributions, ControlsReply, Cull, Draw, EffectSpec, Entry, FrameDesc, FrameRequest, GpuData, GpuImage,
-    GpuPass, GpuPlan, Layout, Light, LightKind, Manifest, MaskPath, PanelSpec, Param, ParamKind, Permission, PickFile, Pixel, RenderCx, RunMode, Scene,
-    TaskSpec, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Value, Widget,
+    GpuPass, GpuPlan, Layout, Light, LightKind, Manifest, MaskPath, PanelSpec, Param, ParamKind, ParamsAt, Permission, PickFile, Pixel, RenderCx, RunMode,
+    Scene, TaskSpec, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Value, Widget,
 };
 pub use host::{Access, Host, Origin, Pixels, Samples};
 pub use images::{MAX_IMAGE_SIDE, PluginImage};

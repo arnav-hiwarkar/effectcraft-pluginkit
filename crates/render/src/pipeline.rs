@@ -95,6 +95,10 @@ pub struct Collapsed {
 
 /// Cache key of a frame-blended footage frame: `seed` (which frames, how they mix, the footage
 /// file) and the Interpret Footage settings that change the decoded pixels.
+fn effect_instance(layer: &Layer, group: &effectcraft_project::PropGroup) -> u64 {
+    layer.id.0.wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(32) ^ group.uid
+}
+
 fn blended_frame_key(f: &Footage, seed: impl std::hash::Hash) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -861,6 +865,7 @@ impl<'a> Renderer<'a> {
             float_depth: self.pipe.levels.is_none(),
             shutter: self.mb_on(ctx, layer).then_some((ctx.comp.shutter_angle, ctx.comp.shutter_phase, ctx.comp.motion_blur_samples)),
             layer_span: crate::eval::layer_span(self.project, layer),
+            instance: 0,
         };
         // Video effects in stack order (index, group, spec); disabled and audio effects skipped.
         let stack: Vec<(usize, &effectcraft_project::PropGroup, &'static effectcraft_effects::EffectSpec)> = fx
@@ -898,7 +903,7 @@ impl<'a> Renderer<'a> {
                             layer_size,
                             seed: g.uid as u32,
                             adjustment,
-                            env: EffectEnv { host: Some(host), effect_index: *i, ..env },
+                            env: EffectEnv { host: Some(host), effect_index: *i, instance: effect_instance(layer, g), ..env },
                         },
                     })
                     .collect();
@@ -915,7 +920,7 @@ impl<'a> Renderer<'a> {
             k += 1;
             let params = self.effect_params(ctx, layer, g);
             let host = FxHost { index: i, ..host };
-            let env = EffectEnv { host: Some(&host), effect_index: i, ..env };
+            let env = EffectEnv { host: Some(&host), effect_index: i, instance: effect_instance(layer, g), ..env };
             let ectx = EffectCtx { params: &params, time: lt.seconds(), layer_size, seed: g.uid as u32, adjustment, env };
             let t0 = web_time::Instant::now();
             target.cpu(&mut |buf| {

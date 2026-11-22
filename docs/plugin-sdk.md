@@ -135,6 +135,34 @@ Tell the app how much of the frame each output pixel needs, in `layout()`.
 Scale every distance by `cx.scale`, so a half-resolution preview matches the full render. `cx.px(id)`
 does this for a slider measured in layer pixels.
 
+## Replay a simulation
+
+A simulation renders frame 40 by stepping from frame 0, and each step needs the parameters at its
+own time. `cx.at(layer_time)` gives the whole `Cx` at another layer time, with keyframes and
+expressions applied, and `cx.param_history()` gives a hash of the parameters' whole animation for
+keying checkpoints:
+
+```rust
+fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+    let key = cx.param_history().map(|history| format!("ck/{history:016x}"));
+    for step in 0..=(cx.time * cx.frame_rate) as u32 {
+        let then = cx.at(f64::from(step) / cx.frame_rate).ok_or("no parameters")?;
+        let emitter = then.point("emitter");
+    }
+    Ok(())
+}
+```
+
+Declare `.reads_param_history()` in the spec. When `param_history` is `None` (an expression is
+involved), do not reuse checkpoints between frames. `plugins/ember` does this.
+
+## Offer presets
+
+`.preset(name, values)` on the spec names a set of parameter values, for example a look popup that
+also sets the sliders. The app applies one with `effect.applyPreset {layer, effect, preset}` in one
+undo step and lists them with `effect.presets`. `plugins/halo` has a preset per look. See
+[Presets](plugin-reference.md#presets).
+
 ## Add a panel
 
 A panel keeps its own state. The app calls `ui` every frame the tab is visible.

@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use craft_plugin::{Call, MaskPath, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Widget, native_target};
+use craft_plugin::{Call, MaskPath, ParamsAt, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Widget, native_target};
 use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Registry};
 use serde_json::{Value, json};
 
@@ -105,6 +105,11 @@ impl Host for Recorder {
     fn pick_file(&mut self, _request: &craft_plugin::PickFile) -> Result<Option<PathBuf>, String> {
         Ok(self.picked.clone())
     }
+
+    fn params_at(&mut self, layer_time: f64) -> Option<ParamsAt> {
+        let params = [("level".to_string(), craft_plugin::Value::Number(10.0 + 10.0 * layer_time))].into();
+        Some(ParamsAt { params, history: Some(7) })
+    }
 }
 
 fn cx(width: u32, height: u32) -> RenderCx {
@@ -171,6 +176,18 @@ fn an_effect_reads_masks_another_layer_and_its_own_earlier_frame_through_the_hos
         let mut pixels: Vec<Pixel> = vec![[0.0; 4]; 4];
         loaded.plugin.render("read-inputs", &cx(2, 2), None, &mut pixels, Recorder::default).unwrap();
         assert_eq!(pixels[0], [1.0, 42.0, 0.625, 2.0], "{kind:?}");
+    });
+}
+
+#[test]
+fn an_effect_reads_its_parameters_at_another_time_through_the_host() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let mut cx = cx(1, 1);
+        cx.params.insert("level".into(), craft_plugin::Value::Number(40.0));
+        let mut pixels: Vec<Pixel> = vec![[0.0; 4]];
+        loaded.plugin.render("report", &cx, None, &mut pixels, Recorder::default).unwrap();
+        assert_eq!(pixels[0], [40.0, 10.0, 0.0, 1.0], "{kind:?}");
     });
 }
 

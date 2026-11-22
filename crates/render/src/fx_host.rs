@@ -159,6 +159,23 @@ impl EffectHost for FxHost<'_, '_, '_> {
         Some(effectcraft_effects::flatten_params(g, &mut |pr| ctx.value(self.layer, pr)))
     }
 
+    fn param_history(&self) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        fn has_expression(g: &effectcraft_project::PropGroup) -> bool {
+            g.children.iter().any(|c| match c {
+                effectcraft_project::Node::Prop(p) => p.has_expression(),
+                effectcraft_project::Node::Group(sub) => has_expression(sub),
+            })
+        }
+        let g = self.layer.effects()?.groups().nth(self.index)?;
+        if has_expression(g) {
+            return None;
+        }
+        let mut h = std::hash::DefaultHasher::new();
+        format!("{g:?}").hash(&mut h);
+        Some(h.finish())
+    }
+
     fn param_at(&self, effect_index: usize, id: &str, layer_time: f64) -> Option<effectcraft_keyframe::Value> {
         // Only the one property: a simulation samples it at every step. Its keyframes are read
         // at the requested layer time exactly (mapping it to comp time and back rounds under a

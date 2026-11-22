@@ -45,6 +45,8 @@ fn register(id: &str, wgsl: &str, program: GpuProgram) {
         time_dependent: false,
         reads_other_frames: false,
         reads_comp_scene: false,
+        reads_param_history: false,
+        presets: Vec::new(),
         revision: 1,
     });
 }

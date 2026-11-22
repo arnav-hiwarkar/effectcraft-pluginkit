@@ -16,6 +16,7 @@ pub struct Particle {
 #[derive(Clone, Debug, PartialEq)]
 pub struct State {
     pub frame: u32,
+    pub carry: f64,
     pub particles: Vec<Particle>,
 }
 
@@ -25,11 +26,15 @@ struct MaskPath {
 }
 
 pub struct Simulator<'a> {
-    sim: &'a Sim,
+    base: &'a Sim,
     masks: Vec<MaskPath>,
     total_length: f32,
     dt: f32,
-    drag: f32,
+}
+
+struct Emission {
+    centre: Vec3,
+    motion: Vec3,
 }
 
 fn add(a: Vec3, b: Vec3) -> Vec3 {
@@ -50,8 +55,8 @@ fn basis(direction: Vec3) -> (Vec3, Vec3) {
 }
 
 impl<'a> Simulator<'a> {
-    pub fn new(sim: &'a Sim) -> Simulator<'a> {
-        let masks: Vec<MaskPath> = match &sim.emitter {
+    pub fn new(base: &'a Sim) -> Simulator<'a> {
+        let masks: Vec<MaskPath> = match &base.emitter {
             Emitter::Masks(paths) => paths
                 .iter()
                 .filter(|p| !p.is_empty())
@@ -69,13 +74,8 @@ impl<'a> Simulator<'a> {
             _ => Vec::new(),
         };
         let total_length = masks.iter().map(|m| m.lengths.last().copied().unwrap_or(0.0)).sum();
-        let dt = 1.0 / (sim.frame_rate * SUBSTEPS as f32);
-        Simulator { sim, masks, total_length, dt, drag: 1.0 - (-sim.drag * dt).exp() }
-    }
-
-    fn emitter_centre(&self, time: f32) -> Vec3 {
-        let pre_run = self.sim.pre_run_frames as f32 / self.sim.frame_rate;
-        add(self.sim.position, scale(self.sim.motion, time - pre_run))
+        let dt = 1.0 / (base.frame_rate * SUBSTEPS as f32);
+        Simulator { base, masks, total_length, dt }
     }
 
     fn mask_point(&self, rng: &mut Stream) -> Option<[f32; 2]> {
@@ -101,14 +101,12 @@ impl<'a> Simulator<'a> {
         self.masks.last().and_then(|m| m.points.last().copied())
     }
 
-    fn spawn(&self, step: u64, index: u32) -> Option<Particle> {
-        let sim = self.sim;
-        let seed = mix(mix(sim.seed, step as u32), mix((step >> 32) as u32, index));
+    fn spawn(&self, sim: &Sim, emission: &Emission, step: u64, index: u32) -> Option<Particle> {
+        let seed = mix(mix(self.base.seed, step as u32), mix((step >> 32) as u32, index));
         let mut rng = Stream::new(seed);
-        let time = step as f32 * self.dt;
-        let centre = self.emitter_centre(time);
+        let centre = emission.centre;
         let half = scale(sim.extent, 0.5);
-        let position = match sim.emitter {
+        let position = match self.base.emitter {
             Emitter::Point => centre,
             Emitter::Box => [0, 1, 2].map(|a| centre[a] + rng.signed() * half[a]),
             Emitter::Sphere => {
@@ -127,29 +125,33 @@ impl<'a> Simulator<'a> {
         let phi = rng.next() * std::f32::consts::TAU;
         let heading = [0, 1, 2].map(|a| sim.direction[a] * cos_theta + (u[a] * phi.cos() + v[a] * phi.sin()) * sin_theta);
         let speed = sim.speed * (1.0 + sim.speed_random * rng.signed());
-        let velocity = add(scale(heading, speed), scale(sim.motion, sim.inherit));
+        let velocity = add(scale(heading, speed), scale(emission.motion, sim.inherit));
         let life = sim.life * (1.0 + sim.life_random * rng.signed());
         Some(Particle { position, velocity, age: 0.0, life: life.max(self.dt), seed: mix(seed, 0x5eed) })
     }
 
-    fn emitted_before(&self, step: u64) -> u64 {
-        if self.sim.burst {
-            return if step == 0 { 0 } else { self.sim.rate as u64 };
+    fn born(&self, sim: &Sim, step: u64, carry: &mut f64) -> u64 {
+        if self.base.burst {
+            return if step == 0 { sim.rate as u64 } else { 0 };
         }
-        (f64::from(self.sim.rate) * step as f64 / (f64::from(self.sim.frame_rate) * f64::from(SUBSTEPS))).floor() as u64
+        let due = *carry + f64::from(sim.rate) / (f64::from(self.base.frame_rate) * f64::from(SUBSTEPS));
+        let born = due.floor();
+        *carry = due - born;
+        born as u64
     }
 
-    fn substep(&self, particles: &mut Vec<Particle>, step: u64) {
-        let sim = self.sim;
-        let born = self.emitted_before(step + 1) - self.emitted_before(step);
-        let room = (sim.max_particles as usize).saturating_sub(particles.len());
-        particles.extend((0..born.min(room as u64) as u32).filter_map(|i| self.spawn(step, i)));
+    fn substep(&self, sim: &Sim, emission: &Emission, state: &mut State, step: u64) {
+        let born = self.born(sim, step, &mut state.carry);
+        let particles = &mut state.particles;
+        let room = (self.base.max_particles as usize).saturating_sub(particles.len());
+        particles.extend((0..born.min(room as u64) as u32).filter_map(|i| self.spawn(sim, emission, step, i)));
         let dt = self.dt;
+        let drag = 1.0 - (-sim.drag * dt).exp();
         let time = step as f32 * dt;
         let field_scale = 1.0 / sim.turbulence_scale;
         let evolution = time * sim.turbulence_evolution;
         let turbulence = sim.turbulence;
-        let noise_seed = mix(sim.seed, 0x7a5b);
+        let noise_seed = mix(self.base.seed, 0x7a5b);
         particles.retain_mut(|p| {
             p.age += dt;
             if p.age >= p.life {
@@ -157,7 +159,7 @@ impl<'a> Simulator<'a> {
             }
             p.velocity[1] += sim.gravity * dt;
             for a in 0..3 {
-                p.velocity[a] += (sim.wind[a] - p.velocity[a]) * self.drag;
+                p.velocity[a] += (sim.wind[a] - p.velocity[a]) * drag;
             }
             let flow = if turbulence > 0.0 {
                 let q = [p.position[0] * field_scale, p.position[1] * field_scale, p.position[2] * field_scale + evolution];
@@ -172,26 +174,30 @@ impl<'a> Simulator<'a> {
         });
     }
 
-    pub fn step_frame(&self, state: &mut State) {
+    pub fn step_frame(&self, state: &mut State, now: &Sim, after: &Sim) {
         let next = state.frame.wrapping_add(1);
+        let motion = scale([0, 1, 2].map(|a| after.position[a] - now.position[a]), self.base.frame_rate);
         for sub in 0..SUBSTEPS {
-            self.substep(&mut state.particles, u64::from(next) * u64::from(SUBSTEPS) + u64::from(sub));
+            let along = sub as f32 / SUBSTEPS as f32;
+            let centre = [0, 1, 2].map(|a| now.position[a] + (after.position[a] - now.position[a]) * along);
+            self.substep(now, &Emission { centre, motion }, state, u64::from(next) * u64::from(SUBSTEPS) + u64::from(sub));
         }
         state.frame = next;
     }
 
-    pub fn start(&self) -> State {
-        let mut state = State { frame: u32::MAX, particles: Vec::new() };
-        self.step_frame(&mut state);
+    pub fn start(&self, now: &Sim, after: &Sim) -> State {
+        let mut state = State { frame: u32::MAX, carry: 0.0, particles: Vec::new() };
+        self.step_frame(&mut state, now, after);
         state
     }
 }
 
 impl State {
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(8 + self.particles.len() * 36);
+        let mut out = Vec::with_capacity(16 + self.particles.len() * 36);
         out.extend_from_slice(&self.frame.to_le_bytes());
         out.extend_from_slice(&(self.particles.len() as u32).to_le_bytes());
+        out.extend_from_slice(&self.carry.to_le_bytes());
         for p in &self.particles {
             for v in p.position.iter().chain(&p.velocity).chain([&p.age, &p.life]) {
                 out.extend_from_slice(&v.to_le_bytes());
@@ -205,17 +211,18 @@ impl State {
         let word = |i: usize| bytes.get(i * 4..i * 4 + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
         let frame = word(0)?;
         let count = word(1)? as usize;
-        if bytes.len() != 8 + count * 36 {
+        if bytes.len() != 16 + count * 36 {
             return None;
         }
+        let carry = f64::from_le_bytes(bytes.get(8..16)?.try_into().ok()?);
         let particles = (0..count)
             .map(|n| {
-                let base = 2 + n * 9;
+                let base = 4 + n * 9;
                 let f = |k: usize| f32::from_bits(word(base + k).unwrap_or(0));
                 Particle { position: [f(0), f(1), f(2)], velocity: [f(3), f(4), f(5)], age: f(6), life: f(7), seed: word(base + 8).unwrap_or(0) }
             })
             .collect();
-        Some(State { frame, particles })
+        Some(State { frame, carry, particles })
     }
 }
 
@@ -229,7 +236,6 @@ mod tests {
             emitter: Emitter::Point,
             position: [100.0, 200.0, 0.0],
             extent: [50.0; 3],
-            motion: [0.0; 3],
             rate: 300.0,
             burst: false,
             direction: direction(0.0, 0.0),
@@ -254,8 +260,8 @@ mod tests {
 
     fn run(sim: &Sim, frames: u32) -> State {
         let s = Simulator::new(sim);
-        let mut state = s.start();
-        (0..frames).for_each(|_| s.step_frame(&mut state));
+        let mut state = s.start(sim, sim);
+        (0..frames).for_each(|_| s.step_frame(&mut state, sim, sim));
         state
     }
 

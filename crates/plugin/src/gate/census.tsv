@@ -65,6 +65,7 @@ comp.workAreaToSelection	document.write
 editor.state	document.read
 effect.apply	document.write
 effect.applyLast	document.write
+effect.applyPreset	document.write
 effect.copy	document.write
 effect.cryptomatteAt	document.read
 effect.duplicate	document.write
@@ -74,6 +75,7 @@ effect.manage	refused
 effect.paste	document.write
 effect.pickColor	document.write
 effect.pickCryptomatte	document.write
+effect.presets	document.read
 effect.remove	document.write
 effect.removeAll	document.write
 effect.reorder	document.write
