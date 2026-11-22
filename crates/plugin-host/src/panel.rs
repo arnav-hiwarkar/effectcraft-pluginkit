@@ -45,6 +45,14 @@ fn merged(pending: &UiEventKind, next: &UiEventKind) -> Option<UiEventKind> {
     }
 }
 
+fn discrete(kind: &UiEventKind) -> bool {
+    match kind {
+        UiEventKind::Pointer(pointer) => matches!(pointer.phase, PointerPhase::Down | PointerPhase::Up),
+        UiEventKind::Number(_) | UiEventKind::Text(_) | UiEventKind::Color(_) => false,
+        UiEventKind::Click | UiEventKind::Bool(_) | UiEventKind::Key(_) | UiEventKind::Drop(_) => true,
+    }
+}
+
 fn one_call(events: &mut Vec<UiEvent>) -> Vec<UiEvent> {
     let mut acted = Vec::new();
     let collapses = |event: &UiEvent| matches!(event.kind, UiEventKind::Click | UiEventKind::Bool(_) | UiEventKind::Drop(_));
@@ -93,7 +101,7 @@ impl Retained {
     pub fn push(&mut self, events: Vec<UiEvent>, keys: &str) {
         let in_flight = self.in_flight;
         for event in events {
-            let last = self.events.iter_mut().rev().find(|pending| pending.id == event.id);
+            let last = self.events.iter_mut().rev().find(|pending| pending.id == event.id || discrete(&pending.kind)).filter(|pending| pending.id == event.id);
             match last.filter(|_| in_flight).and_then(|last| merged(&last.kind, &event.kind).map(|kind| (last, kind))) {
                 Some((last, kind)) => last.kind = kind,
                 None => self.events.push(event),
@@ -382,5 +390,18 @@ mod tests {
         assert_eq!((input.events, input.timers), (vec![click(3)], vec![]));
         panel.finish(Ok(PanelReply { legacy: true, ..Default::default() }), ms(16));
         assert!(panel.start(SIZE, ms(32)).is_some());
+    }
+
+    #[test]
+    fn a_value_made_after_another_click_on_the_same_button_stays_with_that_click() {
+        let mut panel = drawn(vec![], vec![]);
+        slow_call(&mut panel);
+        let number = |value| UiEvent { id: 9, kind: UiEventKind::Number(value) };
+        for events in [vec![click(7)], vec![number(2.0)], vec![click(7)], vec![number(3.0)]] {
+            panel.push(events, "");
+        }
+        panel.finish(reply(vec![], vec![]), ms(40));
+        assert_eq!(events(&mut panel, 48), Some(vec![click(7), number(2.0)]));
+        assert_eq!(events(&mut panel, 64), Some(vec![click(7), number(3.0)]));
     }
 }

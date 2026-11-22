@@ -205,7 +205,9 @@ answer, frame or audio reaches the plugin, and before a reply is applied. A requ
 reloaded or turned off, whose project closed or whose surface closed is dropped with a log line; a worker
 waiting for the app on such a request is released with an error. Each surface has one call in flight at a
 time. A click, a checkbox toggle or a drop reaches exactly one call, so two clicks during a slow call are
-two calls; pointer motion and slider values made during a call coalesce, so the backlog stays bounded. A
+two calls; pointer motion and slider values made during a call coalesce with the latest event of the same
+widget unless a click, toggle, key, press or drop came after it, so a value stays with the click it
+followed. A
 failed call consumes its input, and a reply that arrives after its panel was hidden is dropped and the
 panel is called again when it shows. A custom control's or a custom handle's new value is set at the time
 and with the undo key it was made with. A tool's project edits join the gesture's undo step as they
