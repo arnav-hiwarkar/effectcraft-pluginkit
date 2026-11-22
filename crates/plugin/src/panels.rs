@@ -91,7 +91,7 @@ pub(crate) fn clipboard() -> Result<&'static dyn Clipboard, String> {
 
 #[derive(Clone)]
 pub(crate) struct Bound {
-    loaded: Arc<Loaded>,
+    pub(crate) loaded: Arc<Loaded>,
     project: Arc<AtomicBool>,
     surface: Weak<()>,
 }
@@ -103,6 +103,14 @@ impl Bound {
 
     pub(crate) fn asked_by(&self, surface: &Arc<()>) -> bool {
         std::ptr::eq(self.surface.as_ptr(), Arc::as_ptr(surface))
+    }
+
+    pub(crate) fn same(&self, other: &Bound) -> bool {
+        Weak::ptr_eq(&self.surface, &other.surface)
+    }
+
+    pub(crate) fn from(&self, loaded: &Arc<Loaded>, session: &Session) -> bool {
+        Arc::ptr_eq(&self.loaded, loaded) && Arc::ptr_eq(&self.project, &session.project_closed)
     }
 
     fn plugin(&self) -> &str {
@@ -340,7 +348,8 @@ impl Slot {
 }
 
 pub(crate) struct Overlaid {
-    pub(crate) loaded: Arc<Loaded>,
+    pub(crate) bound: Bound,
+    pub(crate) open: Arc<()>,
     pub(crate) request: Vec<u8>,
     pub(crate) shown: Option<Arc<Drawn>>,
     pub(crate) place: [u64; 2],
@@ -428,7 +437,7 @@ impl Panels {
         let live = running_plugins();
         let current = |loaded: &Arc<Loaded>| live.iter().any(|running| Arc::ptr_eq(running, loaded));
         self.slots.retain(|_, slot| current(&slot.loaded));
-        self.overlays.retain(|_, overlaid| current(&overlaid.loaded));
+        self.overlays.retain(|_, overlaid| current(&overlaid.bound.loaded));
         self.workers.retain(|_, worker| current(&worker.loaded));
         if self.tool.as_ref().is_some_and(|tool| !current(&tool.loaded)) {
             self.tool = None;
@@ -618,8 +627,8 @@ impl Panels {
                     }
                 };
                 let Key::Effect(plugin, instance) = key else { return };
-                if let Some(slot) = self.overlays.get_mut(&(plugin.clone(), instance)).filter(|slot| Arc::ptr_eq(&slot.loaded, &bound.loaded)) {
-                    slot.shown = Some(Arc::new(Drawn { overlay, plugin, cx, loaded: bound.loaded, effect, place: slot.place }));
+                if let Some(slot) = self.overlays.get_mut(&(plugin.clone(), instance)).filter(|slot| bound.asked_by(&slot.open)) {
+                    slot.shown = Some(Arc::new(Drawn { overlay, plugin, cx, bound, effect, place: slot.place }));
                 }
             }
             (Call::Tool { .. }, Ok(Reply::Overlay(overlay))) => {

@@ -42,7 +42,7 @@ fn shown(app: &mut App, panels: &mut Panels) -> Arc<Shown> {
 fn drag(app: &mut App, panels: &mut Panels, shown: &Shown, handle: usize, delta: [f64; 2], merge: &str) {
     let project = app.session.project.clone();
     let layer = project.comp(app.session.active_comp_id().unwrap()).unwrap().layers.iter().find(|layer| layer.name == "Aim").unwrap();
-    let commands = panels.drag(&app.session, shown, handle, delta, layer.effects().unwrap().groups().next().unwrap(), merge).unwrap();
+    let commands = panels.drag(shown, handle, delta, layer.effects().unwrap().groups().next().unwrap(), merge).unwrap();
     for (id, params) in commands {
         app.session.execute_checked(&id, params).unwrap();
     }
@@ -275,4 +275,17 @@ fn a_tool_event_of_an_earlier_activation_is_dropped_when_the_tool_is_picked_agai
     crate::panels::release(&app);
     settle(&mut app, &mut panels);
     assert_eq!(gesture(&mut app, &mut panels, &[]), ["Key 3.0 3.0"]);
+}
+
+#[test]
+fn an_overlay_and_its_grab_do_not_carry_over_to_a_reopened_project_with_the_same_ids_and_values() {
+    let mut app = app("test.viewer-reopened", &[]);
+    let mut panels = Panels::default();
+    aim_layer(&mut app);
+    let first = shown(&mut app, &mut panels);
+    app.session.execute("file.newProject", json!({})).unwrap();
+    app.session.execute("comp.new", json!({"name": "Test", "width": 64, "height": 36, "frameRate": 24, "duration": 2})).unwrap();
+    aim_layer(&mut app);
+    let second = shown(&mut app, &mut panels);
+    assert_eq!((Arc::ptr_eq(&first, &second), second.continues(&first, 0)), (false, false));
 }

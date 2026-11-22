@@ -18,7 +18,7 @@ pub struct Shown {
     pub overlay: Overlay,
     pub plugin: String,
     pub(crate) cx: RenderCx,
-    pub(crate) loaded: Arc<Loaded>,
+    pub(crate) bound: Bound,
     pub(crate) effect: String,
     pub(crate) place: [u64; 2],
 }
@@ -30,7 +30,7 @@ impl Shown {
 
     pub fn continues(&self, grabbed: &Shown, handle: usize) -> bool {
         let bind = |shown: &Shown| shown.overlay.handles.get(handle).map(|handle| handle.bind.clone());
-        Arc::ptr_eq(&self.loaded, &grabbed.loaded) && self.cx.instance == grabbed.cx.instance && bind(self).is_some() && bind(self) == bind(grabbed)
+        self.bound.same(&grabbed.bound) && self.cx.instance == grabbed.cx.instance && bind(self).is_some() && bind(self) == bind(grabbed)
     }
 
     fn point(&self, param: &str) -> Option<[f64; 2]> {
@@ -80,29 +80,31 @@ impl Panels {
         if self.overlays.len() >= MAX_RETAINED && !self.overlays.contains_key(&key) {
             self.overlays.clear();
         }
-        let fresh = || Overlaid { loaded: loaded.clone(), request: Vec::new(), shown: None, place: [ctx.comp_id.0, layer.id.0] };
+        let fresh = || {
+            let open = Arc::default();
+            Overlaid {
+                bound: Bound::of(loaded.clone(), session, Arc::downgrade(&open)),
+                open,
+                request: Vec::new(),
+                shown: None,
+                place: [ctx.comp_id.0, layer.id.0],
+            }
+        };
         let slot = self.overlays.entry(key.clone()).or_insert_with(fresh);
-        if !Arc::ptr_eq(&slot.loaded, &loaded) {
+        if !slot.bound.from(&loaded, session) {
             *slot = fresh();
         }
         let lane = Key::Effect(plugin, instance);
         if slot.request != request {
             slot.request = request;
-            self.post(Request { key: lane.clone(), bound: Bound::of(loaded, session, self.surface()), call, edit: None, gesture: None });
+            let bound = slot.bound.clone();
+            self.post(Request { key: lane.clone(), bound, call, edit: None, gesture: None });
         }
         self.wait(session, |panels| !panels.lanes.contains_key(&lane));
         self.overlays.get(&key)?.shown.clone()
     }
 
-    pub fn drag(
-        &mut self,
-        session: &Session,
-        shown: &Shown,
-        handle: usize,
-        delta: [f64; 2],
-        group: &PropGroup,
-        merge: &str,
-    ) -> Result<Vec<(String, Value)>, String> {
+    pub fn drag(&mut self, shown: &Shown, handle: usize, delta: [f64; 2], group: &PropGroup, merge: &str) -> Result<Vec<(String, Value)>, String> {
         let handle = shown.overlay.handles.get(handle).ok_or_else(|| format!("the overlay has no handle {handle}"))?;
         let to = [handle.at[0] + delta[0], handle.at[1] + delta[1]];
         let uid = |param: &str| group.prop(param).map(|prop| prop.uid).ok_or_else(|| format!("the effect has no parameter `{param}`"));
@@ -133,7 +135,7 @@ impl Panels {
                 let edit = Target { comp: shown.place[0], layer: shown.place[1], prop: uid(param)?, time: shown.cx.comp_time, merge: merge.to_string() };
                 let call = Call::Drag { effect: shown.effect.clone(), cx: shown.cx.clone(), key: key.clone(), to, value };
                 let lane = Key::Effect(shown.plugin.clone(), shown.cx.instance);
-                self.post(Request { key: lane, bound: Bound::of(shown.loaded.clone(), session, self.surface()), call, edit: Some(edit), gesture: None });
+                self.post(Request { key: lane, bound: shown.bound.clone(), call, edit: Some(edit), gesture: None });
                 Ok(Vec::new())
             }
         }
@@ -153,7 +155,13 @@ impl Panels {
         if self.tool.as_ref().is_some_and(|state| state.key != key || !Arc::ptr_eq(&state.loaded, &loaded)) {
             self.tool = None;
         }
-        let state = self.tool.get_or_insert_with(|| Tooling { key: key.clone(), loaded: loaded.clone(), open: Arc::default(), overlay: Overlay::default(), gesture: None });
+        let state = self.tool.get_or_insert_with(|| Tooling {
+            key: key.clone(),
+            loaded: loaded.clone(),
+            open: Arc::default(),
+            overlay: Overlay::default(),
+            gesture: None,
+        });
         if event.kind == ToolEventKind::Down {
             state.gesture = Some(Gesture::new(&name));
         }
