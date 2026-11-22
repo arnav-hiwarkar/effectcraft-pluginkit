@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
+use crate::abi::Pixels;
 use crate::effect::{Cx, Effect, Frame, Pass, Rows};
 use crate::ui::{Panel, Ui};
 use crate::viewer::{Overlay, Space, Tool, ToolSpec};
@@ -116,12 +117,16 @@ impl Plugin {
     }
 
     pub fn dispatch(&self, request: &[u8], pixels: &mut [Pixel]) -> Vec<u8> {
+        self.serve(request, Pixels::packed(pixels))
+    }
+
+    pub(crate) fn serve(&self, request: &[u8], pixels: Pixels) -> Vec<u8> {
         let outcome: Outcome<serde_json::Value> =
             serde_json::from_slice::<Call>(request).map_err(Error::from).and_then(|call| self.run(call, pixels)).map_err(|e| e.0).into();
         serde_json::to_vec(&outcome).unwrap_or_default()
     }
 
-    fn run(&self, call: Call, pixels: &mut [Pixel]) -> Result<serde_json::Value> {
+    fn run(&self, call: Call, pixels: Pixels) -> Result<serde_json::Value> {
         match call {
             Call::Describe => json(&self.contributions()),
             Call::Layout { effect, cx } => json(&self.find_effect(&effect)?.layout(&Cx::new(cx))),
@@ -131,16 +136,17 @@ impl Plugin {
                 let snapshot;
                 let (read, window, out) = match frame.input {
                     None => {
+                        let pixels = pixels.into_packed();
                         snapshot = pixels.to_vec();
                         let whole = Window { size: [frame.width, frame.origin[1] + frame.height], first_row: frame.origin[1], rows: frame.height };
                         (&snapshot[..], whole, pixels)
                     }
                     Some(window) if frame.spread => {
-                        let (read, _, out) = crate::abi::spread(pixels).ok_or("the frame addresses are missing")?;
+                        let (read, _, out) = pixels.spread()?;
                         (read, window, out)
                     }
                     Some(window) => {
-                        let (read, out) = pixels.split_at_mut_checked(window.pixels()).ok_or("the input rows do not fit in the pixels passed")?;
+                        let (read, out) = pixels.into_packed().split_at_mut_checked(window.pixels()).ok_or("the input rows do not fit in the pixels passed")?;
                         (&*read, window, out)
                     }
                 };
@@ -157,9 +163,9 @@ impl Plugin {
             Call::Pass { effect, cx, kernel, f, u, src, aux, out, spread } => {
                 let (src_len, aux_len) = (src.pixels(), aux.map_or(0, |aux| aux.pixels()));
                 let parts = if spread {
-                    crate::abi::spread(pixels)
+                    Some(pixels.spread()?)
                 } else {
-                    pixels.split_at_mut_checked(src_len + aux_len).and_then(|(read, band)| {
+                    pixels.into_packed().split_at_mut_checked(src_len + aux_len).and_then(|(read, band)| {
                         let (src, aux) = read.split_at_checked(src_len)?;
                         Some((src, aux, band))
                     })
@@ -261,6 +267,54 @@ mod tests {
             Ok(Outcome::Ok(reply)) => reply,
             other => panic!("{other:?}"),
         }
+    }
+
+    struct Copy;
+
+    impl Effect for Copy {
+        fn spec(&self) -> EffectSpec {
+            EffectSpec::new("copy", "Copy", "Test")
+        }
+
+        fn pass(&self, _cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {
+            out.pixels.copy_from_slice(pass.src.pixels);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn safe_dispatch_refuses_frames_and_passes_given_by_address() {
+        let plugin = Plugin::new().effect(Copy);
+        let (source, mut written) = (vec![[0.5f32; 4]; 4], vec![[0.0f32; 4]; 4]);
+        let address = |at: usize, len: usize| -> Pixel {
+            let bytes: Vec<u8> = [at as u64, len as u64].iter().flat_map(|word| word.to_ne_bytes()).collect();
+            std::array::from_fn(|i| f32::from_ne_bytes([bytes[4 * i], bytes[4 * i + 1], bytes[4 * i + 2], bytes[4 * i + 3]]))
+        };
+        let table =
+            |out: &mut Vec<Pixel>| vec![address(source.as_ptr() as usize, 4), address(source.as_ptr() as usize, 0), address(out.as_mut_ptr() as usize, 4)];
+        let window = Window { size: [2, 2], first_row: 0, rows: 2 };
+        let render = Call::Render {
+            effect: "copy".into(),
+            cx: Default::default(),
+            frame: crate::wire::FrameDesc { width: 2, height: 2, origin: [0, 0], input: Some(window), spread: true },
+        };
+        let pass = Call::Pass {
+            effect: "copy".into(),
+            cx: Default::default(),
+            kernel: "k".into(),
+            f: vec![],
+            u: vec![],
+            src: window,
+            aux: None,
+            out: window,
+            spread: true,
+        };
+        for call in [render, pass] {
+            let reply = plugin.dispatch(&serde_json::to_vec(&call).unwrap(), &mut table(&mut written));
+            let refused: Outcome<serde_json::Value> = serde_json::from_slice(&reply).unwrap();
+            assert!(matches!(&refused, Outcome::Err(why) if why.contains("by address")), "{refused:?}");
+        }
+        assert_eq!(written, vec![[0.0; 4]; 4]);
     }
 
     #[test]

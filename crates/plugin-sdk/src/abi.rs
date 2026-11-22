@@ -119,24 +119,45 @@ pub(crate) fn call_host(request: &[u8], bulk: &[u8]) -> (Buffer, Buffer) {
     (buffer(out[0], out[1]), buffer(out[2], out[3]))
 }
 
-pub(crate) fn spread(table: &mut [Pixel]) -> Option<(&[Pixel], &[Pixel], &mut [Pixel])> {
-    if table.len() != 3 {
-        return None;
+pub(crate) struct Pixels<'p> {
+    pixels: &'p mut [Pixel],
+    addresses: bool,
+}
+
+type Spread<'p> = (&'p [Pixel], &'p [Pixel], &'p mut [Pixel]);
+
+impl<'p> Pixels<'p> {
+    pub(crate) fn packed(pixels: &'p mut [Pixel]) -> Pixels<'p> {
+        Pixels { pixels, addresses: false }
     }
-    // SAFETY: the table holds 48 initialised bytes, read as six unaligned words.
-    let [src, src_len, aux, aux_len, out, out_len] = unsafe { table.as_ptr().cast::<[u64; 6]>().read_unaligned() };
-    if src == 0 || aux == 0 || out == 0 {
-        return None;
+
+    pub(crate) fn into_packed(self) -> &'p mut [Pixel] {
+        self.pixels
     }
-    // SAFETY: the app sets `spread` only for a native plugin and fills the table with the addresses and pixel
-    // counts of three live, f32-aligned pixel slices that it keeps borrowed for the whole call, the last one
-    // exclusively and apart from the other two.
-    unsafe {
-        Some((
-            std::slice::from_raw_parts(src as *const Pixel, src_len as usize),
-            std::slice::from_raw_parts(aux as *const Pixel, aux_len as usize),
-            std::slice::from_raw_parts_mut(out as *mut Pixel, out_len as usize),
-        ))
+
+    pub(crate) fn spread(self) -> Result<Spread<'p>, &'static str> {
+        if !self.addresses {
+            return Err("this call names its pixels by address, which only the app's native entry point may do; pass the pixels themselves");
+        }
+        let table = self.pixels;
+        if table.len() != 3 {
+            return Err("the frame addresses are missing");
+        }
+        // SAFETY: the table holds 48 initialised bytes, read as six unaligned words.
+        let [src, src_len, aux, aux_len, out, out_len] = unsafe { table.as_ptr().cast::<[u64; 6]>().read_unaligned() };
+        if src == 0 || aux == 0 || out == 0 {
+            return Err("the frame addresses are missing");
+        }
+        // SAFETY: `addresses` is set only by `entry`, whose caller guarantees that a call marked `spread` comes with
+        // a table of the addresses and pixel counts of three live, f32-aligned pixel slices that stay borrowed for
+        // the whole call, the last one exclusively and apart from the other two.
+        unsafe {
+            Ok((
+                std::slice::from_raw_parts(src as *const Pixel, src_len as usize),
+                std::slice::from_raw_parts(aux as *const Pixel, aux_len as usize),
+                std::slice::from_raw_parts_mut(out as *mut Pixel, out_len as usize),
+            ))
+        }
     }
 }
 
@@ -165,7 +186,9 @@ fn report_panics() {
 
 /// # Safety
 /// `request` must point to `request_len` readable bytes, `pixels` to `pixels_len` writable bytes aligned
-/// for `f32` (or be null), and `out` must be writable.
+/// for `f32` (or be null), and `out` must be writable. Outside WebAssembly, when the request is a render or pass
+/// marked `spread`, `pixels` must hold the addresses and pixel counts of three live, f32-aligned pixel slices
+/// that stay borrowed for the whole call, the last one exclusively and apart from the other two.
 pub unsafe fn entry<'p>(
     plugin: impl FnOnce() -> &'p Plugin,
     ctx: usize,
@@ -185,7 +208,8 @@ pub unsafe fn entry<'p>(
         unsafe { std::slice::from_raw_parts_mut(pixels.cast::<Pixel>(), pixels_len / PIXEL_BYTES) }
     };
     let (outer, outer_call) = (CTX.replace(ctx), IN_CALL.replace(true));
-    let reply = catch_unwind(AssertUnwindSafe(|| plugin().dispatch(request, pixels))).unwrap_or_else(|_| {
+    let pixels = Pixels { pixels, addresses: cfg!(not(target_family = "wasm")) };
+    let reply = catch_unwind(AssertUnwindSafe(|| plugin().serve(request, pixels))).unwrap_or_else(|_| {
         let report = PANIC.take().unwrap_or_else(|| "the plugin panicked".into());
         serde_json::to_vec(&Outcome::<()>::Err(report)).unwrap_or_default()
     });
