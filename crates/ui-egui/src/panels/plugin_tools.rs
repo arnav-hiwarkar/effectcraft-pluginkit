@@ -67,6 +67,10 @@ fn cursor(cursor: Cursor) -> egui::CursorIcon {
 
 pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx, map: &ViewerMap, painter: &egui::Painter) -> bool {
     let Some(pick) = active(app).cloned() else { return false };
+    let Some((_, spec)) = effectcraft_plugin::viewer::tools().into_iter().find(|(plugin, spec)| *plugin == pick.plugin && spec.id == pick.tool) else {
+        app.ui.plugin_tool = None;
+        return false;
+    };
     let ctx = ui.ctx().clone();
     let layer = app.session.state.selected_layers.first().and_then(|id| ectx.comp.layer(*id));
     let l2c = layer.map(|layer| crate::panels::viewer::l2c(ectx, layer).0);
@@ -128,8 +132,7 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
         draw_marks(&app.tokens, painter, map, &overlay.marks, l2c.as_ref());
     }
     if hover.is_some() {
-        let spec = effectcraft_plugin::viewer::tools().into_iter().find(|(plugin, spec)| *plugin == pick.plugin && spec.id == pick.tool);
-        ctx.set_cursor_icon(cursor(spec.map_or(Cursor::Crosshair, |(_, spec)| spec.cursor)));
+        ctx.set_cursor_icon(cursor(spec.cursor));
     }
     true
 }
