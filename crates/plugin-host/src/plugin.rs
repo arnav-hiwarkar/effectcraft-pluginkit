@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use std::sync::Arc;
 
-use craft_plugin::{Call, Contributions, FrameDesc, GpuImage, GpuPass, GpuPlan, Manifest, Outcome, Permission, Pixel, RenderCx, TaskState, Window};
+use craft_plugin::{
+    Call, Contributions, FrameDesc, GpuImage, GpuPass, GpuPlan, Layout, Manifest, Outcome, Permission, Pixel, Rect, RenderCx, TaskState, Window,
+};
 use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 
@@ -118,34 +120,68 @@ impl Plugin {
         &self,
         effect: &str,
         cx: &RenderCx,
-        reach: Option<u32>,
+        layout: &Layout,
+        area: Option<Rect>,
         pixels: &mut Vec<Pixel>,
         make_host: impl Fn() -> H + Sync,
-    ) -> Result<(), PluginError> {
+    ) -> Result<Rect, PluginError> {
         let (width, height) = (cx.size[0] as usize, cx.size[1] as usize);
         if pixels.len() != width * height {
             return Err(PluginError::Protocol(format!("{} pixels for a {width}x{height} frame", pixels.len())));
         }
-        if pixels.is_empty() {
-            return Ok(());
+        let full = Rect::of_size(cx.size);
+        let separate = self.contributions.separate_input;
+        let mut area = area.map_or(full, |area| area.clipped(cx.size));
+        if !separate {
+            (area.left, area.right) = (full.left, full.right);
         }
-        let even_rows = height.div_ceil((height / MIN_BAND_ROWS).clamp(1, rayon::current_num_threads()));
-        let (band_rows, reach) = match reach.map(|reach| reach as usize) {
-            Some(reach) if even_rows.max(reach + 1) + 2 * reach < height => (even_rows.max(reach + 1), reach),
-            _ => (height, 0),
+        if pixels.is_empty() || area.is_empty() {
+            *pixels = Vec::new();
+            return Ok(area);
+        }
+        let (rows, out_width) = (area.height() as usize, area.width() as usize);
+        let even_rows = rows.div_ceil((rows / MIN_BAND_ROWS).clamp(1, rayon::current_num_threads()));
+        let reach = layout.reach.map(|reach| reach as usize);
+        let band_rows = match reach {
+            _ if separate && layout.maps_input => even_rows,
+            Some(_) if separate => even_rows,
+            Some(reach) if even_rows.max(reach + 1) + 2 * reach < rows => even_rows.max(reach + 1),
+            _ => rows,
         };
         let input: &[Pixel] = pixels;
-        let mut output = vec![[0.0; 4]; input.len()];
-        output.par_chunks_mut(band_rows * width).enumerate().try_for_each(|(band, rows)| {
-            let first = band * band_rows;
-            let (top, bottom) = (first.saturating_sub(reach), (first + rows.len() / width + reach).min(height));
-            let frame = FrameDesc { width: cx.size[0], height: (bottom - top) as u32, origin: [0, top as u32] };
+        let mut output = vec![[0.0; 4]; out_width * rows];
+        output.par_chunks_mut(band_rows * out_width).enumerate().try_for_each(|(band, written)| {
+            let top = area.top + (band * band_rows) as i32;
+            let out = Rect { top, bottom: top + (written.len() / out_width) as i32, ..area };
+            let needed = match (layout.maps_input && separate, layout.reach) {
+                (true, _) => self.exchange::<Rect>(&Call::Input { effect: effect.into(), cx: cx.clone(), out }, Io::None, &mut make_host())?,
+                (false, Some(reach)) => out.grown(reach),
+                (false, None) => full,
+            };
+            let needed = needed.union(out).clipped(cx.size);
+            let (first, last) = (needed.top as usize, needed.bottom as usize);
+            let held = &input[first * width..last * width];
+            if !separate {
+                let frame = FrameDesc { width: cx.size[0], height: (last - first) as u32, origin: [0, first as u32], ..Default::default() };
+                let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
+                let io = Io::Region { input: held, output: written, skip: (top as usize - first) * width };
+                return self.exchange::<()>(&call, io, &mut make_host());
+            }
+            let spread = !self.engine.copies_pixels();
+            let window = Window { size: cx.size, first_row: first as u32, rows: (last - first) as u32 };
+            let origin = [area.left as u32, top as u32];
+            let frame = FrameDesc { width: out_width as u32, height: (written.len() / out_width) as u32, origin, input: Some(window), spread };
             let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
-            let io = Io::Region { input: &input[top * width..bottom * width], output: rows, skip: (first - top) * width };
-            self.exchange::<()>(&call, io, &mut make_host())
+            if spread {
+                let address = |pixels: &[Pixel]| [pixels.as_ptr() as u64, pixels.len() as u64];
+                let mut table: [Pixel; 3] = bytemuck::cast([address(held), address(&[]), [written.as_mut_ptr() as u64, written.len() as u64]]);
+                self.exchange::<()>(&call, Io::InPlace(&mut table), &mut make_host())
+            } else {
+                self.exchange::<()>(&call, Io::Pass { src: held, aux: &[], out: written }, &mut make_host())
+            }
         })?;
         *pixels = output;
-        Ok(())
+        Ok(area)
     }
 
     pub fn accept_drop(&self, path: &std::path::Path) -> Result<(), String> {
@@ -268,6 +304,7 @@ impl Plugin {
         match call {
             Call::Describe
             | Call::Layout { .. }
+            | Call::Input { .. }
             | Call::Panel { .. }
             | Call::Controls { .. }
             | Call::Overlay { .. }
@@ -296,7 +333,7 @@ fn origin(call: &Call) -> Origin {
         Call::Describe | Call::Panel { .. } | Call::Controls { .. } | Call::Command { .. } | Call::Overlay { .. } | Call::Drag { .. } | Call::Tool { .. } => {
             Origin::Interactive
         }
-        Call::Layout { .. } | Call::Render { .. } | Call::Pass { .. } => Origin::Render,
+        Call::Layout { .. } | Call::Input { .. } | Call::Render { .. } | Call::Pass { .. } => Origin::Render,
         Call::Task { .. } => Origin::Task,
     }
 }

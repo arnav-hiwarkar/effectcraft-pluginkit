@@ -19,7 +19,7 @@ pub struct Grid {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GpuProgram {
-    pub padding: u32,
+    pub padding: [u32; 4],
     pub images: Vec<[u32; 2]>,
     pub buffers: Vec<GpuBytes>,
     pub textures: Vec<GpuPicture>,

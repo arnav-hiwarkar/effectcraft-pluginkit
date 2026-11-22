@@ -14,6 +14,7 @@ pub(crate) struct FxHost<'r, 'a, 'c> {
     /// Index of the effect being rendered (bounds `self_at` to effects before it).
     pub(crate) index: usize,
     pub(crate) original: Option<&'c Buf>,
+    pub(crate) shown: Option<[f64; 4]>,
 }
 
 impl FxHost<'_, '_, '_> {
@@ -92,6 +93,10 @@ pub(crate) const MAX_FX_DEPTH: usize = 8;
 impl EffectHost for FxHost<'_, '_, '_> {
     fn original(&self) -> Option<&Buf> {
         self.original
+    }
+
+    fn shown(&self) -> Option<[f64; 4]> {
+        self.shown
     }
 
     fn particles(&self) -> Option<&dyn effectcraft_effects::psim::ParticleSim> {

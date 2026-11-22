@@ -68,7 +68,7 @@ fn draw(list: &DrawList, sprite: &Sprite, layer: &mut [[f32; 4]], width: usize, 
 }
 
 pub fn render(list: &DrawList, frame: &mut Frame) {
-    let width = frame.width;
+    let (width, x0) = (frame.input.width, frame.origin[0]);
     let first = frame.origin[1];
     let last = first + frame.height;
     let mut layer = vec![[0.0f32; 4]; width * frame.height];
@@ -82,9 +82,10 @@ pub fn render(list: &DrawList, frame: &mut Frame) {
             draw(list, &list.sprites[index as usize], &mut layer, width, rows, first);
         }
     }
-    for ((_, row), particles) in frame.rows_mut().zip(layer.chunks_exact(width.max(1))) {
-        for (pixel, p) in row.iter_mut().zip(particles) {
+    for ((_, read, row), particles) in frame.rows().zip(layer.chunks_exact(width.max(1))) {
+        for ((pixel, p), &source) in row.iter_mut().zip(&particles[x0..]).zip(read) {
             let alpha = p[3].min(1.0);
+            *pixel = source;
             if list.additive {
                 *pixel = [pixel[0] + p[0], pixel[1] + p[1], pixel[2] + p[2], pixel[3] + alpha * (1.0 - pixel[3])];
             } else {

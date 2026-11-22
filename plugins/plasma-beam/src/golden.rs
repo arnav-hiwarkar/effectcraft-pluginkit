@@ -36,8 +36,9 @@ fn sampled_bytes(preset: f64) -> Vec<u8> {
     };
     let settings = Settings::read(&Cx::new(cx));
     let paths = [Path::new(vec![[16.0, 20.0], [150.0, 70.0]], false)];
-    let mut pixels = vec![[0.25, 0.5, 0.75, 1.0]; SIZE[0] * SIZE[1]];
-    let mut frame = Frame { width: SIZE[0], height: SIZE[1], origin: [0, 0], pixels: &mut pixels };
+    let source = vec![[0.25, 0.5, 0.75, 1.0]; SIZE[0] * SIZE[1]];
+    let mut pixels = vec![[0.0; 4]; SIZE[0] * SIZE[1]];
+    let mut frame = Frame::whole(SIZE[0], SIZE[1], &source, &mut pixels);
     crate::render::render(&settings, &paths, SIZE, &mut frame);
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
     (0..ROWS).flat_map(|j| (0..COLUMNS).map(move |i| (7 + 15 * j) * SIZE[0] + 10 + 20 * i)).flat_map(|at| pixels[at].into_iter().take(3).map(byte)).collect()

@@ -20,7 +20,7 @@ fn pass(kernel: &str, src: GpuSlot, out: GpuSlot) -> GpuPass {
 }
 
 fn tint_program() -> GpuProgram {
-    GpuProgram { padding: 3, passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Output)], ..Default::default() }
+    GpuProgram { padding: [3; 4], passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Output)], ..Default::default() }
 }
 
 fn register(id: &str, wgsl: &str, program: GpuProgram) {

@@ -262,3 +262,37 @@ fn a_plugin_that_starts_after_its_project_opened_gives_existing_instances_their_
     app.session.execute("edit.undo", json!({})).unwrap();
     assert!(app.session.execute("prop.get", path).is_err(), "undo kept the migrated parameter");
 }
+
+fn tally(app: &App) -> u64 {
+    let bytes = app.plugins.get(&app.id).and_then(|loaded| loaded.plugin.cached("tally"));
+    bytes.and_then(|bytes| <[u8; 8]>::try_from(&bytes[..]).ok()).map_or(0, u64::from_le_bytes)
+}
+
+fn frame(app: &App, roi: Option<[f64; 4]>) -> effectcraft_engine::raster::Image {
+    let session = &app.session;
+    let mut renderer = Renderer::new(&session.project, session.footage.as_ref(), RenderOpts { roi, ..RenderOpts::default() });
+    renderer.expr = session.expr.as_deref();
+    renderer.comp_frame(session.active_comp_id().expect("an active comp"), Tick::from_seconds_f64(0.0))
+}
+
+#[test]
+fn a_layer_mostly_outside_the_comp_renders_only_its_visible_part() {
+    let mut app = app("test.render-visible", &[]);
+    app.session.execute("comp.new", json!({"name": "Wide", "width": 640, "height": 100, "frameRate": 24, "duration": 2})).unwrap();
+    app.session.execute("layer.newSolid", json!({"name": "Grey", "color": "#808080", "width": 640, "height": 100})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "test.render-visible.tally"})).unwrap();
+    let whole = frame(&app, None);
+    assert_eq!(tally(&app), 64_000, "a layer inside the comp renders whole");
+
+    app.session.execute("prop.set", json!({"path": "transform/position", "value": [896, 50]})).unwrap();
+    let shown = frame(&app, None);
+    let rendered = tally(&app) - 64_000;
+    assert!((6_400..=7_200).contains(&rendered), "a layer 10 % inside the comp rendered {rendered} of 64000 pixels");
+    let at = |image: &effectcraft_engine::raster::Image, x: u32| image.data[(50 * image.width + x) as usize];
+    assert_eq!(at(&shown, 600), at(&whole, 600), "the visible part has the layer's pixels");
+    assert_eq!(at(&shown, 500), [0.0; 4], "the comp left of the layer is empty");
+
+    let zoomed = frame(&app, Some([576.0, 0.0, 32.0, 100.0]));
+    assert_eq!(tally(&app) - 64_000 - rendered, 3_800, "a region of interest renders its part grown by the resampling margin");
+    assert_eq!(at(&zoomed, 10), at(&whole, 600));
+}

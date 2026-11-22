@@ -27,19 +27,21 @@ fn core_plane(strokes: &[Stroke], size: [usize; 2], rows: std::ops::Range<usize>
 fn composite(frame: &mut Frame, core: Option<&Plane>, glow: Option<&Glow>, shading: &Shading) {
     let mut column = vec![[0.0; 3]; glow.map_or(0, |g| g.image.width)];
     let keeps_source = shading.composite.keeps_source();
-    for (y, row) in frame.rows_mut() {
+    let x0 = frame.origin[0];
+    for (y, read, row) in frame.rows() {
         if let Some(glow) = glow {
             let [(a, wa), (b, wb)] = taps(y + glow.guard[1], glow.image.height);
             lerp_row(&mut column, glow.image.row(a), glow.image.row(b), wa, wb);
         }
         let core_row = core.and_then(|plane| plane.row_at(y));
-        for (x, pixel) in row.iter_mut().enumerate() {
+        for (x, (pixel, &source)) in (x0..).zip(row.iter_mut().zip(read)) {
             let light = glow.map_or([0.0; 3], |g| sample_row(&column, x + g.guard[0]));
             let coverage = core_row.and_then(|(start, cells)| cells.get(x.checked_sub(start)?)).map_or(0.0, |cell| cell[0]);
-            if keeps_source && coverage <= 0.0 && light[0] + light[1] + light[2] <= 0.0 {
-                continue;
-            }
-            *pixel = shading.blend(*pixel, shading.beam(light, coverage));
+            *pixel = if keeps_source && coverage <= 0.0 && light[0] + light[1] + light[2] <= 0.0 {
+                source
+            } else {
+                shading.blend(source, shading.beam(light, coverage))
+            };
         }
     }
 }
@@ -85,17 +87,19 @@ mod tests {
     }
 
     fn rendered(settings: &Settings, paths: &[Path]) -> Vec<craft_plugin::Pixel> {
-        let mut pixels = vec![[0.25, 0.5, 0.75, 1.0]; 160 * 90];
-        let mut frame = Frame { width: 160, height: 90, origin: [0, 0], pixels: &mut pixels };
-        render(settings, paths, [160, 90], &mut frame);
+        let source = vec![[0.25, 0.5, 0.75, 1.0]; 160 * 90];
+        let mut pixels = vec![[0.0; 4]; 160 * 90];
+        render(settings, paths, [160, 90], &mut Frame::whole(160, 90, &source, &mut pixels));
         pixels
     }
 
     fn banded(settings: &Settings, paths: &[Path], cuts: &[usize]) -> Vec<craft_plugin::Pixel> {
-        let mut pixels = vec![[0.25, 0.5, 0.75, 1.0]; 160 * 90];
+        let source = vec![[0.25, 0.5, 0.75, 1.0]; 160 * 90];
+        let mut pixels = vec![[0.0; 4]; 160 * 90];
         for pair in cuts.windows(2) {
             let band = &mut pixels[pair[0] * 160..pair[1] * 160];
-            let mut frame = Frame { width: 160, height: pair[1] - pair[0], origin: [0, pair[0]], pixels: band };
+            let input = craft_plugin::Rows { width: 160, height: 90, first_row: 0, pixels: &source };
+            let mut frame = Frame { width: 160, height: pair[1] - pair[0], origin: [0, pair[0]], pixels: band, input };
             render(settings, paths, [160, 90], &mut frame);
         }
         pixels

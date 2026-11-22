@@ -237,8 +237,7 @@ pub fn shade(crt: &Crt, source: impl Fn(i32, i32) -> Pixel, glow: impl Fn(f32, f
 }
 
 pub fn render(crt: &Crt, frame: &mut Frame) {
-    let input = frame.pixels.to_vec();
-    let band = Band { pixels: &input, width: frame.width, top: frame.origin[1] as i32, rows: frame.height as i32 };
+    let band = Band::of(frame.input);
     let d = crt.factor() as i32;
     let width = (crt.size[0] as i32 + d - 1) / d;
     let (first, last) = coarse_rows(band.top, band.top + band.rows, d, crt.size[1]);
@@ -246,10 +245,10 @@ pub fn render(crt: &Crt, frame: &mut Frame) {
     let reduced = Grid::reduce(width, first, last, d, |x, y| bright(band.at(x, y), threshold));
     let sigma = crt.coarse_sigma();
     let glow = reduced.blur(false, false, [sigma; 3]).blur(true, false, [sigma; 3]);
-    let top = frame.origin[1] as u32;
-    for (row, pixels) in frame.pixels.chunks_mut(frame.width).enumerate() {
-        for (x, pixel) in pixels.iter_mut().enumerate() {
-            *pixel = shade(crt, |i, j| band.at(i, j), |gx, gy| glow.sample_full(d, gx, gy), x as u32, top + row as u32);
+    let x0 = frame.origin[0] as u32;
+    for (y, pixels) in frame.rows_mut() {
+        for (x, pixel) in (x0..).zip(pixels.iter_mut()) {
+            *pixel = shade(crt, |i, j| band.at(i, j), |gx, gy| glow.sample_full(d, gx, gy), x, y as u32);
         }
     }
 }

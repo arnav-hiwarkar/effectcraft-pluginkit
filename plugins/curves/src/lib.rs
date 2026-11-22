@@ -31,7 +31,7 @@ impl Effect for CurvesEffect {
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let luts = Luts::new(&Curves::parse(cx.text(PARAM)));
-        frame.pixels.iter_mut().for_each(|pixel| *pixel = luts.pixel(*pixel));
+        frame.map(|pixel| luts.pixel(pixel));
         Ok(())
     }
 

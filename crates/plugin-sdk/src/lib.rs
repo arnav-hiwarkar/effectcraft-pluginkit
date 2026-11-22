@@ -22,8 +22,8 @@ pub mod prelude {
     pub use crate::{
         AppEvent, AudioRequest, Blend, BlendMode, BlurShape, Camera, Canvas, Cull, Cx, Drag, Dropped, Effect, EffectSpec, Error, Filter, Frame, FrameRequest,
         GpuData, GpuImage, GpuPass, GpuPlan, HostKernel, Image, Key, Layout, Light, LightKind, MaskPath, Modifiers, Overlay, Paint, Panel, Param, Pass,
-        PickFile, Pixel, Plugin, Pointer, PointerPhase, Result, Root, Rows, Scene, Space, Taps, Task, TaskState, TaskStatus, Tool, ToolEvent, ToolEventKind,
-        Topic, Ui,
+        PickFile, Pixel, Plugin, Pointer, PointerPhase, Rect, Result, Root, Rows, Scene, Space, Taps, Task, TaskState, TaskStatus, Tool, ToolEvent,
+        ToolEventKind, Topic, Ui,
     };
 }
 

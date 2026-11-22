@@ -105,6 +105,7 @@ impl Plugin {
             commands: self.commands.iter().map(|(spec, _)| spec.clone()).collect(),
             tasks: self.tasks.iter().map(|(spec, _)| spec.clone()).collect(),
             tools: self.tools.iter().map(|(spec, _)| spec.clone()).collect(),
+            separate_input: true,
         }
     }
 
@@ -120,14 +121,33 @@ impl Plugin {
             Call::Layout { effect, cx } => json(&self.find_effect(&effect)?.layout(&Cx::new(cx))),
             Call::Render { effect, cx, frame } => {
                 let (width, height) = (frame.width as usize, frame.height as usize);
-                if pixels.len() != width * height {
-                    return Err(format!("frame is {width}x{height} but {} pixels were passed", pixels.len()).into());
-                }
                 let origin = [frame.origin[0] as usize, frame.origin[1] as usize];
-                let mut frame = Frame { width, height, origin, pixels };
+                let snapshot;
+                let (read, window, out) = match frame.input {
+                    None => {
+                        snapshot = pixels.to_vec();
+                        let whole = Window { size: [frame.width, frame.origin[1] + frame.height], first_row: frame.origin[1], rows: frame.height };
+                        (&snapshot[..], whole, pixels)
+                    }
+                    Some(window) if frame.spread => {
+                        let (read, _, out) = crate::abi::spread(pixels).ok_or("the frame addresses are missing")?;
+                        (read, window, out)
+                    }
+                    Some(window) => {
+                        let (read, out) = pixels.split_at_mut_checked(window.pixels()).ok_or("the input rows do not fit in the pixels passed")?;
+                        (&*read, window, out)
+                    }
+                };
+                let inside = origin[0] + width <= window.size[0] as usize && read.len() == window.pixels();
+                if out.len() != width * height || !inside {
+                    return Err(format!("frame is {width}x{height} at {origin:?} but {} pixels were passed", out.len()).into());
+                }
+                let input = rows(window, read);
+                let mut frame = Frame { width, height, origin, pixels: out, input };
                 self.find_effect(&effect)?.render(&Cx::new(cx), &mut frame)?;
                 Ok(serde_json::Value::Null)
             }
+            Call::Input { effect, cx, out } => json(&self.find_effect(&effect)?.input(&Cx::new(cx), out)),
             Call::Pass { effect, cx, kernel, f, u, src, aux, out, spread } => {
                 let (src_len, aux_len) = (src.pixels(), aux.map_or(0, |aux| aux.pixels()));
                 let parts = if spread {
@@ -140,12 +160,6 @@ impl Plugin {
                 };
                 let fits = |(src, aux, band): &(&[Pixel], &[Pixel], &mut [Pixel])| src.len() == src_len && aux.len() == aux_len && band.len() == out.pixels();
                 let (src_pixels, aux_pixels, band) = parts.filter(fits).ok_or("the pass images do not match the pixels passed")?;
-                let rows = |window: Window, pixels| Rows {
-                    width: window.size[0] as usize,
-                    height: window.size[1] as usize,
-                    first_row: window.first_row as usize,
-                    pixels,
-                };
                 let pass = Pass {
                     kernel: &kernel,
                     f: &f,
@@ -154,7 +168,8 @@ impl Plugin {
                     aux: aux.map(|aux| rows(aux, aux_pixels)),
                     out_size: out.size.map(|side| side as usize),
                 };
-                let mut frame = Frame { width: out.size[0] as usize, height: out.rows as usize, origin: [0, out.first_row as usize], pixels: band };
+                let input = rows(Window { size: out.size, first_row: 0, rows: 0 }, &[]);
+                let mut frame = Frame { width: out.size[0] as usize, height: out.rows as usize, origin: [0, out.first_row as usize], pixels: band, input };
                 self.find_effect(&effect)?.pass(&Cx::new(cx), &pass, &mut frame)?;
                 Ok(serde_json::Value::Null)
             }
@@ -201,6 +216,10 @@ impl Plugin {
     fn find_effect(&self, id: &str) -> Result<&dyn Effect> {
         self.effects.iter().find(|(spec, _)| spec.id == id).map(|(_, effect)| effect.as_ref()).ok_or_else(|| Error(format!("no effect `{id}`")))
     }
+}
+
+fn rows(window: Window, pixels: &[Pixel]) -> Rows<'_> {
+    Rows { width: window.size[0] as usize, height: window.size[1] as usize, first_row: window.first_row as usize, pixels }
 }
 
 fn json(value: &impl Serialize) -> Result<serde_json::Value> {

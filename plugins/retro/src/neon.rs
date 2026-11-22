@@ -127,8 +127,7 @@ pub fn composite(neon: &Neon, source: Pixel, edge: f32, blurred: Pixel) -> Pixel
 }
 
 pub fn render(neon: &Neon, frame: &mut Frame) {
-    let input = frame.pixels.to_vec();
-    let band = Band { pixels: &input, width: frame.width, top: frame.origin[1] as i32, rows: frame.height as i32 };
+    let band = Band::of(frame.input);
     let d = neon.factor() as i32;
     let width = (neon.size[0] as i32 + d - 1) / d;
     let (first, last) = coarse_rows(band.top, band.top + band.rows, d, neon.size[1]);
@@ -136,11 +135,10 @@ pub fn render(neon: &Neon, frame: &mut Frame) {
     let reduced = Grid::reduce(width, first, last, d, |x, y| [line(neon, at, x, y), 0.0, 0.0, 0.0]);
     let sigmas = neon.sigmas();
     let glow = reduced.blur(false, true, sigmas).blur(true, false, sigmas);
-    let top = band.top;
-    for (row, pixels) in frame.pixels.chunks_mut(frame.width).enumerate() {
-        let y = top + row as i32;
-        for (x, pixel) in pixels.iter_mut().enumerate() {
-            let x = x as i32;
+    let x0 = frame.origin[0] as i32;
+    for (y, pixels) in frame.rows_mut() {
+        let y = y as i32;
+        for (x, pixel) in (x0..).zip(pixels.iter_mut()) {
             let edge = line(neon, at, x, y);
             *pixel = composite(neon, band.at(x, y), edge, glow.sample_full(d, x as f32, y as f32));
         }

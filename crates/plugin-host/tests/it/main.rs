@@ -5,10 +5,10 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use craft_plugin::{
-    Call, FrameDesc, GpuImage, GpuPass, GpuPlan, MaskPath, ParamsAt, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Widget,
-    native_target,
+    Call, FrameDesc, GpuImage, GpuPass, GpuPlan, Layout, MaskPath, ParamsAt, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput,
+    Widget, native_target,
 };
-use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Registry, Retained};
+use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Rect, Registry, Retained};
 use serde_json::{Value, json};
 
 mod package;
@@ -61,6 +61,19 @@ struct Loaded {
 
 fn load(kind: Kind, permissions: &[&str]) -> Loaded {
     let (dir, bundle) = bundle(kind, permissions);
+    open(dir, bundle)
+}
+
+fn load_before_regions() -> Loaded {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/fixtures/probe-before-regions.wasm"), dir.path().join("probe.wasm")).unwrap();
+    let manifest = json!({"id": "test.probe-before-regions", "name": "Probe", "version": "1.0.0", "entry": {"wasm": "probe.wasm"}});
+    std::fs::write(dir.path().join("plugin.json"), manifest.to_string()).unwrap();
+    let bundle = Bundle::open(dir.path()).unwrap();
+    open(dir, bundle)
+}
+
+fn open(dir: tempfile::TempDir, bundle: Bundle) -> Loaded {
     let data = tempfile::tempdir().unwrap();
     let grants = bundle.manifest.permissions.clone();
     let limits = Limits { interactive: Duration::from_millis(400), work: Duration::from_millis(400) };
@@ -157,7 +170,7 @@ fn an_effect_changes_the_pixels_it_is_given_using_its_parameters() {
         let mut cx = cx(2, 1);
         cx.params.insert("amount".into(), craft_plugin::Value::Number(1.0));
         let mut pixels: Vec<Pixel> = vec![[0.25, 0.5, 1.0, 1.0], [0.0, 0.0, 0.0, 0.5]];
-        loaded.plugin.render("invert", &cx, Some(0), &mut pixels, Recorder::default).unwrap();
+        loaded.plugin.render("invert", &cx, &Layout::neighbourhood(0), None, &mut pixels, Recorder::default).unwrap();
         assert_eq!(pixels, [[0.75, 0.5, 0.0, 1.0], [1.0, 1.0, 1.0, 0.5]], "{kind:?}");
     });
 }
@@ -168,7 +181,7 @@ fn fast_maths_gives_the_same_bits_sandboxed_and_native_and_stays_within_its_boun
     let render = |kind: Kind| {
         let loaded = load(kind, &[]);
         let mut pixels = source.clone();
-        loaded.plugin.render("fast-maths", &cx(4096, 1), Some(0), &mut pixels, Recorder::default).unwrap();
+        loaded.plugin.render("fast-maths", &cx(4096, 1), &Layout::neighbourhood(0), None, &mut pixels, Recorder::default).unwrap();
         pixels
     };
     let (wasm, native) = (render(Kind::Wasm), render(Kind::Native));
@@ -198,17 +211,91 @@ fn rendering_in_parallel_bands_gives_the_same_picture_as_one_pass() {
 
         let cx = cx(width as u32, height as u32);
         let mut banded = source.clone();
-        loaded.plugin.render("shift-down", &cx, Some(1), &mut banded, Recorder::default).unwrap();
+        loaded.plugin.render("shift-down", &cx, &Layout::neighbourhood(1), None, &mut banded, Recorder::default).unwrap();
         assert!(banded == expected, "{kind:?} banded render differs from the shifted source");
 
         let mut tall = source.clone();
-        loaded.plugin.render("shift-down", &cx, Some(150), &mut tall, Recorder::default).unwrap();
+        loaded.plugin.render("shift-down", &cx, &Layout::neighbourhood(150), None, &mut tall, Recorder::default).unwrap();
         assert!(tall == expected, "{kind:?} render with a reach taller than an even band differs from the shifted source");
 
         let mut whole = source.clone();
-        loaded.plugin.render("shift-down", &cx, None, &mut whole, Recorder::default).unwrap();
+        loaded.plugin.render("shift-down", &cx, &Layout::whole_frame(), None, &mut whole, Recorder::default).unwrap();
         assert!(whole == expected, "{kind:?} whole-frame render differs from the shifted source");
     });
+}
+
+fn numbered(width: usize, height: usize) -> Vec<Pixel> {
+    (0..width * height).map(|i| [i as f32, (i / width) as f32, 0.5, 1.0]).collect()
+}
+
+fn cut(pixels: &[Pixel], width: usize, part: Rect) -> Vec<Pixel> {
+    let columns = part.left as usize..part.right as usize;
+    (part.top as usize..part.bottom as usize).flat_map(|y| pixels[y * width..(y + 1) * width][columns.clone()].to_vec()).collect()
+}
+
+#[test]
+fn a_render_of_a_part_of_the_frame_equals_that_part_cut_from_a_whole_render() {
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+    let (width, height) = (40usize, 300usize);
+    let (source, cx, layout) = (numbered(width, height), cx(width as u32, height as u32), Layout::neighbourhood(3));
+    let part = Rect { left: 7, top: 101, right: 29, bottom: 260 };
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let mut whole = source.clone();
+        pool.install(|| loaded.plugin.render("shift-down", &cx, &layout, None, &mut whole, Recorder::default)).unwrap();
+        let mut pixels = source.clone();
+        let area = pool.install(|| loaded.plugin.render("shift-down", &cx, &layout, Some(part), &mut pixels, Recorder::default)).unwrap();
+        assert_eq!(area, part, "{kind:?}");
+        assert_eq!(pixels[0], [4007.0, 100.0, 0.5, 1.0], "{kind:?} the first pixel is the source pixel one row up");
+        assert!(pixels == cut(&whole, width, part), "{kind:?} the part differs from the whole render");
+    });
+    let before = load_before_regions();
+    let mut pixels = source.clone();
+    let area = pool.install(|| before.plugin.render("shift-down", &cx, &layout, Some(part), &mut pixels, Recorder::default)).unwrap();
+    assert_eq!(area, Rect { left: 0, right: 40, ..part }, "a plugin built before regions renders whole rows");
+    assert!(pixels == cut(&source, width, Rect { top: 100, bottom: 259, ..area }));
+}
+
+#[test]
+fn an_effect_that_maps_its_input_reads_the_rows_it_names_in_every_band() {
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+    let (width, height) = (3usize, 600usize);
+    let source = numbered(width, height);
+    let mut expected = source[8 * width..].to_vec();
+    expected.resize(width * height, [0.0; 4]);
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let mut pixels = source.clone();
+        let layout = Layout::pointwise().maps_input();
+        pool.install(|| loaded.plugin.render("lift", &cx(width as u32, height as u32), &layout, None, &mut pixels, Recorder::default)).unwrap();
+        assert_eq!(pixels[149 * width], [471.0, 157.0, 0.5, 1.0], "{kind:?} the last row of the first band");
+        assert!(pixels == expected, "{kind:?} the lifted frame differs from the source moved up 8 rows");
+    });
+}
+
+#[test]
+fn a_plugin_built_before_frames_had_separate_input_renders_the_same_pixels() {
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+    let (before, now) = (load_before_regions(), load(Kind::Wasm, &[]));
+    assert!(!before.plugin.contributions().separate_input && now.plugin.contributions().separate_input);
+    let (width, height) = (7usize, 700usize);
+    let mut cx = cx(width as u32, height as u32);
+    cx.params.insert("amount".into(), craft_plugin::Value::Number(0.25));
+    cx.params.insert("strength".into(), craft_plugin::Value::Number(0.75));
+    let source: Vec<Pixel> = (0..width * height).map(|i| [(i % 13) as f32 / 13.0, (i % 7) as f32 / 7.0, 0.25, 1.0]).collect();
+    for (effect, layout) in [("invert", Layout::pointwise()), ("shift-down", Layout::neighbourhood(2)), ("gpu-soften", Layout::whole_frame())] {
+        let render = |loaded: &Loaded| {
+            let mut pixels = source.clone();
+            pool.install(|| loaded.plugin.render(effect, &cx, &layout, None, &mut pixels, Recorder::default)).unwrap();
+            pixels
+        };
+        let (old, new) = (render(&before), render(&now));
+        assert!(old == new, "{effect} renders differently from the plugin built before");
+        assert!(old != source, "{effect} left the frame unchanged");
+        if effect == "invert" {
+            assert_eq!(old[0], [0.25, 0.25, 0.375, 1.0]);
+        }
+    }
 }
 
 #[test]
@@ -216,7 +303,7 @@ fn an_effect_reads_masks_another_layer_and_its_own_earlier_frame_through_the_hos
     each_kind(|kind| {
         let loaded = load(kind, &[]);
         let mut pixels: Vec<Pixel> = vec![[0.0; 4]; 4];
-        loaded.plugin.render("read-inputs", &cx(2, 2), None, &mut pixels, Recorder::default).unwrap();
+        loaded.plugin.render("read-inputs", &cx(2, 2), &Layout::whole_frame(), None, &mut pixels, Recorder::default).unwrap();
         assert_eq!(pixels[0], [1.0, 42.0, 0.625, 2.0], "{kind:?}");
     });
 }
@@ -228,7 +315,7 @@ fn an_effect_reads_its_parameters_at_another_time_through_the_host() {
         let mut cx = cx(1, 1);
         cx.params.insert("level".into(), craft_plugin::Value::Number(40.0));
         let mut pixels: Vec<Pixel> = vec![[0.0; 4]];
-        loaded.plugin.render("report", &cx, None, &mut pixels, Recorder::default).unwrap();
+        loaded.plugin.render("report", &cx, &Layout::whole_frame(), None, &mut pixels, Recorder::default).unwrap();
         assert_eq!(pixels[0], [40.0, 10.0, 0.0, 1.0], "{kind:?}");
     });
 }
@@ -391,12 +478,12 @@ fn a_sandboxed_plugin_whose_host_call_returns_after_its_time_limit_fails() {
 fn a_sandboxed_plugin_that_never_returns_is_stopped_and_the_next_call_still_works() {
     let loaded = load(Kind::Wasm, &[]);
     let mut pixels: Vec<Pixel> = vec![[0.0; 4]; 4];
-    let stopped = loaded.plugin.render("spin", &cx(2, 2), None, &mut pixels, Recorder::default).unwrap_err();
+    let stopped = loaded.plugin.render("spin", &cx(2, 2), &Layout::whole_frame(), None, &mut pixels, Recorder::default).unwrap_err();
     assert!(matches!(stopped, PluginError::Trap(_)), "{stopped:?}");
     let mut pixels: Vec<Pixel> = vec![[0.25, 0.25, 0.25, 1.0]];
     let mut cx = cx(1, 1);
     cx.params.insert("amount".into(), craft_plugin::Value::Number(1.0));
-    loaded.plugin.render("invert", &cx, None, &mut pixels, Recorder::default).unwrap();
+    loaded.plugin.render("invert", &cx, &Layout::whole_frame(), None, &mut pixels, Recorder::default).unwrap();
     assert_eq!(pixels[0], [0.75, 0.75, 0.75, 1.0]);
 }
 
@@ -447,7 +534,10 @@ fn bands_cover_every_row_whatever_the_thread_count_and_frame_height() {
         let mut expected = vec![[0.0; 4]; width];
         expected.extend_from_slice(&source[..width * (height - 1)]);
         let mut rendered = source.clone();
-        pool.install(|| loaded.plugin.render("shift-down", &cx(width as u32, height as u32), Some(1), &mut rendered, Recorder::default)).unwrap();
+        pool.install(|| {
+            loaded.plugin.render("shift-down", &cx(width as u32, height as u32), &Layout::neighbourhood(1), None, &mut rendered, Recorder::default)
+        })
+        .unwrap();
         assert!(rendered == expected, "{width}x{height} differs from the shifted source");
     }
 }
@@ -459,7 +549,10 @@ fn an_empty_frame_renders_to_nothing_without_failing() {
         let mut none: Vec<Pixel> = Vec::new();
         for size in [[0, 0], [0, 720], [1280, 0]] {
             let cx = RenderCx { size, scale: 1.0, ..Default::default() };
-            loaded.plugin.render("invert", &cx, Some(0), &mut none, Recorder::default).unwrap_or_else(|e| panic!("{kind:?} {size:?}: {e}"));
+            loaded
+                .plugin
+                .render("invert", &cx, &Layout::neighbourhood(0), None, &mut none, Recorder::default)
+                .unwrap_or_else(|e| panic!("{kind:?} {size:?}: {e}"));
         }
     });
 }
@@ -472,7 +565,18 @@ fn an_effect_whose_last_band_fails_leaves_the_frame_as_it_was() {
         for (size, reach) in [([2, 2], None), ([3, 512], Some(0)), ([3, 512], Some(2))] {
             let source: Vec<Pixel> = (0..size[0] * size[1]).map(|i| [i as f32, 0.2, 0.3, 1.0]).collect();
             let mut pixels = source.clone();
-            let failed = pool.install(|| loaded.plugin.render("half-done", &cx(size[0], size[1]), reach, &mut pixels, Recorder::default)).unwrap_err();
+            let failed = pool
+                .install(|| {
+                    loaded.plugin.render(
+                        "half-done",
+                        &cx(size[0], size[1]),
+                        &reach.map_or(Layout::whole_frame(), Layout::neighbourhood),
+                        None,
+                        &mut pixels,
+                        Recorder::default,
+                    )
+                })
+                .unwrap_err();
             assert!(failed.to_string().contains("gave up half way"), "{kind:?} {reach:?}: {failed}");
             assert!(pixels == source, "{kind:?} {reach:?} changed the frame although a band failed");
         }
@@ -485,7 +589,7 @@ fn a_neighbourhood_effect_renders_in_bands_that_hold_their_reach() {
         let loaded = load(kind, &[]);
         let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
         let mut pixels: Vec<Pixel> = vec![[0.0; 4]; 1024];
-        pool.install(|| loaded.plugin.render("mark-band", &cx(1, 1024), Some(2), &mut pixels, Recorder::default)).unwrap();
+        pool.install(|| loaded.plugin.render("mark-band", &cx(1, 1024), &Layout::neighbourhood(2), None, &mut pixels, Recorder::default)).unwrap();
         assert_eq!([pixels[0], pixels[255]], [[0.0, 258.0, 0.0, 1.0], [0.0, 258.0, 255.0, 1.0]], "{kind:?} first band");
         assert_eq!([pixels[256], pixels[600]], [[254.0, 260.0, 256.0, 1.0], [510.0, 260.0, 600.0, 1.0]], "{kind:?} middle bands");
         assert_eq!(pixels[1023], [766.0, 258.0, 1023.0, 1.0], "{kind:?} last band");
@@ -605,7 +709,7 @@ fn a_cache_put_outside_a_render_changes_the_cache_generation_and_one_inside_does
         let loaded = load(kind, &[]);
         let start = loaded.plugin.cache_generation();
         let mut pixels: Vec<Pixel> = vec![[0.0; 4]];
-        loaded.plugin.render("memo", &cx(1, 1), None, &mut pixels, Recorder::default).unwrap();
+        loaded.plugin.render("memo", &cx(1, 1), &Layout::whole_frame(), None, &mut pixels, Recorder::default).unwrap();
         assert_eq!(loaded.plugin.cached("memo").as_deref(), Some(&[1u8, 2, 3][..]), "{kind:?}");
         assert_eq!(loaded.plugin.cache_generation(), start, "{kind:?}");
         command(&loaded, "put-table", &mut Recorder::default()).unwrap();
@@ -717,7 +821,7 @@ fn an_effect_cannot_render_a_frame_from_inside_its_own_render() {
     each_kind(|kind| {
         let loaded = load(kind, &["document.read"]);
         let mut pixels: Vec<Pixel> = vec![[0.0; 4]];
-        loaded.plugin.render("recurse", &cx(1, 1), None, &mut pixels, Recorder::default).unwrap();
+        loaded.plugin.render("recurse", &cx(1, 1), &Layout::whole_frame(), None, &mut pixels, Recorder::default).unwrap();
         assert_eq!(pixels[0][0], 1.0, "{kind:?}");
     });
 }
@@ -974,7 +1078,7 @@ fn a_pass_that_writes_nothing_leaves_its_image_transparent() {
 fn a_render_call_through_the_generic_entry_point_is_refused_and_writes_nothing() {
     each_kind(|kind| {
         let loaded = load(kind, &[]);
-        let frame = FrameDesc { width: 2, height: 1, origin: [0, 0] };
+        let frame = FrameDesc { width: 2, height: 1, origin: [0, 0], ..Default::default() };
         let call = Call::Render { effect: "passes".into(), cx: cx(2, 1), frame };
         let mut pixels = vec![[0.25; 4]; 2];
         let error = loaded.plugin.call::<()>(&call, Some(&mut pixels), &mut Recorder::default()).unwrap_err();

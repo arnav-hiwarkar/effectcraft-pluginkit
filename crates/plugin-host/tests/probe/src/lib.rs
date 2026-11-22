@@ -15,11 +15,10 @@ impl Effect for Invert {
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let amount = cx.f("amount") as f32;
-        for pixel in frame.pixels.iter_mut() {
-            for channel in &mut pixel[..3] {
-                *channel += (1.0 - 2.0 * *channel) * amount;
-            }
-        }
+        frame.map(|mut pixel| {
+            pixel[..3].iter_mut().for_each(|channel| *channel += (1.0 - 2.0 * *channel) * amount);
+            pixel
+        });
         Ok(())
     }
 }
@@ -36,10 +35,10 @@ impl Effect for FastMaths {
     }
 
     fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
-        for pixel in frame.pixels.iter_mut() {
+        frame.map(|pixel| {
             let x = pixel[0];
-            *pixel = [math::exp(x), math::sin(x), math::atan2(x, 2.0 - x), math::pow(x.abs(), 2.4)];
-        }
+            [math::exp(x), math::sin(x), math::atan2(x, 2.0 - x), math::pow(x.abs(), 2.4)]
+        });
         Ok(())
     }
 }
@@ -57,9 +56,10 @@ impl Effect for Scale {
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let level: f32 = cx.text("level").parse().map_err(|_| Error::from("the level is not a number"))?;
-        for pixel in frame.pixels.iter_mut() {
+        frame.map(|mut pixel| {
             pixel[..3].iter_mut().for_each(|channel| *channel *= level);
-        }
+            pixel
+        });
         Ok(())
     }
 
@@ -112,12 +112,11 @@ impl Effect for GpuInvert {
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let amount = cx.f("amount") as f32;
-        for pixel in frame.pixels.iter_mut() {
+        frame.map(|mut pixel| {
             let alpha = pixel[3];
-            for channel in &mut pixel[..3] {
-                *channel += (alpha - 2.0 * *channel) * amount;
-            }
-        }
+            pixel[..3].iter_mut().for_each(|channel| *channel += (alpha - 2.0 * *channel) * amount);
+            pixel
+        });
         Ok(())
     }
 }
@@ -254,10 +253,8 @@ impl Effect for GpuSoften {
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let (width, height) = (frame.width, frame.height);
-        let at = |x: i64, y: i64| -> Pixel {
-            if x < 0 || y < 0 || x >= width as i64 || y >= height as i64 { [0.0; 4] } else { frame.pixels[y as usize * width + x as usize] }
-        };
+        let (width, height, input) = (frame.input.width, frame.input.height, frame.input);
+        let at = |x: i64, y: i64| input.at(x as isize, y as isize);
         let [hw, hh] = GpuSoften::half([width, height]);
         let mut half = vec![[0.0f32; 4]; hw * hh];
         for y in 0..hh {
@@ -269,20 +266,20 @@ impl Effect for GpuSoften {
         }
         let clamped = |x: i64, y: i64| half[y.clamp(0, hh as i64 - 1) as usize * hw + x.clamp(0, hw as i64 - 1) as usize];
         let strength = cx.f("strength") as f32;
-        for y in 0..height {
-            for x in 0..width {
+        let x0 = frame.origin[0];
+        for (y, read, row) in frame.rows() {
+            for (x, (pixel, source)) in (x0..).zip(row.iter_mut().zip(read)) {
                 let fx = (x as f32 + 0.5) / width as f32 * hw as f32 - 0.5;
                 let fy = (y as f32 + 0.5) / height as f32 * hh as f32 - 0.5;
                 let (x0, y0) = (fx.floor(), fy.floor());
                 let (tx, ty) = (fx - x0, fy - y0);
                 let (xi, yi) = (x0 as i64, y0 as i64);
                 let (a, b, c, d) = (clamped(xi, yi), clamped(xi + 1, yi), clamped(xi, yi + 1), clamped(xi + 1, yi + 1));
-                let pixel = &mut frame.pixels[y * width + x];
                 for k in 0..4 {
                     let top = a[k] + (b[k] - a[k]) * tx;
                     let bottom = c[k] + (d[k] - c[k]) * tx;
                     let soft = top + (bottom - top) * ty;
-                    pixel[k] += (soft - pixel[k]) * strength;
+                    pixel[k] = source[k] + (soft - source[k]) * strength;
                 }
             }
         }
@@ -350,16 +347,61 @@ impl Effect for ShiftDown {
     }
 
     fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let width = frame.width;
-        let first_row_is_frame_top = frame.origin[1] == 0;
-        for y in (1..frame.height).rev() {
-            let (above, here) = frame.pixels.split_at_mut(y * width);
-            here[..width].copy_from_slice(&above[(y - 1) * width..]);
-        }
-        if first_row_is_frame_top {
-            frame.pixels[..width].fill([0.0; 4]);
+        let (input, x0, width) = (frame.input, frame.origin[0], frame.width);
+        for (y, row) in frame.rows_mut() {
+            match y.checked_sub(1).and_then(|above| input.row(above as isize)) {
+                Some(above) => row.copy_from_slice(&above[x0..x0 + width]),
+                None => row.fill([0.0; 4]),
+            }
         }
         Ok(())
+    }
+}
+
+const LIFT_ROWS: i32 = 8;
+
+struct Lift;
+
+impl Effect for Lift {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("lift", "Lift", "Probe")
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise().maps_input()
+    }
+
+    fn input(&self, _cx: &Cx, out: Rect) -> Rect {
+        Rect { top: out.top + LIFT_ROWS, bottom: out.bottom + LIFT_ROWS, ..out }
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let (input, x0, width) = (frame.input, frame.origin[0], frame.width);
+        for (y, row) in frame.rows_mut() {
+            match input.row(y as isize + LIFT_ROWS as isize) {
+                Some(below) => row.copy_from_slice(&below[x0..x0 + width]),
+                None => row.fill([0.0; 4]),
+            }
+        }
+        Ok(())
+    }
+}
+
+struct Tally;
+
+impl Effect for Tally {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("tally", "Tally", "Probe")
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise()
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        frame.map(|pixel| pixel);
+        let before = host::cache_get("tally").and_then(|bytes| <[u8; 8]>::try_from(bytes.as_slice()).ok()).map_or(0, u64::from_le_bytes);
+        host::cache_put("tally", &(before + (frame.width * frame.height) as u64).to_le_bytes())
     }
 }
 
@@ -469,7 +511,8 @@ impl Effect for MarkBand {
     }
 
     fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let (top, rows) = (frame.origin[1] as f32, frame.height as f32);
+        let input = frame.input;
+        let (top, rows) = (input.first_row as f32, (input.pixels.len() / input.width.max(1)) as f32);
         for (y, row) in frame.rows_mut() {
             row.fill([top, rows, y as f32, 1.0]);
         }
@@ -617,6 +660,8 @@ fn make() -> Plugin {
         .effect(FastMaths)
         .effect(Scale)
         .effect(ShiftDown)
+        .effect(Lift)
+        .effect(Tally)
         .effect(ReadInputs)
         .effect(SceneCamera)
         .effect(Spin)

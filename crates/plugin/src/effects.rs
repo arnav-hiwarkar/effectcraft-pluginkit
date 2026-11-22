@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use craft_plugin_host::kernels::{self, StepImage};
 use craft_plugin_host::{
-    Blend, Call, Camera, Cull, Draw, EffectSpec, GpuData, GpuImage, Host, Layout, Light, LightKind, MaskPath, Param, ParamKind, ParamsAt, Pixels, RenderCx,
-    Scene, Value as Wire,
+    Blend, Call, Camera, Cull, Draw, EffectSpec, GpuData, GpuImage, Host, Layout, Light, LightKind, MaskPath, Param, ParamKind, ParamsAt, Pixels, Rect,
+    RenderCx, Scene, Value as Wire,
 };
 use effectcraft_engine::effects::dynamic::{
     self, DynamicEffect, DynamicParam, GpuBlend, GpuBytes, GpuCull, GpuDraw, GpuPass, GpuPicture, GpuProgram, GpuSlot, Grid,
@@ -281,21 +281,39 @@ impl Host for RenderHost<'_, '_> {
 fn layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Layout {
     let call = Call::Layout { effect: spec.id.clone(), cx: render_cx(spec, ctx, grid) };
     let mut layout: Layout = loaded.plugin.call(&call, None, &mut RenderHost { ctx, grid, spec }).unwrap_or_default();
-    layout.padding = layout.padding.min(MAX_PADDING);
+    layout.padding = layout.padding.map(|side| side.min(MAX_PADDING));
     layout
+}
+
+fn padding(buf: &Buf, padding: [u32; 4]) -> [u32; 4] {
+    let (width, height) = (buf.img.width, buf.img.height);
+    let [left, top, right, bottom] = padding.map(f64::from);
+    effectcraft_engine::effects::grow_sides([-left, -top], [f64::from(width) + right, f64::from(height) + bottom], width, height).unwrap_or_default()
+}
+
+fn shown_area(ctx: &EffectCtx, grid: Grid) -> Option<Rect> {
+    let [left, top, right, bottom] = ctx.env.host?.shown()?;
+    let [left, top] = to_px(grid, [left, top]).map(|at| at.floor().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32);
+    let [right, bottom] = to_px(grid, [right, bottom]).map(|at| at.ceil().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32);
+    Some(Rect { left, top, right, bottom })
 }
 
 fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> Buf {
     let layout = layout(loaded, spec, ctx, grid_of(&buf));
-    if layout.padding > 0 {
-        buf.pad(layout.padding);
-    }
+    buf.pad_sides(padding(&buf, layout.padding));
     let grid = grid_of(&buf);
     let cx = render_cx(spec, ctx, grid);
     let host = || RenderHost { ctx, grid, spec };
     let rendered = match layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu()) {
         Some(plan) => loaded.plugin.run_passes(&spec.id, &cx, plan, &mut buf.img.data, host),
-        None => loaded.plugin.render(&spec.id, &cx, layout.reach, &mut buf.img.data, host),
+        None => loaded.plugin.render(&spec.id, &cx, &layout, shown_area(ctx, grid), &mut buf.img.data, host).map(|area| {
+            buf.img.width = area.width();
+            buf.img.height = area.height();
+            buf.offset = [buf.offset[0] - f64::from(area.left), buf.offset[1] - f64::from(area.top)];
+            if area.is_empty() {
+                buf.img = Image::new(1, 1);
+            }
+        }),
     };
     loaded.report(&spec.id, rendered.err().map(|e| e.to_string()));
     buf
@@ -304,7 +322,8 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
 fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Option<GpuProgram> {
     let layout = layout(loaded, spec, ctx, grid);
     let plan = layout.gpu?;
-    let frame = [grid.width, grid.height].map(|side| side.saturating_add(layout.padding.saturating_mul(2)));
+    let [left, top, right, bottom] = layout.padding;
+    let frame = [grid.width.saturating_add(left).saturating_add(right), grid.height.saturating_add(top).saturating_add(bottom)];
     if let Err(why) = plan.validate(frame) {
         loaded.report(&spec.id, Some(format!("the GPU plan was refused: {why}")));
         return None;

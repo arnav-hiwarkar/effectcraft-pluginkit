@@ -5,7 +5,7 @@ use crate::abi::Buffer;
 use crate::host;
 use crate::ui::Ui;
 use crate::viewer::Overlay;
-use crate::wire::{EffectSpec, HostCall, ImageDesc, Layout, MaskPath, ParamsAt, Pixel, RenderCx, Scene, Value};
+use crate::wire::{EffectSpec, HostCall, ImageDesc, Layout, MaskPath, ParamsAt, Pixel, Rect, RenderCx, Scene, Value};
 
 pub trait Effect: Send + Sync + 'static {
     fn spec(&self) -> EffectSpec;
@@ -16,6 +16,10 @@ pub trait Effect: Send + Sync + 'static {
 
     fn render(&self, _cx: &Cx, _frame: &mut Frame) -> Result<()> {
         Ok(())
+    }
+
+    fn input(&self, _cx: &Cx, out: Rect) -> Rect {
+        out
     }
 
     fn controls(&self, _instance: u64, _param: &str, _value: &mut String, _ui: &mut Ui) {}
@@ -82,15 +86,19 @@ impl Cx {
     }
 
     pub fn padded(&self, padding: u32) -> Cx {
-        let shift = f64::from(padding);
+        self.padded_sides(padding, padding, padding, padding)
+    }
+
+    pub fn padded_sides(&self, left: u32, top: u32, right: u32, bottom: u32) -> Cx {
+        let shift = [f64::from(left), f64::from(top)];
         let mut padded = self.0.clone();
-        padded.size = padded.size.map(|side| side + 2 * padding);
-        padded.offset = padded.offset.map(|at| at + shift);
+        padded.size = [padded.size[0] + left + right, padded.size[1] + top + bottom];
+        padded.offset = [padded.offset[0] + shift[0], padded.offset[1] + shift[1]];
         for value in padded.params.values_mut() {
             if let Value::List(point) = value
                 && point.len() < 4
             {
-                point.iter_mut().take(2).for_each(|c| *c += shift);
+                point.iter_mut().zip(shift).for_each(|(c, by)| *c += by);
             }
         }
         Cx(padded)
@@ -200,16 +208,36 @@ pub struct Frame<'a> {
     pub height: usize,
     pub origin: [usize; 2],
     pub pixels: &'a mut [Pixel],
+    pub input: Rows<'a>,
 }
 
-impl Frame<'_> {
+impl<'a> Frame<'a> {
+    pub fn whole(width: usize, height: usize, input: &'a [Pixel], pixels: &'a mut [Pixel]) -> Frame<'a> {
+        Frame { width, height, origin: [0, 0], pixels, input: Rows { width, height, first_row: 0, pixels: input } }
+    }
+
     pub fn rows_mut(&mut self) -> impl Iterator<Item = (usize, &mut [Pixel])> {
         let first = self.origin[1];
         self.pixels.chunks_exact_mut(self.width.max(1)).enumerate().map(move |(y, row)| (first + y, row))
     }
 
+    pub fn rows(&mut self) -> impl Iterator<Item = (usize, &'a [Pixel], &mut [Pixel])> {
+        let ([x0, y0], width, input) = (self.origin, self.width, self.input);
+        self.pixels.chunks_exact_mut(width.max(1)).enumerate().map(move |(i, out)| {
+            let y = y0 + i;
+            let read = input.row(y as isize).and_then(|row| row.get(x0..x0 + width)).unwrap_or(&[]);
+            (y, read, out)
+        })
+    }
+
+    pub fn map(&mut self, f: impl Fn(Pixel) -> Pixel) {
+        for (_, read, out) in self.rows() {
+            out.iter_mut().zip(read).for_each(|(out, read)| *out = f(*read));
+        }
+    }
+
     pub fn at(&self, x: isize, y: isize) -> Pixel {
-        at(self.pixels, self.width, self.height, x, y)
+        self.input.at(x, y)
     }
 }
 

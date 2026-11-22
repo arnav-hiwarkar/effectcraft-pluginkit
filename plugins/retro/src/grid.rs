@@ -9,7 +9,12 @@ pub struct Band<'a> {
     pub rows: i32,
 }
 
-impl Band<'_> {
+impl<'a> Band<'a> {
+    pub fn of(input: Rows<'a>) -> Band<'a> {
+        let rows = input.pixels.len() / input.width.max(1);
+        Band { pixels: input.pixels, width: input.width, top: input.first_row as i32, rows: rows as i32 }
+    }
+
     pub fn at(&self, x: i32, y: i32) -> Pixel {
         let row = y - self.top;
         if x < 0 || x >= self.width as i32 || row < 0 || row >= self.rows {
