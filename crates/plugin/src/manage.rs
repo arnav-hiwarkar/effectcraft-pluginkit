@@ -460,8 +460,9 @@ fn wait_for_tasks(session: &mut Session, timeout: f64) -> bool {
     true
 }
 
-pub fn start_task(plugin: &str, task: &str, args: Value) -> Result<u64, String> {
-    running(plugin)?.plugin.start(task, args).map_err(|e| e.to_string())
+pub fn start_task(session: &mut Session, plugin: &str, task: &str, args: Value) -> Result<u64, String> {
+    let loaded = running(plugin)?;
+    loaded.plugin.start(task, args, &SessionHost::new(session, &loaded)).map_err(|e| e.to_string())
 }
 
 pub fn cancel_task(plugin: &str, id: u64) -> Result<(), String> {
@@ -494,7 +495,7 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
         "plugin.run" => run_command(session, text("plugin")?, text("command")?).map(|()| Value::Null).map_err(failed),
         "plugin.startTask" => {
             let args = params.get("args").cloned().unwrap_or(Value::Null);
-            start_task(text("plugin")?, text("task")?, args).map(|id| json!(id)).map_err(failed)
+            start_task(session, text("plugin")?, text("task")?, args).map(|id| json!(id)).map_err(failed)
         }
         "plugin.cancelTask" => {
             let task = params.get("id").and_then(Value::as_u64).ok_or_else(|| failed("`plugin.cancelTask` needs an `id` number".into()))?;

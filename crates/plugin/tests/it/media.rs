@@ -6,7 +6,7 @@ use crate::{App, app};
 static ONE_SESSION_PUMPS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn finished(app: &mut App, task: &str, args: Value) -> Value {
-    let id = effectcraft_plugin::start_task(&app.id, task, args).expect("the task starts");
+    let id = effectcraft_plugin::start_task(&mut app.session, &app.id, task, args).expect("the task starts");
     let tasks = app.session.execute("plugin.tasks", json!({"wait": true, "timeout": 30})).expect("the tasks finish");
     let state = tasks.as_array().unwrap().iter().find(|t| t["id"] == json!(id) && t["plugin"] == json!(app.id)).cloned().expect("listed");
     assert_eq!(state["status"], json!(TaskStatus::Done), "{state}");
@@ -55,7 +55,7 @@ fn a_task_cannot_ask_for_a_frame_larger_than_the_host_will_render() {
     let mut app = app("test.media-huge", &["document.read"]);
     let mut failure = |width: u32, height: u32, scale: f64| {
         app.session.execute("comp.new", json!({"name": format!("Wide {width}"), "width": width, "height": height, "frameRate": 24, "duration": 1})).unwrap();
-        let id = effectcraft_plugin::start_task(&app.id, "frame", json!({"time": 0.0, "scale": scale})).unwrap();
+        let id = effectcraft_plugin::start_task(&mut app.session, &app.id, "frame", json!({"time": 0.0, "scale": scale})).unwrap();
         let tasks = app.session.execute("plugin.tasks", json!({"wait": true, "timeout": 30})).unwrap();
         let state = tasks.as_array().unwrap().iter().find(|t| t["id"] == json!(id) && t["plugin"] == json!(app.id)).cloned().unwrap();
         (state["status"].clone(), state["error"].as_str().unwrap_or_default().to_string())
@@ -66,4 +66,17 @@ fn a_task_cannot_ask_for_a_frame_larger_than_the_host_will_render() {
     let (status, error) = failure(2100, 2100, 4.0);
     assert_eq!(status, json!(TaskStatus::Failed), "{error}");
     assert!(error.contains("too large"), "{error}");
+}
+
+#[test]
+fn a_task_started_in_one_project_cannot_edit_the_project_opened_after_it() {
+    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut app = app("test.media-closed", &["document.write"]);
+    let id = effectcraft_plugin::start_task(&mut app.session, &app.id, "edit", json!({})).unwrap();
+    app.session.execute("file.newProject", json!({})).unwrap();
+    app.session.execute("comp.new", json!({"name": "Next", "width": 64, "height": 36, "frameRate": 24, "duration": 2})).unwrap();
+    let tasks = app.session.execute("plugin.tasks", json!({"wait": true, "timeout": 30})).unwrap();
+    let state = tasks.as_array().unwrap().iter().find(|t| t["id"] == json!(id) && t["plugin"] == json!(app.id)).cloned().unwrap();
+    assert_eq!(state["status"], json!(TaskStatus::Cancelled), "{state}");
+    assert_eq!(app.layer_names(), Vec::<String>::new());
 }

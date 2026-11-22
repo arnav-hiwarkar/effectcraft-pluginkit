@@ -190,7 +190,10 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             }
             plain(Value::Null)
         }
-        HostCall::Start { task, args } => cx.engine.start(&task, args).map(|id| (json!(id), Bulk::None)),
+        HostCall::Start { task, args } => {
+            let project = cx.task.as_ref().map_or_else(|| cx.host.project_closed(), |task| task.project());
+            cx.engine.start(&task, args, project).map(|id| (json!(id), Bulk::None))
+        }
         HostCall::Task { id } => cx.plugin.tasks.get(id).map(|slot| (json!(slot.state()), Bulk::None)).ok_or(format!("no task {id}")),
         HostCall::Cancel { id } => match cx.plugin.tasks.cancel(id) {
             true => plain(Value::Null),

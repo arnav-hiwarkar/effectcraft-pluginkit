@@ -37,7 +37,9 @@ A task runs on its own plugin instance on a background thread with no time limit
 `plugin.tasks` wait loop of headless runs); its log, file, cache and task calls are answered on its own
 thread. A sandboxed task that ignores cancel is stopped 0.5 s after the cancel. A native task can only
 be asked, through `progress`. A plugin runs at most 4 tasks at once. Disabling, reloading or removing a
-plugin cancels its tasks. The last 16 finished tasks of a plugin stay listed.
+plugin cancels its tasks. A task belongs to the project that was open when it started: when that project
+closes (a new project or another one is opened) the task is cancelled, and a request it makes after that
+fails with `the project this task started in was closed`. The last 16 finished tasks of a plugin stay listed.
 
 ## Effect
 

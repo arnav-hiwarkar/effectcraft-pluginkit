@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use self::native::NativeGuest;
 use self::serve::{HostCx, Identity};
-use self::tasks::{Slot, Tasks};
+use self::tasks::{PROJECT_CLOSED, Project, Slot, Tasks};
 use self::wasm::{WasmGuest, WasmModule};
 use crate::cache::{BUDGET, Cache};
 use crate::host::{Host, Origin};
@@ -125,9 +125,9 @@ impl Engine {
         self.identity.tasks.know(names);
     }
 
-    pub fn start(self: &Arc<Self>, task: &str, args: Value) -> Result<u64, String> {
+    pub fn start(self: &Arc<Self>, task: &str, args: Value, project: Project) -> Result<u64, String> {
         let request = serde_json::to_vec(&Call::Task { task: task.into(), args }).map_err(|e| e.to_string())?;
-        let (id, slot) = self.identity.tasks.add(task)?;
+        let (id, slot) = self.identity.tasks.add(task, project)?;
         let (engine, running) = (self.clone(), slot.clone());
         let spawned = std::thread::Builder::new().name(format!("craft-plugin-task-{id}")).spawn(move || {
             let outcome = engine.run_task(&request, &running);
@@ -180,6 +180,10 @@ impl Engine {
         let queue = self.identity.tasks.take_queue();
         let served = queue.len();
         for forwarded in queue {
+            if forwarded.task.project_closed() {
+                let _ = forwarded.reply.send((serde_json::to_vec(&Outcome::<Value>::Err(PROJECT_CLOSED.into())).unwrap_or_default(), serve::Bulk::None));
+                continue;
+            }
             let mut cx = HostCx {
                 host: &mut *host,
                 plugin: &self.identity,
@@ -192,6 +196,7 @@ impl Engine {
             let answer = native::guarded(&mut cx, &forwarded.request, &forwarded.bulk);
             let _ = forwarded.reply.send(answer);
         }
+        self.identity.tasks.cancel_orphans();
         served
     }
 }

@@ -44,7 +44,7 @@ impl Engine {
         match *self {}
     }
 
-    pub fn start(self: &Arc<Self>, _: &str, _: serde_json::Value) -> Result<u64, String> {
+    pub fn start(self: &Arc<Self>, _: &str, _: serde_json::Value, _: Option<Arc<std::sync::atomic::AtomicBool>>) -> Result<u64, String> {
         match **self {}
     }
 

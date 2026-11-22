@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, OnceLock};
 
 use craft_plugin_host::{Access, AudioRequest, FrameRequest, Host, Permission, PickFile, Pixels, Samples};
 use effectcraft_automation::confine::{self, Confinement, Lookup};
@@ -348,6 +349,10 @@ impl Host for SessionHost<'_> {
         let start = Tick::from_seconds_f64(request.start);
         let samples = audio::mix_comp(project, self.session.footage.as_ref(), self.session.expr.as_deref(), comp, start, frames.round() as usize, request.rate);
         Ok(Samples { channels: 2, rate: request.rate, samples })
+    }
+
+    fn project_closed(&self) -> Option<Arc<AtomicBool>> {
+        Some(self.session.project_closed.clone())
     }
 
     fn pick_file(&mut self, request: &PickFile) -> Result<Option<PathBuf>, String> {

@@ -43,7 +43,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 ## From the second build and its reviews, not fixed
 
-- **A task answers against the project that is open when its request is served.** A task started in one project can edit another if the user opens it meanwhile. Tasks are not cancelled when a project opens. (`crates/plugin/src/manage.rs` `pump`, Sol finding 8)
 - **Another process of the same user can plant a compiled module.** The compiled cache is named by a SHA-256 of the module and plugins cannot write to it, but the files are not signed.
 - **A native task that ignores cancel keeps its thread.** Only a sandboxed task can be interrupted.
 - **In the CLI a task's document requests are answered only inside `plugin.tasks {wait}`.**
