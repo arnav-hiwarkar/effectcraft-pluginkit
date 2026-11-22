@@ -11,12 +11,12 @@ use crate::plugin_draw::{Stage, Target, check_data, check_draw};
 
 const SOURCE: usize = 0;
 const OUTPUT: usize = 1;
-const PIECE: Duration = Duration::from_millis(10);
-const FIRST_PIECE_PIXELS: f64 = 65_536.0;
-const MIN_NS_PER_PIXEL: f64 = 1e-3;
 
 pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b: GBuf) -> Option<GBuf> {
     let effect = &registered.effect;
+    if registered.gpu_stopped.get().is_some() {
+        return None;
+    }
     let (Some(wgsl), Some(plan)) = (effect.shader.as_deref(), effect.gpu.as_ref()) else { return None };
     let (id, revision) = (registered.spec.id, effect.revision);
     let g = e.g;
@@ -55,7 +55,7 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
     for (layer, param) in program.layers.iter().enumerate() {
         *images.get_mut(index(GpuSlot::Layer(layer), &program)?)? = Some(layer_image(e, ctx, &b, param)?);
     }
-    let mut clock = Clock::new(e, id);
+    let clock = Clock::start(e);
     let mut compute = pipelines.iter();
     for (n, pass) in program.passes.iter().enumerate() {
         let read = |slot: GpuSlot| images.get(index(slot, &program)?).cloned().flatten();
@@ -70,38 +70,32 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
             None => {
                 let pipeline = compute.next()?;
                 let out = e.image(w, h);
-                for rows in clock.bands(e, &pass.kernel, w, h) {
-                    let band = e.data(&[rows.start as f32, rows.end as f32]);
-                    let images_bound = KernelImages { src: &src, aux: aux.as_ref(), out: &out };
-                    e.dispatch(Kernel::Plugin { pipeline, label: &pass.kernel }, &params(pass), images_bound, Some(&band), (w.div_ceil(16), h.div_ceil(16)));
-                    if let Err(why) = clock.ran(e, n, &pass.kernel, u64::from(w) * u64::from(rows.end - rows.start)) {
-                        g.plugin_stop(id, &why);
-                        return None;
-                    }
-                }
+                let images_bound = KernelImages { src: &src, aux: aux.as_ref(), out: &out };
+                e.dispatch(Kernel::Plugin { pipeline, label: &pass.kernel }, &params(pass), images_bound, None, (w.div_ceil(16), h.div_ceil(16)));
                 Some(out)
             }
             Some(_) => {
                 let stays_open = program.passes.get(n + 1).is_some_and(|next| next.out == pass.out && next.draw.as_ref().is_some_and(|draw| !draw.clear));
                 let below = images.get(target).cloned().flatten();
                 let target = Target { index: target, size: [w, h], below: below.as_ref(), stays_open };
-                let drawn = match stage.draw(e, pass, &params(pass), &src, aux.as_ref(), target) {
+                match stage.draw(e, pass, &params(pass), &src, aux.as_ref(), target) {
                     Ok(out) => out,
                     Err(why) => {
                         g.plugin_declined(id, &why);
                         return None;
                     }
-                };
-                if let Err(why) = clock.ran(e, n, &pass.kernel, u64::from(w) * u64::from(h)) {
-                    g.plugin_stop(id, &why);
-                    return None;
                 }
-                drawn
             }
         };
         if let Some(out) = out {
             *images.get_mut(target)? = Some(out);
         }
+    }
+    if let Err(why) = clock.ran(e, id, &program) {
+        if registered.gpu_stopped.set(why.clone()).is_ok() {
+            g.plugin_declined(id, &why);
+        }
+        return None;
     }
     b.img = images.get_mut(OUTPUT)?.take()?;
     log::debug!("gpu {}: plugin effect {id} ran {} passes at {}x{}", g.name, program.passes.len(), frame[0], frame[1]);
@@ -124,59 +118,34 @@ fn layer_image(e: &mut Enc, ctx: &EffectCtx, frame: &GBuf, param: &str) -> Optio
     Some(fitted.unwrap_or_else(|| e.zeros(w, h)))
 }
 
-struct Clock<'a> {
-    effect: &'a str,
+struct Clock {
     budget: Option<Duration>,
     start: Instant,
-    group: Vec<(String, f64)>,
-    predicted_ns: f64,
 }
 
-impl<'a> Clock<'a> {
-    fn new(e: &Enc, effect: &'a str) -> Self {
+impl Clock {
+    fn start(e: &mut Enc) -> Self {
         let budget = e.g.deferred.is_none().then(|| e.g.plugin_gpu_budget());
-        Clock { effect, budget, start: Instant::now(), group: Vec::new(), predicted_ns: 0.0 }
-    }
-
-    fn ns_per_pixel(&self, e: &Enc, kernel: &str) -> f64 {
-        e.g.plugin_cost(self.effect, kernel).unwrap_or(PIECE.as_nanos() as f64 / FIRST_PIECE_PIXELS)
-    }
-
-    fn bands(&self, e: &Enc, kernel: &str, w: u32, h: u32) -> Vec<std::ops::Range<u32>> {
-        let h = h.max(1);
-        let rows = match self.budget {
-            None => h,
-            Some(_) => {
-                let per_row = self.ns_per_pixel(e, kernel) * f64::from(w.max(1));
-                ((PIECE.as_nanos() as f64 / per_row).floor() as u32).clamp(1, h)
+        if budget.is_some() {
+            e.submit();
+            if let Some(earlier) = e.last_submission() {
+                e.g.poll_wait(earlier, crate::readback::TIMEOUT);
             }
-        };
-        (0..h).step_by(rows as usize).map(|first| first..(first + rows).min(h)).collect()
+        }
+        Clock { budget, start: Instant::now() }
     }
 
-    fn ran(&mut self, e: &mut Enc, pass: usize, kernel: &str, pixels: u64) -> Result<(), String> {
+    fn ran(&self, e: &mut Enc, effect: &str, program: &GpuProgram) -> Result<(), String> {
         let Some(budget) = self.budget else { return Ok(()) };
-        let cost = self.ns_per_pixel(e, kernel);
-        self.predicted_ns += cost * pixels as f64;
-        self.group.push((kernel.to_string(), cost));
-        if self.predicted_ns < PIECE.as_nanos() as f64 {
-            return Ok(());
-        }
         e.submit();
-        let began = Instant::now();
         if let Some(submission) = e.last_submission() {
             e.g.poll_wait(submission, budget.saturating_sub(self.start.elapsed()).max(Duration::from_millis(1)));
         }
-        let factor = (began.elapsed().as_nanos() as f64 / self.predicted_ns.max(1.0)).clamp(1.0 / 64.0, 64.0);
-        for (kernel, cost) in std::mem::take(&mut self.group) {
-            e.g.plugin_learn(self.effect, &kernel, (cost * factor).max(MIN_NS_PER_PIXEL));
-        }
-        self.predicted_ns = 0.0;
         let spent = self.start.elapsed();
         if spent > budget {
+            let kernels: Vec<&str> = program.passes.iter().map(|pass| pass.kernel.as_str()).collect();
             return Err(format!(
-                "the plugin effect {} stopped at pass {pass} (`{kernel}`): its GPU work took {} ms, past the {} ms budget for one frame",
-                self.effect,
+                "the plugin effect {effect} was stopped: the GPU work of one frame, passes {kernels:?}, took {} ms, past the {} ms budget. It renders on the CPU until the plugin is reloaded",
                 spent.as_millis(),
                 budget.as_millis()
             ));

@@ -223,3 +223,16 @@ fn a_gpu_pass_reads_a_layer_whose_video_is_off_as_its_pixels() {
         assert!((centre[0] - 1.0).abs() < 0.02 && (centre[1] - 0.502).abs() < 0.02 && centre[2] < 0.02, "{backend:?}: {centre:?}");
     }
 }
+
+#[test]
+fn a_gpu_plan_past_its_budget_shows_why_in_the_effect_error() {
+    let app = app("test.gpu-budget", &[]);
+    let Ok(gpu) = Gpu::try_headless() else { return };
+    let spec = effects::find(&format!("{}.gpu-invert", app.id)).expect("the probe registered its GPU effects");
+    let values = params(spec, &[("amount", 0.8)]);
+    gpu.context().set_plugin_gpu_budget(std::time::Duration::ZERO);
+    assert!(gpu.effects(&[FxStep { spec, ctx: ctx(&values) }], &picture(), None).is_none(), "the plan is stopped");
+    let why = app.plugins.render_error(spec.id).expect("Effect Controls shows why the effect left the GPU");
+    assert!(why.contains(spec.id) && why.contains("past the 0 ms budget") && why.contains("until the plugin is reloaded"), "{why}");
+    assert!(!gpu.supports_effect(spec.id), "the next frame renders on the CPU");
+}

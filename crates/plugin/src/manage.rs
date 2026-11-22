@@ -265,10 +265,11 @@ impl Plugins {
 
     pub fn render_error(&self, effect_id: &str) -> Option<String> {
         let inner = self.lock();
-        inner.loaded.iter().find_map(|(plugin, loaded)| {
+        let reported = inner.loaded.iter().find_map(|(plugin, loaded)| {
             let local = local_effect(plugin, loaded, effect_id)?;
             loaded.render_errors.lock().ok()?.get(local).cloned()
-        })
+        });
+        reported.or_else(|| effectcraft_engine::effects::dynamic::get(effect_id)?.gpu_stopped.get().cloned())
     }
 
     pub fn designer(&self, effect_id: &str) -> Option<PluginItem> {

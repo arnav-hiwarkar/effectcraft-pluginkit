@@ -474,8 +474,8 @@ impl GpuPlan {
             }
         }
         let area = |[w, h]: [u32; 2]| u64::from(w) * u64::from(h);
-        let scratch_area: u64 = self.images.iter().copied().map(area).sum();
-        if scratch_area > MAX_SCRATCH_FRAMES * area(frame) {
+        let scratch_area = self.images.iter().copied().map(area).fold(0, u64::saturating_add);
+        if scratch_area > MAX_SCRATCH_FRAMES.saturating_mul(area(frame)) {
             return Err(format!("the scratch images together exceed {MAX_SCRATCH_FRAMES} times the {fw}x{fh} padded frame"));
         }
         if self.buffers.len() > MAX_BUFFERS {
@@ -488,7 +488,7 @@ impl GpuPlan {
         if let Some((i, texture)) = self.textures.iter().enumerate().find(|(_, texture)| area(texture.size) == 0) {
             return Err(format!("texture {i} ({:?}) is {}x{}; it must be non-empty", texture.key, texture.size[0], texture.size[1]));
         }
-        let texels = self.textures.iter().map(|texture| area(texture.size)).sum::<u64>() + self.layers.len() as u64 * area(frame);
+        let texels = self.textures.iter().map(|texture| area(texture.size)).fold((self.layers.len() as u64).saturating_mul(area(frame)), u64::saturating_add);
         if texels > MAX_TEXELS {
             return Err(format!("the textures and layers hold {texels} pixels; the limit is {MAX_TEXELS}"));
         }
@@ -992,6 +992,10 @@ mod tests {
         }
         let mut too_many_texels = plan(vec![], vec![finish()]);
         too_many_texels.texture("big", [4096, 4097]);
+        let mut wrapping_texels = plan(vec![], vec![finish()]);
+        for size in [[u32::MAX, u32::MAX], [u32::MAX, 2], [1, 1]] {
+            wrapping_texels.texture("huge", size);
+        }
         let cases = [
             ("no passes", plan(vec![], vec![]), "1 to 64 passes"),
             ("65 passes", plan(vec![], vec![finish(); 65]), "1 to 64 passes"),
@@ -1010,6 +1014,7 @@ mod tests {
             ("17 uints", plan(vec![], vec![finish().uints(&[0; 17])]), "17 uints"),
             ("17 pictures", too_many_pictures, "at most 16 textures and layers"),
             ("too many texels", too_many_texels, "the limit is 16777216"),
+            ("texels that wrap", wrapping_texels, "hold 18446744073709551615 pixels; the limit is 16777216"),
             ("draw without its buffer", draw_without_buffer, "names buffer 0"),
             ("depth on two sizes", depth_on_two_sizes, "depth buffer on an image of another size"),
         ];

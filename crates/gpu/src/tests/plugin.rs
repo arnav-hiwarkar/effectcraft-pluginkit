@@ -155,6 +155,62 @@ fn the_shader_cache_forgets_an_unloaded_plugin() {
     assert!(g.ctx.plugin_shader_cached("test.gpu.after-unload"));
 }
 
+const FLIP_WGSL: &str = r#"
+@compute @workgroup_size(16, 16)
+fn flip(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    store(vec2<u32>(id.x, out_size().y - 1u - id.y), texel(src, vec2<i32>(id.xy)));
+}
+"#;
+
+#[test]
+fn a_kernel_may_store_each_pixel_anywhere_in_the_output() {
+    let Some(g) = gpu() else { return };
+    let flip = GpuPass { kernel: "flip".into(), src: GpuSlot::Source, aux: None, out: GpuSlot::Output, f: Vec::new(), u: Vec::new(), draw: None };
+    register("test.gpu.flip", FLIP_WGSL, GpuProgram { passes: vec![flip], ..Default::default() });
+    let spec = effectcraft_effects::find("test.gpu.flip").expect("registered");
+    let params = Params::default();
+    let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [256.0, 512.0], seed: 1, adjustment: false, env: Default::default() };
+    let mut img = effectcraft_raster::Image::new(256, 512);
+    for (i, p) in img.data.iter_mut().enumerate() {
+        *p = [(i % 256) as f32, (i / 256) as f32, 0.0, 1.0];
+    }
+    let out = g.effects(&[FxStep { spec, ctx }], &Buf { img, offset: [0.0, 0.0], scale: 1.0 }, None).expect("the flip runs on the GPU");
+    let at = |x: usize, y: usize| out.img.data[y * 256 + x];
+    assert_eq!(
+        [at(0, 0), at(255, 0), at(7, 300), at(255, 511)],
+        [[0.0, 511.0, 0.0, 1.0], [255.0, 511.0, 0.0, 1.0], [7.0, 211.0, 0.0, 1.0], [255.0, 0.0, 0.0, 1.0]]
+    );
+    assert!(out.img.data.iter().enumerate().all(|(i, p)| *p == [(i % 256) as f32, (511 - i / 256) as f32, 0.0, 1.0]), "every row lands flipped");
+}
+
+struct Budget(&'static crate::Gpu);
+
+impl Drop for Budget {
+    fn drop(&mut self) {
+        self.0.ctx.set_plugin_gpu_budget(std::time::Duration::from_secs(2));
+    }
+}
+
+#[test]
+fn a_frame_past_the_budget_stops_the_registration_until_it_is_registered_again() {
+    let Some(g) = gpu() else { return };
+    let _restore = Budget(g);
+    let id = "test.gpu.zero-budget";
+    register(id, TINT_WGSL, GpuProgram { passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Output)], ..Default::default() });
+    g.ctx.set_plugin_gpu_budget(std::time::Duration::ZERO);
+    assert!(run_sized(id, [64, 64]).is_none(), "a 64x64 pass past a zero budget is stopped");
+    let stopped = dynamic::get(id).and_then(|r| r.gpu_stopped.get().cloned()).expect("the registration is stopped");
+    assert!(stopped.contains(id) && stopped.contains(r#"passes ["tint"]"#) && stopped.contains("past the 0 ms budget"), "{stopped}");
+    assert_eq!(g.ctx.plugin_reports(id), vec![stopped]);
+    g.ctx.set_plugin_gpu_budget(std::time::Duration::from_secs(2));
+    assert!(!g.supports_effect(id), "the next frame is rendered on the CPU");
+    assert!(run_sized(id, [64, 64]).is_none(), "a frame already in flight declines too");
+    register(id, TINT_WGSL, GpuProgram { passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Output)], ..Default::default() });
+    assert!(g.supports_effect(id), "registering the same effect again clears the stop");
+    assert!(run_sized(id, [64, 64]).is_some(), "the reloaded effect runs on the GPU");
+}
+
 const SPIN_WGSL: &str = r#"
 @compute @workgroup_size(16, 16)
 fn spin(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -167,12 +223,40 @@ fn spin(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 "#;
 
-const SPIN_SIZE: [u32; 2] = [1024, 1024];
-const HEAVY: u32 = 100_000;
-
-fn spin_program(iterations: u32) -> GpuProgram {
-    let spin = GpuPass { kernel: "spin".into(), src: GpuSlot::Source, aux: None, out: GpuSlot::Output, f: Vec::new(), u: vec![iterations], draw: None };
-    GpuProgram { passes: vec![spin], ..Default::default() }
+#[test]
+fn work_queued_before_a_plugin_is_not_charged_to_it() {
+    let Some(g) = gpu() else { return };
+    let _restore = Budget(g);
+    let spin = g.ctx.plugin_pipelines("test.gpu.spin", 1, SPIN_WGSL, &["spin"]).expect("the spin kernel builds").remove(0);
+    let mut p = crate::context::Params::default();
+    p.u[0][0] = 20_000;
+    let queue_spin = |e: &mut crate::context::Enc| {
+        let (src, out) = (e.zeros(512, 512), e.image(512, 512));
+        e.dispatch(
+            crate::context::Kernel::Plugin { pipeline: &spin, label: "spin" },
+            &p,
+            crate::context::KernelImages { src: &src, aux: None, out: &out },
+            None,
+            (32, 32),
+        );
+    };
+    let mut e = crate::context::Enc::new(&g.ctx);
+    queue_spin(&mut e);
+    let began = std::time::Instant::now();
+    e.submit();
+    g.ctx.poll_wait(e.last_submission().expect("submitted"), std::time::Duration::from_secs(30));
+    let slow = began.elapsed();
+    assert!(slow > std::time::Duration::from_millis(40), "the queued work is slow enough to matter: {slow:?}");
+    register("test.gpu.cheap", TINT_WGSL, tint_program());
+    let cheap = dynamic::get("test.gpu.cheap").expect("registered");
+    g.ctx.set_plugin_gpu_budget(slow / 2);
+    let mut e = crate::context::Enc::new(&g.ctx);
+    queue_spin(&mut e);
+    let frame = crate::effects::GBuf { img: g.ctx.upload_image(&pattern(5, 53, 37)).expect("uploads"), offset: [0.0, 0.0], scale: 1.0 };
+    let params = Params::default();
+    let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [53.0, 37.0], seed: 1, adjustment: false, env: Default::default() };
+    assert!(crate::fx_plugin::apply(&mut e, &cheap, &ctx, frame).is_some(), "the cheap plugin runs");
+    assert_eq!(cheap.gpu_stopped.get(), None, "the slow work queued before it is not charged to the cheap plugin");
 }
 
 fn run_sized(id: &str, size: [u32; 2]) -> Option<Buf> {
@@ -184,42 +268,31 @@ fn run_sized(id: &str, size: [u32; 2]) -> Option<Buf> {
     g.effects(&[FxStep { spec, ctx }], &buf, None)
 }
 
-struct Budget(&'static crate::Gpu);
-
-impl Drop for Budget {
-    fn drop(&mut self) {
-        self.0.ctx.set_plugin_gpu_budget(std::time::Duration::from_secs(2));
-    }
-}
-
 #[test]
-fn plugin_work_runs_in_bounded_pieces_and_stops_past_its_budget() {
+fn stopped_plugin_effects_are_left_out_of_gpu_runs_before_any_upload() {
+    use effectcraft_render::{Backend, RenderOpts, Renderer};
     let Some(g) = gpu() else { return };
-    let _restore = Budget(g);
-    register("test.gpu.spin.light", SPIN_WGSL, spin_program(4));
-    let light = run_sized("test.gpu.spin.light", SPIN_SIZE).expect("a light kernel runs");
-    let row = |y: u32| light.img.data[(y * SPIN_SIZE[0] + 3) as usize];
-    assert!((0..SPIN_SIZE[1]).all(|y| row(y)[3] == 1.0), "every band of the frame is written");
-    register("test.gpu.spin.whole", SPIN_WGSL, spin_program(HEAVY));
-    register("test.gpu.spin.heavy", SPIN_WGSL, spin_program(HEAVY));
-    g.ctx.set_plugin_gpu_budget(std::time::Duration::from_secs(30));
-    let began = std::time::Instant::now();
-    assert!(run_sized("test.gpu.spin.whole", SPIN_SIZE).is_some(), "the heavy plan runs within a long budget");
-    let whole = began.elapsed();
-    g.ctx.set_plugin_gpu_budget(std::time::Duration::from_millis(40));
-    let began = std::time::Instant::now();
-    assert!(run_sized("test.gpu.spin.heavy", SPIN_SIZE).is_none(), "a plan past its budget is stopped");
-    let stopped_after = began.elapsed();
-    let reports = g.ctx.plugin_reports("test.gpu.spin.heavy");
-    assert!(
-        reports.iter().any(|why| why.contains("test.gpu.spin.heavy") && why.contains("pass 0 (`spin`)") && why.contains("40 ms")),
-        "the error names the plugin effect, the pass and the budget: {reports:?}"
-    );
-    assert!(stopped_after < whole / 2, "stopped after {stopped_after:?}; the whole plan takes {whole:?}");
-    let began = std::time::Instant::now();
-    assert!(run_sized("test.gpu.spin.heavy", SPIN_SIZE).is_none(), "the effect stays on the CPU until the plugin reloads");
-    assert!(began.elapsed() < std::time::Duration::from_millis(500), "the next frame declines at once: {:?}", began.elapsed());
-    assert!(g.ctx.check_health().is_ok(), "the device stays usable");
+    for id in ["test.gpu.stopped.a", "test.gpu.stopped.b"] {
+        register(id, TINT_WGSL, tint_program());
+        dynamic::get(id).expect("registered").gpu_stopped.set("stopped by the test".into()).expect("not stopped yet");
+    }
+    let mut s = super::Scene::new(effectcraft_project::BitDepth::Bpc32);
+    let mut layer = s.solid([1.0, 0.5, 0.25], 80, 50);
+    for id in ["test.gpu.stopped.a", "test.gpu.stopped.b", "ec.color.levels"] {
+        s.effect(&mut layer, id, &[]);
+    }
+    s.push(layer);
+    let mut r = Renderer::new(&s.p, &super::Pattern, RenderOpts { backend: Backend::Gpu, ..super::opts() });
+    r.accel = Some(g);
+    let ctx = r.eval_ctx(s.cid, effectcraft_time::Tick::ZERO).expect("the comp evaluates");
+    let mut e = crate::context::Enc::new(&g.ctx);
+    let img = e.image(80, 50);
+    let before = g.ctx.transfer_stats();
+    let mut fx = crate::effects::GpuFx::new(&mut e, img, [0.0, 0.0], 1.0, None);
+    r.run_effects_on(&ctx, &ctx.comp.layers[0], true, &mut fx);
+    fx.finish().expect("the stack runs");
+    let after = g.ctx.transfer_stats();
+    assert_eq!((after.readbacks - before.readbacks, after.uploads - before.uploads), (1, 1), "one readback for the CPU effects, one upload for levels");
 }
 
 #[test]

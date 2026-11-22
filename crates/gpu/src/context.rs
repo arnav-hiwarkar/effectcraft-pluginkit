@@ -115,8 +115,6 @@ struct PluginShader {
     pipelines: HashMap<String, Result<wgpu::ComputePipeline, String>>,
     draws: HashMap<crate::plugin_draw::DrawKey, Result<wgpu::RenderPipeline, String>>,
     reported: BTreeSet<String>,
-    stopped: Option<String>,
-    costs: HashMap<String, f64>,
 }
 
 struct PluginShaders {
@@ -1607,14 +1605,11 @@ impl GpuContext {
                 self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(effect), source: wgpu::ShaderSource::Wgsl(source.into()) })
             })
             .map_err(|why| plugin_source_lines(&why, plugin_prelude_lines()));
-            PluginShader { revision, module, pipelines: HashMap::new(), draws: HashMap::new(), reported: BTreeSet::new(), stopped: None, costs: HashMap::new() }
+            PluginShader { revision, module, pipelines: HashMap::new(), draws: HashMap::new(), reported: BTreeSet::new() }
         };
         let shader = plugins.shaders.entry(effect.to_string()).or_insert_with(compile);
         if shader.revision != revision {
             *shader = compile();
-        }
-        if let Some(why) = &shader.stopped {
-            return Err(why.clone());
         }
         let module = shader.module.clone()?;
         with(shader, &module)
@@ -1638,27 +1633,6 @@ impl GpuContext {
 
     pub(crate) fn plugin_gpu_budget(&self) -> std::time::Duration {
         self.plugin_shaders.lock().map(|plugins| plugins.budget).unwrap_or(PLUGIN_GPU_BUDGET)
-    }
-
-    pub(crate) fn plugin_stop(&self, effect: &str, why: &str) {
-        if let Ok(mut plugins) = self.plugin_shaders.lock()
-            && let Some(shader) = plugins.shaders.get_mut(effect)
-        {
-            shader.stopped = Some(why.to_string());
-        }
-        self.plugin_declined(effect, why);
-    }
-
-    pub(crate) fn plugin_cost(&self, effect: &str, kernel: &str) -> Option<f64> {
-        self.plugin_shaders.lock().ok()?.shaders.get(effect)?.costs.get(kernel).copied()
-    }
-
-    pub(crate) fn plugin_learn(&self, effect: &str, kernel: &str, ns_per_pixel: f64) {
-        if let Ok(mut plugins) = self.plugin_shaders.lock()
-            && let Some(shader) = plugins.shaders.get_mut(effect)
-        {
-            shader.costs.insert(kernel.to_string(), ns_per_pixel);
-        }
     }
 
     pub(crate) fn plugin_pipelines(&self, effect: &str, revision: u64, wgsl: &str, kernels: &[&str]) -> Result<Vec<wgpu::ComputePipeline>, String> {
