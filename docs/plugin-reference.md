@@ -251,6 +251,7 @@ degrees) and `feather` (0 to 1). Light a surface with `colour` times `intensity`
 | `frame.map(f)` | Writes each pixel as `f` of the input pixel under it. The pointwise case. |
 | `frame.rows()` | `(y, input row, output row)`, `y` in the full frame, the input row cut to the columns written. |
 | `frame.rows_mut()` | `(y, output row)`. |
+| `frame.rows_in_place()` | `(y, row)`, each row holding the input under it, to change in place: the cheapest loop for an effect that reads only its own pixel. In place it is `rows_mut()`; when `frame.input` holds rows, each one is copied into its row first. |
 | `frame.at(x, y)` | The input pixel at a full-frame position; transparent outside the input. In place, before `frame.rows()`, the pixel as `frame.pixels` holds it now. |
 | `Frame::whole(width, height, input, pixels)` | A whole-frame call, for unit tests. |
 

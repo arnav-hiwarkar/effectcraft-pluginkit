@@ -535,6 +535,25 @@ impl Effect for Checks {
     }
 }
 
+struct Halve;
+
+impl Effect for Halve {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("halve", "Halve", "Probe")
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise()
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        for (_, row) in frame.rows_in_place() {
+            row.iter_mut().for_each(|pixel| pixel[..3].iter_mut().for_each(|channel| *channel *= 0.5));
+        }
+        Ok(())
+    }
+}
+
 struct Tally;
 
 impl Effect for Tally {
@@ -856,6 +875,7 @@ fn make() -> Plugin {
         .effect(Lift)
         .effect(Tally)
         .effect(Checks)
+        .effect(Halve)
         .effect(Streak)
         .effect(Plain)
         .effect(ReadInputs)

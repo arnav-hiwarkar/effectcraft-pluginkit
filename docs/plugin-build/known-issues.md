@@ -89,6 +89,11 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 
 ## Seen in the third build
 
+- **The test kit's band check renders a pointwise effect whole with `frame.pixels` transparent.** An effect
+  that changes `frame.pixels` directly (not through `rows_in_place`, `map` or `rows`) passes in the app but
+  fails `TestPlugin` renders taller than one band (`timed` in `crates/plugin-host/src/testing.rs`). The
+  whole render needs separate input so that an effect reading rows it did not declare is still caught
+  (`plugins/cookbook`, `Smear`); one in-place band would not catch it.
 - **A native plugin call that never returns keeps its worker thread.** The app never waits for it: its later panel calls, overlays and menu commands queue behind it, and a host request it is waiting on is released with an error when its panel, overlay or tool closes or the plugin is unloaded. A call stuck inside the plugin's own code cannot be stopped in one process; that needs the helper process (`docs/plugin-helper.md`). A sandboxed call stops at its time limit. A synchronous `plugin.run` (CLI, scripts, `engine.execute`) waits for the plugin like any other command.
 
 ## Found by the region work, not fixed
