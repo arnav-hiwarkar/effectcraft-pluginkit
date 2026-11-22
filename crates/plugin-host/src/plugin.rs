@@ -155,7 +155,13 @@ impl Plugin {
         make_host: impl Fn() -> H + Sync,
     ) -> Result<Rect, PluginError> {
         let (width, height) = (cx.size[0] as usize, cx.size[1] as usize);
-        if pixels.len() != width * height {
+        if cx.size.iter().any(|&side| i32::try_from(side).is_err()) {
+            return Err(PluginError::Failed(format!(
+                "a {width}x{height} frame is larger than a plugin can address; each side must be under {} pixels",
+                1u64 << 31
+            )));
+        }
+        if pixels.len() != width.saturating_mul(height) {
             return Err(PluginError::Protocol(format!("{} pixels for a {width}x{height} frame", pixels.len())));
         }
         let full = Rect::of_size(cx.size);
@@ -251,7 +257,7 @@ impl Plugin {
         pixels: &mut Vec<Pixel>,
         make_host: impl Fn() -> H + Sync,
     ) -> Result<(), PluginError> {
-        let area = |size: [u32; 2]| size[0] as usize * size[1] as usize;
+        let area = |size: [u32; 2]| (size[0] as usize).saturating_mul(size[1] as usize);
         if pixels.len() != area(cx.size) {
             return Err(PluginError::Protocol(format!("{} pixels for a {}x{} frame", pixels.len(), cx.size[0], cx.size[1])));
         }

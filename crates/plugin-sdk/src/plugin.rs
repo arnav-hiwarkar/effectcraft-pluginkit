@@ -138,7 +138,8 @@ impl Plugin {
                     None => {
                         let pixels = pixels.into_packed();
                         snapshot = pixels.to_vec();
-                        let whole = Window { size: [frame.width, frame.origin[1] + frame.height], first_row: frame.origin[1], rows: frame.height };
+                        let whole =
+                            Window { size: [frame.width, frame.origin[1].saturating_add(frame.height)], first_row: frame.origin[1], rows: frame.height };
                         (&snapshot[..], whole, pixels)
                     }
                     Some(window) if frame.spread => {
@@ -150,8 +151,8 @@ impl Plugin {
                         (&*read, window, out)
                     }
                 };
-                let inside = origin[0] + width <= window.size[0] as usize && read.len() == window.pixels();
-                if out.len() != width * height || !inside {
+                let inside = origin[0].checked_add(width).is_some_and(|right| right <= window.size[0] as usize) && read.len() == window.pixels();
+                if out.len() != width.saturating_mul(height) || !inside {
                     return Err(format!("frame is {width}x{height} at {origin:?} but {} pixels were passed", out.len()).into());
                 }
                 let input = rows(window, read);
@@ -165,7 +166,7 @@ impl Plugin {
                 let parts = if spread {
                     Some(pixels.spread()?)
                 } else {
-                    pixels.into_packed().split_at_mut_checked(src_len + aux_len).and_then(|(read, band)| {
+                    pixels.into_packed().split_at_mut_checked(src_len.saturating_add(aux_len)).and_then(|(read, band)| {
                         let (src, aux) = read.split_at_checked(src_len)?;
                         Some((src, aux, band))
                     })

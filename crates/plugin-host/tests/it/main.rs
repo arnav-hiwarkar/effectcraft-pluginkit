@@ -586,6 +586,9 @@ fn an_empty_frame_renders_to_nothing_without_failing() {
                 .render("invert", &cx, &Layout::neighbourhood(0), None, &mut none, Recorder::default)
                 .unwrap_or_else(|e| panic!("{kind:?} {size:?}: {e}"));
         }
+        let wide = RenderCx { size: [1 << 31, 0], scale: 1.0, ..Default::default() };
+        let refused = loaded.plugin.render("invert", &wide, &Layout::pointwise(), None, &mut none, Recorder::default).unwrap_err();
+        assert_eq!(refused.to_string(), "a 2147483648x0 frame is larger than a plugin can address; each side must be under 2147483648 pixels", "{kind:?}");
     });
 }
 

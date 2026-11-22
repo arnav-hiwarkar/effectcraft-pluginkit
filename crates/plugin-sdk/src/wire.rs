@@ -354,11 +354,11 @@ impl Rect {
     }
 
     pub fn width(&self) -> u32 {
-        self.right.saturating_sub(self.left).max(0) as u32
+        span(self.left, self.right)
     }
 
     pub fn height(&self) -> u32 {
-        self.bottom.saturating_sub(self.top).max(0) as u32
+        span(self.top, self.bottom)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -391,6 +391,10 @@ impl Rect {
     }
 }
 
+fn span(from: i32, to: i32) -> u32 {
+    u32::try_from((i64::from(to) - i64::from(from)).max(0)).unwrap_or(u32::MAX)
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Window {
     pub size: [u32; 2],
@@ -400,7 +404,7 @@ pub struct Window {
 
 impl Window {
     pub fn pixels(&self) -> usize {
-        self.size[0] as usize * self.rows as usize
+        (self.size[0] as usize).saturating_mul(self.rows as usize)
     }
 }
 
@@ -1668,6 +1672,15 @@ mod tests {
         let sides = Layout::pointwise().padded_sides(5, 0, 2, 1);
         let again: Layout = serde_json::from_str(&serde_json::to_string(&sides).unwrap()).unwrap();
         assert_eq!(again.padding, [5, 0, 2, 1]);
+    }
+
+    #[test]
+    fn rectangle_and_padded_sizes_at_the_ends_of_their_range_neither_wrap_nor_panic() {
+        let widest = Rect { left: i32::MIN, top: -1, right: i32::MAX, bottom: i32::MAX };
+        assert_eq!([widest.width(), widest.height()], [u32::MAX, 1 << 31]);
+        let cx = crate::Cx::new(RenderCx { size: [u32::MAX, 10], ..Default::default() });
+        assert_eq!(cx.padded(1).size, [u32::MAX, 10]);
+        assert_eq!(Window { size: [u32::MAX, u32::MAX], first_row: 0, rows: u32::MAX }.pixels(), (u32::MAX as usize).saturating_mul(u32::MAX as usize));
     }
 
     #[test]

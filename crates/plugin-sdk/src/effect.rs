@@ -99,7 +99,7 @@ impl Cx {
         let [left, top, right, bottom] = applied_padding([left, top, right, bottom], self.size);
         let shift = [f64::from(left), f64::from(top)];
         let mut padded = self.0.clone();
-        padded.size = [padded.size[0] + left + right, padded.size[1] + top + bottom];
+        padded.size = [padded.size[0].saturating_add(left).saturating_add(right), padded.size[1].saturating_add(top).saturating_add(bottom)];
         padded.offset = [padded.offset[0] + shift[0], padded.offset[1] + shift[1]];
         for value in padded.params.values_mut() {
             if let Value::List(point) = value
@@ -207,7 +207,7 @@ fn image(call: &HostCall) -> Option<Image> {
 
 pub(crate) fn image_of(desc: ImageDesc, buffer: crate::abi::Buffer) -> Option<Image> {
     let (width, height) = (desc.width as usize, desc.height as usize);
-    (width * height > 0 && buffer.pixels().len() == width * height).then_some(Image { width, height, buffer })
+    width.checked_mul(height).is_some_and(|area| area > 0 && buffer.pixels().len() == area).then_some(Image { width, height, buffer })
 }
 
 pub struct Frame<'a> {
