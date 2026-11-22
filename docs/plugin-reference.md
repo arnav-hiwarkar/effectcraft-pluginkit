@@ -92,8 +92,11 @@ moved at frame 12 also redraws frame 40.
 
 `.preset("Sun", [("look", Value::Number(1.0)), ("Glow/brightness", Value::Number(120.0))])` names a
 set of values. Ids are the full parameter ids, including the group prefix. Values have the form `cx`
-reads them in, except points: a point is a fraction of the layer, like a parameter's default. Ids
-the effect does not declare, and layer and mask parameters, are ignored.
+reads them in, except points: a point is a fraction of the layer, like a parameter's default. A slider
+value is clamped to its hard range. A preset that names an id the effect does not declare, or gives a value
+of the wrong kind, stops the plugin from loading with the effect, the preset and the id, for example
+`effect `glow`: preset `Wide` sets `radus`, which is not one of its parameters ["radius"]`. Layer and mask
+parameters in a preset are ignored.
 
 A preset writes the absolute value of every parameter it names, so the controls show them, and leaves the
 parameters it does not name as the user set them. A look that names `look` and the counts of its elements
@@ -126,6 +129,13 @@ when an expression or a script pushes the value outside it. `.soft(low..=high)` 
 row shows, so a value up to 1000 can be typed while the slider covers 0.01 to 10. `.log()` spaces the slider
 by ratio, which suits gains and sizes; it needs a soft (or hard) minimum above 0 and is linear otherwise.
 `.range(min..=max)` gives a percent parameter a hard range and a slider (a percent without one has none).
+The modifiers work in any order: `percent(...).soft(...).log().range(...)` keeps the soft range and the log
+scale.
+A hard range with its larger end first (`10.0..=1.0`) stops the plugin from loading with
+`effect `glow`: parameter `gain` has the range 10..=1; give the smaller end first`.
+`param.fit(value)` is the check the app applies to every value it delivers and the test kit applies to every
+`.set`: it clamps a slider to its hard range, truncates a popup or mask index, and refuses a value of the
+wrong kind with `parameter `amount` takes a number, not the text "x"`.
 
 ```rust
 Param::slider("gain", "Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log()
@@ -141,7 +151,12 @@ A parameter declared without these behaves as before. `effect.list` reports `sli
 makes a struct with one field per parameter and two functions: `Name::params()`, the `Vec<Param>` for
 `EffectSpec::params`, and `Name::read(cx)`, the struct filled from `cx`. The builder is any `Param` builder
 above without its first argument; the id is the field name, or `Group/field` inside a group. Range builders chain after it: `gain: f64 = slider("Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log()`. `Name::IDS`
-lists the ids. A field type implements `FromParam`:
+lists the ids. A field can state its saved id with `as`: `kind as "type": usize = popup("Type", &TYPES, 0)`
+saves `type` (or `Group/type`), so an id that is a Rust keyword, or the same id in two groups
+(`core_gain as "gain"` in `"Core"`, `glow_gain as "gain"` in `"Glow"`), needs no hand-written parameter.
+A struct may have no fields, a group may be empty, and a trailing comma is allowed after a field or a group.
+The field type must fit the builder; a `String` field with `slider(...)` stops the build with
+`a slider, percent or angle parameter is read as a number, so its field cannot be String`:
 
 | Type | Read with | For |
 |---|---|---|
@@ -388,7 +403,8 @@ Widgets: `label`, `heading`, `weak`, `mono`, `error`, `button`, `button_enabled`
 `number_in`, `text_edit`, `popup`, `color`, `separator`, `space`, and the containers `row`, `column` and `group`.
 Value widgets take `&mut` state and return `true` on the frame the user changed it.
 `ui.number_in(text, &mut value, speed, min..=max, decimals)` is `number` with a range the value stays in and a
-fixed number of decimals.
+fixed number of decimals. A value that starts outside the range is clamped quietly; `number_in` returns `true`
+only when the user edited it.
 
 | Widget | Shows |
 |---|---|
@@ -404,7 +420,7 @@ fixed number of decimals.
 
 `ui.canvas(key, [width, height], |c| …)` gives a drawing surface with `line`, `bezier`, `rect`, `circle`,
 `polygon` (filled; concave shapes fill correctly, up to 2048 points, and more points are filled as a convex
-shape), `image` and `text`, in canvas-local pixels. A pointer event has a phase of
+shape; repeated points count once, and an outline that crosses itself draws nothing), `image` and `text`, in canvas-local pixels. A pointer event has a phase of
 `Hover`, `Down`, `Drag` or `Up`, the `modifiers` held (`shift`, `alt`, `command`) and the `scroll` delta. A drag keeps reporting positions after the pointer leaves the
 canvas. Colours are theme tokens (`Paint::Text`, `Paint::Accent`, `Paint::Weak`, `Paint::Surface`, …)
 or `Paint::Rgba`.
@@ -494,7 +510,7 @@ All are in `craft_plugin::host`.
 | `command(id, params)` for a command that only reads | `document.read` |
 | `command(id, params)` for a command that edits the project | `document.write` |
 | `command(…)` that names a file, such as `file.saveCopy` | `files.read` and `files.write`, as well |
-| `read_file(Root::Bundle, path)`, `list_files(Root::Bundle, path)`; `read_file` returns a `FileError { kind, message }` whose `kind` is `NotFound`, `PermissionDenied` or `Other`, and `?` turns it into an `Error` | None |
+| `read_file(Root::Bundle, path)`, `list_files(Root::Bundle, path)`; `read_file` returns a `FileError { kind, message }` whose `kind` is `NotFound`, `PermissionDenied` or `Other`, and `?` turns it into an `Error`. The app sends the kind as its own field, so a file or folder name never changes it | None |
 | `read_file`, `write_file`, `list_files` with `Root::Data` | None |
 | `read_file(Root::User, path)`, `list_files(Root::User, path)` | `files.read` |
 | `write_file(Root::User, path, bytes)` | `files.write` |
@@ -559,7 +575,7 @@ reason has still landed.
 | `window.pluginPanel` | `plugin`, `panel` | Opens a plugin panel |
 
 `keys.info {keys?}` describes the selected keyframes, and plugins with `document.read` use it. Each key has
-its `index` among its property's keys and the property's `keyCount`. For a spatial property, `segmentLength`
+its zero-based `index` among its property's keys (the first key is 0) and the property's `keyCount`. For a spatial property, `segmentLength`
 is the length in pixels of the path from this key to the next (`null` on the last key) and `pathLength` the
 length of the whole path. `dims` is the number of dimensions the layer shows (2 for scale on a 2D layer) and
 `easeDims` the number `keys.setEase` works on (3); `inEase` and `outEase` have `easeDims` entries.
@@ -578,8 +594,8 @@ the app uses, with the permissions `plugin.json` asks for. Commands the plugin r
 | Call | Does |
 |---|---|
 | `TestPlugin::of(plugin)` | Runs the plugin that the function `plugin` (the one given to `export!`) makes, with the `plugin.json` of the crate under test. One test binary runs one plugin. |
-| `assert_frame!(plugin, "effect", { "id": value, … }, "name")`, `assert_frame!(render, "name")` | Renders and compares with `tests/frames/<name>.png`, within 1/255 per channel by default. A missing frame is stored (except when `CI` is set); a different one fails, writes `<name>.actual.png` and `<name>.diff.png` beside it and prints their paths. `UPDATE_FRAMES=1` stores every rendered frame. |
-| `plugin.render(effect)` | A `Render` builder: `.set(id, value)`, `.with(json)`, `.on(Pattern)`, `.input(Picture)`, `.size(w, h)` (320x180 by default), `.layer(param, Picture)`, `.mask(points, closed)`, `.time(s)`, `.scale(f)`, `.float()`, `.tolerance(levels)`. |
+| `assert_frame!(plugin.render("tint").set("amount", 100.0), "name")` | Renders and compares with `tests/frames/<name>.png`. By default each straight (not premultiplied) RGBA channel may differ by one level of 255; `.tolerance(0)` on the render asks for an exact match and `.tolerance(n)` allows `n` levels. `<name>` is a plain name of letters, digits, `-` and `_`; a stored frame that is a link is refused. A missing frame is stored, except when `CI` is set: then the test fails and writes the rendered frame to `target/frames/<name>.actual.png`. A frame of another size fails the same way. A different one fails, writes `<name>.actual.png` and `<name>.diff.png` under the plugin's `target/frames/` and prints their paths. Only `UPDATE_FRAMES=1` stores every rendered frame; any other value is ignored. |
+| `plugin.render(effect)` | A `Render` builder: `.set(id, value)`, `.with(json)`, `.on(Pattern)`, `.input(Picture)`, `.size(w, h)` (320x180 by default), `.layer(param, Picture)`, `.mask(points, closed)`, `.time(s)`, `.scale(f)`, `.float()`, `.tolerance(levels)`. A `.set` value passes through `Param::fit` as in the app: clamped to the hard range, and an error when its kind is wrong. |
 | `render.run()`, `render.timed(rounds)` | The output `Picture` (padded by the layout's padding), and the best time. When the layout has a reach, the render in bands is also compared with a whole render, and a difference is an error naming the first pixel. |
 | `render.layout()`, `render.overlay()`, `render.source()` | The effect's `Layout`, its `Overlay` (in layer pixels), and the input picture. |
 | `plugin.panel(id)` | A `PanelTest`: `.click(label)`, `.send(label, UiEventKind)`, `.app_event(AppEvent)`, `.timer(name)`, `.redraw()`, `.texts()`, `.widgets()`. |

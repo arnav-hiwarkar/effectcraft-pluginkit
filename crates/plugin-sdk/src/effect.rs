@@ -62,8 +62,9 @@ impl<'a> Rows<'a> {
     }
 
     pub fn at(&self, x: isize, y: isize) -> Pixel {
-        let pixel = usize::try_from(x).ok().and_then(|x| self.row(y)?.get(x));
-        pixel.copied().unwrap_or([0.0; 4])
+        let (x, row) = (x as usize, y.wrapping_sub(self.first_row as isize) as usize);
+        let at = if x < self.width { row.checked_mul(self.width).and_then(|start| start.checked_add(x)) } else { None };
+        at.and_then(|at| self.pixels.get(at)).copied().unwrap_or([0.0; 4])
     }
 }
 
@@ -277,4 +278,17 @@ fn at(pixels: &[Pixel], width: usize, height: usize, x: isize, y: isize) -> Pixe
         return [0.0; 4];
     }
     pixels[y as usize * width + x as usize]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_at_reads_held_rows_by_frame_coordinates_and_is_transparent_outside_them() {
+        let pixels: Vec<Pixel> = (1..=6).map(|i| [i as f32; 4]).collect();
+        let rows = Rows { width: 3, height: 10, first_row: 4, pixels: &pixels };
+        let probes = [(0, 4), (2, 5), (1, 3), (3, 4), (-1, 4), (0, 6), (isize::MIN, 4), (0, isize::MIN), (0, isize::MAX)];
+        assert_eq!(probes.map(|(x, y)| rows.at(x, y)[0]), [1.0, 6.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    }
 }

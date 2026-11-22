@@ -133,7 +133,7 @@ pub fn simulate(memo: &dyn Memo, settings: &Settings, source: &dyn Source, work_
 }
 
 fn masks(cx: &Cx) -> Vec<Vec<[f64; 2]>> {
-    if cx.index(spec::EMITTER_TYPE) == 3 { cx.masks().into_iter().map(|m| closed(m.points, m.closed)).collect() } else { Vec::new() }
+    if spec::Controls::read(cx).kind == 3 { cx.masks().into_iter().map(|m| closed(m.points, m.closed)).collect() } else { Vec::new() }
 }
 
 fn closed(mut points: Vec<[f64; 2]>, is_closed: bool) -> Vec<[f64; 2]> {
@@ -283,7 +283,7 @@ mod tests {
                     Some((
                         p.id,
                         match p.kind {
-                            K::Slider { default, .. } | K::Percent { default } | K::Angle { default } => V::Number(default),
+                            K::Slider { default, .. } | K::Percent { default, .. } | K::Angle { default } => V::Number(default),
                             K::Checkbox { default } => V::Bool(default),
                             K::Popup { default, .. } => V::Number(f64::from(default)),
                             K::Point3 { default } => V::List(vec![default[0] * 320.0, default[1] * 180.0, default[2]]),

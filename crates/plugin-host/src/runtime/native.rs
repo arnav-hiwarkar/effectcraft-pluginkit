@@ -54,11 +54,15 @@ pub(crate) fn fresh_module(engine: &wasmtime::Engine, compiled: &[u8]) -> wasmti
     unsafe { wasmtime::Module::deserialize(engine, compiled) }
 }
 
+enum Entry {
+    Library { call: CallFn, _library: Library },
+    InProcess(Box<craft_plugin::Plugin>),
+}
+
 pub(crate) struct NativeGuest {
-    call: CallFn,
+    entry: Entry,
     alloc: AllocFn,
     free: FreeFn,
-    _library: Option<Library>,
 }
 
 struct NativeCall<'a, 'b> {
@@ -84,17 +88,20 @@ impl NativeGuest {
             let alloc = *library.get::<AllocFn>(b"craft_plugin_alloc\0").map_err(failed)?;
             let free = *library.get::<FreeFn>(b"craft_plugin_free\0").map_err(failed)?;
             init(host_call);
-            Ok(NativeGuest { call, alloc, free, _library: Some(library) })
+            Ok(NativeGuest { entry: Entry::Library { call, _library: library }, alloc, free })
         }
     }
 
-    pub fn in_process(exports: craft_plugin::abi::Exports) -> Result<NativeGuest, PluginError> {
-        let found = (exports.abi)();
-        if found != ABI {
-            return Err(PluginError::Load(format!("plugin speaks ABI {found}, this app speaks ABI {ABI}")));
+    pub fn in_process(plugin: craft_plugin::Plugin) -> NativeGuest {
+        extern "C" fn alloc(len: usize) -> *mut u8 {
+            craft_plugin::abi::alloc_bytes(len)
         }
-        (exports.init)(host_call);
-        Ok(NativeGuest { call: exports.call, alloc: exports.alloc, free: exports.free, _library: None })
+        unsafe extern "C" fn free(ptr: *mut u8, len: usize) {
+            // SAFETY: the host frees only replies that `alloc_bytes` made, with their length.
+            unsafe { craft_plugin::abi::free_bytes(ptr, len) }
+        }
+        craft_plugin::abi::set_host(host_call);
+        NativeGuest { entry: Entry::InProcess(Box::new(plugin)), alloc, free }
     }
 
     pub fn call(&self, request: &[u8], pixels: Option<&mut [Pixel]>, cx: &mut HostCx) -> Vec<u8> {
@@ -108,7 +115,10 @@ impl NativeGuest {
         // SAFETY: the request, pixel buffer and `frame` outlive the call; the pixel buffer is exclusively
         // borrowed and f32 aligned; the reply is owned by the plugin until handed back to its `free`.
         unsafe {
-            (self.call)(ctx, request.as_ptr(), request.len(), pixels_at, pixels_len, &mut out);
+            match &self.entry {
+                Entry::Library { call, .. } => call(ctx, request.as_ptr(), request.len(), pixels_at, pixels_len, &mut out),
+                Entry::InProcess(plugin) => craft_plugin::abi::entry(|| &**plugin, ctx, request.as_ptr(), request.len(), pixels_at, pixels_len, &mut out),
+            }
             if out[0] == 0 {
                 return Vec::new();
             }

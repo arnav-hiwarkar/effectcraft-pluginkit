@@ -49,7 +49,8 @@ fn a_panic_reaches_the_test_and_the_log_with_its_file_and_line() {
 
 #[test]
 fn tint_matches_its_stored_frame() {
-    assert_frame!(TestPlugin::of(crate::plugin), "tint", { "amount": 100 }, "tint");
+    let plugin = TestPlugin::of(crate::plugin);
+    assert_frame!(plugin.render("tint").set("amount", 100.0), "tint");
 }
 
 #[test]
@@ -103,7 +104,8 @@ fn matte_darkens_where_the_matte_layer_is_dark() {
 
 #[test]
 fn edges_reads_its_neighbours_within_the_reach_it_declares() {
-    assert_frame!(TestPlugin::of(crate::plugin), "edges", { "width": 3 }, "edges");
+    let plugin = TestPlugin::of(crate::plugin);
+    assert_frame!(plugin.render("edges").set("width", 3.0), "edges");
 }
 
 #[test]
@@ -169,4 +171,31 @@ fn the_pin_tool_adds_a_null_where_it_is_clicked_and_rings_the_pointer() {
     assert_eq!(plugin.commands(), [("layer.newNull".to_string(), json!({ "name": "Pin 1" })), ("prop.set".to_string(), position)]);
     let Shape::Circle { center, radius, .. } = &overlay.marks[1].shape else { panic!("{:?}", overlay.marks) };
     assert_eq!((*center, *radius), ([10.0, 20.0], 8.0));
+}
+
+pub struct Reversed;
+
+impl Effect for Reversed {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("reversed", "Reversed", "Cookbook").param(Param::slider("gain", "Gain", 1.0, 10.0..=1.0))
+    }
+}
+
+#[test]
+fn an_effect_with_a_reversed_range_is_refused_when_it_loads() {
+    let error = TestPlugin::in_process(|| Plugin::new().effect(Reversed)).err();
+    let expected = "the plugin could not be loaded: effect `reversed`: parameter `gain` has the range 10..=1; give the smaller end first";
+    assert_eq!(error.as_deref(), Some(expected));
+}
+
+#[test]
+fn two_harnesses_in_one_test_each_have_their_own_plugin_and_data_folder() {
+    let (first, second) = (TestPlugin::of(crate::plugin), TestPlugin::of(crate::plugin));
+    for plugin in [&first, &second] {
+        plugin.answer("layer.newNull", json!({ "layer": 3 }));
+        plugin.tool("pin", pointer(ToolEventKind::Down, [1.0, 1.0])).unwrap();
+    }
+    let named = |plugin: &TestPlugin| plugin.commands().into_iter().find(|(id, _)| id == "layer.newNull").map(|(_, params)| params);
+    assert_eq!((named(&first), named(&second)), (Some(json!({ "name": "Pin 1" })), Some(json!({ "name": "Pin 1" }))));
+    assert_ne!(first.data_dir(), second.data_dir());
 }

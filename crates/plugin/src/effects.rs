@@ -123,7 +123,7 @@ fn declare(param: &Param) -> DynamicParam {
             };
             (Value::Scalar(*default), ui)
         }
-        ParamKind::Percent { default } => (Value::Scalar(*default), ParamUi::Percent),
+        ParamKind::Percent { default, .. } => (Value::Scalar(*default), ParamUi::Percent),
         ParamKind::Angle { default } => (Value::Scalar(*default), ParamUi::Angle),
         ParamKind::Checkbox { default } => (Value::Bool(*default), ParamUi::Checkbox),
         ParamKind::Popup { options, default } => (Value::Enum(*default), ParamUi::Popup { options: options.clone() }),
@@ -140,27 +140,15 @@ fn declare(param: &Param) -> DynamicParam {
 
 fn preset_values(spec: &EffectSpec, values: &BTreeMap<String, Wire>) -> Vec<(String, Value)> {
     let convert = |param: &Param, value: &Wire| -> Option<Value> {
-        let number = || match value {
-            Wire::Number(n) => Some(*n),
-            Wire::Bool(b) => Some(f64::from(u8::from(*b))),
-            _ => None,
-        };
-        let list = |n: usize| match value {
-            Wire::List(items) if items.len() >= n => Some(items[..n].to_vec()),
-            _ => None,
-        };
-        Some(match &param.kind {
-            ParamKind::Slider { .. } | ParamKind::Percent { .. } | ParamKind::Angle { .. } => Value::Scalar(number()?),
-            ParamKind::Checkbox { .. } => Value::Bool(number()? != 0.0),
-            ParamKind::Popup { options, .. } => Value::Enum((number()?.max(0.0) as u32).min(options.len().saturating_sub(1) as u32)),
-            ParamKind::Point { .. } => list(2).map(|v| Value::Vec2([v[0], v[1]]))?,
-            ParamKind::Point3 { .. } => list(3).map(|v| Value::Vec3([v[0], v[1], v[2]]))?,
-            ParamKind::Color { .. } => list(4).map(|v| Value::Color([v[0], v[1], v[2], v[3]]))?,
-            ParamKind::Text { .. } | ParamKind::Custom { .. } => match value {
-                Wire::Text(text) => Value::Str(text.clone()),
-                _ => return None,
-            },
-            ParamKind::Layer | ParamKind::Mask => return None,
+        Some(match (&param.kind, param.fit(value.clone()).ok()?) {
+            (ParamKind::Popup { options, .. }, Wire::Number(n)) => Value::Enum((n as u32).min(options.len().saturating_sub(1) as u32)),
+            (ParamKind::Mask | ParamKind::Layer, _) => return None,
+            (_, Wire::Number(n)) => Value::Scalar(n),
+            (_, Wire::Bool(b)) => Value::Bool(b),
+            (ParamKind::Point { .. }, Wire::List(v)) => Value::Vec2([v[0], v[1]]),
+            (ParamKind::Point3 { .. }, Wire::List(v)) => Value::Vec3([v[0], v[1], v[2]]),
+            (_, Wire::List(v)) => Value::Color([v[0], v[1], v[2], v[3]]),
+            (_, Wire::Text(text)) => Value::Str(text),
         })
     };
     spec.params.iter().filter_map(|param| Some((param.id.clone(), convert(param, values.get(&param.id)?)?))).collect()
@@ -193,8 +181,7 @@ pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 
             }
         };
         match &param.kind {
-            ParamKind::Slider { min, max, .. } => Wire::Number(value.as_f64().max(*min).min(*max)),
-            ParamKind::Percent { .. } | ParamKind::Angle { .. } => Wire::Number(value.as_f64()),
+            ParamKind::Slider { .. } | ParamKind::Percent { .. } | ParamKind::Angle { .. } => Wire::Number(value.as_f64()),
             ParamKind::Checkbox { .. } => Wire::Bool(value.as_bool()),
             ParamKind::Popup { .. } | ParamKind::Mask => Wire::Number(f64::from(value.as_enum())),
             ParamKind::Point { .. } => Wire::List(to_px(grid, value.as_vec2()).to_vec()),
@@ -211,7 +198,7 @@ pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 
             ParamKind::Layer => Wire::Bool(value.as_layer().is_some()),
         }
     };
-    spec.params.iter().map(|param| (param.id.clone(), convert(param))).collect()
+    spec.params.iter().filter_map(|param| Some((param.id.clone(), param.fit(convert(param)).ok()?))).collect()
 }
 
 fn render_cx(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> RenderCx {

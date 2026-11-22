@@ -75,6 +75,7 @@ mod tests {
 
     #[test]
     fn the_neon_outline_matches_its_stored_frame() {
-        assert_frame!(TestPlugin::of(super::plugin), "neon", { "Bloom/intensity": 3 }, "neon");
+        let plugin = TestPlugin::of(super::plugin);
+        assert_frame!(plugin.render("neon").set("Bloom/intensity", 3.0), "neon");
     }
 }

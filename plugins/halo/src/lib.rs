@@ -59,7 +59,8 @@ mod tests {
 
     #[test]
     fn the_sun_look_matches_its_stored_frame() {
-        assert_frame!(TestPlugin::of(super::plugin), "flare", { "look": 1 }, "sun");
+        let plugin = TestPlugin::of(super::plugin);
+        assert_frame!(plugin.render("flare").set("look", 1.0), "sun");
     }
 
     #[test]

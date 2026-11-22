@@ -89,7 +89,8 @@ mod tests {
 
     #[test]
     fn full_amount_tints_the_test_image() {
-        assert_frame!(TestPlugin::of(super::plugin), "my-tint", { "amount": 100 }, "full");
+        let plugin = TestPlugin::of(super::plugin);
+        assert_frame!(plugin.render("my-tint").set("amount", 100.0), "full");
     }
 
     #[test]
@@ -157,13 +158,13 @@ Make the effect invert the picture before it tints it. In `plugins/my-tint/src/l
 
 and run the tests again. Both fail. The zero-amount test says `an amount of 0 changed the picture`, and the
 frame differs from the stored one. The frame test says how many pixels changed and by how much, and writes `full.actual.png` and
-`full.diff.png` (red marks every pixel that changed) beside the stored frame:
+`full.diff.png` (red marks every pixel that changed) under the plugin's `target/frames/`:
 
 ```
 frame `full` differs from the stored frame: 57600 of 57600 pixels are off by more than 1/255 (largest 255/255, first at (0, 0))
   expected:   …/plugins/my-tint/tests/frames/full.png
-  actual:     …/plugins/my-tint/tests/frames/full.actual.png
-  difference: …/plugins/my-tint/tests/frames/full.diff.png (red marks the pixels that differ)
+  actual:     …/plugins/my-tint/target/frames/full.actual.png
+  difference: …/plugins/my-tint/target/frames/full.diff.png (red marks the pixels that differ)
 If the new frame is right, run again with UPDATE_FRAMES=1.
 ```
 

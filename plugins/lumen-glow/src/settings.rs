@@ -134,7 +134,7 @@ pub mod tests {
             .into_iter()
             .filter_map(|p| {
                 let value = match p.kind {
-                    ParamKind::Slider { default, .. } | ParamKind::Percent { default } => Value::Number(default),
+                    ParamKind::Slider { default, .. } | ParamKind::Percent { default, .. } => Value::Number(default),
                     ParamKind::Checkbox { default } => Value::Bool(default),
                     ParamKind::Popup { default, .. } => Value::Number(f64::from(default)),
                     ParamKind::Color { default } => Value::List(default.to_vec()),

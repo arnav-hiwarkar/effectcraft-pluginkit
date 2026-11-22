@@ -189,6 +189,10 @@ pub enum ParamKind {
     },
     Percent {
         default: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        soft: Option<[f64; 2]>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        log: bool,
     },
     Angle {
         default: f64,
@@ -229,13 +233,13 @@ impl Param {
     }
 
     pub fn percent(id: &str, name: &str, default: f64) -> Self {
-        Param::new(id, name, ParamKind::Percent { default })
+        Param::new(id, name, ParamKind::Percent { default, soft: None, log: false })
     }
 
     pub fn range(mut self, range: RangeInclusive<f64>) -> Self {
         let (min, max) = (*range.start(), *range.end());
         self.kind = match self.kind {
-            ParamKind::Percent { default } => ParamKind::Slider { default, min, max, soft: None, log: false, percent: true },
+            ParamKind::Percent { default, soft, log } => ParamKind::Slider { default, min, max, soft, log, percent: true },
             ParamKind::Slider { default, soft, log, percent, .. } => ParamKind::Slider { default, min, max, soft, log, percent },
             other => other,
         };
@@ -243,14 +247,14 @@ impl Param {
     }
 
     pub fn soft(mut self, range: RangeInclusive<f64>) -> Self {
-        if let ParamKind::Slider { soft, .. } = &mut self.kind {
+        if let ParamKind::Slider { soft, .. } | ParamKind::Percent { soft, .. } = &mut self.kind {
             *soft = Some([*range.start(), *range.end()]);
         }
         self
     }
 
     pub fn log(mut self) -> Self {
-        if let ParamKind::Slider { log, .. } = &mut self.kind {
+        if let ParamKind::Slider { log, .. } | ParamKind::Percent { log, .. } = &mut self.kind {
             *log = true;
         }
         self
@@ -932,7 +936,7 @@ pub enum HostCall {
     Source { time: f64 },
     Masks,
     Scene,
-    ReadFile { root: Root, path: String },
+    ReadFile { root: Root, path: String, error_kind: Option<bool> },
     WriteFile { root: Root, path: String },
     ListFiles { root: Root, path: String },
     CacheGet { key: String },
@@ -968,7 +972,8 @@ pub enum LogLevel {
     Error,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum FileErrorKind {
     NotFound,
     PermissionDenied,
@@ -978,7 +983,7 @@ pub enum FileErrorKind {
 const NOT_FOUND: &str = "not found: ";
 const DENIED: &str = "permission denied: ";
 
-pub fn file_failure(path: &str, error: &std::io::Error) -> String {
+fn file_failure(path: &str, error: &std::io::Error) -> String {
     let prefix = match error.kind() {
         std::io::ErrorKind::NotFound => NOT_FOUND,
         std::io::ErrorKind::PermissionDenied => DENIED,
@@ -987,13 +992,37 @@ pub fn file_failure(path: &str, error: &std::io::Error) -> String {
     format!("{prefix}{path}: {error}")
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct FileError {
     pub kind: FileErrorKind,
     pub message: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ReadFailed {
+    pub failed: FileError,
+}
+
+impl From<FileError> for String {
+    fn from(error: FileError) -> String {
+        error.message
+    }
+}
+
 impl FileError {
+    pub fn of(path: &str, error: &std::io::Error) -> Self {
+        let kind = match error.kind() {
+            std::io::ErrorKind::NotFound => FileErrorKind::NotFound,
+            std::io::ErrorKind::PermissionDenied => FileErrorKind::PermissionDenied,
+            _ => FileErrorKind::Other,
+        };
+        FileError { kind, message: file_failure(path, error) }
+    }
+
+    pub fn other(message: impl Into<String>) -> Self {
+        FileError { kind: FileErrorKind::Other, message: message.into() }
+    }
+
     pub fn from_reply(message: String) -> Self {
         let kind = if message.starts_with(NOT_FOUND) {
             FileErrorKind::NotFound
@@ -1447,6 +1476,16 @@ mod tests {
     }
 
     #[test]
+    fn a_read_asks_for_its_error_kind_as_a_field_and_a_read_from_an_older_sdk_does_not() {
+        let asked = HostCall::ReadFile { root: Root::Data, path: "a".into(), error_kind: Some(true) };
+        assert_eq!(serde_json::to_string(&asked).unwrap(), r#"{"call":"read_file","root":"data","path":"a","error_kind":true}"#);
+        let older: HostCall = serde_json::from_str(r#"{"call":"read_file","root":"data","path":"a"}"#).unwrap();
+        assert!(matches!(older, HostCall::ReadFile { error_kind: None, .. }));
+        let failed = ReadFailed { failed: FileError { kind: FileErrorKind::NotFound, message: "a: gone".into() } };
+        assert_eq!(serde_json::to_string(&failed).unwrap(), r#"{"failed":{"kind":"not_found","message":"a: gone"}}"#);
+    }
+
+    #[test]
     fn one_check_refuses_every_plan_beyond_the_limits() {
         let tint = |src, out| GpuPass::new("tint", src, out);
         let scratch = GpuImage::Scratch(0);
@@ -1590,5 +1629,13 @@ mod tests {
         assert_eq!(mix.kind, ParamKind::Slider { default: 50.0, min: -100.0, max: 300.0, soft: None, log: false, percent: true });
         let sent: Param = serde_json::from_str(&serde_json::to_string(&gain).unwrap()).unwrap();
         assert_eq!(sent, gain);
+    }
+
+    #[test]
+    fn a_percent_keeps_its_soft_range_and_log_scale_whichever_order_the_modifiers_come_in() {
+        let expected = ParamKind::Slider { default: 50.0, min: -100.0, max: 300.0, soft: Some([1.0, 200.0]), log: true, percent: true };
+        assert_eq!(Param::percent("m", "Mix", 50.0).soft(1.0..=200.0).log().range(-100.0..=300.0).kind, expected);
+        assert_eq!(Param::percent("m", "Mix", 50.0).range(-100.0..=300.0).log().soft(1.0..=200.0).kind, expected);
+        assert_eq!(serde_json::to_string(&Param::percent("b", "B", 50.0)).unwrap(), r#"{"id":"b","name":"B","kind":"percent","default":50.0}"#);
     }
 }

@@ -97,14 +97,17 @@ impl Plugin {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn in_process(manifest: Manifest, exports: craft_plugin::abi::Exports, dir: PathBuf, data_dir: PathBuf, limits: Limits) -> Result<Plugin, PluginError> {
-        let engine = Engine::in_process(exports, &manifest.id, dir, manifest.permissions.clone(), data_dir)?;
+    pub fn in_process(manifest: Manifest, plugin: craft_plugin::Plugin, dir: PathBuf, data_dir: PathBuf, limits: Limits) -> Result<Plugin, PluginError> {
+        let engine = Engine::in_process(plugin, &manifest.id, dir, manifest.permissions.clone(), data_dir);
         Plugin::described(manifest, engine, limits)
     }
 
     fn described(manifest: Manifest, engine: Arc<Engine>, limits: Limits) -> Result<Plugin, PluginError> {
         let mut plugin = Plugin { manifest, engine, limits, contributions: Contributions::default() };
         plugin.contributions = plugin.call(&Call::Describe, None, &mut NoHost)?;
+        if let Some(error) = plugin.contributions.effects.iter().find_map(|effect| effect.check().err()) {
+            return Err(PluginError::Load(error));
+        }
         plugin.engine.know_tasks(plugin.contributions.tasks.iter().map(|task| task.id.clone()).collect());
         Ok(plugin)
     }

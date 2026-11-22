@@ -89,8 +89,26 @@ fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
 ```
 
 The builder after `=` is any `Param` builder without its id. A misspelt field is a compile error, where
-`cx.f("radus")` silently reads 0. The string
-API stays for ids built at run time.
+`cx.f("radus")` silently reads 0, and a field whose type does not fit its builder (`String` with `slider`)
+is one too. The string API stays for ids built at run time.
+
+When the saved id cannot be the field name, state it with `as`:
+
+```rust
+params! {
+    struct Emitter {
+        "Emitter" {
+            kind as "type": usize = popup("Emitter Type", &["Point", "Box"], 0),
+            emitter_gain as "gain": f64 = slider("Gain", 1.0, 0.0..=10.0),
+        },
+        "Glow" {
+            glow_gain as "gain": f64 = slider("Gain", 1.0, 0.0..=10.0),
+        },
+    }
+}
+```
+
+This saves `Emitter/type`, `Emitter/gain` and `Glow/gain`.
 
 ## Test your plugin
 
@@ -104,7 +122,8 @@ use craft_plugin_host::testing::{Pattern, TestPlugin};
 
 #[test]
 fn half_amount_matches_the_stored_frame() {
-    assert_frame!(TestPlugin::of(super::plugin), "tint", { "amount": 50 }, "half");
+    let plugin = TestPlugin::of(super::plugin);
+    assert_frame!(plugin.render("tint").set("amount", 50.0), "half");
 }
 
 #[test]
@@ -116,10 +135,24 @@ fn zero_amount_changes_nothing() {
 ```
 
 The first run stores `tests/frames/half.png`. A later run that differs fails, writes `half.actual.png` and
-`half.diff.png` beside it and prints their paths; `UPDATE_FRAMES=1 cargo test` stores the new frames. A
+`half.diff.png` under `target/frames/` and prints their paths; `UPDATE_FRAMES=1 cargo test` stores the new frames.
+Each straight RGBA channel may differ by one level of 255; `.tolerance(0)` on the render asks for an exact
+match. A
 render in bands that differs from a whole render fails with the first pixel that changed, which catches a
 `Layout::neighbourhood` reach that is too small. Panels, commands, tasks and tools are tested the same way:
 see [Testing](plugin-reference.md#testing).
+
+A test gets the values the app would deliver. `.set` goes through `Param::fit`, the same function the app
+uses, so a slider value past its hard range is clamped and a value of the wrong kind is an error. With
+`radius: f64 = slider("Radius", 20.0, 0.0..=200.0)`:
+
+```rust
+let plugin = TestPlugin::of(super::plugin);
+let over = plugin.render("glow").set("radius", 500.0).run().unwrap();
+assert_eq!(over, plugin.render("glow").set("radius", 200.0).run().unwrap());
+let error = plugin.render("glow").set("radius", "wide").run().unwrap_err();
+assert_eq!(error, r#"parameter `radius` takes a number, not the text "wide""#);
+```
 
 ## Log, errors and panics
 

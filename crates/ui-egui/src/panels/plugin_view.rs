@@ -547,17 +547,42 @@ impl Renderer<'_> {
 
 const MAX_CONCAVE_POINTS: usize = 2048;
 
-pub(crate) fn filled_polygon(points: Vec<egui::Pos2>, fill: Color32) -> egui::Shape {
+pub(crate) fn filled_polygon(mut points: Vec<egui::Pos2>, fill: Color32) -> egui::Shape {
+    points.dedup();
+    while points.len() > 1 && points.first() == points.last() {
+        points.pop();
+    }
     if points.len() > MAX_CONCAVE_POINTS {
         return egui::Shape::convex_polygon(points, fill, Stroke::NONE);
     }
     let outline: Vec<[f64; 2]> = points.iter().map(|point| [f64::from(point.x), f64::from(point.y)]).collect();
+    if crosses_itself(&outline) {
+        return egui::Shape::Noop;
+    }
     let mut mesh = egui::Mesh::default();
     mesh.vertices.extend(points.iter().map(|point| egui::epaint::Vertex { pos: *point, uv: egui::epaint::WHITE_UV, color: fill }));
     for [a, b, c] in effectcraft_model::triangulate::triangulate(&outline, &[]) {
-        mesh.add_triangle(a as u32, b as u32, c as u32);
+        if side(outline[a], outline[b], outline[c]) != 0.0 {
+            mesh.add_triangle(a as u32, b as u32, c as u32);
+        }
     }
     egui::Shape::mesh(mesh)
+}
+
+fn side(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+}
+
+fn crosses_itself(outline: &[[f64; 2]]) -> bool {
+    let n = outline.len();
+    let edge = |i: usize| (outline[i], outline[(i + 1) % n]);
+    (0..n).any(|i| {
+        let (a, b) = edge(i);
+        (i + 2..n).filter(|&j| (j + 1) % n != i).any(|j| {
+            let (c, d) = edge(j);
+            side(a, b, c) * side(a, b, d) < 0.0 && side(c, d, a) * side(c, d, b) < 0.0
+        })
+    })
 }
 
 fn drawable(coordinate: f32) -> Option<f32> {
@@ -772,6 +797,18 @@ mod tests {
         };
         assert!(covers(corner(2.0, 7.0)) && covers(corner(7.0, 2.0)) && covers(corner(1.0, 1.0)));
         assert!(!covers(corner(7.0, 7.0)), "the notch of the arrow stays empty");
+    }
+
+    #[test]
+    fn a_crossing_outline_draws_nothing_and_repeated_points_and_flat_triangles_add_no_triangles() {
+        let corners = |points: &[(f32, f32)]| points.iter().map(|&(x, y)| egui::pos2(x, y)).collect::<Vec<_>>();
+        let bow_tie = filled_polygon(corners(&[(0.0, 0.0), (10.0, 10.0), (0.0, 10.0), (10.0, 0.0)]), Color32::WHITE);
+        assert!(matches!(bow_tie, egui::Shape::Noop), "{bow_tie:?}");
+        let egui::Shape::Mesh(line) = filled_polygon(corners(&[(0.0, 0.0), (5.0, 5.0), (10.0, 10.0)]), Color32::WHITE) else { panic!("a mesh was expected") };
+        assert_eq!(line.indices.len(), 0);
+        let square = corners(&[(0.0, 0.0), (0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (10.0, 10.0), (0.0, 10.0), (0.0, 0.0)]);
+        let egui::Shape::Mesh(mesh) = filled_polygon(square, Color32::WHITE) else { panic!("a mesh was expected") };
+        assert_eq!((mesh.vertices.len(), mesh.indices.len()), (4, 6));
     }
 
     #[test]

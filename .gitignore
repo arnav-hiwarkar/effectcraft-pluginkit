@@ -9,7 +9,3 @@ __pycache__/
 
 # After Effects test corpus fetched by `cargo xtask aep-corpus`
 /corpus/
-
-# Frames a failed plugin test wrote beside the stored ones
-*.actual.png
-*.diff.png

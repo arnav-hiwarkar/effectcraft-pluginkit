@@ -834,7 +834,7 @@ fn make() -> Plugin {
             host::write_file(Root::Data, "read.txt", &bytes)
         })
         .command("read-kinds", "Read Kinds", || {
-            let reads = [(Root::Data, "absent.txt"), (Root::Data, "gone/deeper.txt"), (Root::Data, ".")];
+            let reads = [(Root::Data, "absent.txt"), (Root::Data, "gone/deeper.txt"), (Root::Data, "."), (Root::Data, "not found: cache")];
             let kinds: Vec<String> = reads
                 .iter()
                 .map(|(root, path)| match host::read_file(*root, path) {
@@ -845,6 +845,7 @@ fn make() -> Plugin {
             host::write_file(Root::Data, "kinds.txt", kinds.join("\n").as_bytes())
         })
         .command("put-table", "Put A Lookup Table", || host::cache_put("table", &[4, 5, 6]))
+        .command("panic", "Panic", || panic!("oops"))
         .command("approve-itself", "Approve Itself", || host::command("plugin.approve", json!({"id": "test.gate-self"})).map(|_| ()))
         .command("read-inside-edit", "Read Inside An Edit", || {
             let steps = json!([{"command": "comp.info", "params": {}}, {"command": "layer.newNull", "params": {}}]);

@@ -1,6 +1,6 @@
 use craft_plugin::Cx;
 
-use crate::spec::{Controls, EMITTER_TYPE};
+use crate::spec::Controls;
 
 pub type Vec3 = [f32; 3];
 
@@ -113,7 +113,7 @@ impl Settings {
         let c = Controls::read(cx);
         let frame_rate = if cx.frame_rate.is_finite() && cx.frame_rate > 0.0 { cx.frame_rate } else { DEFAULT_FRAME_RATE };
         let xy = to_layer(cx, [c.position[0], c.position[1]]);
-        let emitter = match cx.index(EMITTER_TYPE) {
+        let emitter = match c.kind {
             0 => Emitter::Point,
             1 => Emitter::Box,
             2 => Emitter::Sphere,

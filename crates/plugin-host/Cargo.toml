@@ -19,9 +19,10 @@ log = { workspace = true }
 rayon = { workspace = true }
 zip = { workspace = true }
 image = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
 
 [features]
-testing = ["dep:image"]
+testing = ["dep:image", "dep:tempfile"]
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 libloading = { workspace = true }
