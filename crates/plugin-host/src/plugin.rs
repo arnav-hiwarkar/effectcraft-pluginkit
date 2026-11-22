@@ -57,9 +57,8 @@ impl Image<'_> {
     fn window(&self, band: Window, reach: Option<u32>) -> Window {
         let (height, out_height) = (u64::from(self.size[1]), u64::from(band.size[1]).max(1));
         let Some(reach) = reach.map(u64::from) else { return Window { size: self.size, first_row: 0, rows: self.size[1] } };
-        let matching = |row: u32| u64::from(row) * height / out_height;
-        let first = matching(band.first_row).saturating_sub(reach).min(height);
-        let end = (matching(band.first_row + band.rows.saturating_sub(1)) + reach + 1).min(height);
+        let first = (u64::from(band.first_row) * height / out_height).saturating_sub(reach).min(height);
+        let end = ((u64::from(band.first_row) + u64::from(band.rows)) * height).div_ceil(out_height).saturating_add(reach).min(height);
         Window { size: self.size, first_row: first as u32, rows: end.saturating_sub(first) as u32 }
     }
 
@@ -327,9 +326,8 @@ impl Plugin {
         let band_rows = height.div_ceil(bands);
         out.par_chunks_mut(band_rows * width).enumerate().try_for_each(|(index, rows)| {
             let band = Window { size, first_row: (index * band_rows) as u32, rows: (rows.len() / width) as u32 };
-            let reach = pass.reach.filter(|_| !spread);
-            let src_window = src.window(band, reach);
-            let aux_window = aux.as_ref().map(|aux| aux.window(band, pass.aux_reach.or(reach).filter(|_| !spread)));
+            let src_window = src.window(band, pass.reach);
+            let aux_window = aux.as_ref().map(|aux| aux.window(band, pass.aux_reach.or(pass.reach)));
             let (src_held, aux_held) = (src.held(src_window), aux.as_ref().zip(aux_window).map_or(&[][..], |(aux, window)| aux.held(window)));
             let call = Call::Pass {
                 effect: effect.into(),

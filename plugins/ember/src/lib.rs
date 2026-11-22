@@ -402,4 +402,12 @@ mod tests {
             plugin.render("ember").time(0.8).set("Emitter/type", 1.0).set("Emitter/emission", 1.0).set("Emitter/rate", 4000.0).set("Particle/shape", 2.0);
         craft_plugin_host::assert_frame!(render, "sparks");
     }
+
+    #[test]
+    fn every_effect_renders_the_same_in_bands_as_whole_at_an_odd_height() {
+        let plugin = craft_plugin_host::testing::TestPlugin::of(crate::plugin);
+        for effect in plugin.plugin().contributions().effects.iter().map(|spec| spec.id.clone()) {
+            assert_eq!(plugin.render(&effect).size(40, 257).run().err(), None, "{effect}");
+        }
+    }
 }
