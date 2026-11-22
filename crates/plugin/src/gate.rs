@@ -126,7 +126,7 @@ impl<'a> SessionHost<'a> {
         FILE_PERMISSIONS.iter().all(|p| self.plugin.bundle.manifest.permissions.contains(p))
     }
 
-    fn property_write_allowed(&mut self, id: &str, params: &Value, in_batch: bool) -> Result<(), String> {
+    fn property_write_allowed(&mut self, id: &str, params: &Value, reshaped: bool) -> Result<(), String> {
         if !WRITES_A_PROPERTY.contains(&id) {
             return Ok(());
         }
@@ -136,9 +136,13 @@ impl<'a> SessionHost<'a> {
         if params.get("selected").and_then(Value::as_bool) == Some(true) && under_effects {
             return Err(needs_files("writing an effect property on every selected layer"));
         }
-        let created_by_the_batch = in_batch && ["layer", "prop", "path"].iter().any(|key| refers_to_a_step(params.get(*key)));
-        if created_by_the_batch {
-            return if under_effects { Err(needs_files("writing an effect property on a layer the batch creates")) } else { Ok(()) };
+        let created_by_the_batch = ["layer", "prop", "path"].iter().any(|key| refers_to_a_step(params.get(*key)));
+        if created_by_the_batch || reshaped {
+            return if under_effects {
+                Err(needs_files("writing an effect property after a batch step that can change which property the path names"))
+            } else {
+                Ok(())
+            };
         }
         let mut target = serde_json::Map::new();
         for key in ["layer", "comp", "path", "prop"] {
@@ -164,7 +168,12 @@ impl<'a> SessionHost<'a> {
             return self.property_write_allowed(id, params, false);
         }
         let owned: Vec<(String, Value)> = steps(params)?.into_iter().map(|(inner, inner_params)| (inner.to_string(), inner_params.clone())).collect();
-        owned.iter().try_for_each(|(inner, inner_params)| self.property_write_allowed(inner, inner_params, true))
+        let mut reshaped = false;
+        for (inner, inner_params) in owned {
+            self.property_write_allowed(&inner, &inner_params, reshaped)?;
+            reshaped |= !WRITES_A_PROPERTY.contains(&inner.as_str()) && commands::find(&inner).is_some_and(|spec| spec.journal);
+        }
+        Ok(())
     }
 
     fn files_allowed(&mut self, id: &str, params: &Value) -> Result<(), String> {
