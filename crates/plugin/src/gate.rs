@@ -98,8 +98,17 @@ fn needed(id: &str, params: &Value, needs: &mut BTreeSet<Permission>) -> Result<
     if names_files {
         needs.extend(FILE_PERMISSIONS);
     }
+    needs.extend(outside_the_document(id, params));
     needs.insert(if spec.journal { Permission::DocumentWrite } else { Permission::DocumentRead });
     Ok(())
+}
+
+fn outside_the_document(id: &str, params: &Value) -> Option<Permission> {
+    match id {
+        "text.fonts" => Some(Permission::FilesRead),
+        "layer.setText" if params.get("font").is_some() => Some(Permission::FilesWrite),
+        _ => None,
+    }
 }
 
 fn refers_to_a_step(value: Option<&Value>) -> bool {
@@ -210,5 +219,34 @@ impl Host for SessionHost<'_> {
         self.property_writes_allowed(id, &params)?;
         self.files_allowed(id, &params)?;
         self.session.execute_checked(id, params).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod census {
+    use std::collections::BTreeMap;
+
+    fn decision(id: &str) -> String {
+        let mut needs = std::collections::BTreeSet::new();
+        match super::needed(id, &serde_json::Value::Null, &mut needs) {
+            Ok(()) => needs.iter().map(|p| p.name()).collect::<Vec<_>>().join("+"),
+            Err(_) => "refused".into(),
+        }
+    }
+
+    #[test]
+    fn every_command_in_an_allowed_family_has_a_recorded_decision() {
+        let allowed = |id: &str| super::DOCUMENT_FAMILIES.contains(&super::family(id)) || super::FILE_FAMILIES.contains(&super::family(id));
+        let found: BTreeMap<&str, String> =
+            effectcraft_engine::commands::command_specs().iter().filter(|spec| allowed(spec.id)).map(|spec| (spec.id, decision(spec.id))).collect();
+        let recorded: BTreeMap<&str, String> =
+            include_str!("gate/census.tsv").lines().filter_map(|line| line.split_once('\t')).map(|(id, decision)| (id, decision.to_string())).collect();
+        let differences: Vec<String> = found
+            .iter()
+            .filter(|(id, decision)| recorded.get(*id) != Some(*decision))
+            .map(|(id, decision)| format!("{id}\t{decision}"))
+            .chain(recorded.keys().filter(|id| !found.contains_key(*id)).map(|id| format!("{id}\tgone")))
+            .collect();
+        assert!(differences.is_empty(), "decide these commands and record them in census.tsv:\n{}", differences.join("\n"));
     }
 }

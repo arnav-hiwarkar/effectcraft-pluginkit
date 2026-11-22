@@ -184,3 +184,14 @@ fn an_effect_write_after_a_step_that_reshapes_the_document_needs_file_permission
     ]});
     app.relay("engine.batch", batch).expect("transform writes stay allowed after any step");
 }
+
+#[test]
+fn commands_that_reach_outside_the_document_need_file_permissions() {
+    let mut app = app("test.gate-outside", EDITOR);
+    app.session.execute("layer.newText", json!({"text": "Title"})).unwrap();
+    let fonts = app.relay("text.fonts", json!({"rescan": true})).unwrap_err();
+    assert!(fonts.contains("files.read"), "{fonts}");
+    let font = app.relay("layer.setText", json!({"font": "Inter"})).unwrap_err();
+    assert!(font.contains("files.write"), "{font}");
+    app.relay("layer.setText", json!({"text": "Subtitle"})).expect("changing the text alone stays a document edit");
+}
