@@ -27,6 +27,7 @@ pub fn set_host(host: HostFn) {
 
 thread_local! {
     static CTX: Cell<usize> = const { Cell::new(0) };
+    static IN_CALL: Cell<bool> = const { Cell::new(false) };
 }
 
 fn layout(len: usize) -> Option<MemLayout> {
@@ -148,7 +149,7 @@ fn report_panics() {
     HOOK.call_once(|| {
         let outside = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            if CTX.get() == 0 {
+            if !IN_CALL.get() {
                 return outside(info);
             }
             let message = info.payload_as_str().unwrap_or("no message");
@@ -183,12 +184,13 @@ pub unsafe fn entry<'p>(
         // SAFETY: the caller guarantees an exclusive, f32-aligned buffer of `pixels_len` bytes.
         unsafe { std::slice::from_raw_parts_mut(pixels.cast::<Pixel>(), pixels_len / PIXEL_BYTES) }
     };
-    let outer = CTX.replace(ctx);
+    let (outer, outer_call) = (CTX.replace(ctx), IN_CALL.replace(true));
     let reply = catch_unwind(AssertUnwindSafe(|| plugin().dispatch(request, pixels))).unwrap_or_else(|_| {
         let report = PANIC.take().unwrap_or_else(|| "the plugin panicked".into());
         serde_json::to_vec(&Outcome::<()>::Err(report)).unwrap_or_default()
     });
     CTX.set(outer);
+    IN_CALL.set(outer_call);
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { *out = Buffer::copy_of(&reply).into_raw() };
 }

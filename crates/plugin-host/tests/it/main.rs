@@ -1126,3 +1126,12 @@ fn a_failing_pass_fails_the_render() {
         assert_eq!(run_plan(kind, &plan), Err(PluginError::Failed("no probe kernel `nope`".into())));
     });
 }
+
+#[test]
+fn a_panic_in_a_sandboxed_plugin_logs_its_file_and_line_before_the_trap() {
+    let loaded = load(Kind::Wasm, &[]);
+    let error = command(&loaded, "panic", &mut Recorder::default()).unwrap_err().to_string();
+    assert!(error.contains("unreachable"), "{error}");
+    let logs: Vec<String> = loaded.plugin.logs(0).into_iter().map(|line| line.message).collect();
+    assert_eq!(logs.first().map(String::as_str), Some("the plugin panicked at src/lib.rs:848:39: oops"), "{logs:?}");
+}
