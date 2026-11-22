@@ -8,7 +8,7 @@ use craft_plugin::{
     Call, FrameDesc, GpuImage, GpuPass, GpuPlan, MaskPath, ParamsAt, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Widget,
     native_target,
 };
-use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Registry};
+use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Registry, Retained};
 use serde_json::{Value, json};
 
 mod package;
@@ -72,6 +72,7 @@ fn load(kind: Kind, permissions: &[&str]) -> Loaded {
 struct Recorder {
     commands: Vec<String>,
     picked: Option<PathBuf>,
+    clipboard: String,
 }
 
 impl Host for Recorder {
@@ -112,6 +113,15 @@ impl Host for Recorder {
     fn params_at(&mut self, layer_time: f64) -> Option<ParamsAt> {
         let params = [("level".to_string(), craft_plugin::Value::Number(10.0 + 10.0 * layer_time))].into();
         Some(ParamsAt { params, history: Some(7) })
+    }
+
+    fn clipboard(&mut self) -> Result<String, String> {
+        Ok(self.clipboard.clone())
+    }
+
+    fn set_clipboard(&mut self, text: &str) -> Result<(), String> {
+        self.clipboard = text.to_string();
+        Ok(())
     }
 }
 
@@ -229,7 +239,7 @@ fn a_panel_keeps_its_state_between_frames_and_reacts_to_events() {
         let loaded = load(kind, &[]);
         let frame = |events: Vec<UiEvent>| -> Vec<Widget> {
             let call = Call::Panel { panel: "counter".into(), input: UiInput { events, size: [300.0, 200.0], ..Default::default() } };
-            loaded.plugin.call(&call, None, &mut Recorder::default()).unwrap()
+            loaded.plugin.call::<craft_plugin::PanelReply>(&call, None, &mut Recorder::default()).unwrap().widgets
         };
         let first = frame(vec![]);
         let (Widget::Button { id: button, .. }, Widget::Slider { id: slider, .. }) = (&first[0], &first[1]) else {
@@ -238,7 +248,63 @@ fn a_panel_keeps_its_state_between_frames_and_reacts_to_events() {
         frame(vec![UiEvent { id: *button, kind: UiEventKind::Click }]);
         frame(vec![UiEvent { id: *button, kind: UiEventKind::Click }, UiEvent { id: *slider, kind: UiEventKind::Number(4.0) }]);
         let last = frame(vec![]);
-        assert_eq!(last[2], Widget::Label { text: "2 clicks at speed 4".into(), style: craft_plugin::TextStyle::Body });
+        assert!(matches!(&last[2], Widget::Label { text, .. } if text == "2 clicks at speed 4"), "{kind:?} {:?}", last[2]);
+    });
+}
+
+fn panel_frame(loaded: &Loaded, panel: &str, retained: &mut Retained, now: Duration) -> bool {
+    let Some(input) = retained.start([300.0, 200.0], now) else { return false };
+    let call = Call::Panel { panel: panel.into(), input: input.clone() };
+    let reply = loaded.plugin.call::<craft_plugin::PanelReply>(&call, None, &mut Recorder::default()).map_err(|e| e.to_string());
+    retained.finish(input, reply, now);
+    true
+}
+
+fn texts(widgets: &[Widget]) -> Vec<String> {
+    widgets
+        .iter()
+        .filter_map(|widget| match widget {
+            Widget::Label { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_retained_panel_is_not_called_while_nothing_happens_for_a_hundred_frames() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let mut counter = Retained::new();
+        assert!(panel_frame(&loaded, "counter", &mut counter, Duration::ZERO));
+        let called = (1..=100).filter(|frame| panel_frame(&loaded, "counter", &mut counter, Duration::from_millis(16 * frame))).count();
+        assert_eq!(called, 0, "{kind:?}");
+        let Widget::Button { id, .. } = counter.widgets()[0] else { panic!("{kind:?} button expected") };
+        counter.push(vec![UiEvent { id, kind: UiEventKind::Click }], "");
+        assert!(panel_frame(&loaded, "counter", &mut counter, Duration::from_millis(1700)));
+        assert_eq!(texts(counter.widgets()), vec!["1 clicks at speed 0".to_string(), "calls 2".to_string()], "{kind:?}");
+    });
+}
+
+#[test]
+fn a_panel_timer_fires_ten_times_in_a_simulated_second_and_a_one_shot_once() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let mut ticker = Retained::new();
+        for frame in 0..=60 {
+            panel_frame(&loaded, "ticker", &mut ticker, Duration::from_secs_f64(f64::from(frame) / 60.0));
+        }
+        assert_eq!(texts(ticker.widgets()), vec!["ticks 10 once true".to_string()], "{kind:?}");
+    });
+}
+
+#[test]
+fn a_plugin_reads_and_writes_the_clipboard_only_with_the_clipboard_permission() {
+    each_kind(|kind| {
+        let mut host = Recorder { clipboard: "hello".into(), ..Default::default() };
+        let refused = command(&load(kind, &[]), "swap-clipboard", &mut host).unwrap_err().to_string();
+        assert!(refused.contains("does not have `clipboard`"), "{kind:?} {refused}");
+        command(&load(kind, &["clipboard"]), "swap-clipboard", &mut host).unwrap();
+        assert_eq!(host.clipboard, "probe saw hello", "{kind:?}");
     });
 }
 

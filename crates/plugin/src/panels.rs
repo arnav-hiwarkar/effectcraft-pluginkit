@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
-use craft_plugin_host::ui::{AppEvent, ControlsReply, PanelReply, Topic, UiEvent, UiInput, Widget};
+use craft_plugin_host::ui::{AppEvent, ControlsReply, PanelReply, UiEvent, UiInput, Widget};
 use craft_plugin_host::{Access, AudioRequest, Call, FrameRequest, Host, PickFile, Pixels, Retained, Samples};
 use effectcraft_engine::Session;
 use effectcraft_engine::project::{ItemId, Project};
@@ -238,8 +238,7 @@ impl Panels {
                 slot.retained.hide();
             }
         }
-        let wants_edits = self.slots.values().any(|slot| slot.retained.subscribed(Topic::Edit));
-        let seen = Seen::of(session, wants_edits);
+        let seen = Seen::of(session);
         if let Some(before) = &self.seen {
             for event in before.changes(&seen) {
                 self.slots.values_mut().for_each(|slot| slot.retained.notify(&event));
@@ -254,6 +253,10 @@ impl Panels {
         if let Some(slot) = self.slots.get_mut(key) {
             slot.retained.push(events, keys);
         }
+    }
+
+    pub fn busy(&self, key: &str) -> bool {
+        self.slots.get(key).is_some_and(|slot| slot.retained.in_flight())
     }
 
     pub fn calls(&self, key: &str) -> u64 {
@@ -358,11 +361,11 @@ struct Seen {
     comp: Option<ItemId>,
     time: Option<f64>,
     selection: AppEvent,
-    project: Option<Arc<Project>>,
+    project: Arc<Project>,
 }
 
 impl Seen {
-    fn of(session: &Session, keep_project: bool) -> Seen {
+    fn of(session: &Session) -> Seen {
         let comp = session.active_comp_id();
         let state = &session.state;
         let selection = AppEvent::Selection {
@@ -376,7 +379,7 @@ impl Seen {
             comp,
             time: comp.map(|comp| session.time_of(comp).seconds()),
             selection,
-            project: keep_project.then(|| session.project.clone()),
+            project: session.project.clone(),
         }
     }
 
@@ -397,10 +400,8 @@ impl Seen {
         if self.selection != next.selection {
             events.push(next.selection.clone());
         }
-        if let (false, Some(before), Some(after)) = (reopened, &self.project, &next.project)
-            && !Arc::ptr_eq(before, after)
-        {
-            events.push(AppEvent::Edit { layers: changed_layers(before, after, next.comp) });
+        if !reopened && !Arc::ptr_eq(&self.project, &next.project) {
+            events.push(AppEvent::Edit { layers: changed_layers(&self.project, &next.project, next.comp) });
         }
         events
     }

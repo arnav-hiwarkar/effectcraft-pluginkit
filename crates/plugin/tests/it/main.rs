@@ -3,6 +3,7 @@ mod gate;
 mod gpu;
 mod lumen;
 mod media;
+mod panels;
 mod params;
 mod render;
 mod viewer;
