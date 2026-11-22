@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 
 use crate::host::{Host, Origin};
-use crate::journal::LogLine;
+use crate::journal::{LogLine, LogPage};
 use crate::kernels::{self, Image, Step};
 use crate::registry::Bundle;
 use crate::runtime::Engine;
@@ -355,7 +355,11 @@ impl Plugin {
     }
 
     pub fn logs(&self, after: u64) -> Vec<LogLine> {
-        self.engine.journal().after(after)
+        self.engine.journal().page(after, None).lines
+    }
+
+    pub fn log_page(&self, after: u64, load: Option<u64>) -> LogPage {
+        self.engine.journal().page(after, load)
     }
 
     fn exchange<R: DeserializeOwned>(&self, call: &Call, io: Io, host: &mut dyn Host) -> Result<R, PluginError> {

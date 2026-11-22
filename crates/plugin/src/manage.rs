@@ -486,7 +486,8 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
         }
         "plugin.log" => {
             let after = params.get("after").and_then(Value::as_u64).unwrap_or(0);
-            running(text("id")?).map(|loaded| json!(loaded.plugin.logs(after))).map_err(failed)
+            let load = params.get("load").and_then(Value::as_u64);
+            running(text("id")?).map(|loaded| json!(loaded.plugin.log_page(after, load))).map_err(failed)
         }
         "plugin.tasks" => {
             let waited = params.get("wait").and_then(Value::as_bool) == Some(true);

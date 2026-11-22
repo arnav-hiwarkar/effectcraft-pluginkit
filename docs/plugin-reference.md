@@ -552,7 +552,7 @@ reason has still landed.
 | `plugin.startTask` | `plugin`, `task`, `args` | Starts a plugin task, returns its id |
 | `plugin.tasks` | `wait`, `timeout` (600 s) | Every plugin task with status, progress, message, result and error. With `wait`, answers the tasks' app calls until none runs. |
 | `plugin.cancelTask` | `plugin`, `id` | Cancels a task |
-| `plugin.log` | `id`, `after` (0) | The plugin's last 512 log lines, panics and failed calls after sequence number `after`, as `[{seq, level, message}]`. A failed call reads `render of effect `glow` failed: …`. The numbers start again when the plugin is loaded again. |
+| `plugin.log` | `id`, `after` (0), `load` | `{load, missed, lines}`: the plugin's log lines, panics and failed calls after sequence number `after`, as `lines: [{seq, level, message}]`. The log keeps the last 512 lines and at most 64 KiB; a message is cut at 4 KiB and newlines and control characters in it are escaped (`\n`, `\u{1b}`), so one message is one row. `missed` counts lines dropped before you read them. A failed call reads `render of effect `glow` failed: …`. Each load of the plugin has its own `load` number and starts its numbers again; pass the `load` you last saw, and a cursor from an earlier load reads the new load from its start. |
 | `window.plugins` | | Opens the plugin manager |
 | `window.pluginPanel` | `plugin`, `panel` | Opens a plugin panel |
 

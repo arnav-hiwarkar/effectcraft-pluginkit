@@ -100,6 +100,7 @@ struct Dev {
     told: bool,
     running: Option<String>,
     after: u64,
+    load: Option<u64>,
 }
 
 impl Dev {
@@ -111,15 +112,20 @@ impl Dev {
             told: false,
             running: None,
             after: 0,
+            load: None,
         }
     }
 
     fn reload(&mut self, out: &mut impl Write) {
+        if self.waiting.is_none() {
+            return;
+        }
+        self.print_log(out);
         let Some(built) = &self.waiting else { return };
         match self.control.execute("plugin.load", json!({ "path": built.bundle })) {
             Ok(_) => {
                 let _ = writeln!(out, "reloaded {}: built in {:.1} s", built.id, built.seconds);
-                (self.running, self.after, self.told, self.waiting) = (Some(built.id.clone()), 0, false, None);
+                (self.running, self.told, self.waiting) = (Some(built.id.clone()), false, None);
             }
             Err(Failure::Refused(why)) => {
                 let _ = writeln!(out, "the app did not load {}: {why}", built.id);
@@ -152,8 +158,15 @@ impl Dev {
 
     fn print_log(&mut self, out: &mut impl Write) {
         let Some(id) = &self.running else { return };
-        let Ok(lines) = self.control.execute("plugin.log", json!({ "id": id, "after": self.after })) else { return };
-        for line in lines.as_array().into_iter().flatten() {
+        let Ok(page) = self.control.execute("plugin.log", json!({ "id": id, "after": self.after, "load": self.load })) else { return };
+        if self.load != page["load"].as_u64() {
+            (self.load, self.after) = (page["load"].as_u64(), 0);
+        }
+        let missed = page["missed"].as_u64().unwrap_or_default();
+        if missed > 0 {
+            let _ = writeln!(out, "[warn] {missed} log lines were dropped before they were read");
+        }
+        for line in page["lines"].as_array().into_iter().flatten() {
             self.after = self.after.max(line["seq"].as_u64().unwrap_or_default());
             let _ = writeln!(out, "[{}] {}", line["level"].as_str().unwrap_or("info"), line["message"].as_str().unwrap_or_default());
         }
@@ -252,8 +265,8 @@ mod tests {
 
     #[test]
     fn a_built_plugin_is_loaded_into_the_app_and_its_new_log_lines_are_printed_once() {
-        let panic = json!([{ "seq": 4, "level": "error", "message": "the plugin panicked at src/lib.rs:12:9: index out of bounds" }]);
-        let (port, server) = serve(vec![json!({ "id": "com.example.tint" }), panic, json!([])]);
+        let panic = json!({ "load": 7, "missed": 0, "lines": [{ "seq": 4, "level": "error", "message": "the plugin panicked at src/lib.rs:12:9: index out of bounds" }] });
+        let (port, server) = serve(vec![json!({ "id": "com.example.tint" }), panic, json!({ "load": 7, "missed": 0, "lines": [] })]);
         let mut dev = Dev::new(&port);
         dev.waiting = Some(Built { bundle: PathBuf::from("/dist/com.example.tint"), id: "com.example.tint".into(), seconds: 1.25 });
         let mut out = Vec::new();
@@ -266,7 +279,27 @@ mod tests {
         );
         let seen = server.join().unwrap();
         assert_eq!(seen[0], json!({ "command": "plugin.load", "params": { "path": "/dist/com.example.tint" } }));
-        assert_eq!(seen[2], json!({ "command": "plugin.log", "params": { "id": "com.example.tint", "after": 4 } }));
+        assert_eq!(seen[2], json!({ "command": "plugin.log", "params": { "id": "com.example.tint", "after": 4, "load": 7 } }));
+    }
+
+    #[test]
+    fn a_reload_first_prints_the_old_load_s_unread_lines_and_then_says_how_many_lines_the_new_load_dropped() {
+        let old = json!({ "load": 7, "missed": 0, "lines": [{ "seq": 9, "level": "info", "message": "saved the preset" }] });
+        let new = json!({ "load": 8, "missed": 3, "lines": [{ "seq": 4, "level": "info", "message": "started" }] });
+        let (port, server) = serve(vec![old, json!({ "id": "com.example.tint" }), new]);
+        let mut dev = Dev::new(&port);
+        (dev.running, dev.after, dev.load) = (Some("com.example.tint".into()), 8, Some(7));
+        dev.waiting = Some(Built { bundle: PathBuf::from("/dist/com.example.tint"), id: "com.example.tint".into(), seconds: 1.0 });
+        let mut out = Vec::new();
+        dev.reload(&mut out);
+        dev.print_log(&mut out);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "[info] saved the preset\nreloaded com.example.tint: built in 1.0 s\n[warn] 3 log lines were dropped before they were read\n[info] started\n"
+        );
+        let seen = server.join().unwrap();
+        assert_eq!(seen[2]["params"], json!({ "id": "com.example.tint", "after": 9, "load": 7 }));
+        assert_eq!((dev.after, dev.load), (4, Some(8)));
     }
 
     #[test]

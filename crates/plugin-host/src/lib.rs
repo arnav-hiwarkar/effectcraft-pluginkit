@@ -23,7 +23,7 @@ pub use craft_plugin::{
 };
 pub use host::{Access, Host, Origin, Pixels, Samples};
 pub use images::{MAX_IMAGE_SIDE, PluginImage};
-pub use journal::LogLine;
+pub use journal::{LogLine, LogPage};
 pub use package::{EXTENSION as PACKAGE_EXTENSION, MAX_ENTRIES as PACKAGE_MAX_ENTRIES, MAX_UNPACKED_BYTES as PACKAGE_MAX_BYTES, PackageError, unpack};
 pub use panel::Retained;
 pub use plugin::{Limits, Plugin, PluginError, validate};

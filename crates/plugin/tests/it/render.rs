@@ -318,10 +318,12 @@ fn a_failed_render_is_in_the_plugin_log_with_the_effect_and_a_sequence_number_to
     app.session.execute("layer.newSolid", json!({"name": "Plate", "color": "#ff3300", "width": 64, "height": 36})).unwrap();
     app.session.execute("effect.apply", json!({"effect": "test.render-log.read-inputs"})).unwrap();
     centre_pixel(&app);
-    let lines = app.session.execute("plugin.log", json!({"id": "test.render-log"})).unwrap();
+    let page = app.session.execute("plugin.log", json!({"id": "test.render-log"})).unwrap();
+    let lines = &page["lines"];
     let failed: Vec<&serde_json::Value> = lines.as_array().unwrap().iter().filter(|line| line["message"].as_str().unwrap().contains("no matte")).collect();
     assert_eq!(failed[0]["message"], "render of effect `read-inputs` failed: no matte layer");
     assert_eq!(failed[0]["level"], "error");
     let last = lines.as_array().unwrap().last().unwrap()["seq"].clone();
-    assert_eq!(app.session.execute("plugin.log", json!({"id": "test.render-log", "after": last})).unwrap(), json!([]));
+    let newer = app.session.execute("plugin.log", json!({"id": "test.render-log", "after": last, "load": page["load"]})).unwrap();
+    assert_eq!((&newer["lines"], &newer["missed"]), (&json!([]), &json!(0)));
 }

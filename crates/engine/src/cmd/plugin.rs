@@ -45,7 +45,7 @@ pub fn specs() -> Vec<CommandSpec> {
         plugin!(
             "plugin.log",
             "Read Plug-in Log",
-            "{id, after?: number} — the plug-in's log lines, panics and failed calls with a sequence number each; pass the last one seen as `after`"
+            "{id, after?: number, load?: number} — {load, missed, lines}: the plug-in's log lines, panics and failed calls with a sequence number each; pass the last `seq` and `load` seen to read only newer lines"
         ),
         window!("window.plugins", "Manage Plug-ins...", "{}"),
         window!("window.pluginPanel", "Show Plug-in Panel", "{plugin, panel}"),
