@@ -18,7 +18,7 @@ pub enum Call {
     Panel { panel: String, input: UiInput },
     Command { command: String },
     Task { task: String, args: serde_json::Value },
-    Controls { effect: String, param: String, value: String, input: UiInput },
+    Controls { effect: String, param: String, instance: u64, value: String, input: UiInput },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]

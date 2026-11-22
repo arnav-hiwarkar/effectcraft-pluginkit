@@ -155,10 +155,10 @@ impl Plugin {
                 state.lock().map_err(|_| Error("the panel panicked earlier".into()))?.ui(&mut ui);
                 json(&ui.finish())
             }
-            Call::Controls { effect, param, value, input } => {
+            Call::Controls { effect, param, instance, value, input } => {
                 let mut edited = value.clone();
                 let mut ui = Ui::new(&input);
-                self.find_effect(&effect)?.controls(&param, &mut edited, &mut ui);
+                self.find_effect(&effect)?.controls(instance, &param, &mut edited, &mut ui);
                 json(&ControlsReply { widgets: ui.finish(), value: (edited != value).then_some(edited) })
             }
             Call::Command { command } => {
@@ -194,7 +194,7 @@ mod tests {
             EffectSpec::new("toggle", "Toggle", "Test").param(Param::custom("state", "State", "off"))
         }
 
-        fn controls(&self, param: &str, value: &mut String, ui: &mut Ui) {
+        fn controls(&self, _instance: u64, param: &str, value: &mut String, ui: &mut Ui) {
             if ui.button(param) {
                 *value = if value == "off" { "on".into() } else { "off".into() };
             }
@@ -203,7 +203,7 @@ mod tests {
 
     fn controls(plugin: &Plugin, value: &str, events: Vec<UiEvent>) -> ControlsReply {
         let input = UiInput { events, ..Default::default() };
-        let call = Call::Controls { effect: "toggle".into(), param: "state".into(), value: value.into(), input };
+        let call = Call::Controls { effect: "toggle".into(), param: "state".into(), instance: 1, value: value.into(), input };
         let reply = plugin.dispatch(&serde_json::to_vec(&call).unwrap_or_default(), &mut []);
         match serde_json::from_slice::<Outcome<ControlsReply>>(&reply) {
             Ok(Outcome::Ok(reply)) => reply,

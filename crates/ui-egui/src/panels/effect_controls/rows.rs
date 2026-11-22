@@ -696,7 +696,7 @@ fn custom_control(
     let mut body = ui.new_child(egui::UiBuilder::new().id_salt(("ec-custom-body", uid)).max_rect(block));
     body.set_clip_rect(clip.intersect(ui.clip_rect()));
     let scope = format!("effectControls.prop.{uid}.control");
-    match effectcraft_plugin::controls(&mut app.session, effect, param, &value, input) {
+    match effectcraft_plugin::controls(&mut app.session, effect, param, uid, &value, input) {
         Ok((plugin, reply)) => {
             let tokens = app.tokens;
             let source = crate::panels::plugin_view::Source { plugin: &plugin, images: &mut app.plugin_ui.images };

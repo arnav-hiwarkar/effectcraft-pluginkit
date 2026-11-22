@@ -46,7 +46,7 @@ pub trait Effect: Send + Sync + 'static {
     fn spec(&self) -> EffectSpec;
     fn layout(&self, cx: &Cx) -> Layout;                       // default: Layout::whole_frame()
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()>; // default: leaves the frame unchanged
-    fn controls(&self, param: &str, value: &mut String, ui: &mut Ui); // default: draws nothing
+    fn controls(&self, instance: u64, param: &str, value: &mut String, ui: &mut Ui); // default: draws nothing
     fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()>; // default: an error naming the kernel
 }
 ```

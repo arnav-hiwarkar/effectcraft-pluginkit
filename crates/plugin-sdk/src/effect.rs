@@ -17,7 +17,7 @@ pub trait Effect: Send + Sync + 'static {
         Ok(())
     }
 
-    fn controls(&self, _param: &str, _value: &mut String, _ui: &mut Ui) {}
+    fn controls(&self, _instance: u64, _param: &str, _value: &mut String, _ui: &mut Ui) {}
 
     fn pass(&self, _cx: &Cx, pass: &Pass, _out: &mut Frame) -> Result<()> {
         Err(format!("this effect has no CPU kernel `{}`", pass.kernel).into())
