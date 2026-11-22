@@ -296,3 +296,17 @@ fn a_layer_mostly_outside_the_comp_renders_only_its_visible_part() {
     assert_eq!(tally(&app) - 64_000 - rendered, 3_800, "a region of interest renders its part grown by the resampling margin");
     assert_eq!(at(&zoomed, 10), at(&whole, 600));
 }
+
+#[test]
+fn padding_on_chosen_sides_grows_only_those_sides_of_the_layer() {
+    let _app = app("test.render-streak", &[]);
+    let spec = effectcraft_engine::effects::find("test.render-streak.streak").expect("the streak effect");
+    let params = effectcraft_engine::effects::Params::default();
+    let ctx =
+        effectcraft_engine::effects::EffectCtx { params: &params, time: 0.0, layer_size: [4.0, 3.0], seed: 1, adjustment: false, env: Default::default() };
+    let mut img = effectcraft_engine::raster::Image::new(4, 3);
+    img.data.iter_mut().enumerate().for_each(|(i, pixel)| *pixel = [i as f32, 0.5, 0.25, 1.0]);
+    let out = effectcraft_engine::effects::apply(spec, &ctx, effectcraft_engine::effects::Buf { img, offset: [0.0, 0.0], scale: 1.0 });
+    assert_eq!((out.img.width, out.img.height, out.offset), (11, 3, [5.0, 0.0]));
+    assert_eq!([out.img.data[0], out.img.data[5], out.img.data[11 + 8], out.img.data[10]], [[0.0; 4], [0.0, 0.5, 0.25, 1.0], [7.0, 0.5, 0.25, 1.0], [0.0; 4]]);
+}

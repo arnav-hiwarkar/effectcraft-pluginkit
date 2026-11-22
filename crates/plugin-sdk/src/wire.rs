@@ -1330,4 +1330,13 @@ mod tests {
         let old: GpuPlan = serde_json::from_str(before_kernels).unwrap();
         assert_eq!(old.passes, vec![finish().floats(&[1.0]).reach(2)]);
     }
+
+    #[test]
+    fn padding_from_a_plugin_built_before_four_sides_applies_to_every_side() {
+        let old: Layout = serde_json::from_str(r#"{"padding":6,"reach":0}"#).unwrap();
+        assert_eq!(old.padding, [6; 4]);
+        let sides = Layout::pointwise().padded_sides(5, 0, 2, 1);
+        let again: Layout = serde_json::from_str(&serde_json::to_string(&sides).unwrap()).unwrap();
+        assert_eq!(again.padding, [5, 0, 2, 1]);
+    }
 }

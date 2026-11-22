@@ -387,6 +387,23 @@ impl Effect for Lift {
     }
 }
 
+struct Streak;
+
+impl Effect for Streak {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("streak", "Streak", "Probe")
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise().padded_sides(5, 0, 2, 0)
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        frame.map(|pixel| pixel);
+        Ok(())
+    }
+}
+
 struct Tally;
 
 impl Effect for Tally {
@@ -662,6 +679,7 @@ fn make() -> Plugin {
         .effect(ShiftDown)
         .effect(Lift)
         .effect(Tally)
+        .effect(Streak)
         .effect(ReadInputs)
         .effect(SceneCamera)
         .effect(Spin)

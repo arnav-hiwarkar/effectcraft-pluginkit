@@ -50,7 +50,8 @@ cancelled even if it returns a result. The last 16 finished tasks of a plugin st
 pub trait Effect: Send + Sync + 'static {
     fn spec(&self) -> EffectSpec;
     fn layout(&self, cx: &Cx) -> Layout;                       // default: Layout::whole_frame()
-    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()>; // default: leaves the frame unchanged
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()>; // default: writes nothing
+    fn input(&self, cx: &Cx, out: Rect) -> Rect;                // default: out; asked only with Layout::maps_input
     fn controls(&self, instance: u64, param: &str, value: &mut String, ui: &mut Ui); // default: draws nothing
     fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()>; // default: an error naming the kernel
     fn overlay(&self, cx: &Cx, overlay: &mut Overlay);          // default: draws nothing
@@ -135,7 +136,8 @@ defaults when the project opens, or when the plugin starts while the project is 
 | `cx.linear` | The working colour space is linear. When false, pixel values are display-encoded. |
 
 `cx.px(id)` is `cx.f(id) * cx.scale`. In `layout`, `cx` describes the frame before padding.
-`cx.padded(n)` is the context `render` gets after `n` pixels of padding.
+`cx.padded(n)` is the context `render` gets after `n` pixels of padding, `cx.padded_sides(left, top,
+right, bottom)` after padding each side by its own amount.
 
 | Call | Returns |
 |---|---|
@@ -184,17 +186,31 @@ degrees) and `feather` (0 to 1). Light a surface with `colour` times `intensity`
 
 | Field | Meaning |
 |---|---|
-| `frame.pixels` | Premultiplied RGBA `f32`, row 0 at the top. Values above 1 are valid. |
-| `frame.width`, `frame.height` | Size of this call's pixels. |
-| `frame.origin` | Position of this call's first pixel in the full frame. Not `[0, 0]` in a band. |
+| `frame.pixels` | The pixels this call writes: premultiplied RGBA `f32`, row 0 at the top. Values above 1 are valid. Write every pixel; a pixel left unwritten is transparent. |
+| `frame.width`, `frame.height` | Size of the rectangle this call writes. |
+| `frame.origin` | Position of that rectangle in the full frame. Not `[0, 0]` in a band or when only part of the layer shows. |
+| `frame.input` | The input this call may read (`Rows`: `width`, `height` of the full frame, `first_row`, `pixels`, `row(y)`, `at(x, y)`, in full-frame coordinates). Whole rows: the rows the call writes, plus `n` above and below for `Layout::neighbourhood(n)`, the rows `Effect::input` names with `maps_input`, every row for `Layout::whole_frame()`. |
 
-With `Layout::pointwise()` or `Layout::neighbourhood(n)` the app renders bands on all cores, for sandboxed
-and native builds alike. A band's call gets its own rows plus `n` rows above and below, and the app keeps
-only the band's own rows. The rendered bands go into a new frame that replaces the layer's frame only when
-every call succeeded, so an effect that fails, in any band, leaves the layer as it was.
+| Method | Meaning |
+|---|---|
+| `frame.map(f)` | Writes each pixel as `f` of the input pixel under it. The pointwise case. |
+| `frame.rows()` | `(y, input row, output row)`, `y` in the full frame, the input row cut to the columns written. |
+| `frame.rows_mut()` | `(y, output row)`. |
+| `frame.at(x, y)` | The input pixel at a full-frame position; transparent outside the input. |
+| `Frame::whole(width, height, input, pixels)` | A whole-frame call, for unit tests. |
 
-`frame.rows_mut()` yields `(y, row)` with `y` measured in the full frame. `frame.at(x, y)` takes
-coordinates within this call's pixels, so subtract `frame.origin` from a full-frame position first.
+The app asks an effect only for the part of the layer that shows in the frame being rendered (the comp
+frame, or the viewer's region when it is zoomed in), grown by what the resampling onto the comp and the
+later effects in the stack need. Without padding, a layer wholly in the frame renders whole. With
+`Layout::pointwise()`, `Layout::neighbourhood(n)` or `.maps_input()` that rectangle is split into bands of
+rows on all cores, for sandboxed and native builds alike, and no row is written twice. A native plugin
+reads the input where it lies and writes the output frame directly; a sandboxed one gets its input rows
+copied in and its rows copied out. The rendered bands go into a new frame that replaces the layer's frame
+only when every call succeeded, so an effect that fails, in any band, leaves the layer as it was.
+
+A plugin built before frames had separate input (it sends no `separate_input` in its description) still
+runs: each band gets whole rows with `n` rows above and below in `frame.pixels`, the app copies them for it
+and keeps the band's own rows.
 
 ### Layout
 
@@ -203,7 +219,13 @@ coordinates within this call's pixels, so subtract `frame.origin` from a full-fr
 | `Layout::whole_frame()` | One call gets the whole frame. |
 | `Layout::pointwise()` | Each output pixel depends only on the same input pixel. |
 | `Layout::neighbourhood(n)` | Each output row depends on input rows at most `n` away. |
-| `.padded(n)` | Grow the frame by `n` pixels on each side first. The app caps `n` at 4096. |
+| `.padded(n)` | Grow the frame by `n` pixels on each side first. The app caps each side at 4096. |
+| `.padded_sides(left, top, right, bottom)` | Grow each side by its own amount. |
+| `.maps_input()` | The app asks `Effect::input` which input rectangle an output rectangle needs, once per band. |
+
+`Rect { left, top, right, bottom }` is in frame pixels, `right` and `bottom` exclusive, and may reach past
+the frame; the app clips it. `Rect::of_size`, `grown(n)`, `clipped(size)`, `union`, `contains`, `width`,
+`height` and `is_empty` help build one.
 | `.passes(plan)` | Run these passes on the GPU when the GPU renderer is active, and otherwise on the CPU through `Effect::pass`, in bands on all cores. |
 | `.gpu(plan)` | Run these passes when the GPU renderer is active; `render` is the CPU path. |
 

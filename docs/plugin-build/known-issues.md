@@ -28,7 +28,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **Engine: `keys.info` gaps.** It does not give a key's index in its property, and reports 2 dimensions for scale on a 2D layer while `keys.setEase` works on 3.
 - **CLI: `bench` does not load plugins**, so plugin effects are missing from its timings. (`bench_cmd` in `apps/effectcraft-cli/src/main.rs`)
 - **SDK: sliders have one range.** No logarithmic mode and no separate soft range. `ui.number` has no range or decimals.
-- **SDK: padding is one number for all four sides.** A horizontal streak pays for vertical padding too.
 - **SDK: `read_file` cannot tell a missing file from a failed read.**
 - **GPU: on WebGPU a bad plugin shader is not contained, and plugin GPU work has no time limit there**, because the browser build cannot wait for a submission (`Clock` in `crates/gpu/src/fx_plugin.rs`).
 - **GPU: a runaway plugin kernel stalls the GPU once per load.** A wgpu dispatch cannot be cancelled, so the 2 s budget is checked when a frame's plan has finished. The first frame that passes it stops the effect, which then renders on the CPU until the plugin is reloaded; that one frame still runs to its end (or until the OS GPU watchdog or the 10 s readback limit), and every other GPU effect waits for it. The error lists the plan's passes but cannot say which one was slow.
@@ -72,15 +71,8 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 The measurements and the ranked list of changes are in `pluginkit/reports/speed-study.md`.
 
-- **A large reach repeats most of a band.** A `Layout::neighbourhood(n)` band renders its own rows plus `n`
-  above and below. Retro Neon has `n = 67` at 1080p, so each of ten 108-row bands renders 242 rows. Fewer,
-  taller bands, or a pass plan, would repeat less. (`Plugin::render` in `crates/plugin-host/src/plugin.rs`)
 - **Timeout checks cost 8 to 35 % of sandboxed compute** (Plasma Beam 4.44 → 3.23 ms with them off, Halo
   25 → 17.5 ms). They are needed to stop a plugin that hangs; the options are in the study.
-- **A light native effect pays for a copy of the frame.** Every render now writes a new frame that replaces
-  the old one only when all bands succeed. A native band copies its input rows into that frame and renders
-  there, so native Probe went from 0.54 to 1.23 ms and native Plasma Beam from 2.23 to 2.60 ms at 1080p. The
-  cure is a frame with separate rows to read and rows to write, which the region-of-interest work brings.
 
 ## Found by the host kernel work, not fixed
 

@@ -73,11 +73,7 @@ impl Effect for TintEffect {
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let gain = (cx.f("amount") / 100.0) as f32;
-        for pixel in frame.pixels.iter_mut() {
-            for channel in &mut pixel[..3] {
-                *channel *= gain;
-            }
-        }
+        frame.map(|[r, g, b, a]| [r * gain, g * gain, b * gain, a]);
         Ok(())
     }
 }
@@ -127,12 +123,54 @@ Tell the app how much of the frame each output pixel needs, in `layout()`.
 
 - If each pixel depends only on itself, return `Layout::pointwise()`. The app renders bands of the frame
   on all cores.
-- If each row depends on rows at most `n` away, return `Layout::neighbourhood(n)`. Each band is
-  rendered with `n` extra rows above and below, so a smaller `n` does less repeated work.
-- If the effect spills past the layer, add `.padded(n)`.
+- If each row depends on rows at most `n` away, return `Layout::neighbourhood(n)`. Each band writes its
+  own rows and reads `n` more rows of input above and below.
+- If the effect spills past the layer, add `.padded(n)`, or `.padded_sides(left, top, right, bottom)` when
+  it spills one way only (a horizontal streak needs no rows above and below).
+- If an output row reads input rows that `n` cannot describe, such as a scale or an offset, add
+  `.maps_input()` and say which input an output rectangle needs in `Effect::input`.
 - If the effect needs the whole frame, describe it as passes: `Layout::whole_frame().passes(plan)`. The
   app runs each pass on the GPU when there is one, and otherwise calls your `pass` method for bands of
   each pass on all cores. See [Passes](plugin-gpu.md).
+
+A frame has rows to write and rows to read. `frame.pixels` holds the rectangle this call writes
+(`frame.width` by `frame.height` at `frame.origin` in the layer's frame), and `frame.input` the input
+rows it may read, in the layer's coordinates. Reading never sees what the call wrote, so a neighbourhood
+effect needs no copy of its input:
+
+```rust
+fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+    let (input, x0) = (frame.input, frame.origin[0] as isize);
+    for (y, row) in frame.rows_mut() {
+        for (x, pixel) in (x0..).zip(row.iter_mut()) {
+            let y = y as isize;
+            *pixel = [input.at(x, y - 1), input.at(x, y), input.at(x, y + 1)].iter().fold([0.0; 4], |sum, p| std::array::from_fn(|c| sum[c] + p[c] / 3.0));
+        }
+    }
+    Ok(())
+}
+```
+
+Write every pixel of `frame.pixels`. `frame.map(f)` writes each pixel from the input pixel under it, and
+`frame.rows()` yields `(y, input row, output row)` for a loop over both.
+
+The app asks an effect only for the part of the layer that shows in the frame it renders: a layer half
+outside the comp, or a viewer zoomed in, renders that part. A band is part of that rectangle. An effect
+that shifts its picture says where its input comes from:
+
+```rust
+fn layout(&self, _cx: &Cx) -> Layout {
+    Layout::pointwise().maps_input()
+}
+
+fn input(&self, _cx: &Cx, out: Rect) -> Rect {
+    Rect { top: out.top + 8, bottom: out.bottom + 8, ..out }
+}
+```
+
+`frame.input` then holds the rows of that rectangle and of `out` itself, clipped to the frame. Columns
+are always whole rows. A plugin built before frames had separate input keeps working unchanged: the app
+gives it whole rows in place, as before, and copies them for it.
 
 Scale every distance by `cx.scale`, so a half-resolution preview matches the full render. `cx.px(id)`
 does this for a slider measured in layer pixels.
@@ -188,9 +226,10 @@ use craft_plugin::math::{linear_to_srgb, saturate};
 
 fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
     let gain = cx.f("gain") as f32;
-    for pixel in frame.pixels.iter_mut() {
+    frame.map(|mut pixel| {
         pixel[..3].iter_mut().for_each(|c| *c = linear_to_srgb(saturate(*c * gain)));
-    }
+        pixel
+    });
     Ok(())
 }
 ```
