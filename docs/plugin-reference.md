@@ -41,7 +41,8 @@ thread. A sandboxed task that ignores cancel is stopped 0.5 s after the cancel. 
 be asked, through `progress`. A plugin runs at most 4 tasks at once. Disabling, reloading or removing a
 plugin cancels its tasks. A task belongs to the project that was open when it started: when that project
 closes (a new project or another one is opened) the task is cancelled, and a request it makes after that
-fails with `the project this task started in was closed`. The last 16 finished tasks of a plugin stay listed.
+fails with `the project this task started in was closed`, as does starting another task from it. Such a task ends as
+cancelled even if it returns a result. The last 16 finished tasks of a plugin stay listed.
 
 ## Effect
 

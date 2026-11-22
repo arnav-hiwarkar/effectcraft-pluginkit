@@ -58,7 +58,7 @@ impl Slot {
     }
 
     pub fn finish(&self, outcome: Result<serde_json::Value, String>) {
-        let cancelled = self.cancelled();
+        let cancelled = self.cancelled() || self.project_closed();
         let mut state = lock(&self.state);
         match outcome {
             _ if cancelled => state.status = TaskStatus::Cancelled,
@@ -109,6 +109,9 @@ impl Tasks {
         let mut slots = lock(&self.slots);
         if self.closed.load(Ordering::Acquire) {
             return Err(STOPPED.into());
+        }
+        if project.as_ref().is_some_and(|closed| closed.load(Ordering::Acquire)) {
+            return Err(PROJECT_CLOSED.into());
         }
         if slots.values().filter(|slot| slot.running()).count() >= MAX_RUNNING {
             return Err(format!("this plugin already runs {MAX_RUNNING} tasks"));
@@ -212,5 +215,19 @@ mod tests {
         let status = |id: u64| tasks.list().into_iter().find(|state| state.id == id).map(|state| state.status);
         assert_eq!(status(bound), Some(TaskStatus::Cancelled));
         assert_eq!(status(free), Some(TaskStatus::Running));
+    }
+
+    #[test]
+    fn a_task_whose_project_closed_starts_no_child_and_does_not_finish_as_done_before_the_next_pump() {
+        let tasks = Tasks::default();
+        tasks.know(vec!["edit".into()]);
+        let closed = Arc::new(AtomicBool::new(false));
+        let (id, slot) = tasks.add("edit", Some(closed.clone())).unwrap();
+        closed.store(true, Ordering::Release);
+        assert_eq!(tasks.add("edit", slot.project()).err(), Some("the project this task started in was closed".to_string()));
+        slot.finish(Ok(serde_json::json!({"edited": true})));
+        let state = tasks.get(id).unwrap().state();
+        assert_eq!((state.status, state.result), (TaskStatus::Cancelled, None));
+        assert_eq!(tasks.list().len(), 1);
     }
 }
