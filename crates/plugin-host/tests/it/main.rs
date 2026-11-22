@@ -418,6 +418,26 @@ fn a_half_finished_install_is_not_treated_as_an_installed_plugin() {
     assert!(!staged.exists(), "the leftover staging folder is cleaned up by the next install");
 }
 
+#[test]
+fn an_update_whose_entry_file_is_missing_keeps_the_working_install() {
+    let (source, _) = bundle(Kind::Wasm, &[]);
+    let root = tempfile::tempdir().unwrap();
+    let mut registry = Registry::open(root.path());
+    let installed = registry.install(source.path()).unwrap();
+
+    let broken = tempfile::tempdir().unwrap();
+    let manifest = json!({"id": "test.probe", "name": "Probe", "version": "2.0.0", "entry": {"wasm": "probe.wasm"}, "permissions": []});
+    std::fs::write(broken.path().join("plugin.json"), manifest.to_string()).unwrap();
+    let error = registry.install(broken.path()).unwrap_err();
+    assert!(error.to_string().contains("missing"), "{error}");
+
+    let kept = Bundle::open(&installed.dir).unwrap();
+    assert_eq!(kept.manifest.version, "1.0.0");
+    let data = tempfile::tempdir().unwrap();
+    let limits = Limits { interactive: Duration::from_millis(400), work: Duration::from_millis(400) };
+    assert!(Plugin::load(&kept, BTreeSet::new(), data.path().join("data"), limits).is_ok());
+}
+
 fn settle(loaded: &Loaded, id: u64, host: &mut Recorder) -> TaskState {
     let until = std::time::Instant::now() + Duration::from_secs(10);
     loop {

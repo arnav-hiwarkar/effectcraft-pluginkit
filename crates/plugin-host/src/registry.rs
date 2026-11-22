@@ -24,6 +24,8 @@ pub enum BundleError {
     Package(#[from] PackageError),
     #[error("plugin `{0}` has no build for this machine, so it cannot run unsandboxed")]
     NoNativeBuild(String),
+    #[error("the plugin's entry file {0} is missing")]
+    MissingEntry(PathBuf),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,7 +136,10 @@ impl Registry {
         } else {
             Bundle::open(source)
         };
-        let incoming = match unpacked.and_then(|bundle| bundle.entry_path().map(|_| bundle)) {
+        let incoming = match unpacked.and_then(|bundle| {
+            let entry = bundle.entry_path()?;
+            if entry.is_file() { Ok(bundle) } else { Err(BundleError::MissingEntry(entry)) }
+        }) {
             Ok(bundle) => bundle,
             Err(error) => {
                 if from_file {
