@@ -225,6 +225,9 @@ impl EffectcraftApp {
             self.session.poll_mask_track();
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+        if effectcraft_plugin::pump(&mut self.session) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(30));
+        }
         // Background tasks (Content-Aware Fill, Scene Edit Detection, imports).
         if !self.session.tasks.is_empty() {
             self.session.poll_jobs();

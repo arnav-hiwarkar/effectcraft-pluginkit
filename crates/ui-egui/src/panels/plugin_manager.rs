@@ -36,6 +36,26 @@ pub(crate) enum State {
     Failed,
 }
 
+#[derive(Deserialize, Clone)]
+pub(crate) struct ListedTask {
+    pub plugin: String,
+    pub id: u64,
+    pub task: String,
+    pub status: TaskStatus,
+    pub progress: f64,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TaskStatus {
+    Running,
+    Done,
+    Failed,
+    Cancelled,
+}
+
 type Actions = Vec<(&'static str, Value)>;
 
 pub(crate) fn install_packages(app: &mut EffectcraftApp, paths: &[String]) -> Vec<String> {
@@ -60,6 +80,10 @@ impl EffectcraftApp {
     }
 }
 
+fn tasks(app: &mut EffectcraftApp) -> Vec<ListedTask> {
+    app.session.execute("plugin.tasks", json!({})).ok().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
+}
+
 pub(crate) fn installed(app: &mut EffectcraftApp) -> Vec<Listed> {
     list(app).unwrap_or_default()
 }
@@ -82,6 +106,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context) {
         return;
     }
     let listed = list(app);
+    let running = tasks(app);
     let t = app.tokens;
     let mut open = true;
     let mut actions = Actions::new();
@@ -99,6 +124,11 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context) {
                 action(app, ui, "plugins.reload", "Reload", ("plugin.reload", json!({})), &mut actions);
             });
             ui.separator();
+            if !running.is_empty() {
+                ui.label(RichText::new(tr("Tasks")).font(Tokens::semibold(14.0)).color(t.text));
+                running.iter().for_each(|task| task_row(app, ui, task, &mut actions));
+                ui.separator();
+            }
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match &listed {
                 Ok(plugins) if plugins.is_empty() => {
                     ui.label(RichText::new(tr("No plug-ins are installed.")).color(t.text_dim));
@@ -124,6 +154,31 @@ fn action(app: &mut EffectcraftApp, ui: &mut egui::Ui, auto: &str, label: &'stat
     if response.clicked() {
         actions.push(command);
     }
+}
+
+fn task_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, task: &ListedTask, actions: &mut Actions) {
+    let t = app.tokens;
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(format!("{} · {}", task.plugin, task.task)).color(t.text));
+        match task.status {
+            TaskStatus::Running => {
+                let bar = egui::ProgressBar::new(task.progress as f32).desired_width(180.0).text(task.message.as_str()).show_percentage();
+                let response = ui.add(bar);
+                app.auto.add_response(&format!("plugins.{}.task.{}.progress", task.plugin, task.id), &response, "Task progress");
+                let cancel = json!({"plugin": task.plugin, "id": task.id});
+                action(app, ui, &format!("plugins.{}.task.{}.cancel", task.plugin, task.id), "Cancel", ("plugin.cancelTask", cancel), actions);
+            }
+            TaskStatus::Done => {
+                ui.label(RichText::new(tr("Finished")).color(t.text_dim));
+            }
+            TaskStatus::Cancelled => {
+                ui.label(RichText::new(tr("Cancelled")).color(t.text_dim));
+            }
+            TaskStatus::Failed => {
+                ui.label(RichText::new(tr_args("Failed: {}", &[&task.error.clone().unwrap_or_default()])).color(t.danger));
+            }
+        }
+    });
 }
 
 fn entry(app: &mut EffectcraftApp, ui: &mut egui::Ui, plugin: &Listed, actions: &mut Actions) {

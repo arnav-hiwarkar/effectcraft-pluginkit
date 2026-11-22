@@ -108,21 +108,28 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
                     s.bump();
                     "; the batch was rolled back (nothing changed)".to_string()
                 } else {
-                    fold(s, &project, &label);
+                    fold(s, &project, &history, &label);
                     format!("; steps 1–{i} were applied")
                 };
                 return Err(EngineError::Other(format!("step {} ({id}): {e}{note}", i + 1)));
             }
         }
     }
-    fold(s, &project, &label);
+    fold(s, &project, &history, &label);
     Ok(json!({"steps": results.len(), "results": results}))
 }
 
 /// Fold the undo steps recorded since the project was `snap` into one step called `label`.
-fn fold(s: &mut Session, snap: &Arc<effectcraft_project::Project>, label: &str) {
+fn fold(s: &mut Session, snap: &Arc<effectcraft_project::Project>, before: &crate::History, label: &str) {
     let h = &mut s.history;
-    let Some(start) = h.undo.iter().rposition(|(_, p)| Arc::ptr_eq(p, snap)) else { return };
+    let Some(start) = h.undo.iter().rposition(|(_, p)| Arc::ptr_eq(p, snap)) else {
+        if !Arc::ptr_eq(&s.project, snap) {
+            let levels = s.prefs.general.undo_levels.max(1) as usize;
+            *h = before.clone();
+            h.record(label, snap.clone(), levels);
+        }
+        return;
+    };
     let first = h.undo[start].1.clone();
     h.undo.truncate(start);
     h.undo.push((label.to_string(), first));
@@ -198,6 +205,13 @@ mod tests {
         assert_eq!(l.name, "Red Box");
         assert_eq!(l.props.prop("transform/opacity").unwrap().value.as_f64(), 40.0);
         assert_eq!(s.history.undo.len(), undo_before + 1, "one undo step");
+        s.prefs.general.undo_levels = 4;
+        let names: Vec<serde_json::Value> = (0..10).map(|i| json!({"command": "layer.newNull", "params": {"name": format!("N{i}")}})).collect();
+        s.execute_checked("engine.batch", json!({"label": "Many", "steps": names})).unwrap();
+        assert_eq!(s.history.undo.last().map(|(label, _)| label.as_str()), Some("Many"), "a batch longer than the undo levels is still one step");
+        let layers = s.active_comp().unwrap().layers.len();
+        s.execute("edit.undo", json!({})).unwrap();
+        assert_eq!(s.active_comp().unwrap().layers.len(), layers - 10);
         assert_eq!(s.history.undo.last().unwrap().0, "Build");
         assert!(s.undo());
         assert!(s.active_comp().unwrap().layers.is_empty());

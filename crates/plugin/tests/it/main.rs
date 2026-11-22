@@ -2,6 +2,7 @@ mod forge;
 mod gate;
 mod gpu;
 mod lumen;
+mod media;
 mod render;
 
 use std::path::{Path, PathBuf};

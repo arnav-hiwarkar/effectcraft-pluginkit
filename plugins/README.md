@@ -11,6 +11,18 @@ Each folder here is one plugin: a standalone Rust crate outside the workspace, b
 | [Halo Flares](halo) | Effect | A lens flare from a light point: core glow, star rays, anamorphic streak, chromatic ring, iris ghosts along the line through the centre, lens-dirt bloom and a hoop, with six looks, edge trigger, shimmer, occlusion by another layer and Add or Screen compositing |
 | [Forge 3D](forge-3d) | Effect | Lit, depth-correct 3D models over a layer, drawn by GPU draw passes: a cube, sphere, torus, extruded star or the bundled OBJ model, a grid or ring replicator with a colour ramp, a material, and the comp's camera and lights |
 | [Glide](glide) | Panel and commands | A cubic-bezier easing editor with a preset library that applies the curve to the selected keyframes in one undo step |
+| [Pulse](pulse) | Panel and task | Analyses a frequency band of a layer's audio in a cancellable background task and writes its energy per frame as slider keyframes in one undo step |
+
+## Pulse
+
+Open **Window ▸ Plug-ins ▸ Pulse**, type the audio layer's name (or leave it empty for the comp mix),
+choose a band and press **Analyse**. A task reads the audio in 2 s chunks at 48 kHz, takes a 2048-point
+FFT with a Hann window centred on each comp frame, and sums the band's energy. The panel shows
+progress and a Cancel button, then draws the average spectrum and the resulting curve. The values,
+scaled so the loudest frame is 100, go onto a Slider Control of a new null named `Pulse <low>-<high>
+Hz`, as one keyframe per frame in one `engine.batch`: one undo removes them. `plugins/pulse/verify.sh`
+drives `effectcraft-cli` over a 60 s tone whose level rises linearly and checks the curve, the undo and
+cancel.
 
 ## Halo Flares
 

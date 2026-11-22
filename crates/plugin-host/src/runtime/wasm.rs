@@ -4,12 +4,15 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use craft_plugin::{ABI, Outcome, Pixel};
-use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc};
+use std::sync::Arc;
+
+use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc, UpdateDeadline};
 
 use rayon::prelude::*;
 
 use super::native;
 use super::serve::HostCx;
+use super::tasks::Slot;
 use crate::plugin::{Io, PluginError};
 
 const TICK: Duration = Duration::from_millis(50);
@@ -97,8 +100,23 @@ pub(crate) struct WasmGuest {
 impl WasmGuest {
     pub fn call(&mut self, request: &[u8], io: Io, cx: &mut HostCx, budget: Duration) -> Result<Vec<u8>, PluginError> {
         self.store.set_epoch_deadline(ticks(budget));
+        self.run(request, io, cx, Instant::now().checked_add(budget))
+    }
+
+    pub fn run_task(&mut self, request: &[u8], cx: &mut HostCx, slot: Arc<Slot>) -> Result<Vec<u8>, PluginError> {
+        self.store.epoch_deadline_callback(move |_| {
+            if slot.overdue() {
+                return Err(wasmtime::format_err!("the task was cancelled"));
+            }
+            Ok(UpdateDeadline::Continue(1))
+        });
+        self.store.set_epoch_deadline(1);
+        self.run(request, Io::None, cx, None)
+    }
+
+    fn run(&mut self, request: &[u8], io: Io, cx: &mut HostCx, deadline: Option<Instant>) -> Result<Vec<u8>, PluginError> {
         self.store.data_mut().ctx = native::erase(cx);
-        self.store.data_mut().deadline = Instant::now().checked_add(budget);
+        self.store.data_mut().deadline = deadline;
         let reply = self.exchange(request, io);
         self.store.data_mut().ctx = 0;
         self.store.data_mut().deadline = None;

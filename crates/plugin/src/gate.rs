@@ -1,8 +1,12 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
-use craft_plugin_host::{Access, Host, Permission};
+use craft_plugin_host::{Access, AudioRequest, FrameRequest, Host, Permission, PickFile, Pixels, Samples};
 use effectcraft_automation::confine::{self, Confinement, Lookup};
+use effectcraft_engine::project::{ItemId, LayerId, Project};
+use effectcraft_engine::render::{RenderOpts, Renderer, audio};
+use effectcraft_engine::time::Tick;
 use effectcraft_engine::{Event, Session, commands};
 use serde_json::{Value, json};
 
@@ -61,6 +65,44 @@ const WRITES_A_PROPERTY: &[&str] = &["prop.set", "prop.setExpression", "prop.pic
 const MAX_NOTICE: usize = 300;
 
 const FILE_PERMISSIONS: [Permission; 2] = [Permission::FilesRead, Permission::FilesWrite];
+
+const MAX_AUDIO_FRAMES: f64 = (1u64 << 25) as f64;
+const AUDIO_RATES: std::ops::RangeInclusive<u32> = 1000..=192_000;
+const MAX_FRAME_SCALE: f64 = 4.0;
+
+pub type FilePicker = Box<dyn Fn(&PickFile) -> Option<PathBuf> + Send + Sync>;
+
+static FILE_PICKER: OnceLock<FilePicker> = OnceLock::new();
+
+pub fn set_file_picker(picker: FilePicker) {
+    let _ = FILE_PICKER.set(picker);
+}
+
+fn find_comp(session: &Session, name: Option<&str>) -> Result<ItemId, String> {
+    let Some(name) = name else { return session.active_comp_id().ok_or_else(|| "there is no active composition".to_string()) };
+    let by_name = session.project.items.values().find(|item| item.name == name && item.as_comp().is_some()).map(|item| item.id);
+    by_name.or_else(|| name.parse().ok().map(ItemId).filter(|id| session.project.comp(*id).is_some())).ok_or_else(|| format!("no composition `{name}`"))
+}
+
+fn find_layer(project: &Project, comp: ItemId, name: &str) -> Result<LayerId, String> {
+    let comp = project.comp(comp).ok_or("the composition is gone")?;
+    let by_name = comp.layers.iter().find(|layer| layer.name == name).map(|layer| layer.id);
+    by_name.or_else(|| name.parse().ok().map(LayerId).filter(|id| comp.layer(*id).is_some())).ok_or_else(|| format!("no layer `{name}`"))
+}
+
+fn only_layer(project: &Project, comp: ItemId, layer: LayerId, video: bool) -> Result<Project, String> {
+    let mut solo = project.clone();
+    let comp = solo.comp_mut(comp).ok_or("the composition is gone")?;
+    for other in comp.layers.iter_mut() {
+        let keep = other.id == layer;
+        if video {
+            other.switches.video &= keep;
+        } else {
+            other.switches.audio &= keep;
+        }
+    }
+    Ok(solo)
+}
 
 pub(crate) struct SessionHost<'a> {
     session: &'a mut Session,
@@ -219,6 +261,50 @@ impl Host for SessionHost<'_> {
         self.property_writes_allowed(id, &params)?;
         self.files_allowed(id, &params)?;
         self.session.execute_checked(id, params).map_err(|e| e.to_string())
+    }
+
+    fn frame(&mut self, request: &FrameRequest) -> Result<Pixels, String> {
+        if !(request.scale > 0.0 && request.scale <= MAX_FRAME_SCALE) || !request.time.is_finite() {
+            return Err(format!("a frame needs a scale above 0 and at most {MAX_FRAME_SCALE}, and a finite time"));
+        }
+        let comp = find_comp(self.session, request.comp.as_deref())?;
+        let solo = match &request.layer {
+            Some(layer) => Some(only_layer(&self.session.project, comp, find_layer(&self.session.project, comp, layer)?, true)?),
+            None => None,
+        };
+        let opts = self.session.render_opts(RenderOpts { scale: request.scale, ..RenderOpts::default() });
+        let time = Tick::from_seconds_f64(request.time);
+        let image = match &solo {
+            Some(project) => {
+                let mut renderer = Renderer::new(project, self.session.footage.as_ref(), opts);
+                renderer.expr = self.session.expr.as_deref();
+                renderer.accel = self.session.accel.as_deref();
+                renderer.comp_frame(comp, time)
+            }
+            None => self.session.render(comp, time, opts),
+        };
+        Ok(Pixels { width: image.width, height: image.height, data: image.data })
+    }
+
+    fn audio(&mut self, request: &AudioRequest) -> Result<Samples, String> {
+        let frames = request.duration * f64::from(request.rate);
+        if !AUDIO_RATES.contains(&request.rate) || !(request.duration >= 0.0 && frames <= MAX_AUDIO_FRAMES) || !request.start.is_finite() {
+            return Err(format!("audio needs a rate from {} to {} Hz and at most {MAX_AUDIO_FRAMES} sample frames", AUDIO_RATES.start(), AUDIO_RATES.end()));
+        }
+        let comp = find_comp(self.session, None)?;
+        let solo = match &request.layer {
+            Some(layer) => Some(only_layer(&self.session.project, comp, find_layer(&self.session.project, comp, layer)?, false)?),
+            None => None,
+        };
+        let project = solo.as_ref().unwrap_or(&self.session.project);
+        let start = Tick::from_seconds_f64(request.start);
+        let samples = audio::mix_comp(project, self.session.footage.as_ref(), self.session.expr.as_deref(), comp, start, frames.round() as usize, request.rate);
+        Ok(Samples { channels: 2, rate: request.rate, samples })
+    }
+
+    fn pick_file(&mut self, request: &PickFile) -> Result<Option<PathBuf>, String> {
+        let picker = FILE_PICKER.get().ok_or("a file dialog cannot open in a headless run")?;
+        Ok(picker(request))
     }
 }
 

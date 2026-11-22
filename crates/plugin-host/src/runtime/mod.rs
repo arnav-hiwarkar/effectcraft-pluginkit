@@ -1,6 +1,7 @@
 mod gate;
 mod native;
 mod serve;
+mod tasks;
 mod wasm;
 
 use std::collections::BTreeSet;
@@ -8,13 +9,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use craft_plugin::{Permission, RunMode};
+use craft_plugin::{Call, Outcome, Permission, RunMode, TaskState};
+use serde_json::Value;
 
 use self::native::NativeGuest;
 use self::serve::{HostCx, Identity};
+use self::tasks::{Slot, Tasks};
 use self::wasm::{WasmGuest, WasmModule};
 use crate::cache::{BUDGET, Cache};
-use crate::host::Host;
+use crate::host::{Host, Origin};
 use crate::plugin::{Io, PluginError};
 use crate::registry::Bundle;
 
@@ -29,7 +32,7 @@ pub(crate) struct Engine {
 }
 
 impl Engine {
-    pub fn open(bundle: &Bundle, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Result<Engine, PluginError> {
+    pub fn open(bundle: &Bundle, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Result<Arc<Engine>, PluginError> {
         let entry = bundle.entry_path().map_err(|e| PluginError::Load(e.to_string()))?;
         let kind = if bundle.mode == RunMode::Sandboxed {
             let bytes = std::fs::read(&entry).map_err(|e| PluginError::Load(format!("{}: {e}", entry.display())))?;
@@ -38,8 +41,16 @@ impl Engine {
         } else {
             Kind::Native(NativeGuest::load(&entry)?)
         };
-        let identity = Identity { id: bundle.manifest.id.clone(), dir: bundle.dir.clone(), data_dir, grants, cache: Arc::new(Cache::new(BUDGET)) };
-        Ok(Engine { identity, kind })
+        let identity = Identity {
+            id: bundle.manifest.id.clone(),
+            dir: bundle.dir.clone(),
+            data_dir,
+            grants,
+            cache: Arc::new(Cache::new(BUDGET)),
+            tasks: Tasks::default(),
+            picked: Mutex::new(Vec::new()),
+        };
+        Ok(Arc::new(Engine { identity, kind }))
     }
 
     pub fn cached(&self, key: &str) -> Option<Arc<[u8]>> {
@@ -50,8 +61,9 @@ impl Engine {
         matches!(self.kind, Kind::Wasm { .. })
     }
 
-    pub fn call(&self, request: &[u8], io: Io, host: &mut dyn Host, stateful: bool, budget: Duration) -> Result<Vec<u8>, PluginError> {
-        let mut cx = HostCx { host, plugin: &self.identity };
+    pub fn call(self: &Arc<Self>, request: &[u8], io: Io, host: &mut dyn Host, origin: Origin, budget: Duration) -> Result<Vec<u8>, PluginError> {
+        let stateful = origin == Origin::Interactive;
+        let mut cx = HostCx { host, plugin: &self.identity, engine: self, origin, task: None, on_task_thread: false };
         match &self.kind {
             Kind::Native(guest) => match io {
                 Io::None => Ok(guest.call(request, None, &mut cx)),
@@ -84,4 +96,72 @@ impl Engine {
             }
         }
     }
+
+    pub fn know_tasks(&self, names: Vec<String>) {
+        self.identity.tasks.know(names);
+    }
+
+    pub fn start(self: &Arc<Self>, task: &str, args: Value) -> Result<u64, String> {
+        let request = serde_json::to_vec(&Call::Task { task: task.into(), args }).map_err(|e| e.to_string())?;
+        let (id, slot) = self.identity.tasks.add(task)?;
+        let (engine, running) = (self.clone(), slot.clone());
+        let spawned = std::thread::Builder::new().name(format!("craft-plugin-task-{id}")).spawn(move || {
+            let outcome = engine.run_task(&request, &running);
+            running.finish(outcome);
+        });
+        if let Err(error) = spawned {
+            slot.finish(Err(error.to_string()));
+        }
+        Ok(id)
+    }
+
+    fn run_task(self: &Arc<Self>, request: &[u8], slot: &Arc<Slot>) -> Result<Value, String> {
+        let mut detached = Detached;
+        let mut cx = HostCx { host: &mut detached, plugin: &self.identity, engine: self, origin: Origin::Task, task: Some(slot.clone()), on_task_thread: true };
+        let reply = match &self.kind {
+            Kind::Native(guest) => guest.call(request, None, &mut cx),
+            Kind::Wasm { module, .. } => {
+                module.instantiate().and_then(|mut guest| guest.run_task(request, &mut cx, slot.clone())).map_err(|e| e.to_string())?
+            }
+        };
+        let outcome: Outcome<Value> = serde_json::from_slice(&reply).map_err(|e| e.to_string())?;
+        outcome.into()
+    }
+
+    pub fn tasks(&self) -> Vec<TaskState> {
+        self.identity.tasks.list()
+    }
+
+    pub fn running_tasks(&self) -> usize {
+        self.identity.tasks.running()
+    }
+
+    pub fn cancel(&self, id: u64) -> bool {
+        self.identity.tasks.cancel(id)
+    }
+
+    pub fn cancel_all(&self) {
+        self.identity.tasks.cancel_all();
+    }
+
+    pub fn pump(self: &Arc<Self>, host: &mut dyn Host) -> usize {
+        let queue = self.identity.tasks.take_queue();
+        let served = queue.len();
+        for forwarded in queue {
+            let mut cx = HostCx {
+                host: &mut *host,
+                plugin: &self.identity,
+                engine: self,
+                origin: Origin::Task,
+                task: Some(forwarded.task.clone()),
+                on_task_thread: false,
+            };
+            let answer = native::guarded(&mut cx, &forwarded.request, &forwarded.bulk);
+            let _ = forwarded.reply.send(answer);
+        }
+        served
+    }
 }
+
+struct Detached;
+impl Host for Detached {}

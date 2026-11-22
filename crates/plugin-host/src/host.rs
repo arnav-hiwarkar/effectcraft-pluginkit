@@ -1,5 +1,20 @@
-use craft_plugin::{MaskPath, Permission, Pixel, Scene};
+use std::path::PathBuf;
+
+use craft_plugin::{AudioRequest, FrameRequest, MaskPath, Permission, PickFile, Pixel, Scene};
 use serde_json::Value;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    Interactive,
+    Render,
+    Task,
+}
+
+pub struct Samples {
+    pub channels: u32,
+    pub rate: u32,
+    pub samples: Vec<f32>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Access {
@@ -39,5 +54,17 @@ pub trait Host {
 
     fn scene(&mut self) -> Option<Scene> {
         None
+    }
+
+    fn frame(&mut self, _request: &FrameRequest) -> Result<Pixels, String> {
+        Err("frames are not available here".into())
+    }
+
+    fn audio(&mut self, _request: &AudioRequest) -> Result<Samples, String> {
+        Err("audio is not available here".into())
+    }
+
+    fn pick_file(&mut self, _request: &PickFile) -> Result<Option<PathBuf>, String> {
+        Err("a file dialog is not available here".into())
     }
 }

@@ -23,6 +23,21 @@ returns.
 | `.effect(value)` | An effect. `value` implements `Effect`. |
 | `.panel(id, title, value)` | A panel. `value` implements `Panel`. |
 | `.command(id, title, function)` | A command. `function` is `Fn() -> Result<()>`. |
+| `.task(id, title, function)` | A long-running task. `function` is `Fn(&Task) -> Result<serde_json::Value>`. |
+
+### Task
+
+| Method | Returns |
+|---|---|
+| `task.args()` | The JSON the caller passed to `host::start` |
+| `task.progress(fraction, message)` | `Err` once the user cancelled, so `?` ends the task |
+
+A task runs on its own plugin instance on a background thread with no time limit. Its `command`,
+`notify`, `frame` and `audio` calls are answered by the app's main thread, once per UI frame (and in the
+`plugin.tasks` wait loop of headless runs); its log, file, cache and task calls are answered on its own
+thread. A sandboxed task that ignores cancel is stopped 0.5 s after the cancel. A native task can only
+be asked, through `progress`. A plugin runs at most 4 tasks at once. Disabling, reloading or removing a
+plugin cancels its tasks. The last 16 finished tasks of a plugin stay listed.
 
 ## Effect
 
@@ -179,6 +194,12 @@ All are in `craft_plugin::host`.
 | `write_file(Root::User, path, bytes)` | `files.write` |
 | `log(level, message)`, `info(message)` | None |
 | `notify(message)`: shows a short message to the user | None |
+| `start(task, args)`: starts a task, returns its id | None |
+| `task(id)`: `TaskState { status: Running, Done, Failed or Cancelled, progress, message, result, error }` | None |
+| `cancel(id)` | None |
+| `frame(FrameRequest { comp, layer, time, scale })`: the comp (the active one when `comp` is `None`), or one layer with its effects, as a premultiplied RGBA f32 `Image`. Refused inside an effect's `layout` or `render`. `scale` is above 0 and at most 4. | `document.read` |
+| `audio(AudioRequest { layer, start, duration, rate })`: interleaved f32 samples of the active comp's mix, or of one layer, with the channel count (2). Rates 1000 to 192000 Hz, at most 2^25 sample frames per call. Refused inside an effect. | `document.read` |
+| `pick_file(PickFile { save, title, extensions })`: the app's file dialog, `Some(path)` or `None`. The chosen path is then readable, and writable when `save` is set, through `Root::User` for the rest of the session. Panels and commands only. Refused in headless runs. | None |
 
 A plugin may run the document commands (`layer.*`, `comp.*`, `prop.*`, `keys.*`, `effect.*`, `mask.*`,
 `text.*`, `shape.*`, and the other families in `DOCUMENT_FAMILIES` in `crates/plugin/src/gate.rs`) and the
@@ -191,6 +212,8 @@ help, render jobs, and plugin management. A refused or denied call returns an `E
 |---|---|
 | `layout` and `panel` call | 2 s |
 | `render` and `command` call | 60 s |
+| `task` | None; cancel stops it |
+| Running tasks per plugin | 4 |
 | Memory of one sandboxed instance | 3 GiB |
 | Padding | 4096 pixels |
 
@@ -210,6 +233,9 @@ panel state is lost.
 | `plugin.load` | `path` | Runs a bundle until the app quits, with the permissions it asks for |
 | `plugin.reload` | | Stops and restarts every plugin |
 | `plugin.run` | `plugin`, `command` | Runs a plugin command |
+| `plugin.startTask` | `plugin`, `task`, `args` | Starts a plugin task, returns its id |
+| `plugin.tasks` | `wait`, `timeout` (600 s) | Every plugin task with status, progress, message, result and error. With `wait`, answers the tasks' app calls until none runs. |
+| `plugin.cancelTask` | `plugin`, `id` | Cancels a task |
 | `window.plugins` | | Opens the plugin manager |
 | `window.pluginPanel` | `plugin`, `panel` | Opens a plugin panel |
 

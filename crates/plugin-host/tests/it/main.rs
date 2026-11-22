@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use craft_plugin::{Call, MaskPath, Permission, Pixel, RenderCx, UiEvent, UiEventKind, UiInput, Widget, native_target};
+use craft_plugin::{Call, MaskPath, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Widget, native_target};
 use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Registry};
 use serde_json::{Value, json};
 
@@ -68,6 +68,7 @@ fn load(kind: Kind, permissions: &[&str]) -> Loaded {
 #[derive(Default)]
 struct Recorder {
     commands: Vec<String>,
+    picked: Option<PathBuf>,
 }
 
 impl Host for Recorder {
@@ -94,6 +95,15 @@ impl Host for Recorder {
 
     fn masks(&mut self) -> Vec<MaskPath> {
         vec![MaskPath { name: "m".into(), points: vec![[0.0, 0.0], [42.0, 7.0]], closed: true, inverted: false }]
+    }
+
+    fn frame(&mut self, request: &craft_plugin::FrameRequest) -> Result<Pixels, String> {
+        let width = (4.0 * request.scale) as u32;
+        Ok(Pixels { width, height: 1, data: vec![[request.time as f32, 0.0, 0.0, 1.0]; width as usize] })
+    }
+
+    fn pick_file(&mut self, _request: &craft_plugin::PickFile) -> Result<Option<PathBuf>, String> {
+        Ok(self.picked.clone())
     }
 }
 
@@ -382,4 +392,130 @@ fn a_half_finished_install_is_not_treated_as_an_installed_plugin() {
     let again = registry.install(source.path()).unwrap();
     assert_eq!(again.dir, installed.dir);
     assert!(!staged.exists(), "the leftover staging folder is cleaned up by the next install");
+}
+
+fn settle(loaded: &Loaded, id: u64, host: &mut Recorder) -> TaskState {
+    let until = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        loaded.plugin.pump(host);
+        let state = loaded.plugin.tasks().into_iter().find(|task| task.id == id).expect("the task is listed");
+        if state.status != TaskStatus::Running || std::time::Instant::now() > until {
+            return state;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn a_task_reports_progress_and_finishes_with_its_result_without_a_time_limit() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let id = loaded.plugin.start("count", json!({"steps": 4})).unwrap();
+        let state = settle(&loaded, id, &mut Recorder::default());
+        assert_eq!(state.status, TaskStatus::Done, "{kind:?} {state:?}");
+        assert_eq!(state.result, Some(json!({"counted": 4})));
+        assert_eq!((state.progress, state.message.as_str()), (1.0, "step 3"));
+
+        command(&loaded, "start-count", &mut Recorder::default()).unwrap();
+        let started: u64 = std::fs::read_to_string(loaded.data.path().join("data/task-id.txt")).unwrap().parse().unwrap();
+        assert_eq!(started, id + 1);
+        assert_eq!(settle(&loaded, started, &mut Recorder::default()).result, Some(json!({"counted": 3})));
+        assert!(loaded.plugin.start("missing", json!({})).unwrap_err().to_string().contains("no task `missing`"));
+    });
+}
+
+#[test]
+fn cancel_stops_a_task_that_never_reports_progress() {
+    let loaded = load(Kind::Wasm, &[]);
+    let id = loaded.plugin.start("forever", json!({})).unwrap();
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(loaded.plugin.tasks()[0].status, TaskStatus::Running, "a task has no fixed time limit");
+    let asked = std::time::Instant::now();
+    assert!(loaded.plugin.cancel(id));
+    let state = settle(&loaded, id, &mut Recorder::default());
+    assert_eq!(state.status, TaskStatus::Cancelled);
+    assert!(asked.elapsed() < Duration::from_secs(2), "{:?}", asked.elapsed());
+
+    let native = load(Kind::Native, &[]);
+    let id = native.plugin.start("patient", json!({})).unwrap();
+    native.plugin.cancel(id);
+    assert_eq!(settle(&native, id, &mut Recorder::default()).status, TaskStatus::Cancelled);
+}
+
+#[test]
+fn a_task_edits_the_document_on_the_apps_thread_only_with_the_permission_for_it() {
+    each_kind(|kind| {
+        let denied = load(kind, &["document.read"]);
+        let mut host = Recorder::default();
+        let id = denied.plugin.start("edit", json!({})).unwrap();
+        let state = settle(&denied, id, &mut host);
+        assert_eq!(state.status, TaskStatus::Failed, "{kind:?}");
+        assert!(state.error.as_deref().unwrap_or_default().contains("document.write"), "{kind:?} {state:?}");
+        assert!(host.commands.is_empty());
+
+        let allowed = load(kind, &["document.write"]);
+        let id = allowed.plugin.start("edit", json!({})).unwrap();
+        let state = settle(&allowed, id, &mut host);
+        assert_eq!(state.result, Some(json!({"echo": {"name": "From Task"}})), "{kind:?}");
+        assert_eq!(host.commands, ["layer.newNull"]);
+    });
+}
+
+#[test]
+fn a_plugin_runs_at_most_four_tasks_at_once_and_stopping_it_cancels_them() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let ids: Vec<u64> = (0..4).map(|_| loaded.plugin.start("patient", json!({})).unwrap()).collect();
+        let fifth = loaded.plugin.start("patient", json!({})).unwrap_err();
+        assert!(fifth.to_string().contains("already runs 4 tasks"), "{kind:?} {fifth}");
+        loaded.plugin.cancel_all();
+        let states: Vec<TaskStatus> = ids.iter().map(|id| settle(&loaded, *id, &mut Recorder::default()).status).collect();
+        assert_eq!(states, [TaskStatus::Cancelled; 4], "{kind:?}");
+        assert_eq!(loaded.plugin.running_tasks(), 0);
+        loaded.plugin.start("count", json!({"steps": 1})).unwrap();
+    });
+}
+
+#[test]
+fn a_task_reads_a_frame_through_the_app_only_with_document_read() {
+    each_kind(|kind| {
+        let reader = load(kind, &["document.read"]);
+        let id = reader.plugin.start("frame", json!({"time": 0.75, "scale": 0.5})).unwrap();
+        let state = settle(&reader, id, &mut Recorder::default());
+        assert_eq!(state.result, Some(json!({"width": 2, "height": 1, "center": [0.75, 0.0, 0.0, 1.0]})), "{kind:?} {state:?}");
+
+        let blind = load(kind, &[]);
+        let id = blind.plugin.start("frame", json!({"time": 0.0})).unwrap();
+        let state = settle(&blind, id, &mut Recorder::default());
+        assert!(state.error.as_deref().unwrap_or_default().contains("document.read"), "{kind:?} {state:?}");
+    });
+}
+
+#[test]
+fn an_effect_cannot_render_a_frame_from_inside_its_own_render() {
+    each_kind(|kind| {
+        let loaded = load(kind, &["document.read"]);
+        let mut pixels: Vec<Pixel> = vec![[0.0; 4]];
+        loaded.plugin.render("recurse", &cx(1, 1), None, &mut pixels, Recorder::default).unwrap();
+        assert_eq!(pixels[0][0], 1.0, "{kind:?}");
+    });
+}
+
+#[test]
+fn a_picked_file_becomes_readable_without_the_files_permission_but_not_writable() {
+    each_kind(|kind| {
+        let outside = tempfile::tempdir().unwrap();
+        let chosen = outside.path().join("chosen.txt");
+        std::fs::write(&chosen, "chosen by the user").unwrap();
+        let loaded = load(kind, &[]);
+        let mut host = Recorder { picked: Some(chosen.clone()), ..Default::default() };
+        let error = command(&loaded, "pick-and-read", &mut host).unwrap_err();
+        assert!(error.to_string().contains("files.write"), "{kind:?} {error}");
+        assert_eq!(std::fs::read_to_string(loaded.data.path().join("data/picked.txt")).unwrap(), "chosen by the user");
+        assert_eq!(std::fs::read_to_string(&chosen).unwrap(), "chosen by the user");
+
+        let id = loaded.plugin.start("pick", json!({})).unwrap();
+        let state = settle(&loaded, id, &mut host);
+        assert!(state.error.as_deref().unwrap_or_default().contains("only from a panel or a command"), "{kind:?} {state:?}");
+    });
 }

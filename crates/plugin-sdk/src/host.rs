@@ -4,7 +4,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::abi::{Buffer, call_host};
-use crate::wire::{HostCall, LogLevel, Outcome, Root};
+use crate::effect::{Image, image_of};
+use crate::wire::{AudioDesc, AudioRequest, FrameRequest, HostCall, LogLevel, Outcome, PickFile, Root, TaskState};
 use crate::{Error, Result};
 
 pub fn call<T: DeserializeOwned>(call: &HostCall, bulk: &[u8]) -> Result<(T, Buffer)> {
@@ -54,4 +55,42 @@ pub fn cache_remove(key: &str) {
 
 pub fn list_files(root: Root, path: &str) -> Result<Vec<String>> {
     call(&HostCall::ListFiles { root, path: path.into() }, &[]).map(|(names, _)| names)
+}
+
+pub fn start(task: &str, args: impl Serialize) -> Result<u64> {
+    let args = serde_json::to_value(args)?;
+    call(&HostCall::Start { task: task.into(), args }, &[]).map(|(id, _)| id)
+}
+
+pub fn task(id: u64) -> Result<TaskState> {
+    call(&HostCall::Task { id }, &[]).map(|(state, _)| state)
+}
+
+pub fn cancel(id: u64) -> Result<()> {
+    call::<serde_json::Value>(&HostCall::Cancel { id }, &[]).map(|_| ())
+}
+
+pub fn frame(request: FrameRequest) -> Result<Image> {
+    let (desc, buffer) = call::<crate::wire::ImageDesc>(&HostCall::Frame { request }, &[])?;
+    image_of(desc, buffer).ok_or_else(|| Error("the app returned an empty frame".into()))
+}
+
+pub struct Audio {
+    pub channels: u32,
+    pub rate: u32,
+    pub samples: Vec<f32>,
+}
+
+pub fn audio(request: AudioRequest) -> Result<Audio> {
+    let (desc, bulk) = call::<AudioDesc>(&HostCall::Audio { request }, &[])?;
+    let samples = bytemuck_floats(bulk.bytes());
+    Ok(Audio { channels: desc.channels, rate: desc.rate, samples })
+}
+
+fn bytemuck_floats(bytes: &[u8]) -> Vec<f32> {
+    bytes.chunks_exact(4).map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])).collect()
+}
+
+pub fn pick_file(request: PickFile) -> Result<Option<String>> {
+    call(&HostCall::PickFile { request }, &[]).map(|(path, _)| path)
 }

@@ -11,6 +11,7 @@ built and why. To write a plugin, read [Write a plugin](plugin-sdk.md). For the 
 | Effect | Effects & Presets, Effect Controls, the timeline, saved projects | Parameters the app draws and keyframes, plus a CPU render function, GPU passes, or both |
 | Panel | A dockable tab, listed in **Window ▸ Plug-ins** | A function the app calls every frame the tab is visible |
 | Command | **Window ▸ Plug-ins** | A function that runs app commands |
+| Task | The plugin manager, while it runs | A function that runs in the background with progress and cancel |
 
 A plugin effect is registered in the same registry as the built-in effects. Nothing downstream can tell
 the two apart: Effect Controls, keyframes, expressions, presets, the render cache, and project files all
@@ -31,10 +32,16 @@ adopts the system by writing its own version of the third crate, which is about 
 
 There is one function in each direction.
 
-- The app calls `craft_plugin_call` with a JSON request: `describe`, `layout`, `render`, `panel`, or
-  `command`.
+- The app calls `craft_plugin_call` with a JSON request: `describe`, `layout`, `render`, `panel`,
+  `command`, or `task`.
 - The plugin calls `host_call` with a JSON request: run an app command, read a layer, read the masks,
-  read or write a file, or write a log line.
+  read or write a file, write a log line, start or ask about a task, render a frame, read audio, or
+  open the file dialog.
+
+A task runs on its own thread and instance. Its calls that need the document wait in a queue that the
+app answers on the main thread once per UI frame (`effectcraft_plugin::pump`) and in the headless
+`plugin.tasks` wait loop, so the document is never touched off the main thread. A sandboxed task is
+cancelled through the same epoch clock that stops a call over its time limit.
 
 Pixels never travel as JSON. A frame is a pointer and a length next to the request.
 
@@ -161,7 +168,8 @@ resolves them.
 - Open network connections from the sandbox.
 - Draw custom controls inside Effect Controls. An effect can link a panel as its designer instead.
 - Keep per-instance state between frames, such as a simulation cache.
-- Read audio samples or 3D lights.
-- Import or export file formats.
+- Read audio from inside an effect's render (`cx.audio`): a panel, command or task can read it. The
+  render path reaches only footage items' audio (`EffectHost::audio`), not the comp mixer.
+- Import or export file formats. A task with `pick_file` and `frame` can write an export itself.
 
 Each of these is one more request variant and one more permission check, not a redesign.
