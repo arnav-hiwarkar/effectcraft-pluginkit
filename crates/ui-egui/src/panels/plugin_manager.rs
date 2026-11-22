@@ -38,6 +38,28 @@ pub(crate) enum State {
 
 type Actions = Vec<(&'static str, Value)>;
 
+pub(crate) fn install_packages(app: &mut EffectcraftApp, paths: &[String]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for path in paths {
+        match app.session.execute("plugin.install", json!({"path": path})) {
+            Ok(_) => {
+                app.plugin_ui.manager_open = true;
+                app.plugin_ui.listed = None;
+            }
+            Err(error) => errors.push(tr_args("Cannot install plug-in {}: {}", &[path, &error])),
+        }
+    }
+    errors
+}
+
+impl EffectcraftApp {
+    pub fn open_plugin_packages(&mut self, paths: &[String]) {
+        if let Some(error) = install_packages(self, paths).into_iter().next() {
+            self.ui.status = error;
+        }
+    }
+}
+
 pub(crate) fn installed(app: &mut EffectcraftApp) -> Vec<Listed> {
     list(app).unwrap_or_default()
 }
@@ -141,8 +163,7 @@ fn entry(app: &mut EffectcraftApp, ui: &mut egui::Ui, plugin: &Listed, actions: 
                 action(app, ui, &format!("{scope}.disable"), "Disable", ("plugin.disable", id.clone()), actions);
             }
             if plugin.can_unsandbox && plugin.state != State::NeedsApproval {
-                let (auto, label, sandboxed) =
-                    if plugin.sandboxed { ("unsandbox", "Run Unsandboxed", false) } else { ("sandbox", "Run Sandboxed", true) };
+                let (auto, label, sandboxed) = if plugin.sandboxed { ("unsandbox", "Run Unsandboxed", false) } else { ("sandbox", "Run Sandboxed", true) };
                 action(app, ui, &format!("{scope}.{auto}"), label, ("plugin.setSandbox", json!({"id": plugin.id, "sandboxed": sandboxed})), actions);
             }
             if !plugin.session_only {

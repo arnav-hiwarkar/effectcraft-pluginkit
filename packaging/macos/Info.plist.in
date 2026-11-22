@@ -77,8 +77,20 @@
       <key>LSItemContentTypes</key>
       <array><string>ai.storyteller.effectcraft.document</string></array>
     </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>EffectCraft Plug-in</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>CFBundleTypeIconFile</key>
+      <string>EffectCraft</string>
+      <key>LSItemContentTypes</key>
+      <array><string>ai.storyteller.effectcraft.plugin</string></array>
+    </dict>
   </array>
-  <!-- EffectCraft's own format: the project (.ecproj) and its XML copy (.ecprojx). -->
+  <!-- EffectCraft's own formats: the project (.ecproj) and its XML copy (.ecprojx), and the plug-in package (.craftplugin). -->
   <key>UTExportedTypeDeclarations</key>
   <array>
     <dict>
@@ -102,6 +114,24 @@
         </array>
         <key>public.mime-type</key>
         <array><string>application/x-effectcraft</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>ai.storyteller.effectcraft.plugin</string>
+      <key>UTTypeDescription</key>
+      <string>EffectCraft Plug-in</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+        <string>public.archive</string>
+      </array>
+      <key>UTTypeIconFile</key>
+      <string>EffectCraft</string>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array><string>craftplugin</string></array>
       </dict>
     </dict>
   </array>

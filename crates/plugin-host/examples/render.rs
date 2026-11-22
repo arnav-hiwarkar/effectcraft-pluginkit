@@ -210,7 +210,7 @@ fn run() -> Result<(), String> {
         best = best.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     save_png(Path::new(out), padded_w, padded_h, &pixels, option("--over") != Some("none"))?;
-    let kind = if bundle.manifest.sandboxed() { "wasm" } else { "native" };
+    let kind = if bundle.mode == craft_plugin::RunMode::Sandboxed { "wasm" } else { "native" };
     println!(
         "{effect}: {padded_w}x{padded_h} (padding {pad}, reach {:?}, gpu plan {}) best of {rounds}: {best:.2} ms [{kind}] -> {out}",
         layout.reach,

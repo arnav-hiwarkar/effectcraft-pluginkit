@@ -52,3 +52,21 @@ fn stopping_a_plugin_removes_its_effects_and_the_layer_renders_unchanged() {
     assert!(effectcraft_engine::effects::find("test.render-stop.invert").is_none());
     assert!(close(centre_pixel(&app), [1.0, 0.2, 0.0, 1.0]), "without the plugin it is {:?}", centre_pixel(&app));
 }
+
+#[test]
+fn reloading_a_plugin_with_new_code_changes_the_effect_revision_so_cached_frames_redraw() {
+    let app = app("test.render-revision", &[]);
+    let effect = "test.render-revision.invert";
+    let first = effectcraft_engine::effects::revision(effect);
+    assert_ne!(first, 0);
+
+    app.plugins.load_for_session(app.bundle.path()).unwrap();
+    assert_eq!(effectcraft_engine::effects::revision(effect), first, "the same code keeps its revision");
+
+    let module = app.bundle.path().join("probe.wasm");
+    let mut bytes = std::fs::read(&module).unwrap();
+    bytes.extend_from_slice(&[0, 4, 1, b'x', 7, 7]);
+    std::fs::write(&module, bytes).unwrap();
+    app.plugins.load_for_session(app.bundle.path()).unwrap();
+    assert_ne!(effectcraft_engine::effects::revision(effect), first, "new code gets a new revision");
+}

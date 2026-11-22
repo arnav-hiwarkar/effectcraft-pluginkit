@@ -63,6 +63,10 @@ fn app_icon() -> egui::IconData {
 
 /// Both native JSON projects and Save a Copy As XML projects are openable on launch.
 /// Keep this classification shared by project opening and the subsequent media-import pass.
+fn is_plugin_package(path: &str) -> bool {
+    std::path::Path::new(path).extension().and_then(std::ffi::OsStr::to_str).is_some_and(|ext| ext.eq_ignore_ascii_case("craftplugin"))
+}
+
 fn is_project_file(path: &str) -> bool {
     std::path::Path::new(path)
         .extension()
@@ -348,7 +352,8 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
             } else if demo {
                 let _ = session.execute("file.openDemoProject", json!({}));
             }
-            let media: Vec<String> = files.iter().filter(|f| !is_project_file(f)).cloned().collect();
+            let packages: Vec<String> = files.iter().filter(|f| is_plugin_package(f)).cloned().collect();
+            let media: Vec<String> = files.iter().filter(|f| !is_project_file(f) && !is_plugin_package(f)).cloned().collect();
             if !media.is_empty()
                 && let Err(e) = session.execute("file.import", json!({"paths": media}))
             {
@@ -360,6 +365,7 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
             let _ = session.execute("window.restoreScriptPanels", json!({}));
             let mut app = EffectcraftApp::new(session);
             app.set_startup_update_check(startup_update_check(control_port));
+            app.open_plugin_packages(&packages);
             app.set_gpu_failure_bridge(gpu_failures);
             app.ui.start_screen = show_home;
             if let Some(n) = notice {
