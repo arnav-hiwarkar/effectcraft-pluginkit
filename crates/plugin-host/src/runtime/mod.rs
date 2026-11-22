@@ -33,7 +33,8 @@ impl Engine {
         let entry = bundle.entry_path().map_err(|e| PluginError::Load(e.to_string()))?;
         let kind = if bundle.mode == RunMode::Sandboxed {
             let bytes = std::fs::read(&entry).map_err(|e| PluginError::Load(format!("{}: {e}", entry.display())))?;
-            Kind::Wasm { module: WasmModule::compile(&bytes)?, main: Mutex::new(None), pool: Mutex::new(Vec::new()) }
+            let cache = data_dir.parent().unwrap_or(&data_dir).join(".compiled");
+            Kind::Wasm { module: WasmModule::compile(&bytes, &cache)?, main: Mutex::new(None), pool: Mutex::new(Vec::new()) }
         } else {
             Kind::Native(NativeGuest::load(&entry)?)
         };
