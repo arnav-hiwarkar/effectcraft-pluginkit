@@ -701,9 +701,8 @@ impl<'a> Renderer<'a> {
             Some((_, _, rw, rh)) => (rw, rh),
             None => (w, h),
         };
-        let canvas = Image::new(w, h);
         if self.depth > 16 {
-            return canvas;
+            return Image::new(w, h);
         }
         let ctx = self.ctx(comp_id, comp, t);
         let key = self.static_frame_key(&ctx);
@@ -715,9 +714,12 @@ impl<'a> Renderer<'a> {
             }
             return frame.img.clone();
         }
+        let canvas = Image::new(w, h);
         let t0 = web_time::Instant::now();
         let (canvas, files) = self.recorded(key, |r| r.finish_frame(&r.with_reads(&ctx), canvas));
-        if let (Some(c), Some(k)) = (self.cache_to_keep(), key) {
+        if let (Some(c), Some(k)) = (self.cache_to_keep(), key)
+            && !files.files().iter().any(|f| f.stamp == crate::reads::FileStamp::Missing)
+        {
             c.insert_in_memory(k, Arc::new(Buf { img: canvas.clone(), offset: [0.0; 2], scale: s }), files, t0.elapsed());
         }
         canvas
@@ -730,7 +732,7 @@ impl<'a> Renderer<'a> {
         }
         let mut contents = Vec::new();
         for layer in ctx.comp.layers.iter() {
-            if layer.is_3d() || !cache::timeless(layer) {
+            if layer.is_3d() || layer.track_matte.is_some() || !cache::timeless(layer) {
                 return None;
             }
             if let LayerSource::Footage { item } = &layer.source {

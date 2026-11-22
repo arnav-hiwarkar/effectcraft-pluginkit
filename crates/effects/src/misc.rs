@@ -257,21 +257,16 @@ fn glow(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let mode = ctx.params.e("operation");
     b.img.data.par_chunks_mut(crate::QUANTIZE_CHUNK).zip(blurred.data.par_chunks(crate::QUANTIZE_CHUNK)).for_each(|(os, gs)| {
         for (o, g) in os.iter_mut().zip(gs) {
-            // Intensity scales the glow's colour; with the colour channels its coverage stays.
             let g = [g[0] * intensity, g[1] * intensity, g[2] * intensity, if alpha_based { g[3] * intensity } else { g[3] }];
             match mode {
-                // Behind: the glow shows only where the original is transparent.
                 1 => {
                     let k = 1.0 - o[3];
                     for c in 0..4 {
                         o[c] += g[c] * k;
                     }
                 }
-                // None: the glow alone.
                 2 => *o = [g[0], g[1], g[2], g[3]],
-                // On Top with another Glow Operation: that blend mode.
                 _ if glow_op != effectcraft_color::BlendMode::Add => *o = effectcraft_color::blend_pixel(glow_op, *o, g, 0.0),
-                // On Top: add (screen-like add on premultiplied colour; alpha grows by the glow's alpha).
                 _ => {
                     for c in 0..3 {
                         o[c] += g[c];

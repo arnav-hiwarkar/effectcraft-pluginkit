@@ -39,10 +39,10 @@ pub fn quantize_px(p: &mut Px, levels: f32, inv: f32) {
     *p = quantize_levels(*p, levels, inv).map(|n| n * inv);
 }
 
+pub const QUANTIZE_CHUNK: usize = 2048;
+
 pub fn quantize_slice(px: &mut [Px], levels: f32) {
     let inv = 1.0 / levels;
-    // Runs of all-zero pixels (+0.0 in every channel) quantise to themselves: skip them a
-    // cache line at a time (sparse shape, precomp and glow buffers are mostly empty).
     let (blocks, rest) = px.as_chunks_mut::<4>();
     for b in blocks {
         if b.as_flattened().iter().fold(0, |a, v| a | v.to_bits()) != 0 {
@@ -356,13 +356,21 @@ impl Image {
     }
     /// Map every pixel through `f` on straight colour (keeps alpha).
     pub fn map_straight(&mut self, f: impl Fn([f32; 3]) -> [f32; 3] + Sync) {
-        self.data.par_iter_mut().for_each(|p| {
-            let a = p[3];
-            if a <= 0.0 {
-                return;
+        self.map_straight_quantized(None, f);
+    }
+    pub fn map_straight_quantized(&mut self, levels: Option<f32>, f: impl Fn([f32; 3]) -> [f32; 3] + Sync) {
+        self.data.par_chunks_mut(QUANTIZE_CHUNK).for_each(|chunk| {
+            for p in chunk.iter_mut() {
+                let a = p[3];
+                if a <= 0.0 {
+                    continue;
+                }
+                let c = f([p[0] / a, p[1] / a, p[2] / a]);
+                *p = [c[0] * a, c[1] * a, c[2] * a, a];
             }
-            let c = f([p[0] / a, p[1] / a, p[2] / a]);
-            *p = [c[0] * a, c[1] * a, c[2] * a, a];
+            if let Some(l) = levels {
+                quantize_slice(chunk, l);
+            }
         });
     }
     /// Blend `src` (same size) onto self with a mode and opacity.

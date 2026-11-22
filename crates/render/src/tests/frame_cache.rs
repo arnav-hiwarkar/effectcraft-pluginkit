@@ -41,6 +41,8 @@ fn a_frame_of_a_comp_where_nothing_animates_comes_from_the_cache_without_composi
     let (img, drawn) = profiled(&p, cid, t, &cache);
     let after = cache.stats();
     assert_eq!((drawn, after.hits - before.hits, after.misses - before.misses), (0, 1, 0));
+    let level = |n: [f32; 4]| n.map(|v| v * (1.0 / 255.0));
+    assert_eq!((img.get(10, 15), img.get(190, 5)), (level([102.0, 39.0, 26.0, 128.0]), [0.0; 4]));
     assert!(img == render_cached(&p, cid, t, None));
 }
 
@@ -54,6 +56,7 @@ fn a_comp_with_animation_composites_every_frame() {
     let t = Tick::from_seconds_f64(0.5);
     let (img, drawn) = profiled(&p, cid, t, &cache);
     assert_eq!(drawn, 3);
+    assert_eq!(img.get(5, 45), [102.0, 39.0, 26.0, 128.0].map(|v| v * (1.0 / 255.0)));
     assert!(img == render_cached(&p, cid, t, None));
 }
 
@@ -110,4 +113,62 @@ fn every_edit_of_a_static_comp_renders_a_new_frame() {
         assert!(cached == fresh, "{what}");
         assert!(orig != fresh, "{what}: edit had no visible effect");
     }
+}
+
+#[test]
+fn a_hidden_matte_that_ends_clears_the_cached_frame() {
+    let (mut p, cid, comp) = setup();
+    let fill = solid(&mut p, &comp, [1.0, 0.0, 0.0], 200, 100);
+    let mut matte = solid(&mut p, &comp, [1.0, 1.0, 1.0], 200, 100);
+    matte.switches.video = false;
+    matte.out_point = Tick::from_seconds_f64(1.0);
+    let fill = effectcraft_project::Layer { track_matte: Some(TrackMatte { layer: matte.id, kind: MatteKind::Alpha }), ..fill };
+    p.comp_mut(cid).unwrap().layers = vec![matte, fill].into();
+    let cache = LayerCache::default();
+    let before = render_cached(&p, cid, Tick::from_seconds_f64(0.5), Some(&cache));
+    let after = render_cached(&p, cid, Tick::from_seconds_f64(1.5), Some(&cache));
+    assert_eq!((before.get(100, 50), after.get(100, 50)), ([1.0, 0.0, 0.0, 1.0], [0.0; 4]));
+}
+
+struct Plate(std::sync::atomic::AtomicBool);
+
+impl crate::FootageSource for Plate {
+    fn frame(&self, _: ItemId, _: &effectcraft_project::Footage, _: Tick) -> Option<std::sync::Arc<Image>> {
+        self.0.load(std::sync::atomic::Ordering::SeqCst).then(|| std::sync::Arc::new(Image::filled(200, 100, [0.0, 1.0, 0.0, 1.0])))
+    }
+    fn recording(&self, reads: &crate::reads::ReadLog, f: &mut dyn FnMut()) {
+        let stamp = match self.0.load(std::sync::atomic::Ordering::SeqCst) {
+            true => crate::reads::FileStamp::Native { len: 1, modified: Some(1) },
+            false => crate::reads::FileStamp::Missing,
+        };
+        reads.note(crate::reads::ReadFile::new("plate.png", stamp));
+        f();
+    }
+}
+
+#[test]
+fn a_frame_rendered_while_its_still_was_missing_is_not_kept() {
+    let (mut p, cid, comp) = setup();
+    let f = effectcraft_project::Footage {
+        path: "plate.png".into(),
+        kind: effectcraft_project::FootageKind::Still,
+        width: 200,
+        height: 100,
+        pixel_aspect: 1.0,
+        has_video: true,
+        ..Default::default()
+    };
+    let fid = p.add_item("plate", effectcraft_color::Label::Aqua, None, ItemKind::Footage(f));
+    let l = effectcraft_project::build::layer(&mut p, &comp, "plate", LayerSource::Footage { item: fid }, (200, 100), None);
+    p.comp_mut(cid).unwrap().layers = vec![l].into();
+    let plate = Plate(false.into());
+    let cache = LayerCache::default();
+    let render = |t: f64| {
+        let mut r = Renderer::new(&p, &plate, RenderOpts::default());
+        r.cache = Some(&cache);
+        r.comp_frame(cid, Tick::from_seconds_f64(t)).get(100, 50)
+    };
+    let missing = render(0.0);
+    plate.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!((missing, render(0.5)), ([0.0; 4], [0.0, 1.0, 0.0, 1.0]));
 }
