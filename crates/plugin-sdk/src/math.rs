@@ -60,7 +60,7 @@ fn log_parts(x: f32) -> (f32, f32) {
 }
 
 /// `log2(x)` for finite `x > 0`. Zero, negative and subnormal inputs give `-126`.
-/// Largest absolute error against `f32::log2` over `1e-30..=1e30`: 2e-7 times `max(1, |log2 x|)`.
+/// Largest absolute error against `f32::log2` over `1e-30..=1e30`: 1.1e-7 times `max(1, |log2 x|)`.
 #[inline(always)]
 pub fn log2(x: f32) -> f32 {
     let (exponent, series) = log_parts(x);
@@ -68,7 +68,7 @@ pub fn log2(x: f32) -> f32 {
 }
 
 /// `ln(x)` for finite `x > 0`. Zero, negative and subnormal inputs give `-87.3`.
-/// Largest absolute error against `f32::ln` over `1e-30..=1e30`: 3e-7 times `max(1, |ln x|)`.
+/// Largest absolute error against `f32::ln` over `1e-30..=1e30`: 1.2e-7 times `max(1, |ln x|)`.
 #[inline(always)]
 pub fn ln(x: f32) -> f32 {
     let (exponent, series) = log_parts(x);
@@ -76,7 +76,8 @@ pub fn ln(x: f32) -> f32 {
 }
 
 /// `x^y` for finite `x >= 0` and any `y` whose result lies in `1e-37..=1e37`. `pow(0.0, y)` is exactly `0` for
-/// `y > 0`; a negative `x` is treated like `0`.
+/// `y > 0`; a negative `x` is treated like `0`. A positive `x` below `f32::MIN_POSITIVE` (about `1.2e-38`) is
+/// treated like `f32::MIN_POSITIVE`, as in [`log2`]: normalising it would cost every call.
 /// Largest relative error against `f64::powf` for `x` in `1e-3..=1e3`, `y` in `-8..=8`: 2e-5.
 #[inline(always)]
 pub fn pow(x: f32, y: f32) -> f32 {
@@ -113,7 +114,9 @@ pub fn sin_cos(x: f32) -> (f32, f32) {
     (sin(x), cos(x))
 }
 
-/// The angle of the point `(x, y)` in `-PI..=PI`, like `f32::atan2(y, x)`. `atan2(0.0, 0.0)` is `0`.
+/// The angle of the point `(x, y)` in `-PI..=PI`, like `f32::atan2(y, x)`, including the sign of a zero `y` and
+/// of a zero `x`. `atan2` of two zeros is `0`. A NaN argument gives a finite angle, not NaN: checking for it would
+/// cost every call.
 /// Largest absolute error against `f32::atan2` over a `-20..=20` grid and around the axes: 5e-6.
 #[inline(always)]
 pub fn atan2(y: f32, x: f32) -> f32 {
@@ -128,13 +131,16 @@ pub fn atan2(y: f32, x: f32) -> f32 {
     if ay > ax {
         r = FRAC_PI_2 - r;
     }
-    if x < 0.0 {
+    if x.is_sign_negative() {
         r = PI - r;
     }
-    if y < 0.0 { -r } else { r }
+    if y.is_sign_negative() { -r } else { r }
 }
 
-/// `sqrt(x * x + y * y)` for `|x|, |y| <= 1e18`. Largest relative error against `f32::hypot`: 1.5e-7.
+/// `sqrt(x * x + y * y)` when the larger of `|x|` and `|y|` is `0` or lies in `1e-19..=1e18`. Largest relative
+/// error against `f32::hypot` over that range: 1.5e-7. Below `1e-19` the squares are subnormal and the result loses
+/// precision, and below `1e-22` it is `0`; scaling the arguments would cost every call, and no pixel value is that
+/// small and nonzero.
 #[inline(always)]
 pub fn hypot(x: f32, y: f32) -> f32 {
     (x * x + y * y).sqrt()
@@ -160,7 +166,9 @@ pub fn saturate(x: f32) -> f32 {
 }
 
 /// The sRGB transfer function's decode: an encoded value to linear light. Negative values mirror around zero and
-/// values above 1 continue the curve. Largest absolute error against the `f64` formula over `-2..=2`: 3e-6.
+/// values above 1 continue the curve. Largest absolute error against the `f64` formula over `-2..=2`: 3e-6; largest
+/// relative error up to `|encoded| = 1e15`: 3e-6. Past `6e15` the result saturates at `2^126` (about `8.5e37`), as
+/// [`pow`] does: a branch to the standard power function would cost every pixel, and no pixel is that bright.
 #[inline(always)]
 pub fn srgb_to_linear(encoded: f32) -> f32 {
     let a = encoded.abs();
@@ -182,7 +190,13 @@ mod tests {
     use super::*;
 
     fn worst(inputs: impl Iterator<Item = f32>, error: impl Fn(f32) -> f64) -> f64 {
-        inputs.map(error).fold(0.0, f64::max)
+        inputs
+            .map(|x| {
+                let e = error(x);
+                assert!(e.is_finite(), "the error at {x:e} is {e}");
+                e
+            })
+            .fold(0.0, f64::max)
     }
 
     fn sweep(from: f32, to: f32, steps: u32) -> impl Iterator<Item = f32> {
@@ -190,8 +204,9 @@ mod tests {
     }
 
     fn geometric(from: f32, to: f32, steps: u32) -> impl Iterator<Item = f32> {
+        let (from, to) = (f64::from(from), f64::from(to));
         let ratio = (to / from).ln();
-        (0..=steps).map(move |i| from * (ratio * i as f32 / steps as f32).exp())
+        (0..=steps).map(move |i| (from * (ratio * f64::from(i) / f64::from(steps)).exp()) as f32)
     }
 
     fn relative(got: f32, want: f64) -> f64 {
@@ -220,12 +235,12 @@ mod tests {
     }
 
     #[test]
-    fn log2_is_within_2e_7_of_the_exact_value() {
+    fn log2_is_within_1_1e_7_of_the_exact_value() {
         let error = worst(geometric(1e-30, 1e30, 200_000), |x| {
             let want = f64::from(x).log2();
             (f64::from(log2(x)) - want).abs() / want.abs().max(1.0)
         });
-        assert!(error < 2.0e-7, "{error}");
+        assert!(error < 1.1e-7, "{error}");
         assert_eq!(log2(1.0), 0.0);
         assert_eq!(log2(8.0), 3.0);
         assert_eq!(log2(0.25), -2.0);
@@ -234,12 +249,12 @@ mod tests {
     }
 
     #[test]
-    fn ln_is_within_3e_7_of_the_exact_value() {
+    fn ln_is_within_1_2e_7_of_the_exact_value() {
         let error = worst(geometric(1e-30, 1e30, 200_000), |x| {
             let want = f64::from(x).ln();
             (f64::from(ln(x)) - want).abs() / want.abs().max(1.0)
         });
-        assert!(error < 3.0e-7, "{error}");
+        assert!(error < 1.2e-7, "{error}");
         assert_eq!(ln(1.0), 0.0);
         assert!((ln(std::f32::consts::E) - 1.0).abs() < 3e-7);
     }
@@ -259,6 +274,8 @@ mod tests {
         assert_eq!(pow(0.0, 2.0), 0.0);
         assert_eq!(pow(-3.0, 0.5), 0.0);
         assert_eq!(pow(0.0, 0.0), 1.0);
+        assert_eq!(pow(f32::from_bits(1 << 22), 0.5), pow(f32::MIN_POSITIVE, 0.5));
+        assert_eq!(pow(f32::MIN_POSITIVE, 0.5), exp2(-63.0));
     }
 
     #[test]
@@ -296,6 +313,12 @@ mod tests {
         assert_eq!(atan2(0.0, 0.0), 0.0);
         assert_eq!(atan2(0.0, 1.0), 0.0);
         assert_eq!(atan2(1.0, 0.0), FRAC_PI_2);
+        assert_eq!(atan2(-0.0, -1.0), -PI);
+        assert_eq!(atan2(0.0, -1.0), PI);
+        assert_eq!(atan2(-0.0, 1.0).to_bits(), (-0.0f32).to_bits());
+        assert_eq!(atan2(1.0, -0.0), FRAC_PI_2);
+        assert_eq!(atan2(-1.0, -0.0), -FRAC_PI_2);
+        assert!(atan2(f32::NAN, 1.0).is_finite());
     }
 
     #[test]
@@ -310,6 +333,9 @@ mod tests {
         assert!(error < 1.5e-7, "{error}");
         assert_eq!(hypot(3.0, 4.0), 5.0);
         assert_eq!(hypot(0.0, 0.0), 0.0);
+        let at_the_limit = hypot(1e-19, 0.5e-19);
+        assert!(relative(at_the_limit, 1.118_033_988_749_895e-19) < 1.5e-7, "{at_the_limit:e}");
+        assert_eq!(hypot(1e-30, 0.0), 0.0);
     }
 
     #[test]
@@ -337,6 +363,10 @@ mod tests {
         let trip = worst(sweep(0.0, 1.0, 1000), |v| f64::from((linear_to_srgb(srgb_to_linear(v)) - v).abs()));
         assert!(trip < 5.0e-6, "{trip}");
         assert_eq!(srgb_to_linear(0.0), 0.0);
+        let bright = worst([1e3f32, 1e8, 1e12, 1e15].into_iter(), |v| relative(srgb_to_linear(v), ((f64::from(v) + 0.055) / 1.055).powf(2.4)));
+        assert!(bright < 3.0e-6, "{bright}");
+        assert_eq!(srgb_to_linear(1e16), 2.0f32.powi(126));
+        assert_eq!(srgb_to_linear(-1e30), -(2.0f32.powi(126)));
         assert!((srgb_to_linear(1.0) - 1.0).abs() < 3e-6);
         assert!((linear_to_srgb(1.0) - 1.0).abs() < 3e-6);
     }

@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use craft_plugin::{
-    Call, GpuImage, GpuPass, GpuPlan, MaskPath, ParamsAt, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Widget,
+    Call, FrameDesc, GpuImage, GpuPass, GpuPlan, MaskPath, ParamsAt, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Widget,
     native_target,
 };
 use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Registry};
@@ -809,6 +809,30 @@ fn a_pass_writing_the_image_it_reads_is_refused() {
     let tall = |src| GpuPass::new("probe_tall", src, GpuImage::Output).reach(3);
     let plan = GpuPlan::new().pass(tall(GpuImage::Source)).pass(tall(GpuImage::Output));
     assert_eq!(run_plan(Kind::Wasm, &plan), Err(PluginError::Failed("pass 1 reads the image it writes".into())));
+}
+
+#[test]
+fn a_pass_that_writes_nothing_leaves_its_image_transparent() {
+    each_kind(|kind| {
+        let mut plan = GpuPlan::new();
+        let scratch = plan.scratch(PASS_FRAME);
+        let plan = plan.pass(GpuPass::new("probe_red", GpuImage::Source, scratch)).pass(GpuPass::new("probe_nothing", scratch, GpuImage::Output));
+        let pixels = run_plan(kind, &plan).unwrap();
+        assert_eq!(pixels, vec![[0.0; 4]; pixels.len()], "{kind:?}");
+    });
+}
+
+#[test]
+fn a_render_call_through_the_generic_entry_point_is_refused_and_writes_nothing() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let frame = FrameDesc { width: 2, height: 1, origin: [0, 0] };
+        let call = Call::Render { effect: "passes".into(), cx: cx(2, 1), frame };
+        let mut pixels = vec![[0.25; 4]; 2];
+        let error = loaded.plugin.call::<()>(&call, Some(&mut pixels), &mut Recorder::default()).unwrap_err();
+        assert_eq!(error, PluginError::Failed("a render call stages its frame through Plugin::render; call render".into()), "{kind:?}");
+        assert_eq!(pixels, vec![[0.25; 4]; 2], "{kind:?}");
+    });
 }
 
 #[test]

@@ -374,7 +374,7 @@ impl Session {
         let path = plan.path.to_string_lossy().into_owned();
         if self.autosave.background && !cfg!(target_arch = "wasm32") {
             let project = self.project.clone();
-            let view = self.saved_view();
+            let view = self.autosave_view();
             let config = self.config.clone();
             let job = plan.clone();
             let pending =
@@ -388,11 +388,15 @@ impl Session {
                 .map_err(fail)?;
             self.autosave.pending = Some(pending);
         } else {
-            let json = self.project.to_file_json_with_view(&self.saved_view(), true).map_err(|e| fail(std::io::Error::other(e)))?;
+            let json = self.project.to_file_json_with_view(&self.autosave_view(), true).map_err(|e| fail(std::io::Error::other(e)))?;
             plan.write(self.file_ops(), json.as_bytes()).map_err(fail)?;
             self.commit_autosave(path.clone(), plan.slot, self.revision);
         }
         Ok(path)
+    }
+
+    fn autosave_view(&self) -> effectcraft_project::SavedView {
+        effectcraft_project::SavedView { autosave_of: self.path.clone(), ..self.saved_view() }
     }
 
     /// Advance recovery bookkeeping only for a successfully written snapshot.

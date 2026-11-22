@@ -200,6 +200,8 @@ impl Effect for Passes {
         let src = pass.src;
         let sum = |pixels: &[(Pixel, f32)]| -> Pixel { std::array::from_fn(|c| pixels.iter().map(|(pixel, weight)| pixel[c] * weight).sum()) };
         let kernel: Taps = match pass.kernel {
+            "probe_red" => return Ok(out.pixels.fill([1.0, 0.0, 0.0, 1.0])),
+            "probe_nothing" => return Ok(()),
             "probe_down" => |at, x, y| [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(dx, dy)| (at(2 * x + dx, 2 * y + dy), 0.25)).to_vec(),
             "probe_up" => |at, x, y| [0, 1].map(|dy| (at(x / 2, y / 2 + dy), 0.5)).to_vec(),
             "probe_tall" => |at, x, y| (-3..=3).map(|dy| (at(x, y + dy), (dy + 4) as f32)).collect(),

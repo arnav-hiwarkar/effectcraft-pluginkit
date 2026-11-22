@@ -1040,6 +1040,93 @@ fn a_recovered_auto_save_without_an_original_is_an_untitled_project() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+fn recovered_from(snapshot: &str, claimed_original: &str) -> Session {
+    let mut fresh = Session::default();
+    fresh.execute("file.open", json!({"path": snapshot, "autosaveOf": claimed_original})).unwrap();
+    fresh
+}
+
+#[test]
+fn recovery_does_not_offer_the_snapshot_of_another_project_with_the_same_file_name() {
+    let dir = tmp("recover-search");
+    let store: Arc<dyn ConfigStore> = Arc::new(DirConfig::new(dir.join("config")));
+    let [a, b] = ["a", "b"].map(|name| {
+        std::fs::create_dir_all(dir.join(name)).unwrap();
+        dir.join(name).join("Shot.ecproj").to_string_lossy().into_owned()
+    });
+    let mut s = session_with_comp();
+    s.config = Some(store.clone());
+    s.prefs.auto_save.location = "custom".into();
+    s.prefs.auto_save.folder = dir.join("saves").to_string_lossy().into_owned();
+    s.execute("file.saveAs", json!({"path": b})).unwrap();
+    let snapshot = s.autosave_now().unwrap();
+    let recover = |project: &str| {
+        autosave::update(store.as_ref(), &autosave::Sentinel { pid: 1, project: Some(project.into()), autosave: None, dirty: true });
+        Session { config: Some(store.clone()), prefs: s.prefs.clone(), ..Default::default() }.begin_recovery().unwrap().autosave
+    };
+    assert_eq!(recover(&a), None);
+    assert_eq!(recover(&b).as_deref(), Some(snapshot.as_str()));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_snapshot_made_from_another_project_opens_untitled_and_changed() {
+    let dir = tmp("recover-claim");
+    let (mut s, _) = three_comp_session(&dir, false);
+    let made_from = dir.join("work.ecproj").to_string_lossy().into_owned();
+    let other = dir.join("other.ecproj").to_string_lossy().into_owned();
+    s.execute("file.saveAs", json!({"path": made_from})).unwrap();
+    let snapshot = s.autosave_now().unwrap();
+
+    let fresh = recovered_from(&snapshot, &other);
+    assert_eq!(fresh.path, None);
+    assert!(fresh.is_dirty());
+    assert!(fresh.prefs.recent_projects.is_empty());
+
+    let legacy = dir.join("legacy.ecproj");
+    std::fs::write(&legacy, s.project.to_file_json().unwrap()).unwrap();
+    let fresh = recovered_from(&legacy.to_string_lossy(), &made_from);
+    assert_eq!(fresh.path, None);
+    assert!(fresh.is_dirty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_recovered_project_whose_original_is_gone_enters_open_recent_only_once_saved() {
+    let dir = tmp("recover-gone");
+    let (mut s, _) = three_comp_session(&dir, false);
+    let original = dir.join("work.ecproj").to_string_lossy().into_owned();
+    s.execute("file.saveAs", json!({"path": original})).unwrap();
+    let snapshot = s.autosave_now().unwrap();
+    std::fs::remove_file(&original).unwrap();
+
+    let mut fresh = recovered_from(&snapshot, &original);
+    assert_eq!(fresh.path.as_deref(), Some(original.as_str()));
+    assert!(fresh.prefs.recent_projects.is_empty(), "{:?}", fresh.prefs.recent_projects);
+    fresh.execute("file.save", json!({})).unwrap();
+    assert_eq!(fresh.prefs.recent_projects, std::slice::from_ref(&original));
+
+    let again = recovered_from(&snapshot, &original);
+    assert_eq!(again.prefs.recent_projects, [original], "the original exists again");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn an_auto_save_with_every_comp_tab_closed_recovers_with_no_tab_open() {
+    let dir = tmp("recover-no-tabs");
+    let (mut s, [a, b, c]) = three_comp_session(&dir, false);
+    for id in [a, b, c] {
+        s.execute("comp.close", json!({"comp": id.0})).unwrap();
+    }
+    assert!(s.state.open_comps.is_empty());
+    let snapshot = s.autosave_now().unwrap();
+    let mut fresh = Session::default();
+    fresh.execute("file.open", json!({"path": snapshot})).unwrap();
+    assert!(fresh.state.open_comps.is_empty(), "{:?}", fresh.state.open_comps);
+    assert_eq!(fresh.state.active_comp, None);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn background_autosave_failure_retries_the_same_revision_and_retains_recovery() {
     let dir = tmp("autosave-retry");

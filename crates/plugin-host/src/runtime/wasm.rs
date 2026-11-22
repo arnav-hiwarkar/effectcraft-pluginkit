@@ -137,7 +137,9 @@ impl WasmGuest {
         let place = place.ok_or_else(|| wasmtime::format_err!("the frame does not fit in plugin memory"))?;
         let (first_place, rest) = place.split_at_mut(first.len());
         first_place.copy_from_slice(first);
-        rest[..second.len()].copy_from_slice(second);
+        let (second_place, out_place) = rest.split_at_mut(second.len());
+        second_place.copy_from_slice(second);
+        out_place.fill(0);
 
         let request_at = self.alloc.call(&mut self.store, len(request)?)?;
         if request_at == 0 {

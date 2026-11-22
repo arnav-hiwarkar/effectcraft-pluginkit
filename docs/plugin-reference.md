@@ -220,15 +220,15 @@ native plugins compute identical bits. Each error is the largest found by a test
 |---|---|---|
 | `exp2(x)` | `-126..=126`, clamped | 3e-7 relative |
 | `exp(x)` | `-87..=88`, clamped | 5e-7 relative |
-| `log2(x)`, `ln(x)` | finite `x > 0`; zero, negative and subnormal give `-126` and `-87.3` | 2e-7 and 3e-7 times `max(1, abs(result))` |
-| `pow(x, y)` | finite `x >= 0`, result in `1e-37..=1e37`; `pow(0, y)` is `0` for `y > 0` | 2e-5 relative |
+| `log2(x)`, `ln(x)` | finite `x > 0`; zero, negative and subnormal give `-126` and `-87.3` | 1.1e-7 and 1.2e-7 times `max(1, abs(result))` |
+| `pow(x, y)` | finite `x >= 0`, result in `1e-37..=1e37`; `pow(0, y)` is `0` for `y > 0`; a positive `x` below `1.2e-38` behaves as `1.2e-38` | 2e-5 relative |
 | `sin(x)`, `cos(x)`, `sin_cos(x)` | `abs(x) <= 1000` | 2e-6 absolute (3e-7 within 20 radians) |
-| `atan2(y, x)` | any; `atan2(0, 0)` is `0` | 5e-6 absolute |
-| `hypot(x, y)` | `abs(x)`, `abs(y)` up to `1e18` | 1.5e-7 relative |
+| `atan2(y, x)` | finite; the sign of a zero counts; `atan2(0, 0)` is `0`; a NaN argument gives a finite angle | 5e-6 absolute |
+| `hypot(x, y)` | the larger of `abs(x)`, `abs(y)` is `0` or in `1e-19..=1e18` (below `1e-22` the result is `0`) | 1.5e-7 relative |
 | `smoothstep(e0, e1, x)` | `e0 != e1` | exact |
 | `lerp(a, b, t)` | any | exact |
 | `saturate(x)` | any; NaN stays NaN | exact |
-| `srgb_to_linear(v)`, `linear_to_srgb(v)` | any; negatives mirror around 0, values above 1 continue the curve | 3e-6 absolute over `-2..=2` |
+| `srgb_to_linear(v)`, `linear_to_srgb(v)` | any; negatives mirror around 0, values above 1 continue the curve; `srgb_to_linear` saturates at `8.5e37` past `6e15` | 3e-6 absolute over `-2..=2` (`srgb_to_linear` 3e-6 relative up to `1e15`) |
 
 ## Panel
 

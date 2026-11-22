@@ -111,6 +111,9 @@ impl Plugin {
     }
 
     pub fn call<R: DeserializeOwned>(&self, call: &Call, pixels: Option<&mut [Pixel]>, host: &mut dyn Host) -> Result<R, PluginError> {
+        if matches!(call, Call::Render { .. }) {
+            return Err(PluginError::Failed("a render call stages its frame through Plugin::render; call render".into()));
+        }
         let io = pixels.map_or(Io::None, Io::InPlace);
         self.exchange(call, io, host)
     }

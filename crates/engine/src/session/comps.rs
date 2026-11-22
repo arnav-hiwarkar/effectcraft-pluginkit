@@ -265,13 +265,13 @@ impl Session {
     /// ([`effectcraft_project::SavedView`]).
     pub fn saved_view(&self) -> effectcraft_project::SavedView {
         let comp_times = self.state.times.iter().filter(|(id, _)| self.project.comp(**id).is_some()).map(|(id, t)| (*id, *t)).collect();
-        effectcraft_project::SavedView { active_comp: self.state.active_comp, open_comps: self.state.open_comps.clone(), comp_times }
+        effectcraft_project::SavedView { active_comp: self.state.active_comp, open_comps: Some(self.state.open_comps.clone()), autosave_of: None, comp_times }
     }
 
     /// Reopen the compositions a project file was saved with (#748), each at its saved current
     /// time (#1714). Ids that no longer name a comp are skipped; with none left the project stays
     /// on the comp [`Session::replace_project`] opened (its first), as files from before the view
-    /// was saved do.
+    /// was saved do. A view saved with every tab closed leaves no comp open.
     pub fn restore_view(&mut self, view: &effectcraft_project::SavedView) {
         for (id, t) in &view.comp_times {
             if let Some(comp) = self.project.comp(*id) {
@@ -280,12 +280,18 @@ impl Session {
             }
         }
         let mut open: Vec<ItemId> = Vec::new();
-        for id in view.open_comps.iter().copied().filter(|id| self.project.comp(*id).is_some()) {
+        for id in view.open_comps.iter().flatten().copied().filter(|id| self.project.comp(*id).is_some()) {
             if !open.contains(&id) {
                 open.push(id);
             }
         }
-        let Some(active) = view.active_comp.filter(|id| self.project.comp(*id).is_some()).or_else(|| open.first().copied()) else { return };
+        let Some(active) = view.active_comp.filter(|id| self.project.comp(*id).is_some()).or_else(|| open.first().copied()) else {
+            if view.open_comps.as_ref().is_some_and(Vec::is_empty) {
+                self.state.open_comps.clear();
+                self.activate_comp_none();
+            }
+            return;
+        };
         self.state.open_comps = open;
         self.open_comp(active);
     }
