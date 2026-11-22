@@ -701,9 +701,8 @@ impl<'a> Renderer<'a> {
             Some((_, _, rw, rh)) => (rw, rh),
             None => (w, h),
         };
-        let canvas = Image::new(w, h);
         if self.depth > 16 {
-            return canvas;
+            return Image::new(w, h);
         }
         let ctx = self.ctx(comp_id, comp, t);
         let key = self.static_frame_key(&ctx);
@@ -715,6 +714,7 @@ impl<'a> Renderer<'a> {
             }
             return frame.img.clone();
         }
+        let canvas = Image::new(w, h);
         let t0 = web_time::Instant::now();
         let (canvas, files) = self.recorded(key, |r| r.finish_frame(&r.with_reads(&ctx), canvas));
         if let (Some(c), Some(k)) = (self.cache_to_keep(), key)
