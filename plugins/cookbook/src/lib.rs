@@ -30,7 +30,7 @@ fn plugin() -> Plugin {
         .task("measure", "Measure Brightness", measure::measure)
         .tool("pin", "Pin", pin::Pin::default());
     #[cfg(test)]
-    let plugin = plugin.effect(tests::Smear);
+    let plugin = plugin.effect(tests::Smear).effect(tests::Crash);
     plugin
 }
 

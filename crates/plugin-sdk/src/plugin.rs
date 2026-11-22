@@ -176,7 +176,7 @@ impl Plugin {
             Call::Panel { panel, input } => {
                 let (_, state) = self.panels.iter().find(|(spec, _)| spec.id == panel).ok_or_else(|| Error(format!("no panel `{panel}`")))?;
                 let mut ui = Ui::new(&input);
-                state.lock().map_err(|_| Error("the panel panicked earlier".into()))?.ui(&mut ui);
+                state.lock().map_err(|_| Error("the panel panicked earlier; reload the plugin to start it again".into()))?.ui(&mut ui);
                 json(&ui.reply())
             }
             Call::Controls { effect, param, instance, value, input } => {
@@ -207,14 +207,17 @@ impl Plugin {
             Call::Tool { tool, event } => {
                 let (_, state) = self.tools.iter().find(|(spec, _)| spec.id == tool).ok_or_else(|| Error(format!("no tool `{tool}`")))?;
                 let mut overlay = Overlay::in_space(Space::Comp);
-                state.lock().map_err(|_| Error("the tool panicked earlier".into()))?.event(&event, &mut overlay)?;
+                state.lock().map_err(|_| Error("the tool panicked earlier; reload the plugin to start it again".into()))?.event(&event, &mut overlay)?;
                 json(&overlay)
             }
         }
     }
 
     fn find_effect(&self, id: &str) -> Result<&dyn Effect> {
-        self.effects.iter().find(|(spec, _)| spec.id == id).map(|(_, effect)| effect.as_ref()).ok_or_else(|| Error(format!("no effect `{id}`")))
+        self.effects.iter().find(|(spec, _)| spec.id == id).map(|(_, effect)| effect.as_ref()).ok_or_else(|| {
+            let known: Vec<&str> = self.effects.iter().map(|(spec, _)| spec.id.as_str()).collect();
+            Error(format!("no effect `{id}`; this plugin has {known:?}"))
+        })
     }
 }
 

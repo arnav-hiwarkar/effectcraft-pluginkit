@@ -24,6 +24,28 @@ impl Effect for Smear {
     }
 }
 
+pub struct Crash;
+
+impl Effect for Crash {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("crash", "Crash", "Cookbook")
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let past_the_end = frame.pixels.len();
+        frame.pixels[past_the_end] = [1.0; 4];
+        Ok(())
+    }
+}
+
+#[test]
+fn a_panic_reaches_the_test_and_the_log_with_its_file_and_line() {
+    let plugin = this_plugin!();
+    let error = plugin.render("crash").size(4, 2).run().unwrap_err();
+    assert_eq!(error, "the plugin panicked at src/tests.rs:36:9: index out of bounds: the len is 8 but the index is 8");
+    assert!(plugin.logs().contains(&format!("render of effect `crash` failed: {error}")), "{:?}", plugin.logs());
+}
+
 #[test]
 fn tint_matches_its_stored_frame() {
     assert_frame!("tint", { "amount": 100 }, "tint");

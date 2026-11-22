@@ -13,6 +13,7 @@ Each folder here is one plugin: a standalone Rust crate outside the workspace, b
 | [Curves](curves) | Effect and panel | Tone curves for RGB, red, green, blue and alpha drawn as a graph in Effect Controls, and a Curve Presets panel of thumbnails |
 | [Retro](retro) | Effects | CRT Display (curvature, aperture grille, slot or dot mask, rolling scanlines, convergence error, phosphor glow, noise and flicker) and Neon Outline (luma or alpha edges with a three-radius bloom), each with matching GPU kernels and a banded CPU render; `retro/bench.sh` times both |
 | [Glide](glide) | Panel and commands | A cubic-bezier easing editor with a preset library that applies the curve to the selected keyframes in one undo step |
+| [Cookbook](cookbook) | Effects, panels, a command, a task and a tool | Every recipe of [the cookbook](../docs/plugin-cookbook.md), each with its test; the page's code is checked against it |
 | [Pulse](pulse) | Panel and task | Analyses a frequency band of a layer's audio in a cancellable background task and writes its energy per frame as slider keyframes in one undo step |
 
 ## Pulse
@@ -73,9 +74,10 @@ To try an unpacked folder without installing it, list the folders in `EFFECTCRAF
 EFFECTCRAFT_PLUGIN_PATH="$PWD/plugins/dist/org.craftkit.lumen-glow:$PWD/plugins/dist/org.craftkit.glide" cargo run -p effectcraft
 ```
 
-To write a plugin, run `cargo xtask plugin new <name> [--panel] [--gpu]`, then `cargo xtask plugin dev plugins/<name>`
-with the app running (`cargo run -p effectcraft -- --control 9877`). `plugins/new-plugin-check.sh` generates each kind
-of new plugin, runs its test and builds it for WebAssembly.
+To write a plugin, run `cargo xtask plugin new <name> [--kind effect|gpu-effect|panel|tool|task]`, then
+`cargo xtask plugin dev plugins/<name>` with the app running (`cargo run -p effectcraft -- --control 9877`); the
+[quickstart](../docs/plugin-quickstart.md) goes step by step. `plugins/new-plugin-check.sh` generates each kind of new
+plugin, runs its tests and builds it for WebAssembly, then runs the Cookbook's tests.
 
 `plugins/e2e.sh` builds every plugin here, installs Plasma Beam from its `.craftplugin` file, loads the other
 bundles in `effectcraft-cli`, renders a frame with each effect and runs `glide/verify.sh`.
