@@ -224,12 +224,13 @@ impl<'a> SessionHost<'a> {
     fn plugin_owned_text(&self, found: &Value) -> bool {
         let (Some(layer), Some(uid)) = (found.get("layer").and_then(Value::as_u64), found.get("uid").and_then(Value::as_u64)) else { return false };
         use effectcraft_engine::project::{GroupKind, LayerId, Node, ParamUi};
-        let own = format!("{}.", self.plugin.bundle.manifest.id);
+        let own = &self.plugin.bundle.manifest.id;
+        let owned_by_this_plugin = |effect: &str| effectcraft_engine::effects::dynamic::get(effect).is_some_and(|found| &found.effect.owner == own);
         let Some(layer) = self.session.project.comps().find_map(|(_, comp)| comp.layer(LayerId(layer))) else { return false };
         let Some(effects) = layer.props.sub("effects") else { return false };
         effects.children.iter().any(|node| match node {
             Node::Group(effect) => {
-                matches!(&effect.kind, GroupKind::Effect { effect } if effect.starts_with(&own))
+                matches!(&effect.kind, GroupKind::Effect { effect } if owned_by_this_plugin(effect))
                     && effect.find(uid).is_some_and(|prop| matches!(prop.ui, ParamUi::Custom))
             }
             Node::Prop(_) => false,

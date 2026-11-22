@@ -262,3 +262,17 @@ fn a_batch_cannot_plant_text_in_an_effect_parameter_by_its_uid_or_another_spelli
     let lut = app.session.execute_checked("prop.get", json!({"layer": "Graded", "path": "effects/#1/lut"})).unwrap()["value"].clone();
     assert_eq!(lut, json!(""));
 }
+
+#[test]
+fn a_plugin_whose_id_prefixes_another_cannot_write_text_into_the_others_custom_parameter() {
+    let mut app = app("test.gate-pre", EDITOR);
+    let longer = tempfile::tempdir().unwrap();
+    std::fs::copy(app.bundle.path().join("probe.wasm"), longer.path().join("probe.wasm")).unwrap();
+    let manifest = json!({"id": "test.gate-pre.pro", "name": "Pro", "version": "1.0.0", "entry": {"wasm": "probe.wasm"}, "permissions": EDITOR});
+    std::fs::write(longer.path().join("plugin.json"), manifest.to_string()).unwrap();
+    app.plugins.load_for_session(longer.path()).unwrap();
+    app.session.execute("layer.newSolid", json!({"name": "Graded"})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "test.gate-pre.pro.scale"})).unwrap();
+    let denied = app.relay("prop.set", json!({"path": "effects/#1/level", "value": "/Users/someone/secret"})).unwrap_err();
+    assert!(denied.contains("files.read"), "{denied}");
+}
