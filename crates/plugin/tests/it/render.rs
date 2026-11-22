@@ -69,6 +69,7 @@ fn reloading_a_plugin_with_new_code_changes_the_effect_revision_so_cached_frames
     std::fs::write(&module, bytes).unwrap();
     app.plugins.load_for_session(app.bundle.path()).unwrap();
     assert_ne!(effectcraft_engine::effects::revision(effect), first, "new code gets a new revision");
+}
 
 fn reader_key(app: &App) -> Option<u64> {
     let session = &app.session;
