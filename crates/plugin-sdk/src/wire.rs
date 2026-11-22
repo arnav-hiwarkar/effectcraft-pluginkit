@@ -918,6 +918,52 @@ pub enum LogLevel {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileErrorKind {
+    NotFound,
+    PermissionDenied,
+    Other,
+}
+
+const NOT_FOUND: &str = "not found: ";
+const DENIED: &str = "permission denied: ";
+
+pub fn file_failure(path: &str, error: &std::io::Error) -> String {
+    let prefix = match error.kind() {
+        std::io::ErrorKind::NotFound => NOT_FOUND,
+        std::io::ErrorKind::PermissionDenied => DENIED,
+        _ => "",
+    };
+    format!("{prefix}{path}: {error}")
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileError {
+    pub kind: FileErrorKind,
+    pub message: String,
+}
+
+impl FileError {
+    pub fn from_reply(message: String) -> Self {
+        let kind = if message.starts_with(NOT_FOUND) {
+            FileErrorKind::NotFound
+        } else if message.starts_with(DENIED) {
+            FileErrorKind::PermissionDenied
+        } else {
+            FileErrorKind::Other
+        };
+        FileError { kind, message }
+    }
+}
+
+impl std::fmt::Display for FileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for FileError {}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Root {
@@ -1401,3 +1447,4 @@ mod tests {
         let sent: Param = serde_json::from_str(&serde_json::to_string(&gain).unwrap()).unwrap();
         assert_eq!(sent, gain);
     }
+}

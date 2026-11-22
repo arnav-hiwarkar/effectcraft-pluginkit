@@ -748,6 +748,17 @@ fn make() -> Plugin {
             let bytes = host::read_file(Root::User, path.trim())?;
             host::write_file(Root::Data, "read.txt", &bytes)
         })
+        .command("read-kinds", "Read Kinds", || {
+            let reads = [(Root::Data, "absent.txt"), (Root::Data, "gone/deeper.txt"), (Root::Data, ".")];
+            let kinds: Vec<String> = reads
+                .iter()
+                .map(|(root, path)| match host::read_file(*root, path) {
+                    Ok(_) => "read".to_string(),
+                    Err(error) => format!("{:?}|{}", error.kind, error.message),
+                })
+                .collect();
+            host::write_file(Root::Data, "kinds.txt", kinds.join("\n").as_bytes())
+        })
         .command("put-table", "Put A Lookup Table", || host::cache_put("table", &[4, 5, 6]))
         .command("approve-itself", "Approve Itself", || host::command("plugin.approve", json!({"id": "test.gate-self"})).map(|_| ()))
         .command("read-inside-edit", "Read Inside An Edit", || {

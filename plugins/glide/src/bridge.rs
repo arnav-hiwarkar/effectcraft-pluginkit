@@ -15,7 +15,7 @@ impl Host for LiveHost {
     }
 
     fn read_data(&self, path: &str) -> Result<Vec<u8>, String> {
-        host::read_file(Root::Data, path).map_err(|e| e.0)
+        host::read_file(Root::Data, path).map_err(|e| e.message)
     }
 
     fn write_data(&self, path: &str, bytes: &[u8]) -> Result<(), String> {

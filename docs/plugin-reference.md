@@ -454,7 +454,7 @@ All are in `craft_plugin::host`.
 | `command(id, params)` for a command that only reads | `document.read` |
 | `command(id, params)` for a command that edits the project | `document.write` |
 | `command(…)` that names a file, such as `file.saveCopy` | `files.read` and `files.write`, as well |
-| `read_file(Root::Bundle, path)`, `list_files(Root::Bundle, path)` | None |
+| `read_file(Root::Bundle, path)`, `list_files(Root::Bundle, path)`; `read_file` returns a `FileError { kind, message }` whose `kind` is `NotFound`, `PermissionDenied` or `Other`, and `?` turns it into an `Error` | None |
 | `read_file`, `write_file`, `list_files` with `Root::Data` | None |
 | `read_file(Root::User, path)`, `list_files(Root::User, path)` | `files.read` |
 | `write_file(Root::User, path, bytes)` | `files.write` |

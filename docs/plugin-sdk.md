@@ -617,6 +617,16 @@ Panels and commands only. With `save: true` the path is also writable.
 
 ## Store files
 
+A missing file is not a failed read: `read_file` returns a `FileError` with a `kind`.
+
+```rust
+let saved = match host::read_file(Root::Data, "presets.json") {
+    Ok(bytes) => bytes,
+    Err(error) if error.kind == FileErrorKind::NotFound => Vec::new(),
+    Err(error) => return Err(error.into()),
+};
+```
+
 ```rust
 host::write_file(Root::Data, "presets.json", bytes)?;   // private to the plugin, always allowed
 let lut = host::read_file(Root::Bundle, "assets/film.cube")?;  // shipped with the plugin, read-only

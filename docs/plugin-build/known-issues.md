@@ -27,7 +27,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **Engine: influence cannot go below 0.1 %.** A curve handle exactly on its anchor's column is stored about 6.6e-4 of the value range off.
 - **Engine: `keys.info` gaps.** It does not give a key's index in its property, and reports 2 dimensions for scale on a 2D layer while `keys.setEase` works on 3.
 - **CLI: `bench` does not load plugins**, so plugin effects are missing from its timings. (`bench_cmd` in `apps/effectcraft-cli/src/main.rs`)
-- **SDK: `read_file` cannot tell a missing file from a failed read.**
 - **GPU: on WebGPU a bad plugin shader is not contained, and plugin GPU work has no time limit there**, because the browser build cannot wait for a submission (`Clock` in `crates/gpu/src/fx_plugin.rs`).
 - **GPU: a runaway plugin kernel stalls the GPU once per load.** A wgpu dispatch cannot be cancelled, so the 2 s budget is checked when a frame's plan has finished. The first frame that passes it stops the effect, which then renders on the CPU until the plugin is reloaded; that one frame still runs to its end (or until the OS GPU watchdog or the 10 s readback limit), and every other GPU effect waits for it. The error lists the plan's passes but cannot say which one was slow.
 
