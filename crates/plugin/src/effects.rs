@@ -396,6 +396,7 @@ fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) 
                 u: pass.u.clone(),
                 data: Vec::new(),
                 draw: pass.draw.clone().map(draw),
+                host: None,
             },
             Lowered::Host(step) => GpuPass {
                 kernel: step.entry.to_string(),
@@ -406,6 +407,7 @@ fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) 
                 u: step.u,
                 data: step.data,
                 draw: None,
+                host: Some(String::new()),
             },
         })
         .collect();

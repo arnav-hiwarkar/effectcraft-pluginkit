@@ -316,9 +316,10 @@ These prelude functions are stable:
 0..1 coordinates name the same spot in images of any size, so `sample_uv(aux, out_uv(id.xy))` reads a
 half-size scratch image under the current output pixel.
 
-The prelude declares other helpers that may change, and the host kernels as entry points whose names
-start with `craft_`. Prefix your own function names, for example with the effect's name, so they cannot
-collide with them.
+The prelude declares other helpers that may change, with names that start with `craft_`. Prefix your own
+function names, for example with the effect's name, so they cannot collide with them. The host kernels are
+compiled in a module of their own, so a plain pass cannot name one; use the [host kernel](#host-kernels)
+builders instead.
 
 When the WGSL fails to compile, or a kernel a pass names does not exist, the app logs the error once and
 renders the effect on the CPU until the plugin is reloaded. The log quotes line numbers of your source,

@@ -16,7 +16,7 @@ fn tint(@builtin(global_invocation_id) id: vec3<u32>) {
 "#;
 
 fn pass(kernel: &str, src: GpuSlot, out: GpuSlot) -> GpuPass {
-    GpuPass { kernel: kernel.into(), src, aux: None, out, f: TINT.to_vec(), u: Vec::new(), data: Vec::new(), draw: None }
+    GpuPass { kernel: kernel.into(), src, aux: None, out, f: TINT.to_vec(), u: Vec::new(), data: Vec::new(), draw: None, host: None }
 }
 
 fn tint_program() -> GpuProgram {
@@ -108,6 +108,17 @@ fn a_plugin_shader_that_does_not_compile_declines_to_the_cpu() {
 }
 
 #[test]
+fn a_plain_pass_cannot_run_a_built_in_kernel() {
+    let Some(g) = gpu() else { return };
+    let mut raw = pass("craft_convolve_x", GpuSlot::Source, GpuSlot::Output);
+    raw.u = vec![1025];
+    register("test.gpu.raw-host", TINT_WGSL, GpuProgram { passes: vec![raw], ..Default::default() });
+    assert!(run("test.gpu.raw-host").is_none(), "a plain pass naming a built-in kernel declines");
+    let reports = g.ctx.plugin_reports("test.gpu.raw-host");
+    assert!(reports.iter().any(|why| why.contains("craft_convolve_x")), "{reports:?}");
+}
+
+#[test]
 fn plans_the_gpu_cannot_hold_are_declined() {
     let Some(g) = gpu() else { return };
     let finish = pass("tint", GpuSlot::Source, GpuSlot::Output);
@@ -166,8 +177,7 @@ fn flip(@builtin(global_invocation_id) id: vec3<u32>) {
 #[test]
 fn a_kernel_may_store_each_pixel_anywhere_in_the_output() {
     let Some(g) = gpu() else { return };
-    let flip =
-        GpuPass { kernel: "flip".into(), src: GpuSlot::Source, aux: None, out: GpuSlot::Output, f: Vec::new(), u: Vec::new(), data: Vec::new(), draw: None };
+    let flip = GpuPass { f: Vec::new(), ..pass("flip", GpuSlot::Source, GpuSlot::Output) };
     register("test.gpu.flip", FLIP_WGSL, GpuProgram { passes: vec![flip], ..Default::default() });
     let spec = effectcraft_effects::find("test.gpu.flip").expect("registered");
     let params = Params::default();

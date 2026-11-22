@@ -4,7 +4,7 @@ use effectcraft_effects::EffectCtx;
 use effectcraft_effects::dynamic::{GpuPass, GpuProgram, GpuSlot, Grid, Registered};
 use web_time::Instant;
 
-use crate::context::{Enc, GpuImage, Kernel, KernelImages, Params};
+use crate::context::{Enc, GpuContext, GpuImage, Kernel, KernelImages, Params};
 use crate::effects::GBuf;
 use crate::fx_key::{Placed, fit, fitted};
 use crate::plugin_draw::{Stage, Target, check_data, check_draw};
@@ -33,8 +33,7 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
         return None;
     }
     let frame = [b.img.width, b.img.height];
-    let kernels: Vec<&str> = program.passes.iter().filter(|pass| pass.draw.is_none()).map(|pass| pass.kernel.as_str()).collect();
-    let pipelines = match check(&program, |w, h| g.fits(w, h)).and_then(|()| g.plugin_pipelines(id, revision, wgsl, &kernels)) {
+    let pipelines = match check(&program, |w, h| g.fits(w, h)).and_then(|()| compute_pipelines(g, id, revision, wgsl, &program)) {
         Ok(pipelines) => pipelines,
         Err(why) => {
             g.plugin_declined(id, &why);
@@ -102,6 +101,18 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
     b.img = images.get_mut(OUTPUT)?.take()?;
     log::debug!("gpu {}: plugin effect {id} ran {} passes at {}x{}", g.name, program.passes.len(), frame[0], frame[1]);
     Some(b)
+}
+
+fn compute_pipelines(g: &GpuContext, id: &str, revision: u64, wgsl: &str, program: &GpuProgram) -> Result<Vec<wgpu::ComputePipeline>, String> {
+    let compute = || program.passes.iter().filter(|pass| pass.draw.is_none());
+    let plain: Vec<&str> = compute().filter(|pass| pass.host.is_none()).map(|pass| pass.kernel.as_str()).collect();
+    let mut plain = g.plugin_pipelines(id, revision, wgsl, &plain)?.into_iter();
+    compute()
+        .map(|pass| match &pass.host {
+            Some(source) => g.host_pipeline(source, &pass.kernel),
+            None => plain.next().ok_or_else(|| "a plugin kernel was not built".to_string()),
+        })
+        .collect()
 }
 
 fn layer_image(e: &mut Enc, ctx: &EffectCtx, frame: &GBuf, param: &str) -> Option<GpuImage> {
