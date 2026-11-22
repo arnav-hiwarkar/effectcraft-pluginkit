@@ -130,16 +130,13 @@ struct PluginShaders {
     shaders: HashMap<String, PluginShader>,
     host: HashMap<String, HostModule>,
     generation: u64,
-    budget: std::time::Duration,
 }
 
 impl Default for PluginShaders {
     fn default() -> Self {
-        PluginShaders { shaders: HashMap::new(), host: HashMap::new(), generation: u64::MAX, budget: PLUGIN_GPU_BUDGET }
+        PluginShaders { shaders: HashMap::new(), host: HashMap::new(), generation: u64::MAX }
     }
 }
-
-const PLUGIN_GPU_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn plugin_prelude_lines() -> usize {
     PLUGIN_PRELUDE.iter().map(|part| part.lines().count()).sum()
@@ -1637,16 +1634,6 @@ impl GpuContext {
     #[cfg(test)]
     pub(crate) fn plugin_reports(&self, effect: &str) -> Vec<String> {
         self.plugin_shaders.lock().ok().and_then(|plugins| Some(plugins.shaders.get(effect)?.reported.iter().cloned().collect())).unwrap_or_default()
-    }
-
-    pub fn set_plugin_gpu_budget(&self, budget: std::time::Duration) {
-        if let Ok(mut plugins) = self.plugin_shaders.lock() {
-            plugins.budget = budget;
-        }
-    }
-
-    pub(crate) fn plugin_gpu_budget(&self) -> std::time::Duration {
-        self.plugin_shaders.lock().map(|plugins| plugins.budget).unwrap_or(PLUGIN_GPU_BUDGET)
     }
 
     pub(crate) fn plugin_pipelines(&self, effect: &str, revision: u64, wgsl: &str, kernels: &[&str]) -> Result<Vec<wgpu::ComputePipeline>, String> {

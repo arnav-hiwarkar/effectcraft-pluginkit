@@ -120,7 +120,6 @@ pub struct DynamicEffect {
 pub struct Registered {
     pub spec: &'static EffectSpec,
     pub effect: DynamicEffect,
-    pub gpu_stopped: std::sync::OnceLock<String>,
 }
 
 static REGISTRY: RwLock<Vec<Arc<Registered>>> = RwLock::new(Vec::new());
@@ -176,7 +175,7 @@ pub fn register(effect: DynamicEffect) {
     effectcraft_project::declare_reads_other_frames(spec.id, effect.reads_other_frames);
     let mut registry = REGISTRY.write().unwrap_or_else(|poisoned| poisoned.into_inner());
     registry.retain(|r| r.spec.id != spec.id);
-    registry.push(Arc::new(Registered { spec, effect, gpu_stopped: std::sync::OnceLock::new() }));
+    registry.push(Arc::new(Registered { spec, effect }));
     GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
 }
 

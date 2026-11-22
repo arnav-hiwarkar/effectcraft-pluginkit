@@ -1,8 +1,5 @@
-use std::time::Duration;
-
 use effectcraft_effects::EffectCtx;
 use effectcraft_effects::dynamic::{GpuPass, GpuProgram, GpuSlot, Grid, Registered};
-use web_time::Instant;
 
 use crate::context::{Enc, GpuContext, GpuImage, Kernel, KernelImages, Params};
 use crate::effects::GBuf;
@@ -14,9 +11,6 @@ const OUTPUT: usize = 1;
 
 pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b: GBuf) -> Option<GBuf> {
     let effect = &registered.effect;
-    if registered.gpu_stopped.get().is_some() {
-        return None;
-    }
     let (Some(wgsl), Some(plan)) = (effect.shader.as_deref(), effect.gpu.as_ref()) else { return None };
     let (id, revision) = (registered.spec.id, effect.revision);
     let g = e.g;
@@ -59,16 +53,9 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
         g.plugin_declined(id, &why);
         return None;
     }
-    let clock = Clock::start(e);
     if let Err(why) = record(e, &program, &pipelines, &mut stage, &mut images, &sizes) {
         e.discard();
         g.plugin_declined(id, &why);
-        return None;
-    }
-    if let Err(why) = clock.ran(e, id, &program) {
-        if registered.gpu_stopped.set(why.clone()).is_ok() {
-            g.plugin_declined(id, &why);
-        }
         return None;
     }
     b.img = images.get_mut(OUTPUT)?.take()?;
@@ -140,38 +127,6 @@ fn layer_image(e: &mut Enc, ctx: &EffectCtx, frame: &GBuf, param: &str) -> Optio
         e.g.transfers.layers_copied.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     Some(fitted.unwrap_or_else(|| e.zeros(w, h)))
-}
-
-struct Clock {
-    budget: Option<Duration>,
-    start: Instant,
-}
-
-impl Clock {
-    fn start(e: &mut Enc) -> Self {
-        e.submit();
-        let drained = |g: &GpuContext| g.poll_wait(g.queue.submit([]), crate::readback::TIMEOUT);
-        let budget = e.g.deferred.is_none().then(|| e.g.plugin_gpu_budget()).filter(|_| drained(e.g));
-        Clock { budget, start: Instant::now() }
-    }
-
-    fn ran(&self, e: &mut Enc, effect: &str, program: &GpuProgram) -> Result<(), String> {
-        let Some(budget) = self.budget else { return Ok(()) };
-        e.submit();
-        if let Some(submission) = e.last_submission() {
-            e.g.poll_wait(submission, budget.saturating_sub(self.start.elapsed()).max(Duration::from_millis(1)));
-        }
-        let spent = self.start.elapsed();
-        if spent > budget {
-            let kernels: Vec<&str> = program.passes.iter().map(|pass| pass.kernel.as_str()).collect();
-            return Err(format!(
-                "the plugin effect {effect} was stopped: the GPU work of one frame, passes {kernels:?}, took {} ms, past the {} ms budget. It renders on the CPU until the plugin is reloaded",
-                spent.as_millis(),
-                budget.as_millis()
-            ));
-        }
-        Ok(())
-    }
 }
 
 fn index(slot: GpuSlot, program: &GpuProgram) -> Option<usize> {
