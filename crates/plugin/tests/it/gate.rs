@@ -215,3 +215,30 @@ fn a_plugin_may_write_text_into_its_own_custom_parameter_but_not_into_another_pl
     let denied = effectcraft_plugin::run_command(&mut app.session, "test.gate-other", "relay").unwrap_err();
     assert!(denied.contains("files.read"), "{denied}");
 }
+
+#[test]
+fn changing_how_an_updated_plugin_runs_does_not_grant_permissions_the_user_has_not_approved() {
+    let app = app("test.gate-mode-host", EDITOR);
+    let id = "test.gate-mode";
+    let source = tempfile::tempdir().unwrap();
+    std::fs::copy(app.bundle.path().join("probe.wasm"), source.path().join("probe.wasm")).unwrap();
+    let write = |version: &str, permissions: &[&str]| {
+        let manifest = json!({"id": id, "name": "Mode", "version": version, "entry": {"wasm": "probe.wasm"}, "permissions": permissions});
+        std::fs::write(source.path().join("plugin.json"), manifest.to_string()).unwrap();
+    };
+    write("1.0.0", &[]);
+    app.plugins.install(source.path()).unwrap();
+    app.plugins.approve(id).unwrap();
+    assert!(app.plugins.get(id).is_some());
+
+    write("1.1.0", &["document.read"]);
+    app.plugins.install(source.path()).unwrap();
+    assert!(app.plugins.get(id).is_none(), "the update waits for approval");
+    app.plugins.set_sandboxed(id, true).unwrap();
+    assert!(app.plugins.get(id).is_none(), "choosing the sandbox started a plugin whose new permission was never approved");
+
+    app.plugins.approve(id).unwrap();
+    let granted: Vec<&str> = app.plugins.get(id).unwrap().bundle.manifest.permissions.iter().map(|p| p.name()).collect();
+    assert_eq!(granted, ["document.read"]);
+    app.plugins.uninstall(id).unwrap();
+}
