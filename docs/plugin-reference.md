@@ -260,7 +260,8 @@ later effects in the stack need. Without padding, a layer wholly in the frame re
 `Layout::pointwise()`, `Layout::neighbourhood(n)` or `.maps_input()` that rectangle is split into bands of
 rows on all cores, for sandboxed and native builds alike, and no row is written twice. A native plugin
 reads the input where it lies and writes the output frame directly; a sandboxed one gets its input rows
-copied in and its rows copied out. The rendered bands go into a new frame that replaces the layer's frame
+copied in and its rows copied out. A sandboxed effect whose reach covers the frame renders in one band, so
+the frame is copied in once, and its bands never stage more than 1 GiB of rows between them. The rendered bands go into a new frame that replaces the layer's frame
 only when every call succeeded, so an effect that fails, in any band, leaves the layer as it was.
 
 A plugin built before frames had separate input (it sends no `separate_input` in its description) still

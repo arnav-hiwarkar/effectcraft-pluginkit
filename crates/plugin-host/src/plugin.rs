@@ -17,6 +17,7 @@ use crate::registry::Bundle;
 use crate::runtime::Engine;
 
 const MIN_BAND_ROWS: usize = 64;
+const STAGED_BYTES: usize = 1 << 30;
 
 fn plain_id(id: &str) -> bool {
     !id.is_empty() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
@@ -168,10 +169,12 @@ impl Plugin {
             return Ok(area);
         }
         let (rows, out_width) = (area.height() as usize, area.width() as usize);
-        let even_rows = rows.div_ceil((rows / MIN_BAND_ROWS).clamp(1, rayon::current_num_threads()));
+        let bands = (rows / MIN_BAND_ROWS).clamp(1, rayon::current_num_threads());
+        let even_rows = rows.div_ceil(bands);
         let reach = layout.reach.map(|reach| reach as usize);
         let band_rows = match reach {
             _ if separate && layout.maps_input => even_rows,
+            Some(reach) if separate && self.engine.copies_pixels() => copied_band_rows(area, height, width, reach, bands, STAGED_BYTES),
             Some(_) if separate => even_rows,
             Some(reach) if even_rows.max(reach + 1) + 2 * reach < rows => even_rows.max(reach + 1),
             _ => rows,
@@ -387,6 +390,22 @@ impl Drop for Plugin {
     }
 }
 
+fn copied_band_rows(area: Rect, height: usize, width: usize, reach: usize, bands: usize, budget: usize) -> usize {
+    let (rows, top, bottom) = (area.height() as usize, area.top as usize, area.bottom as usize);
+    let staged = |band_rows: usize| {
+        (0..rows).step_by(band_rows).fold((rows * area.width() as usize, true), |(pixels, covers), start| {
+            let first = (top + start).saturating_sub(reach);
+            let last = (top + start + band_rows).min(bottom).saturating_add(reach).min(height);
+            (pixels + (last - first) * width, covers && last - first == height)
+        })
+    };
+    (1..=bands)
+        .rev()
+        .map(|bands| rows.div_ceil(bands))
+        .find(|&band_rows| matches!(staged(band_rows), (pixels, false) if pixels.saturating_mul(size_of::<Pixel>()) <= budget))
+        .unwrap_or(rows)
+}
+
 fn what(call: &Call) -> String {
     match call {
         Call::Describe => "describing the plugin".into(),
@@ -411,5 +430,20 @@ fn origin(call: &Call) -> Origin {
         }
         Call::Layout { .. } | Call::Input { .. } | Call::Render { .. } | Call::Pass { .. } => Origin::Render,
         Call::Task { .. } => Origin::Task,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sandboxed_render_uses_one_band_when_its_reach_covers_the_frame_and_bounds_what_its_bands_stage() {
+        let frame = Rect::of_size([64, 256]);
+        assert_eq!(copied_band_rows(frame, 256, 64, 1000, 4, usize::MAX), 256, "a reach over the frame");
+        assert_eq!(copied_band_rows(frame, 256, 64, 8, 4, usize::MAX), 64, "a short reach");
+        assert_eq!(copied_band_rows(frame, 256, 64, 100, 4, 1_064_960), 64, "four bands stage 1,064,960 bytes");
+        assert_eq!(copied_band_rows(frame, 256, 64, 100, 4, 800_000), 128, "two bands stage 729,088 bytes");
+        assert_eq!(copied_band_rows(frame, 256, 64, 100, 4, 1000), 256, "nothing fits: one band");
     }
 }
