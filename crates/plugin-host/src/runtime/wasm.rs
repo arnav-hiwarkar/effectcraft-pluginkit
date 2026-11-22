@@ -1,5 +1,5 @@
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use craft_plugin::{ABI, Outcome, Pixel};
 use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc};
@@ -19,6 +19,7 @@ struct State {
     limits: StoreLimits,
     ctx: usize,
     alloc: Option<AllocFn>,
+    deadline: Option<Instant>,
 }
 
 fn engine() -> Result<&'static Engine, PluginError> {
@@ -60,7 +61,7 @@ impl WasmModule {
 
     pub fn instantiate(&self) -> Result<WasmGuest, PluginError> {
         let limits = StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).memories(1).instances(1).build();
-        let mut store = Store::new(self.module.engine(), State { limits, ctx: 0, alloc: None });
+        let mut store = Store::new(self.module.engine(), State { limits, ctx: 0, alloc: None, deadline: None });
         store.limiter(|state| &mut state.limits);
         store.set_epoch_deadline(ticks(Duration::from_secs(5)));
         let instance = self.linker.instantiate(&mut store, &self.module).map_err(load_error)?;
@@ -93,8 +94,10 @@ impl WasmGuest {
     pub fn call(&mut self, request: &[u8], io: Io, cx: &mut HostCx, budget: Duration) -> Result<Vec<u8>, PluginError> {
         self.store.set_epoch_deadline(ticks(budget));
         self.store.data_mut().ctx = native::erase(cx);
+        self.store.data_mut().deadline = Instant::now().checked_add(budget);
         let reply = self.exchange(request, io);
         self.store.data_mut().ctx = 0;
+        self.store.data_mut().deadline = None;
         reply.map_err(|e| PluginError::Trap(format!("{e:#}")))
     }
 
@@ -168,6 +171,9 @@ fn host_call(mut caller: Caller<'_, State>, _ctx: u32, request: u32, request_len
     let request = slice(request, request_len)?;
     let bulk_in = slice(bulk, bulk_len)?;
     let (reply, bulk_out) = native::serve_erased(caller.data().ctx, &request, &bulk_in);
+    if caller.data().deadline.is_some_and(|deadline| Instant::now() > deadline) {
+        wasmtime::bail!("the plugin passed its time limit while the host served a call");
+    }
     let alloc = caller.data().alloc.clone().ok_or_else(|| wasmtime::format_err!("host call before start"))?;
     let mut place = |bytes: &[u8]| -> wasmtime::Result<[u32; 2]> {
         if bytes.is_empty() {

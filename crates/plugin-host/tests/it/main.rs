@@ -245,6 +245,24 @@ fn the_private_data_folder_cannot_be_escaped_and_the_bundle_is_read_only() {
 }
 
 #[test]
+fn a_sandboxed_plugin_whose_host_call_returns_after_its_time_limit_fails() {
+    struct Slow;
+    impl Host for Slow {
+        fn access(&self, _command: &str, _params: &Value) -> Access {
+            Access::Needs(vec![])
+        }
+        fn command(&mut self, _id: &str, _params: Value) -> Result<Value, String> {
+            std::thread::sleep(Duration::from_millis(700));
+            Ok(Value::Null)
+        }
+    }
+    let loaded = load(Kind::Wasm, &[]);
+    std::fs::write(loaded._dir.path().join("relay.json"), json!({"command": "comp.info", "params": {}}).to_string()).unwrap();
+    let late = loaded.plugin.call::<()>(&Call::Command { command: "relay".into() }, None, &mut Slow).unwrap_err();
+    assert!(matches!(&late, PluginError::Trap(why) if why.contains("time limit")), "{late:?}");
+}
+
+#[test]
 fn a_sandboxed_plugin_that_never_returns_is_stopped_and_the_next_call_still_works() {
     let loaded = load(Kind::Wasm, &[]);
     let mut pixels: Vec<Pixel> = vec![[0.0; 4]; 4];
