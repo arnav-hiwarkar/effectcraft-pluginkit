@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -78,7 +79,10 @@ pub(crate) struct Tasks {
     next: Mutex<u64>,
     slots: Mutex<BTreeMap<u64, Arc<Slot>>>,
     queue: Mutex<VecDeque<Forwarded>>,
+    closed: AtomicBool,
 }
+
+const STOPPED: &str = "the plugin was stopped";
 
 impl Tasks {
     pub fn know(&self, names: Vec<String>) {
@@ -90,6 +94,9 @@ impl Tasks {
             return Err(format!("this plugin has no task `{task}`"));
         }
         let mut slots = lock(&self.slots);
+        if self.closed.load(Ordering::Acquire) {
+            return Err(STOPPED.into());
+        }
         if slots.values().filter(|slot| slot.running()).count() >= MAX_RUNNING {
             return Err(format!("this plugin already runs {MAX_RUNNING} tasks"));
         }
@@ -128,6 +135,11 @@ impl Tasks {
     }
 
     pub fn cancel_all(&self) {
+        {
+            let mut queue = lock(&self.queue);
+            self.closed.store(true, Ordering::Release);
+            queue.clear();
+        }
         let ids: Vec<u64> = lock(&self.slots).keys().copied().collect();
         ids.into_iter().for_each(|id| {
             self.cancel(id);
@@ -138,6 +150,9 @@ impl Tasks {
         let (reply, answer) = channel();
         {
             let mut queue = lock(&self.queue);
+            if self.closed.load(Ordering::Acquire) {
+                return Err(STOPPED.into());
+            }
             if task.cancelled() {
                 return Err("cancelled".into());
             }

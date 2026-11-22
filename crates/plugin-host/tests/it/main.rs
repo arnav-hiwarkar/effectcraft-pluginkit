@@ -582,7 +582,8 @@ fn a_plugin_runs_at_most_four_tasks_at_once_and_stopping_it_cancels_them() {
         let states: Vec<TaskStatus> = ids.iter().map(|id| settle(&loaded, *id, &mut Recorder::default()).status).collect();
         assert_eq!(states, [TaskStatus::Cancelled; 4], "{kind:?}");
         assert_eq!(loaded.plugin.running_tasks(), 0);
-        loaded.plugin.start("count", json!({"steps": 1})).unwrap();
+        let after = loaded.plugin.start("count", json!({"steps": 1})).unwrap_err();
+        assert!(after.to_string().contains("the plugin was stopped"), "{kind:?} {after}");
     });
 }
 
