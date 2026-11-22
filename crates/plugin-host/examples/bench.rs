@@ -69,7 +69,7 @@ fn source(size: [u32; 2]) -> Vec<Pixel> {
         .collect()
 }
 
-fn median_ms(rounds: usize, mut reset: impl FnMut(), mut run: impl FnMut()) -> f64 {
+fn median_ms(rounds: usize, mut reset: impl FnMut(), mut run: impl FnMut()) -> [f64; 2] {
     reset();
     run();
     let mut times: Vec<f64> = (0..rounds)
@@ -81,10 +81,10 @@ fn median_ms(rounds: usize, mut reset: impl FnMut(), mut run: impl FnMut()) -> f
         })
         .collect();
     times.sort_by(f64::total_cmp);
-    times[rounds / 2]
+    [times[rounds / 2], times[0]]
 }
 
-fn render(plugin: &Plugin, effect: &str, size: [u32; 2], rounds: usize) -> (f64, Vec<Pixel>) {
+fn render(plugin: &Plugin, effect: &str, size: [u32; 2], rounds: usize) -> ([f64; 2], Vec<Pixel>) {
     let mut cx = RenderCx { size, scale: 1.0, time: 1.25, frame_rate: 24.0, layer_size: [f64::from(size[0]), f64::from(size[1])], ..Default::default() };
     cx.params = defaults(plugin, effect, size);
     let layout: Layout = plugin.call(&Call::Layout { effect: effect.into(), cx: cx.clone() }, None, &mut NoHost).unwrap();
@@ -115,8 +115,11 @@ fn main() {
     let only: Vec<String> = std::env::args().skip(1).collect();
     let scratch = std::env::temp_dir().join("craft-plugin-bench");
     let rounds = 15;
-    println!("f32 RGBA, {} rayon threads, median of {rounds}", rayon::current_num_threads());
-    println!("{:<16} {:>9} {:>11} {:>11} {:>7} {:>11} {:>17}", "effect", "size", "native ms", "wasm ms", "ratio", "load ms", "wasm digest");
+    println!("f32 RGBA, {} rayon threads, median and minimum of {rounds}", rayon::current_num_threads());
+    println!(
+        "{:<16} {:>9} {:>11} {:>11} {:>7} {:>11} {:>11} {:>7} {:>11} {:>17}",
+        "effect", "size", "native ms", "wasm ms", "ratio", "native min", "wasm min", "ratio", "load ms", "wasm digest"
+    );
     for subject in subjects.iter().filter(|s| only.is_empty() || only.iter().any(|o| s.library.contains(o.as_str()))) {
         let native = load(&scratch, subject, false);
         let start = Instant::now();
@@ -127,10 +130,15 @@ fn main() {
             let (wasm_ms, wasm_out) = render(&wasm, subject.effect, size, rounds);
             let same = if native_out == wasm_out { "same as native" } else { "differs from native" };
             println!(
-                "{:<16} {:>9} {native_ms:>11.2} {wasm_ms:>11.2} {:>7.2} {load_ms:>11.1} {:>17x} {same}",
+                "{:<16} {:>9} {:>11.2} {:>11.2} {:>7.2} {:>11.2} {:>11.2} {:>7.2} {load_ms:>11.1} {:>17x} {same}",
                 subject.name,
                 format!("{}x{}", size[0], size[1]),
-                wasm_ms / native_ms,
+                native_ms[0],
+                wasm_ms[0],
+                wasm_ms[0] / native_ms[0],
+                native_ms[1],
+                wasm_ms[1],
+                wasm_ms[1] / native_ms[1],
                 digest(&wasm_out)
             );
         }
