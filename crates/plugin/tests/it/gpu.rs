@@ -97,6 +97,18 @@ fn a_draw_pass_fills_the_frame_and_a_plan_with_an_index_past_its_vertices_is_dec
 }
 
 #[test]
+fn a_draw_that_keeps_its_target_draws_over_what_the_passes_before_it_wrote() {
+    let app = app("test.gpu-keep", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.gpu-fill", app.id)).expect("the probe registered its draw effect");
+    let mut keep = params(spec, &[]);
+    keep.values.insert("onto_scratch".into(), Value::Bool(true));
+    let out = gpu.effects(&[FxStep { spec, ctx: ctx(&keep) }], &picture(), None).expect("the GPU ran the plan");
+    assert_eq!(app.plugins.render_error(spec.id), None);
+    assert_eq!([out.img.data[0], out.img.data[5]], [[0.25, 0.125, 0.5, 0.5], [0.5, 0.25, 1.0, 1.0]]);
+}
+
+#[test]
 fn a_gpu_pass_reads_the_layer_a_layer_parameter_names() {
     let mut app = app("test.gpu-matte", &[]);
     let Some(gpu) = gpu() else { return };

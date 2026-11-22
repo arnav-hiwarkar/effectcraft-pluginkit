@@ -1071,6 +1071,21 @@ fn host_kernel_passes_run_in_the_app_between_plugin_passes() {
 }
 
 #[test]
+fn a_native_pass_is_handed_its_target_as_the_passes_before_it_left_it() {
+    let mut plan = GpuPlan::new();
+    let (a, b) = (plan.scratch(PASS_FRAME), plan.scratch(PASS_FRAME));
+    let half = [[0.5, 0.0, 0.0, 0.0], [0.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 0.5]];
+    let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    let plan = plan
+        .pass(GpuPass::matrix(GpuImage::Source, a, half))
+        .pass(GpuPass::matrix(a, b, identity))
+        .pass(GpuPass::new("probe_nothing", b, a))
+        .pass(GpuPass::matrix(a, GpuImage::Output, identity));
+    assert_eq!(at(&run_plan(Kind::Native, &plan).unwrap(), 10, 75), [5.0, 37.5, 0.5, 0.5]);
+    assert_eq!(at(&run_plan(Kind::Wasm, &plan).unwrap(), 10, 75), [0.0; 4], "a sandboxed pass starts from a clear target");
+}
+
+#[test]
 fn a_pass_with_too_little_reach_is_missing_rows_at_band_edges() {
     let short = GpuPlan::new().pass(GpuPass::new("probe_tall", GpuImage::Source, GpuImage::Output).reach(2));
     let pixels = run_plan(Kind::Wasm, &short).unwrap();

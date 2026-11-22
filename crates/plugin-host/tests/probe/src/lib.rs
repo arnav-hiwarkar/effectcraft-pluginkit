@@ -140,15 +140,30 @@ struct GpuFill;
 
 impl Effect for GpuFill {
     fn spec(&self) -> EffectSpec {
-        EffectSpec::new("gpu-fill", "GPU Fill", "Probe").param(Param::slider("last_index", "Last Index", 2.0, 0.0..=9.0)).shader(FILL_SHADER)
+        EffectSpec::new("gpu-fill", "GPU Fill", "Probe")
+            .param(Param::slider("last_index", "Last Index", 2.0, 0.0..=9.0))
+            .param(Param::checkbox("onto_scratch", "Onto Scratch", false))
+            .shader(FILL_SHADER)
     }
 
     fn layout(&self, cx: &Cx) -> Layout {
         let mut plan = GpuPlan::new();
         let corners = plan.buffer(GpuData::Floats(vec![-1.0, -1.0, 3.0, -1.0, -1.0, 3.0]));
         let triangle = plan.buffer(GpuData::Indices(vec![0, 1, cx.f("last_index") as u32]));
-        let fill = GpuPass::draw("probe_fill", GpuImage::Output).vertices(corners, &[2]).indices(triangle).clear().floats(&FILL);
-        Layout::pointwise().gpu(plan.pass(fill))
+        let fill = GpuPass::draw("probe_fill", GpuImage::Output).vertices(corners, &[2]).indices(triangle).floats(&FILL);
+        if !cx.bool("onto_scratch") {
+            return Layout::pointwise().gpu(plan.pass(fill.clear()));
+        }
+        let frame = cx.size;
+        let (a, b) = (plan.scratch(frame), plan.scratch(frame));
+        let from_alpha = [[0.0, 0.0, 0.0, 0.5], [0.0, 0.0, 0.0, 0.25], [0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]];
+        let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        let plan = plan
+            .pass(GpuPass::matrix(GpuImage::Source, a, from_alpha))
+            .pass(GpuPass::matrix(a, b, identity))
+            .pass(GpuPass { out: a, ..fill.count(0) })
+            .pass(GpuPass::matrix(a, GpuImage::Output, identity));
+        Layout::pointwise().gpu(plan)
     }
 
     fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {

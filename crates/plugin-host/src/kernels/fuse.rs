@@ -42,9 +42,13 @@ fn reads_aux(kernel: &HostKernel) -> bool {
     matches!(kernel, HostKernel::Blend { .. })
 }
 
+fn keeps_target(pass: &GpuPass) -> bool {
+    pass.host.is_none() && pass.draw.as_ref().is_none_or(|draw| !draw.clear)
+}
+
 pub(crate) fn live_after(passes: &[GpuPass], image: GpuImage) -> bool {
     for pass in passes {
-        if pass.src == image || pass.aux == Some(image) {
+        if pass.src == image || pass.aux == Some(image) || (pass.out == image && keeps_target(pass)) {
             return true;
         }
         if pass.out == image {
