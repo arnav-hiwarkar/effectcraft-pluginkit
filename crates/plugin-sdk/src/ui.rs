@@ -1,19 +1,19 @@
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 
-use crate::wire::{Paint, Pointer, Shape, TextStyle, UiEvent, UiEventKind, UiInput, Widget};
+use crate::wire::{AppEvent, Drag, Dropped, Key, MIN_TIMER_MS, Paint, PanelReply, Pointer, Shape, TextStyle, Timer, Topic, UiEventKind, UiInput, Widget};
 
 pub trait Panel: Send + 'static {
     fn ui(&mut self, ui: &mut Ui);
 }
 
 pub struct Ui<'a> {
-    events: &'a [UiEvent],
-    keys: &'a str,
-    size: [f32; 2],
+    input: &'a UiInput,
     widgets: Vec<Widget>,
     seen: HashMap<u64, u32>,
     scope: u64,
+    topics: Vec<Topic>,
+    timers: Vec<Timer>,
 }
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -25,19 +25,44 @@ fn hash(seed: u64, bytes: &[u8]) -> u64 {
 
 impl<'a> Ui<'a> {
     pub fn new(input: &'a UiInput) -> Self {
-        Ui { events: &input.events, keys: &input.keys, size: input.size, widgets: Vec::new(), seen: HashMap::new(), scope: FNV_OFFSET }
+        Ui { input, widgets: Vec::new(), seen: HashMap::new(), scope: FNV_OFFSET, topics: Vec::new(), timers: Vec::new() }
     }
 
     pub fn finish(self) -> Vec<Widget> {
         self.widgets
     }
 
+    pub fn reply(self) -> PanelReply {
+        PanelReply { widgets: self.widgets, topics: self.topics, timers: self.timers, legacy: false }
+    }
+
     pub fn available(&self) -> [f32; 2] {
-        self.size
+        self.input.size
     }
 
     pub fn keys(&self) -> &'a str {
-        self.keys
+        &self.input.keys
+    }
+
+    pub fn on(&mut self, topic: Topic) -> Option<&'a AppEvent> {
+        if !self.topics.contains(&topic) {
+            self.topics.push(topic);
+        }
+        self.input.app.iter().find(|event| event.topic() == topic)
+    }
+
+    pub fn every(&mut self, name: &str, ms: u32) -> bool {
+        self.timer(name, ms, true)
+    }
+
+    pub fn after(&mut self, name: &str, ms: u32) -> bool {
+        self.timer(name, ms, false)
+    }
+
+    fn timer(&mut self, name: &str, ms: u32, repeat: bool) -> bool {
+        self.timers.retain(|timer| timer.name != name);
+        self.timers.push(Timer { name: name.into(), ms: ms.max(MIN_TIMER_MS), repeat });
+        self.input.timers.iter().any(|fired| fired == name)
     }
 
     fn id(&mut self, key: &str) -> u64 {
@@ -48,11 +73,16 @@ impl<'a> Ui<'a> {
     }
 
     fn event(&self, id: u64) -> Option<&'a UiEventKind> {
-        self.events.iter().rev().find(|e| e.id == id).map(|e| &e.kind)
+        self.events_of(id).last()
+    }
+
+    fn events_of(&self, id: u64) -> impl DoubleEndedIterator<Item = &'a UiEventKind> + use<'a> {
+        self.input.events.iter().filter(move |e| e.id == id).map(|e| &e.kind)
     }
 
     fn text(&mut self, text: &str, style: TextStyle) {
-        self.widgets.push(Widget::Label { text: text.into(), style });
+        let id = self.id(text);
+        self.widgets.push(Widget::Label { id, text: text.into(), style });
     }
 
     pub fn label(&mut self, text: &str) {
@@ -187,11 +217,15 @@ impl<'a> Ui<'a> {
 
     pub fn canvas(&mut self, key: &str, size: [f32; 2], draw: impl FnOnce(&mut Canvas)) {
         let id = self.id(key);
-        let pointer = match self.event(id) {
-            Some(UiEventKind::Pointer(pointer)) => Some(*pointer),
-            _ => None,
-        };
-        let mut canvas = Canvas { size, pointer, shapes: Vec::new() };
+        let mut canvas = Canvas { size, pointer: None, pointers: Vec::new(), keys: Vec::new(), shapes: Vec::new() };
+        for kind in self.events_of(id) {
+            match kind {
+                UiEventKind::Pointer(pointer) => canvas.pointers.push(*pointer),
+                UiEventKind::Key(key) => canvas.keys.push(key.clone()),
+                _ => {}
+            }
+        }
+        canvas.pointer = canvas.pointers.last().copied();
         draw(&mut canvas);
         self.widgets.push(Widget::Canvas { id, size, shapes: canvas.shapes });
     }
@@ -239,6 +273,22 @@ impl<'a> Ui<'a> {
         self.widgets.push(Widget::Grid { id, columns, children });
     }
 
+    pub fn drop_target(&mut self, key: &str, build: impl FnOnce(&mut Ui<'a>)) -> Option<&'a Dropped> {
+        let id = self.id(key);
+        let children = self.nested_in(id, build);
+        self.widgets.push(Widget::DropTarget { id, children });
+        self.events_of(id).rev().find_map(|kind| match kind {
+            UiEventKind::Drop(dropped) => Some(dropped),
+            _ => None,
+        })
+    }
+
+    pub fn drag_source(&mut self, key: &str, drag: Drag, build: impl FnOnce(&mut Ui<'a>)) {
+        let id = self.id(key);
+        let children = self.nested_in(id, build);
+        self.widgets.push(Widget::DragSource { id, drag, children });
+    }
+
     fn nested_in(&mut self, scope: u64, build: impl FnOnce(&mut Ui<'a>)) -> Vec<Widget> {
         let outer_scope = std::mem::replace(&mut self.scope, scope);
         let outer_widgets = std::mem::take(&mut self.widgets);
@@ -251,6 +301,8 @@ impl<'a> Ui<'a> {
 pub struct Canvas {
     pub size: [f32; 2],
     pub pointer: Option<Pointer>,
+    pub pointers: Vec<Pointer>,
+    pub keys: Vec<Key>,
     shapes: Vec<Shape>,
 }
 
@@ -287,7 +339,7 @@ impl Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::PointerPhase;
+    use crate::wire::{Modifiers, PointerPhase, UiEvent};
 
     fn frame(events: Vec<UiEvent>, build: impl FnOnce(&mut Ui)) -> Vec<Widget> {
         let input = UiInput { events, size: [200.0, 100.0], ..Default::default() };
@@ -411,7 +463,7 @@ mod tests {
         assert_eq!(*height, 120.0);
         assert_ne!(id_of(&children[0]), id_of(&widgets[0]));
         assert!(
-            matches!(&widgets[2], Widget::Collapsing { title, open: false, children, .. } if title == "More" && children == &vec![Widget::Label { text: "hidden".into(), style: TextStyle::Body }])
+            matches!(&widgets[2], Widget::Collapsing { title, open: false, children, .. } if title == "More" && matches!(&children[..], [Widget::Label { text, style: TextStyle::Body, .. }] if text == "hidden"))
         );
         assert!(matches!(&widgets[3], Widget::Grid { columns: 3, children, .. } if children.len() == 2));
     }
@@ -471,5 +523,72 @@ mod tests {
     fn keys_typed_while_the_panel_has_focus_reach_the_ui() {
         let input = UiInput { keys: "ab".into(), ..Default::default() };
         assert_eq!(Ui::new(&input).keys(), "ab");
+    }
+
+    fn input(events: Vec<UiEvent>, app: Vec<AppEvent>, timers: &[&str]) -> UiInput {
+        UiInput { events, app, timers: timers.iter().map(|t| t.to_string()).collect(), size: [200.0, 100.0], ..Default::default() }
+    }
+
+    #[test]
+    fn a_canvas_sees_every_pointer_and_key_of_the_call_in_order_and_its_pointer_is_the_last() {
+        let Widget::Canvas { id, .. } = frame(vec![], |ui| ui.canvas("pad", [50.0, 50.0], |_| {}))[0].clone() else { panic!("canvas expected") };
+        let shift = Modifiers { shift: true, alt: false, command: false };
+        let events = vec![
+            UiEvent { id, kind: UiEventKind::Pointer(Pointer::new([1.0, 1.0], PointerPhase::Down)) },
+            UiEvent { id, kind: UiEventKind::Key(Key { name: "ArrowLeft".into(), modifiers: shift }) },
+            UiEvent { id, kind: UiEventKind::Pointer(Pointer::new([2.0, 1.0], PointerPhase::Drag)) },
+            UiEvent { id: id + 1, kind: UiEventKind::Pointer(Pointer::new([9.0, 9.0], PointerPhase::Up)) },
+        ];
+        let (mut pointers, mut keys, mut last) = (vec![], vec![], None);
+        frame(events, |ui| {
+            ui.canvas("pad", [50.0, 50.0], |c| {
+                pointers = c.pointers.iter().map(|p| (p.pos, p.phase)).collect();
+                keys = c.keys.clone();
+                last = c.pointer.map(|p| p.pos);
+            })
+        });
+        assert_eq!(pointers, vec![([1.0, 1.0], PointerPhase::Down), ([2.0, 1.0], PointerPhase::Drag)]);
+        assert_eq!(keys, vec![Key { name: "ArrowLeft".into(), modifiers: shift }]);
+        assert_eq!(last, Some([2.0, 1.0]));
+    }
+
+    #[test]
+    fn a_panel_subscribes_and_arms_timers_in_its_reply_and_sees_what_was_delivered() {
+        let selection = AppEvent::Selection { layers: vec![3], properties: vec![], keyframes: 0 };
+        let delivered = input(vec![], vec![selection.clone()], &["tick"]);
+        let mut ui = Ui::new(&delivered);
+        assert_eq!(ui.on(Topic::Selection), Some(&selection));
+        assert_eq!(ui.on(Topic::Time), None);
+        assert!(ui.every("tick", 5));
+        assert!(!ui.after("hide", 2000));
+        let reply = ui.reply();
+        assert_eq!(reply.topics, vec![Topic::Selection, Topic::Time]);
+        assert_eq!(
+            reply.timers,
+            vec![Timer { name: "tick".into(), ms: MIN_TIMER_MS, repeat: true }, Timer { name: "hide".into(), ms: 2000, repeat: false }]
+        );
+    }
+
+    #[test]
+    fn a_drop_target_returns_what_was_dropped_on_it_and_a_label_has_a_stable_id() {
+        let widgets = frame(vec![], |ui| {
+            ui.drop_target("bin", |ui| ui.label("Drop here"));
+        });
+        let Widget::DropTarget { id, children } = &widgets[0] else { panic!("drop target expected, got {widgets:?}") };
+        assert!(matches!(&children[0], Widget::Label { id: label, .. } if *label != 0));
+        let dropped = Dropped::Files { paths: vec!["/tmp/a.png".into()] };
+        let mut got = None;
+        frame(vec![UiEvent { id: *id, kind: UiEventKind::Drop(dropped.clone()) }], |ui| got = ui.drop_target("bin", |ui| ui.label("Drop here")).cloned());
+        assert_eq!(got, Some(dropped));
+    }
+
+    #[test]
+    fn a_reply_from_an_older_sdk_is_a_bare_widget_list_and_reads_as_a_legacy_reply() {
+        let old: PanelReply = serde_json::from_str(r#"[{"w":"label","text":"hi","style":"body"}]"#).unwrap_or_else(|e| panic!("{e}"));
+        assert!(old.legacy);
+        assert_eq!(old.widgets, vec![Widget::Label { id: 0, text: "hi".into(), style: TextStyle::Body }]);
+        let new: PanelReply = serde_json::from_value(serde_json::to_value(PanelReply { topics: vec![Topic::Time], ..Default::default() }).unwrap_or_default())
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!((new.legacy, new.topics), (false, vec![Topic::Time]));
     }
 }

@@ -20,9 +20,7 @@ pub use wire::*;
 pub mod prelude {
     pub use crate::host;
     pub use crate::{
-        AudioRequest, Blend, BlendMode, BlurShape, Camera, Canvas, Cull, Cx, Effect, EffectSpec, Error, Filter, Frame, FrameRequest, GpuData, GpuImage,
-        GpuPass, GpuPlan, HostKernel, Image, Layout, Light, LightKind, MaskPath, Overlay, Paint, Panel, Param, Pass, PickFile, Pixel, Plugin, Pointer,
-        PointerPhase, Result, Root, Rows, Scene, Space, Taps, Task, TaskState, TaskStatus, Tool, ToolEvent, ToolEventKind, Ui,
+        AppEvent, AudioRequest, Blend, BlendMode, BlurShape, Camera, Canvas, Cull, Cx, Drag, Dropped, Effect, EffectSpec, Error, Filter, Frame, FrameRequest, GpuData, GpuImage, GpuPass, GpuPlan, HostKernel, Image, Key, Layout, Light, LightKind, MaskPath, Modifiers, Overlay, Paint, Panel, Param, Pass, PickFile, Pixel, Plugin, Pointer, PointerPhase, Result, Root, Rows, Scene, Space, Taps, Task, TaskState, TaskStatus, Tool, ToolEvent, ToolEventKind, Topic, Ui,
     };
 }
 

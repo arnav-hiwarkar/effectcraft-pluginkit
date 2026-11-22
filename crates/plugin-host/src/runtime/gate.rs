@@ -18,6 +18,7 @@ fn access(call: &HostCall, host: &dyn Host, plugin: &Identity, origin: Origin) -
             Access::Free
         }
         HostCall::ParamsAt { .. } | HostCall::RemoveImage { .. } => Access::Free,
+        HostCall::ClipboardRead | HostCall::ClipboardWrite { .. } => Access::Needs(vec![Permission::Clipboard]),
         HostCall::Command { id, params } => host.access(id, params),
         HostCall::ReadFile { root: Root::User, .. } | HostCall::ListFiles { root: Root::User, .. } => Access::Needs(vec![Permission::FilesRead]),
         HostCall::WriteFile { root: Root::User, .. } => Access::Needs(vec![Permission::FilesWrite]),

@@ -44,10 +44,12 @@ pub enum Permission {
     FilesRead,
     #[serde(rename = "files.write")]
     FilesWrite,
+    #[serde(rename = "clipboard")]
+    Clipboard,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 4] = [Permission::DocumentRead, Permission::DocumentWrite, Permission::FilesRead, Permission::FilesWrite];
+    pub const ALL: [Permission; 5] = [Permission::DocumentRead, Permission::DocumentWrite, Permission::FilesRead, Permission::FilesWrite, Permission::Clipboard];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -55,6 +57,7 @@ impl Permission {
             Permission::DocumentWrite => "document.write",
             Permission::FilesRead => "files.read",
             Permission::FilesWrite => "files.write",
+            Permission::Clipboard => "clipboard",
         }
     }
 
@@ -64,6 +67,7 @@ impl Permission {
             Permission::DocumentWrite => "Edit the open project: create and change layers, effects and keyframes",
             Permission::FilesRead => "Read files outside the plugin's own folders",
             Permission::FilesWrite => "Write files outside the plugin's own folders",
+            Permission::Clipboard => "Read and replace the text on the system clipboard",
         }
     }
 }
