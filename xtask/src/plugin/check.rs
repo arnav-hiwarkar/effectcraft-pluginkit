@@ -6,10 +6,10 @@ use craft_plugin_host::testing::TestPlugin;
 use craft_plugin_host::{Bundle, PACKAGE_MAX_BYTES, PACKAGE_MAX_ENTRIES};
 use serde_json::Value;
 
+use super::look::layers_from_source;
 use super::{Messages, USAGE, WASM_FLAGS, assemble, json_file, pack_folder, package_file, plugin_dir, positional};
 
 const PACKAGE_BUDGET: u64 = 32 << 20;
-const READS: [&str; 10] = ["f", "px", "bool", "index", "point", "point3", "color", "text", "layer", "layer_at"];
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Level {
@@ -199,158 +199,22 @@ fn other_plugins(root: &Path, dir: &Path, id: &str, report: &mut Report) {
     }
 }
 
-struct Source {
-    file: String,
-    line: usize,
-    text: String,
-}
-
-fn files(dir: &Path) -> Vec<(String, String)> {
-    let root = dir.join("src");
-    let mut out = Vec::new();
-    for path in walk(&root).into_iter().filter(|path| path.extension().is_some_and(|ext| ext == "rs")) {
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let text = text.split("\nmod tests").next().unwrap_or_default().to_string();
-        out.push((path.strip_prefix(dir).unwrap_or(&path).display().to_string(), text));
-    }
-    out
-}
-
-fn sources(files: &[(String, String)]) -> Vec<Source> {
-    let mut out = Vec::new();
-    for (file, text) in files {
-        for (n, line) in text.lines().enumerate() {
-            out.push(Source { file: file.clone(), line: n + 1, text: line.to_string() });
-        }
-    }
-    out
-}
-
-pub(super) fn literal_reads(line: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    for (dot, _) in line.match_indices('.') {
-        let name_start = line[..dot].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |at| at + 1);
-        let receiver = &line[name_start..dot];
-        if !(receiver.ends_with("cx") || receiver == "then") {
-            continue;
-        }
-        let rest = &line[dot + 1..];
-        let Some(open) = rest.find("(\"") else { continue };
-        let method = rest[..open].split("::<").next().unwrap_or_default();
-        if !(READS.contains(&method) || method == "list") {
-            continue;
-        }
-        if let Some(id) = rest[open + 2..].split('"').next() {
-            found.push(id.to_string());
-        }
-    }
-    found
-}
-
-fn reads(sources: &[Source], contributions: &Contributions, report: &mut Report) {
-    let declared: BTreeSet<&str> = contributions.effects.iter().flat_map(|e| &e.params).map(|p| p.id.as_str()).collect();
-    for source in sources {
-        for id in literal_reads(&source.text) {
-            if !declared.contains(id.as_str()) {
-                let known: Vec<&str> = declared.iter().copied().collect();
-                report.error(
-                    format!("{}:{} reads the parameter `{id}`, which no effect declares, so it always reads the default", source.file, source.line),
-                    format!("use one of {known:?}, or declare the parameter with params! so the compiler checks it"),
-                );
-            }
-        }
-    }
-}
-
-fn permissions(sources: &[Source], manifest: &Manifest, report: &mut Report) {
-    let uses = |needles: &[&str]| sources.iter().any(|source| needles.iter().any(|needle| source.text.contains(needle)));
-    let user_files = |call: &str| sources.iter().any(|source| source.text.contains(call) && source.text.contains("Root::User"));
-    let commands = uses(&["host::command("]);
-    let needed: [(Permission, bool, &str); 5] = [
-        (Permission::DocumentRead, commands || uses(&["host::frame(", "host::audio("]), "host::command, host::frame or host::audio"),
-        (Permission::DocumentWrite, commands, "host::command"),
-        (Permission::FilesRead, user_files("read_file(") || user_files("list_files("), "host::read_file(Root::User, ..)"),
-        (Permission::FilesWrite, user_files("write_file("), "host::write_file(Root::User, ..)"),
-        (Permission::Clipboard, uses(&["host::clipboard(", "host::set_clipboard("]), "host::clipboard or host::set_clipboard"),
-    ];
-    for (permission, used, calls) in needed {
-        let asked = manifest.permissions.contains(&permission);
-        if asked && !used {
-            report.warn(
-                format!("plugin.json asks for `{permission}` but src never calls {calls}"),
-                format!("remove \"{permission}\" from `permissions`; users approve every permission a plugin asks for"),
-            );
-        }
-    }
-    let documents = manifest.permissions.contains(&Permission::DocumentRead) || manifest.permissions.contains(&Permission::DocumentWrite);
-    if commands && !documents {
-        report.warn(
-            "src calls host::command but plugin.json asks for neither document.read nor document.write",
-            "add \"document.read\" to read the project or \"document.write\" to edit it",
-        );
-    }
-    for (permission, used, calls) in needed.into_iter().filter(|(p, ..)| !matches!(p, Permission::DocumentRead | Permission::DocumentWrite)) {
-        if used && !manifest.permissions.contains(&permission) {
-            report.warn(
-                format!("src calls {calls} but plugin.json does not ask for `{permission}`"),
-                format!("add \"{permission}\" to `permissions`, or the call fails with permission denied"),
+fn smoke_renders(plugin: &TestPlugin, report: &mut Report) {
+    for spec in &plugin.plugin().contributions().effects {
+        let render = plugin.render(&spec.id);
+        let [width, height] = [render.source().width, render.source().height];
+        let source = render.source();
+        if let Err(error) = layers_from_source(plugin, &spec.id, render, &source).run() {
+            report.error(
+                format!("effect `{}` fails to render at its default settings on a {width}x{height} test image: {error}", spec.id),
+                format!("run cargo xtask plugin render <dir> --effect {} and fix the error; the app shows it on the layer instead of the effect", spec.id),
             );
         }
     }
 }
 
-pub(super) fn unread_params(files: &[(String, String)]) -> Vec<(String, String)> {
-    let mut declared = Vec::new();
-    let mut elsewhere = String::new();
-    for (file, text) in files {
-        let mut rest = text.as_str();
-        while let Some(start) = rest.find("params! {") {
-            elsewhere.push_str(&rest[..start]);
-            let block = &rest[start..];
-            let mut depth = 0;
-            let end = block
-                .char_indices()
-                .find(|&(_, c)| {
-                    depth += i32::from(c == '{') - i32::from(c == '}');
-                    c == '}' && depth == 0
-                })
-                .map_or(block.len(), |(at, _)| at + 1);
-            let first_line = text[..text.len() - rest.len() + start].lines().count().max(1);
-            for (offset, line) in block[..end].lines().enumerate() {
-                let line = line.trim().trim_start_matches("pub ");
-                if let Some((name, kind)) = line.split_once(':')
-                    && kind.contains('=')
-                    && !name.is_empty()
-                    && name.chars().all(|c| c.is_alphanumeric() || c == '_')
-                {
-                    declared.push((name.to_string(), format!("{file}:{}", first_line + offset)));
-                }
-            }
-            rest = &block[end..];
-        }
-        elsewhere.push_str(rest);
-    }
-    let used = |name: &str| {
-        elsewhere.match_indices(name).any(|(at, _)| {
-            let before = elsewhere[..at].chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
-            let after = elsewhere[at + name.len()..].chars().next().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
-            before && after
-        })
-    };
-    declared.into_iter().filter(|(name, _)| !used(name)).collect()
-}
-
-fn typed(sources: &[(String, String)], contributions: &Contributions, report: &mut Report) {
-    let leaves: BTreeMap<&str, &str> =
-        contributions.effects.iter().flat_map(|e| &e.params).map(|p| (p.id.rsplit('/').next().unwrap_or(&p.id), p.id.as_str())).collect();
-    for (field, at) in unread_params(sources) {
-        let id = leaves.get(field.as_str()).copied().unwrap_or(&field);
-        report.warn(format!("{at}: the parameter `{id}` is declared in params! but never read"), "use it in layout or render, or remove it");
-    }
-}
-
-pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
-    let dir = plugin_dir(root, positional(args, &[]).ok_or(USAGE)?);
+fn check(root: &Path, dir: &Path) -> Result<Report, String> {
+    let dir = dir.to_path_buf();
     let mut report = Report::default();
     let raw = json_file(&dir.join("plugin.json"))?;
     let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap_or_default();
@@ -383,19 +247,22 @@ pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
             Ok(plugin) => {
                 let described = plugin.plugin().contributions();
                 contributions(described, &mut report);
-                if !cargo.is_empty() {
-                    let files = files(&dir);
-                    let sources = sources(&files);
-                    reads(&sources, described, &mut report);
-                    permissions(&sources, manifest, &mut report);
-                    typed(&files, described, &mut report);
+                if let Err(error) = craft_plugin_host::validate(manifest, described) {
+                    report.error(format!("the app refuses the plugin: {error}"), "change the id the message names");
                 }
+                smoke_renders(&plugin, &mut report);
             }
             Err(error) => report.error(format!("the plugin does not load: {error}"), "run its tests (cargo test) to see where it fails"),
         }
     }
     report.0.sort();
     report.0.dedup();
+    Ok(report)
+}
+
+pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
+    let dir = plugin_dir(root, positional(args, &[]).ok_or(USAGE)?);
+    let report = check(root, &dir)?;
     for finding in &report.0 {
         let level = if finding.level == Level::Error { "error" } else { "warning" };
         println!("{level}: {}\n  fix: {}", finding.what, finding.fix);
@@ -410,17 +277,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn string_reads_of_parameters_are_found_on_cx_and_cx_like_names_only() {
-        assert_eq!(literal_reads(r#"let r = cx.px("radius") * cx.f("Bloom/gain"); ui.text("x");"#), ["radius", "Bloom/gain"]);
-        assert_eq!(literal_reads(r#"then.point("emitter"); cx.list::<4>("tint"); obj.cx.f("x")"#), ["emitter", "tint", "x"]);
-        assert_eq!(literal_reads(r#"overlay.text(at, "Light"); cx.masks()"#), Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_params_field_that_no_code_outside_the_declaration_names_is_unread() {
-        let lib = "params! {\n    struct S {\n        radius: f64 = slider(\"Radius\", 1.0, 0.0..=2.0),\n        \"Colour\" {\n            tint: [f32; 4] = color(\"Tint\", [1.0; 4]),\n            spare: f64 = percent(\"Spare\", 1.0),\n        }\n    }\n}\nfn f(s: S) -> f64 { s.radius * s.radius_scale }\n";
-        let other = ("src/look.rs".to_string(), "fn g(S { tint, .. }: S) {}".to_string());
-        assert_eq!(unread_params(&[("src/lib.rs".into(), lib.into()), other]), [("spare".to_string(), "src/lib.rs:6".to_string())]);
+    fn check_refuses_what_the_app_refuses_and_a_render_that_fails_but_not_a_parameter_named_in_a_comment() {
+        let root = crate::root();
+        let report = check(&root, &root.join("xtask/tests/check-fixture")).unwrap();
+        let errors: Vec<&str> = report.0.iter().filter(|f| f.level == Level::Error).map(|f| f.what.as_str()).collect();
+        assert_eq!(
+            errors,
+            [
+                "effect `broken` fails to render at its default settings on a 320x180 test image: the lookup table is empty",
+                "the app refuses the plugin: effect id `Bad` may only use lower case letters, digits, `-` and `_`",
+            ]
+        );
     }
 
     #[test]

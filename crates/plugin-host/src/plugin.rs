@@ -18,6 +18,20 @@ use crate::runtime::Engine;
 
 const MIN_BAND_ROWS: usize = 64;
 
+fn plain_id(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+pub fn validate(manifest: &Manifest, contributions: &Contributions) -> Result<(), String> {
+    if manifest.id.starts_with("ec.") {
+        return Err("plugin ids starting with `ec.` are reserved for built-in effects".into());
+    }
+    match contributions.effects.iter().find(|e| !plain_id(&e.id)) {
+        Some(effect) => Err(format!("effect id `{}` may only use lower case letters, digits, `-` and `_`", effect.id)),
+        None => Ok(()),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum PluginError {
     #[error("the plugin could not be loaded: {0}")]

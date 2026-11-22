@@ -26,7 +26,7 @@ pub use images::{MAX_IMAGE_SIDE, PluginImage};
 pub use journal::LogLine;
 pub use package::{EXTENSION as PACKAGE_EXTENSION, MAX_ENTRIES as PACKAGE_MAX_ENTRIES, MAX_UNPACKED_BYTES as PACKAGE_MAX_BYTES, PackageError, unpack};
 pub use panel::Retained;
-pub use plugin::{Limits, Plugin, PluginError};
+pub use plugin::{Limits, Plugin, PluginError, validate};
 pub use registry::{Bundle, BundleError, Consent, Registry};
 
 pub mod ui {

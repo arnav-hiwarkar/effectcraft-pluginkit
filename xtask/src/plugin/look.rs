@@ -51,7 +51,7 @@ fn first_effect(plugin: &TestPlugin) -> Result<String, String> {
     plugin.plugin().contributions().effects.first().map(|spec| spec.id.clone()).ok_or("this plugin has no effects to render".into())
 }
 
-fn layers_from_source<'a>(plugin: &TestPlugin, effect: &str, render: Render<'a>, source: &Picture) -> Render<'a> {
+pub(super) fn layers_from_source<'a>(plugin: &TestPlugin, effect: &str, render: Render<'a>, source: &Picture) -> Render<'a> {
     let specs = &plugin.plugin().contributions().effects;
     let layers = specs.iter().filter(|spec| spec.id == effect).flat_map(|spec| &spec.params).filter(|param| param.kind == ParamKind::Layer);
     layers.fold(render, |render, param| render.layer(&param.id, source.clone()))
