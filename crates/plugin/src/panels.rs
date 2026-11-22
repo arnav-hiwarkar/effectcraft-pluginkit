@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use craft_plugin_host::ui::{AppEvent, ControlsReply, PanelReply, UiEvent, UiInput, Widget};
 use craft_plugin_host::viewer::{Overlay, ToolEventKind};
-use craft_plugin_host::{Access, AudioRequest, Call, FrameRequest, Host, MAX_BACKLOG, PickFile, Pixels, PluginError, Retained, Samples};
+use craft_plugin_host::{Access, AudioRequest, Call, FrameRequest, Host, MAX_BACKLOG, PickFile, Pixels, Retained, Samples};
 use effectcraft_engine::Session;
 use effectcraft_engine::project::{ItemId, Project};
 use serde_json::{Value, json};
@@ -57,11 +57,12 @@ fn wait_for_work(timeout: Duration) {
 
 pub(crate) fn run_command(session: &mut Session, loaded: Arc<Loaded>, command: &str) -> Result<(), String> {
     let asking = Arc::new(());
-    let mut host = Remote { bound: Bound::of(loaded.clone(), session, Arc::downgrade(&asking)), wake: Arc::new(|| {}), gesture: None };
-    let call = Call::Command { command: command.to_string() };
+    let plugin = loaded.bundle.manifest.id.clone();
+    let bound = Bound::of(loaded, session, Arc::downgrade(&asking));
+    let request = Request { key: Key::Command(plugin.clone()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture: None };
     let running = std::thread::Builder::new()
-        .name(format!("craft-plugin-command-{}", loaded.bundle.manifest.id))
-        .spawn(move || loaded.plugin.call::<()>(&call, None, &mut host).map_err(|error| error.to_string()))
+        .name(format!("craft-plugin-command-{plugin}"))
+        .spawn(move || run(&request, &(Arc::new(|| {}) as Waker)).map(drop))
         .map_err(|error| error.to_string())?;
     while !running.is_finished() {
         if !serve_one(session) {
@@ -292,17 +293,16 @@ struct Done {
 fn run(request: &Request, wake: &Waker) -> Result<Reply, String> {
     let mut host = Remote { bound: request.bound.clone(), wake: wake.clone(), gesture: request.gesture.clone() };
     let (plugin, call) = (&request.bound.loaded.plugin, &request.call);
-    let failed = |error: PluginError| error.to_string();
     match call {
-        Call::Panel { .. } => plugin.call(call, None, &mut host).map(|reply| Reply::Panel(reply, None)).map_err(failed),
+        Call::Panel { .. } => plugin.call(call, None, &mut host).map(|reply| Reply::Panel(reply, None)),
         Call::Controls { .. } => plugin
             .call(call, None, &mut host)
-            .map(|reply: ControlsReply| Reply::Panel(PanelReply { widgets: reply.widgets, ..Default::default() }, reply.value))
-            .map_err(failed),
-        Call::Drag { .. } => plugin.call(call, None, &mut host).map(Reply::Value).map_err(failed),
-        Call::Command { .. } => plugin.call(call, None, &mut host).map(|()| Reply::Value(None)).map_err(failed),
-        _ => plugin.call(call, None, &mut host).map(Reply::Overlay).map_err(failed),
+            .map(|reply: ControlsReply| Reply::Panel(PanelReply { widgets: reply.widgets, ..Default::default() }, reply.value)),
+        Call::Drag { .. } => plugin.call(call, None, &mut host).map(Reply::Value),
+        Call::Command { .. } => plugin.call(call, None, &mut host).map(|()| Reply::Value(None)),
+        _ => plugin.call(call, None, &mut host).map(Reply::Overlay),
     }
+    .map_err(|error| error.to_string())
 }
 
 struct Worker {
@@ -406,14 +406,6 @@ fn find(surface: Surface) -> Result<(Arc<Loaded>, Call), String> {
     }
 }
 
-fn with_input(call: Call, input: UiInput) -> Call {
-    match call {
-        Call::Panel { panel, .. } => Call::Panel { panel, input },
-        Call::Controls { effect, param, instance, value, .. } => Call::Controls { effect, param, instance, value, input },
-        other => other,
-    }
-}
-
 impl Panels {
     pub fn has_waker(&self) -> bool {
         self.wake.is_some()
@@ -430,8 +422,7 @@ impl Panels {
     pub fn frame(&mut self, session: &mut Session, now: Duration) -> Option<Duration> {
         self.now = now;
         self.deadline = Some(Instant::now() + WAIT);
-        self.serve(session);
-        self.collect(session);
+        self.work(session);
         let live = running_plugins();
         let current = |loaded: &Arc<Loaded>| live.iter().any(|running| Arc::ptr_eq(running, loaded));
         self.slots.retain(|_, slot| current(&slot.loaded));
@@ -479,13 +470,9 @@ impl Panels {
     }
 
     pub fn command(&mut self, session: &Session, plugin: &str, command: &str) -> Result<(), String> {
-        let bound = Bound::of(running(plugin)?, session, self.surface());
+        let bound = Bound::of(running(plugin)?, session, Arc::downgrade(&self.open));
         self.post(Request { key: Key::Command(plugin.to_string()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture: None });
         Ok(())
-    }
-
-    pub(crate) fn surface(&self) -> Weak<()> {
-        Arc::downgrade(&self.open)
     }
 
     pub fn show(&mut self, session: &mut Session, key: &str, surface: Surface, size: [f32; 2]) -> Result<Shown<'_>, String> {
@@ -505,9 +492,11 @@ impl Panels {
         }
         let bound = Bound::of(loaded, session, Arc::downgrade(&slot.open));
         while let Some(input) = self.slots.get_mut(key).and_then(|slot| slot.retained.start(size, self.now)) {
-            let request =
-                Request { key: Key::Slot(key.to_string()), bound: bound.clone(), call: with_input(call.clone(), input), edit: edit.clone(), gesture: None };
-            self.send(request);
+            let mut call = call.clone();
+            if let Call::Panel { input: given, .. } | Call::Controls { input: given, .. } = &mut call {
+                *given = input;
+            }
+            self.send(Request { key: Key::Slot(key.to_string()), bound: bound.clone(), call, edit: edit.clone(), gesture: None });
             self.wait(session, |panels| !panels.busy(key));
             if self.busy(key) || edit.is_some() || self.spent() {
                 break;
@@ -592,23 +581,10 @@ impl Panels {
         Instant::now() >= *self.deadline.get_or_insert_with(|| Instant::now() + WAIT)
     }
 
-    fn serve(&mut self, session: &mut Session) -> bool {
+    fn work(&mut self, session: &mut Session) -> bool {
         let mut any = false;
-        while serve_one(session) {
+        while serve_one(session) || self.done.1.try_recv().map(|done| self.apply(session, done)).is_ok() {
             any = true;
-            if self.spent() {
-                self.waker()();
-                break;
-            }
-        }
-        any
-    }
-
-    fn collect(&mut self, session: &mut Session) -> bool {
-        let mut any = false;
-        while let Ok(done) = self.done.1.try_recv() {
-            any = true;
-            self.apply(session, done);
             if self.spent() {
                 self.waker()();
                 break;
@@ -680,8 +656,7 @@ impl Panels {
 
     pub(crate) fn wait(&mut self, session: &mut Session, done: impl Fn(&Panels) -> bool) {
         while !done(self) && !self.spent() {
-            let served = self.serve(session);
-            if !(self.collect(session) || served) {
+            if !self.work(session) {
                 wait_for_work(POLL);
             }
         }
@@ -800,7 +775,7 @@ mod tests {
     }
 
     fn request(panels: &Panels, session: &Session, key: Key, loaded: &Arc<Loaded>, call: Call) -> Request {
-        Request { key, bound: Bound::of(loaded.clone(), session, panels.surface()), call, edit: None, gesture: None }
+        Request { key, bound: Bound::of(loaded.clone(), session, Arc::downgrade(&panels.open)), call, edit: None, gesture: None }
     }
 
     fn idle(panels: &mut Panels, session: &mut Session) {
