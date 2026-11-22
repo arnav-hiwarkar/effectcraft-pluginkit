@@ -44,6 +44,7 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
             reads_other_frames: spec.reads_other_frames,
             reads_comp_scene: spec.reads_scene,
             reads_param_history: spec.reads_param_history,
+            presets: spec.presets.iter().map(|preset| (preset.name.clone(), preset_values(spec, &preset.values))).collect(),
             revision: loaded.revision,
             files: Some(folders_stamp(vec![loaded.bundle.dir.clone(), loaded.data_dir.clone()])),
         });
@@ -107,6 +108,34 @@ fn declare(param: &Param) -> DynamicParam {
         ParamKind::Mask => (Value::Enum(0), ParamUi::Mask),
     };
     DynamicParam { id: param.id.clone(), name: param.name.clone(), default, ui }
+}
+
+fn preset_values(spec: &EffectSpec, values: &BTreeMap<String, Wire>) -> Vec<(String, Value)> {
+    let convert = |param: &Param, value: &Wire| -> Option<Value> {
+        let number = || match value {
+            Wire::Number(n) => Some(*n),
+            Wire::Bool(b) => Some(f64::from(u8::from(*b))),
+            _ => None,
+        };
+        let list = |n: usize| match value {
+            Wire::List(items) if items.len() >= n => Some(items[..n].to_vec()),
+            _ => None,
+        };
+        Some(match &param.kind {
+            ParamKind::Slider { .. } | ParamKind::Percent { .. } | ParamKind::Angle { .. } => Value::Scalar(number()?),
+            ParamKind::Checkbox { .. } => Value::Bool(number()? != 0.0),
+            ParamKind::Popup { options, .. } => Value::Enum((number()?.max(0.0) as u32).min(options.len().saturating_sub(1) as u32)),
+            ParamKind::Point { .. } => list(2).map(|v| Value::Vec2([v[0], v[1]]))?,
+            ParamKind::Point3 { .. } => list(3).map(|v| Value::Vec3([v[0], v[1], v[2]]))?,
+            ParamKind::Color { .. } => list(4).map(|v| Value::Color([v[0], v[1], v[2], v[3]]))?,
+            ParamKind::Text { .. } => match value {
+                Wire::Text(text) => Value::Str(text.clone()),
+                _ => return None,
+            },
+            ParamKind::Layer | ParamKind::Mask => return None,
+        })
+    };
+    spec.params.iter().filter_map(|param| Some((param.id.clone(), convert(param, values.get(&param.id)?)?))).collect()
 }
 
 fn grid_of(buf: &Buf) -> Grid {

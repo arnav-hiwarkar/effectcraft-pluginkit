@@ -101,3 +101,19 @@ fn every_applied_effect_has_its_own_instance_that_survives_saving_and_reopening(
     render_at(&app, 0.0);
     assert_eq!(instances(&app), before);
 }
+
+#[test]
+fn choosing_a_preset_sets_its_parameters_in_one_undoable_step() {
+    let mut app = app("test.params-preset", &[]);
+    report_layer(&mut app, "Sim");
+    let listed = app.session.execute_checked("effect.presets", json!({"layer": "Sim", "effect": 1})).unwrap();
+    assert_eq!(listed, json!({"presets": ["Loud"]}));
+
+    let value = |app: &mut App, path: &str| app.session.execute_checked("prop.get", json!({"layer": "Sim", "path": path})).unwrap()["value"].clone();
+    app.session.execute_checked("effect.applyPreset", json!({"layer": "Sim", "effect": 1, "preset": "Loud"})).unwrap();
+    assert_eq!((value(&mut app, "effects/#1/level"), value(&mut app, "effects/#1/spot")), (json!(90.0), json!([16.0, 27.0])));
+
+    app.session.execute_checked("edit.undo", json!({})).unwrap();
+    assert_eq!((value(&mut app, "effects/#1/level"), value(&mut app, "effects/#1/spot")), (json!(10.0), json!([32.0, 18.0])));
+    assert!(app.session.execute_checked("effect.applyPreset", json!({"layer": "Sim", "effect": 1, "preset": "Quiet"})).is_err());
+}

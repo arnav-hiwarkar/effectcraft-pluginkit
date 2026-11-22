@@ -935,6 +935,52 @@ fn reset(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(Value::Null)
 }
 
+fn effect_presets(
+    s: &Session,
+    p: &Value,
+    cmd: &str,
+) -> Result<(effectcraft_project::ItemId, LayerId, Uid, Vec<(String, Vec<(String, effectcraft_keyframe::Value)>)>)> {
+    let (cid, lid, uid) = find_fx(s, p, cmd)?;
+    let layer = s.project.comp(cid).and_then(|c| c.layer(lid)).ok_or(EngineError::NoComp)?;
+    let g = layer.effects().and_then(|fx| fx.groups().find(|g| g.uid == uid)).ok_or_else(|| bad(cmd, "no such effect"))?;
+    let presets = match &g.kind {
+        GroupKind::Effect { effect } => effectcraft_effects::presets(effect),
+        _ => Vec::new(),
+    };
+    Ok((cid, lid, uid, presets))
+}
+
+fn presets(s: &mut Session, p: &Value) -> Result<Value> {
+    let (.., presets) = effect_presets(s, p, "effect.presets")?;
+    Ok(json!({"presets": presets.iter().map(|(name, _)| name).collect::<Vec<_>>()}))
+}
+
+fn apply_preset(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "effect.applyPreset";
+    let name = str_p(p, "preset").ok_or_else(|| bad(cmd, "missing `preset` (a name from effect.presets)"))?;
+    let (cid, lid, uid, presets) = effect_presets(s, p, cmd)?;
+    let (name, values) = presets.into_iter().find(|(known, _)| known == name).ok_or_else(|| bad(cmd, format!("this effect has no preset `{name}`")))?;
+    let comp = s.project.comp(cid).ok_or(EngineError::NoComp)?;
+    let layer = comp.layer(lid).ok_or(EngineError::NoComp)?;
+    let size = effectcraft_render::effect_bounds(&s.project, comp, layer).0;
+    let lt = layer.layer_time(s.time());
+    let scaled = |value: &effectcraft_keyframe::Value| match value {
+        effectcraft_keyframe::Value::Vec2([x, y]) => effectcraft_keyframe::Value::Vec2([x * size[0], y * size[1]]),
+        effectcraft_keyframe::Value::Vec3([x, y, z]) => effectcraft_keyframe::Value::Vec3([x * size[0], y * size[1], *z]),
+        other => other.clone(),
+    };
+    s.edit(&format!("Apply Preset {name}"), None, |proj, _| {
+        let g = layer_mut(proj, cid, lid)?.props.find_group_mut(uid).ok_or_else(|| bad(cmd, "effect gone"))?;
+        for (id, value) in &values {
+            if let Some(pr) = g.prop_mut(id) {
+                pr.set_value_at(lt, scaled(value));
+            }
+        }
+        Ok(())
+    })?;
+    Ok(Value::Null)
+}
+
 /// Tint's Swap Colors button edits both swatches at the CTI in one undo step. Like Reset,
 /// it keys animated parameters without moving their existing keys or replacing expressions.
 fn swap_tint_colors(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1072,6 +1118,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("effect.paste", "Paste Effects", [], None, "{layers?} — adds the copied effects to the layers", has_layers, paste),
         cmd!("effect.reset", "Reset Effect", [], None, "{layer?, effect}", has_layers, reset),
         cmd!(
+            "effect.applyPreset",
+            "Apply Effect Preset",
+            [],
+            None,
+            "{layer?, effect, preset: name from effect.presets} — sets the preset's parameters at the current layer time in one undo step",
+            has_layers,
+            apply_preset
+        ),
+        cmd!(
             "effect.swapTintColors",
             "Swap Tint Colors",
             [],
@@ -1086,6 +1141,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "{filter?} → [{params: [{id, name, type, default, options?, min?, max?, sliderMin?, sliderMax?, decimals?}]}]; popup indices are zero-based (JSX uses one-based values)",
             list
         ),
+        crate::query!("effect.presets", "Effect Presets", "{layer?, effect} → {presets: [name]} — the named parameter sets the effect offers", presets),
         crate::query!(
             "effect.warning",
             "Effect Warning",

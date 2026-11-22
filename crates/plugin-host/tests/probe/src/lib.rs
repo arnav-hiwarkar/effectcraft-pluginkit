@@ -230,7 +230,11 @@ struct Report;
 
 impl Effect for Report {
     fn spec(&self) -> EffectSpec {
-        EffectSpec::new("report", "Report", "Probe").param(Param::slider("level", "Level", 10.0, 0.0..=100.0)).reads_param_history()
+        EffectSpec::new("report", "Report", "Probe")
+            .param(Param::slider("level", "Level", 10.0, 0.0..=100.0))
+            .param(Param::point("spot", "Spot", [0.5, 0.5]))
+            .reads_param_history()
+            .preset("Loud", [("level", craft_plugin::Value::Number(90.0)), ("spot", craft_plugin::Value::List(vec![0.25, 0.75]))])
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {

@@ -1,4 +1,5 @@
 use craft_plugin::prelude::*;
+use craft_plugin::{ParamKind, Value};
 
 use crate::flare::wgsl_constants;
 use crate::looks;
@@ -43,19 +44,44 @@ pub fn spec() -> EffectSpec {
         .param(Param::color("color", "Colour", WHITE))
         .param(Param::angle("rotation", "Rotation", 0.0));
     let spec = ELEMENTS.iter().zip(extras).fold(spec, |spec, (name, extra)| spec.group(name, element(extra)));
-    spec.group(
-        "Behaviour",
-        [
-            Param::checkbox("edge", "Edge Trigger", true),
-            Param::slider("edge_width", "Edge Width", 150.0, 0.0..=2000.0),
-            Param::percent("shimmer", "Shimmer", 30.0),
-            Param::slider("shimmer_speed", "Shimmer Speed", 1.0, 0.0..=20.0),
-            Param::checkbox("occlusion", "Occlusion", false),
-            Param::layer("occluder", "Occluding Layer"),
-            Param::slider("occlusion_radius", "Occlusion Radius", 12.0, 0.0..=500.0),
-        ],
-    )
-    .group("Composite", [Param::popup("blend", "Blend", &BLENDS, 0), Param::checkbox("flare_only", "Flare Only", false)])
-    .time_dependent()
-    .shader(&format!("{}{}", wgsl_constants(), include_str!("halo.wgsl")))
+    let spec = spec
+        .group(
+            "Behaviour",
+            [
+                Param::checkbox("edge", "Edge Trigger", true),
+                Param::slider("edge_width", "Edge Width", 150.0, 0.0..=2000.0),
+                Param::percent("shimmer", "Shimmer", 30.0),
+                Param::slider("shimmer_speed", "Shimmer Speed", 1.0, 0.0..=20.0),
+                Param::checkbox("occlusion", "Occlusion", false),
+                Param::layer("occluder", "Occluding Layer"),
+                Param::slider("occlusion_radius", "Occlusion Radius", 12.0, 0.0..=500.0),
+            ],
+        )
+        .group("Composite", [Param::popup("blend", "Blend", &BLENDS, 0), Param::checkbox("flare_only", "Flare Only", false)])
+        .time_dependent()
+        .shader(&format!("{}{}", wgsl_constants(), include_str!("halo.wgsl")));
+    with_look_presets(spec)
+}
+
+fn default_value(kind: &ParamKind) -> Option<Value> {
+    Some(match kind {
+        ParamKind::Slider { default, .. } | ParamKind::Percent { default } | ParamKind::Angle { default } => Value::Number(*default),
+        ParamKind::Checkbox { default } => Value::Bool(*default),
+        ParamKind::Popup { default, .. } => Value::Number(f64::from(*default)),
+        ParamKind::Color { default } => Value::List(default.to_vec()),
+        _ => return None,
+    })
+}
+
+fn with_look_presets(spec: EffectSpec) -> EffectSpec {
+    let neutral: Vec<(String, Value)> = spec
+        .params
+        .iter()
+        .filter(|param| ELEMENTS.iter().any(|element| param.id.starts_with(&format!("{element}/"))))
+        .filter_map(|param| Some((param.id.clone(), default_value(&param.kind)?)))
+        .collect();
+    (1..looks::NAMES.len()).fold(spec, |spec, index| {
+        let values = std::iter::once(("look", Value::Number(index as f64))).chain(neutral.iter().map(|(id, value)| (id.as_str(), value.clone())));
+        spec.preset(looks::NAMES[index], values.collect::<Vec<_>>())
+    })
 }

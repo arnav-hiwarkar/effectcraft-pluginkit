@@ -1531,6 +1531,10 @@ pub fn reads_other_frames(id: &str) -> bool {
     dynamic::get(id).is_some_and(|r| r.effect.reads_other_frames)
 }
 
+pub fn presets(id: &str) -> Vec<(String, Vec<(String, Value)>)> {
+    dynamic::get(id).map(|r| r.effect.presets.clone()).unwrap_or_default()
+}
+
 pub fn revision(id: &str) -> u64 {
     dynamic::get(id).map_or(0, |r| match &r.effect.files {
         Some(stamp) => r.effect.revision ^ stamp().rotate_left(1),
