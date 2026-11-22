@@ -59,7 +59,7 @@ fn a_panel_gets_each_app_event_it_subscribed_to_once_with_its_contents_and_key_e
     }
     let Widget::Canvas { id, .. } = first[0] else { panic!("canvas expected, got {first:?}") };
     let shift = Modifiers { shift: true, alt: false, command: false };
-    panels.submit(KEY, vec![UiEvent { id, kind: UiEventKind::Key(Key { name: "ArrowLeft".into(), modifiers: shift }) }], "");
+    panels.submit(KEY, vec![UiEvent { id, kind: UiEventKind::Key(Key { name: "Left".into(), modifiers: shift }) }], "");
     let last = show(&mut app, &mut panels, &mut frame);
     assert_eq!(
         lines(&last),
@@ -68,7 +68,7 @@ fn a_panel_gets_each_app_event_it_subscribed_to_once_with_its_contents_and_key_e
             format!(r#"{{"topic":"edit","layers":[{layer}]}}"#),
             format!(r#"{{"topic":"time","comp":{comp},"time":1.0}}"#),
             r#"{"topic":"selection","layers":[],"properties":[],"keyframes":0}"#.to_string(),
-            "key ArrowLeft shift true".to_string(),
+            "key Left shift true".to_string(),
         ]
     );
     assert_eq!(panels.calls(KEY), 5);

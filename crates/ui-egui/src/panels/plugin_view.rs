@@ -588,6 +588,9 @@ fn pointers(ui: &egui::Ui, response: &egui::Response, rect: Rect) -> Vec<Pointer
 }
 
 #[cfg(test)]
+pub(crate) mod glide_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use egui_kittest::Harness;
@@ -726,5 +729,70 @@ mod tests {
         assert_eq!(phases.first(), Some(&PointerPhase::Down), "{phases:?}");
         assert!(phases.contains(&PointerPhase::Drag), "{phases:?}");
         assert_eq!(phases.last(), Some(&PointerPhase::Up), "{phases:?}");
+    }
+
+    fn canvas_events(harness: &Harness<'static, Vec<UiEvent>>) -> Vec<UiEventKind> {
+        harness.state().iter().filter(|event| event.id == 11).map(|event| event.kind.clone()).collect()
+    }
+
+    #[test]
+    fn a_canvas_reached_with_tab_gets_arrow_keys_with_their_modifiers_and_keeps_the_focus() {
+        let button = Widget::Button { id: 10, text: "Before".into(), enabled: true };
+        let mut harness = harness(vec![button, Widget::Canvas { id: 11, size: [100.0, 60.0], shapes: vec![] }]);
+        harness.run();
+        harness.key_press(egui::Key::Tab);
+        harness.run();
+        harness.key_press(egui::Key::Tab);
+        harness.run();
+        assert!(harness.get_by_label("Plug-in drawing").is_focused());
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowLeft);
+        harness.run();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        let shift = Modifiers { shift: true, alt: false, command: false };
+        assert_eq!(
+            canvas_events(&harness),
+            vec![
+                UiEventKind::Key(Key { name: "Left".into(), modifiers: shift }),
+                UiEventKind::Key(Key { name: "Down".into(), modifiers: Modifiers::default() })
+            ]
+        );
+        assert!(harness.get_by_label("Plug-in drawing").is_focused());
+    }
+
+    #[test]
+    fn every_pointer_move_of_a_frame_reaches_the_canvas_in_order() {
+        let mut harness = harness(vec![Widget::Canvas { id: 11, size: [100.0, 100.0], shapes: vec![] }]);
+        harness.run();
+        let origin = harness.get_by_label("Plug-in drawing").rect().min;
+        harness.drag_at(origin + vec2(10.0, 10.0));
+        harness.run();
+        harness.state_mut().clear();
+        for x in [20.0, 30.0, 40.0] {
+            harness.event(egui::Event::PointerMoved(origin + vec2(x, 10.0)));
+        }
+        harness.run();
+        let drags: Vec<[f32; 2]> = canvas_events(&harness)
+            .into_iter()
+            .filter_map(|kind| match kind {
+                UiEventKind::Pointer(Pointer { phase: PointerPhase::Drag, pos, .. }) => Some(pos),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(drags, vec![[20.0, 10.0], [30.0, 10.0], [40.0, 10.0]]);
+    }
+
+    #[test]
+    fn dropping_project_files_on_a_drop_target_sends_their_paths_with_its_id() {
+        let target = Widget::DropTarget { id: 12, children: vec![Widget::Label { id: 13, text: "Drop footage here".into(), style: TextStyle::Body }] };
+        let mut harness = harness(vec![target]);
+        harness.run();
+        let at = harness.get_all_by_value("Drop footage here").next().map(|node| node.rect().center()).unwrap_or_default();
+        egui::DragAndDrop::set_payload(&harness.ctx, crate::panels::DragPayload::Files(vec!["/footage/a.mov".into()]));
+        harness.hover_at(at);
+        harness.run();
+        harness.drop_at(at);
+        harness.run();
+        assert_eq!(harness.state(), &vec![UiEvent { id: 12, kind: UiEventKind::Drop(Dropped::Files { paths: vec!["/footage/a.mov".into()] }) }]);
     }
 }
