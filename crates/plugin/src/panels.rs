@@ -420,6 +420,15 @@ fn changed_layers(before: &Project, after: &Project, comp: Option<ItemId>) -> Ve
     changed
 }
 
+pub fn accept_drop(plugin: &str, paths: &[String]) {
+    let Some(loaded) = plugins().and_then(|plugins| plugins.get(plugin)) else { return };
+    for path in paths {
+        if let Err(error) = loaded.plugin.accept_drop(std::path::Path::new(path)) {
+            log::warn!("{path} was dropped on `{plugin}` but stays closed to it: {error}");
+        }
+    }
+}
+
 pub fn drag_path(plugin: &str, root: craft_plugin_host::ui::Root, path: &str) -> Option<String> {
     use craft_plugin_host::ui::Root;
     let loaded = plugins()?.get(plugin)?;

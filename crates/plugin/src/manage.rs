@@ -510,8 +510,9 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
     };
     session.plugin_items = plugins.items();
     if effectcraft_engine::effects::dynamic::generation() != effects_before {
-        for lost in effectcraft_engine::upgrade_effects(Arc::make_mut(&mut session.project)) {
-            log::warn!("{lost} lost its animation when its plug-in started");
+        match session.edit("Update Plug-in Effects", None, |project, _| Ok(effectcraft_engine::upgrade_effects(project))) {
+            Ok(lost) => lost.iter().for_each(|lost| log::warn!("{lost} lost its animation when its plug-in started")),
+            Err(error) => log::warn!("the open project's plug-in effects were not updated: {error}"),
         }
     }
     result

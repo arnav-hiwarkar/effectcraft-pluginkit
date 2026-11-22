@@ -86,7 +86,7 @@ impl Engine {
 
     pub fn call(self: &Arc<Self>, request: &[u8], io: Io, host: &mut dyn Host, origin: Origin, budget: Duration) -> Result<Vec<u8>, PluginError> {
         let stateful = origin == Origin::Interactive;
-        let mut cx = HostCx { host, plugin: &self.identity, engine: self, origin, task: None, on_task_thread: false, paused: Duration::ZERO, deadline: None };
+        let mut cx = HostCx { host, plugin: &self.identity, engine: self, origin, task: None, on_task_thread: false, paused: Duration::ZERO };
         match &self.kind {
             Kind::Native(guest) => match io {
                 Io::None => Ok(guest.call(request, None, &mut cx)),
@@ -121,6 +121,10 @@ impl Engine {
         }
     }
 
+    pub fn accept_drop(&self, path: &Path) -> Result<(), String> {
+        self.identity.remember_pick(path.to_path_buf(), false)
+    }
+
     pub fn know_tasks(&self, names: Vec<String>) {
         self.identity.tasks.know(names);
     }
@@ -149,7 +153,6 @@ impl Engine {
             task: Some(slot.clone()),
             on_task_thread: true,
             paused: Duration::ZERO,
-            deadline: None,
         };
         let reply = match &self.kind {
             Kind::Native(guest) => guest.call(request, None, &mut cx),
@@ -193,7 +196,6 @@ impl Engine {
                 task: Some(forwarded.task.clone()),
                 on_task_thread: false,
                 paused: Duration::ZERO,
-                deadline: None,
             };
             let answer = native::guarded(&mut cx, &forwarded.request, &forwarded.bulk);
             let _ = forwarded.reply.send(answer);

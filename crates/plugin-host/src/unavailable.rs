@@ -40,6 +40,10 @@ impl Engine {
         match **self {}
     }
 
+    pub fn accept_drop(&self, _: &std::path::Path) -> Result<(), String> {
+        match *self {}
+    }
+
     pub fn know_tasks(&self, _: Vec<String>) {
         match *self {}
     }

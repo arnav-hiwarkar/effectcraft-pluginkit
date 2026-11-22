@@ -254,6 +254,11 @@ fn a_plugin_that_starts_after_its_project_opened_gives_existing_instances_their_
     let path = json!({"layer": solid, "path": "effects/#1/amount"});
     assert!(app.session.execute("prop.get", path.clone()).is_err());
 
+    app.session.mark_saved();
+
     app.session.execute("plugin.load", json!({"path": app.bundle.path()})).unwrap();
-    assert_eq!(app.session.execute("prop.get", path).unwrap()["value"], json!(1.0));
+    assert_eq!(app.session.execute("prop.get", path.clone()).unwrap()["value"], json!(1.0));
+    assert!(app.session.is_dirty(), "the migrated project still looks saved");
+    app.session.execute("edit.undo", json!({})).unwrap();
+    assert!(app.session.execute("prop.get", path).is_err(), "undo kept the migrated parameter");
 }

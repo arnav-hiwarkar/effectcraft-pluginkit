@@ -17,7 +17,7 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 ## From the Sol review, not fixed
 
-- **A slow app command inside a sandboxed call is not interrupted.** File calls run on a helper thread and are abandoned at the call's limit (`on_disk` in `crates/plugin-host/src/runtime/serve.rs`). `command`, `frame` and `audio` borrow the open project on the app's thread, so they cannot be moved to another thread and abandoned; the call fails when one returns past the limit. Native calls and tasks have no time limit, so their file calls run inline. Instantiation has its own 5 s limit on top of the call limit.
+- **A slow host call is not interrupted.** A file call on a stalled disk or a slow app command runs to its end on the calling thread; the sandboxed call fails when it returns past the limit. A file write cannot be cancelled, so it is not moved to another thread and abandoned: that let a write land after the plugin was told it failed, and stalled threads piled up. Stopping one needs the helper process (`docs/plugin-helper.md`), where the whole process can be killed. Instantiation has its own 5 s limit on top of the call limit.
 - **A dangling link is also possible in the automation confinement.** `crates/automation/src/confine.rs` falls back to the parent folder when a path does not resolve. This is upstream code and affects agents too.
 
 ## Reported by the flagship plugin authors, not fixed
@@ -46,7 +46,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **Forge 3D draws only on the GPU.** Draw passes render to an `Rgba16Float` target that is created per frame and copied.
 - **Ember simulates from frame 0 on every render when a parameter has an expression**, because the history cannot be hashed. It reads the masks at the current time for every step.
 - **A Halo preset sets the look and resets the element controls.** It does not write absolute slider values.
-- **A file dropped on a plugin panel is not readable without `files.read`.** A picked file is; a dropped one only gives the plugin its path. (`crates/plugin/src/panels.rs`, `crates/plugin-host/src/runtime/serve.rs` `picked`)
 - **Custom Effect Controls rows cannot subscribe to app events or set timers.** They are called again on their own widget events, a new value or a new width. (`crates/plugin/src/panels.rs`)
 - **Curves keeps the selected channel per effect, not per instance of the effect**, unless the fix for Opus finding 7 landed (see the log).
 - **`polygon` on a canvas fills convex shapes only.**

@@ -345,7 +345,17 @@ match ui.drop_target("bin", |ui| ui.weak("Drop footage here")) {
 ui.drag_source("export", Drag::File { root: Root::Data, path: "out/look.cube".into() }, |ui| ui.label("look.cube"));
 ```
 
-Reading a dropped file outside the plugin's own folders needs `files.read`.
+A dropped file counts as one the user picked: the plugin reads it with `host::read_file(Root::User, path)` and needs
+no `files.read`. Only that file opens, not the folder it is in, and it is not writable. A dropped project item
+gives the item id only.
+
+```rust
+if let Some(Dropped::Files { paths }) = ui.drop_target("lut", |ui| ui.weak("Drop a .cube file"))
+    && let Some(path) = paths.first()
+{
+    self.lut = host::read_file(Root::User, path).ok();
+}
+```
 
 ### Show images
 

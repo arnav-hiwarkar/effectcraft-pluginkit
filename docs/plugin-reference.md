@@ -41,7 +41,8 @@ thread. A sandboxed task that ignores cancel is stopped 0.5 s after the cancel. 
 be asked, through `progress`. A plugin runs at most 4 tasks at once. Disabling, reloading or removing a
 plugin cancels its tasks. A task belongs to the project that was open when it started: when that project
 closes (a new project or another one is opened) the task is cancelled, and a request it makes after that
-fails with `the project this task started in was closed`. The last 16 finished tasks of a plugin stay listed.
+fails with `the project this task started in was closed`, as does starting another task from it. Such a task ends as
+cancelled even if it returns a result. The last 16 finished tasks of a plugin stay listed.
 
 ## Effect
 
@@ -115,7 +116,8 @@ Panels, commands, the CLI and automation all use these two commands.
 | `Param::mask(id, name)` | `cx.index(id)` | index into `cx.masks()` |
 
 A new version of a plugin may add parameters. Effects already applied in a project gain them with their
-defaults when the project opens, or when the plugin starts while the project is open.
+defaults when the project opens, or when the plugin starts while the project is open. The second is one undo step,
+`Update Plug-in Effects`, and marks the project changed.
 
 ### Cx
 
@@ -300,7 +302,7 @@ A timer the next reply does not ask for is stopped.
 | `c.pointers` | Every pointer event over the canvas since the last call, in order |
 | `c.pointer` | The last of `c.pointers` |
 | `c.keys` | Every key pressed while the canvas had the keyboard focus: `Key { name, modifiers }`. Names are egui key names: `Left`, `Right`, `Up`, `Down`, `Enter`, `Escape`, `Delete`, `Backspace`, `Space`, `A` to `Z`, `0` to `9`, `F1` … |
-| `ui.drop_target(key, \|ui\| …) -> Option<&Dropped>` | `Dropped::Files { paths }`, `Dropped::Items { ids }` (project items) or `Dropped::Data { plugin, data }` |
+| `ui.drop_target(key, \|ui\| …) -> Option<&Dropped>` | `Dropped::Files { paths }`, `Dropped::Items { ids }` (project items) or `Dropped::Data { plugin, data }`. A dropped file is readable through `Root::User` as if the user had picked it, with no `files.read`; its folder stays closed and it is not writable |
 | `ui.drag_source(key, drag, \|ui\| …)` | Lets the user drag its contents. `Drag::File { root, path }` drags a file from `Root::Bundle` or `Root::Data` (or `Root::User` with `files.read`); `Drag::Data { data }` drags text to a plugin drop target |
 
 A panel's widgets have the automation ids `plugin.<plugin>.<panel>.<widget id>`, and its labels
@@ -421,7 +423,7 @@ All are in `craft_plugin::host`.
 | `cancel(id)` | None |
 | `frame(FrameRequest { comp, layer, time, scale })`: the comp (the active one when `comp` is `None`), or one layer with its effects, its track matte and the comp's cameras and lights (every other layer is hidden; the layer itself shows even when its video switch is off, as through a layer parameter), as a premultiplied RGBA f32 `Image`. Refused inside an effect's `layout` or `render`. `scale` is above 0 and at most 4. | `document.read` |
 | `audio(AudioRequest { layer, start, duration, rate })`: interleaved f32 samples of the active comp's mix, or of one layer, with the channel count (2). Rates 1000 to 192000 Hz, at most 2^25 sample frames per call. Refused inside an effect. | `document.read` |
-| `pick_file(PickFile { save, title, extensions })`: the app's file dialog, `Some(path)` or `None`. The chosen path is then readable, and writable when `save` is set, through `Root::User` for the rest of the session. The host holds the identity of the picked file: once it is replaced, for example by a link, reading or writing it fails with `is no longer the file the user picked`, and the plugin should ask the user to pick it again. Panels and commands only. Refused in headless runs. | None |
+| `pick_file(PickFile { save, title, extensions })`: the app's file dialog, `Some(path)` or `None`. The chosen path is then readable, and writable when `save` is set, through `Root::User` for the rest of the session. The host holds the identity of the picked file: once it is replaced, for example by a link, reading or writing it fails with `is no longer the file the user picked`, and the plugin should ask the user to pick it again. A new save target is created in the folder the user picked it in, even if that folder is moved afterwards. A path inside the app's own plugin folders is refused (`that folder belongs to the app`). Panels and commands only. Refused in headless runs. | None |
 | `upload_image(key, width, height, rgba8)`: stores an image for `ui.image` and `c.image` | None |
 | `remove_image(key)`: removes an uploaded image and frees its share of the 256 MiB image budget | None |
 | `clipboard()`: the text on the system clipboard | `clipboard` |
@@ -445,8 +447,9 @@ help, render jobs, and plugin management. A refused or denied call returns an `E
 | Padding | 4096 pixels |
 
 A sandboxed plugin that passes a limit or panics is stopped. The next call starts a new instance, and
-panel state is lost. A file read, write or listing that a sandboxed call makes runs on a helper thread, so a
-stalled disk stops the call at its limit; the file call itself finishes in the background.
+panel state is lost. A host call is not interrupted: a file call on a stalled disk, or a slow app command, runs to
+its end, and the plugin is stopped when it returns past the limit. A write the plugin is told failed for that
+reason has still landed.
 
 ## App commands
 

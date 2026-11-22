@@ -148,6 +148,10 @@ impl Plugin {
         Ok(())
     }
 
+    pub fn accept_drop(&self, path: &std::path::Path) -> Result<(), String> {
+        self.engine.accept_drop(path)
+    }
+
     pub fn start(&self, task: &str, args: serde_json::Value, host: &dyn Host) -> Result<u64, PluginError> {
         self.engine.start(task, args, host.project_closed()).map_err(PluginError::Failed)
     }

@@ -741,6 +741,29 @@ fn a_picked_file_becomes_readable_without_the_files_permission_but_not_writable(
     });
 }
 
+#[test]
+fn a_dropped_file_is_readable_like_a_picked_one_but_not_writable_and_its_folder_stays_closed() {
+    each_kind(|kind| {
+        let outside = tempfile::tempdir().unwrap();
+        let (dropped, sibling) = (outside.path().join("dropped.txt"), outside.path().join("sibling.txt"));
+        std::fs::write(&dropped, "dropped by the user").unwrap();
+        std::fs::write(&sibling, "next to it").unwrap();
+        let loaded = load(kind, &[]);
+        let target = |path: &Path| std::fs::write(loaded._dir.path().join("user-target.txt"), path.to_str().unwrap()).unwrap();
+        let mut host = Recorder::default();
+        loaded.plugin.accept_drop(&dropped).unwrap();
+        target(&dropped);
+        command(&loaded, "read-user", &mut host).unwrap();
+        assert_eq!(std::fs::read_to_string(loaded.data.path().join("data/read.txt")).unwrap(), "dropped by the user", "{kind:?}");
+        let error = command(&loaded, "write-user", &mut host).unwrap_err().to_string();
+        assert!(error.contains("files.write"), "{kind:?} {error}");
+        target(&sibling);
+        let error = command(&loaded, "read-user", &mut host).unwrap_err().to_string();
+        assert!(error.contains("files.read"), "{kind:?} {error}");
+        assert_eq!(std::fs::read_to_string(&dropped).unwrap(), "dropped by the user", "{kind:?}");
+    });
+}
+
 #[cfg(unix)]
 #[test]
 fn a_picked_file_replaced_by_a_link_is_refused_and_a_new_save_target_is_not_followed() {
@@ -778,24 +801,59 @@ fn a_picked_file_replaced_by_a_link_is_refused_and_a_new_save_target_is_not_foll
 
 #[cfg(unix)]
 #[test]
-fn a_sandboxed_call_whose_file_read_stalls_fails_at_its_time_limit() {
+fn a_new_save_target_is_created_in_the_folder_the_user_picked_even_if_that_folder_is_moved_and_replaced_by_a_link() {
+    each_kind(|kind| {
+        let outside = tempfile::tempdir().unwrap();
+        let (chosen, moved, elsewhere) = (outside.path().join("chosen"), outside.path().join("moved"), outside.path().join("elsewhere"));
+        std::fs::create_dir(&chosen).unwrap();
+        std::fs::create_dir(&elsewhere).unwrap();
+        let target = chosen.join("new.txt");
+        let loaded = load(kind, &[]);
+        let mut host = Recorder { picked: Some(target.clone()), ..Default::default() };
+        command(&loaded, "pick-save-target", &mut host).unwrap();
+        std::fs::rename(&chosen, &moved).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &chosen).unwrap();
+        std::fs::write(loaded._dir.path().join("user-target.txt"), target.to_str().unwrap()).unwrap();
+        command(&loaded, "write-user", &mut host).unwrap();
+        assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0, "{kind:?}");
+        assert_eq!(std::fs::read_to_string(moved.join("new.txt")).unwrap(), "written by plugin", "{kind:?}");
+    });
+}
+
+#[test]
+fn a_save_target_picked_inside_the_apps_folders_is_refused() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let planted = loaded.data.path().join("planted.json");
+        let mut host = Recorder { picked: Some(planted.clone()), ..Default::default() };
+        let error = command(&loaded, "pick-and-save", &mut host).unwrap_err().to_string();
+        assert!(error.contains("that folder belongs to the app"), "{kind:?} {error}");
+        assert!(!planted.exists(), "{kind:?}");
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn a_sandboxed_call_whose_file_write_stalls_returns_only_after_the_write_landed() {
     let outside = tempfile::tempdir().unwrap();
     let stalled = outside.path().join("stalled");
     assert!(Command::new("mkfifo").arg(&stalled).status().unwrap().success());
     let loaded = load(Kind::Wasm, &["files.read", "files.write"]);
     std::fs::write(loaded._dir.path().join("user-target.txt"), stalled.to_str().unwrap()).unwrap();
-    let (done, outcome) = std::sync::mpsc::channel();
-    let started = std::time::Instant::now();
     std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let _ = done.send(command(&loaded, "read-user", &mut Recorder::default()).map_err(|e| e.to_string()));
+        let reader = scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(700));
+            let released = std::time::Instant::now();
+            let mut written = String::new();
+            std::io::Read::read_to_string(&mut std::fs::File::open(&stalled).unwrap(), &mut written).unwrap();
+            (released, written)
         });
-        let answered = outcome.recv_timeout(Duration::from_secs(5));
-        let release = std::fs::OpenOptions::new().write(true).open(&stalled);
-        drop(release);
-        let error = answered.expect("the call returned while the read was still stalled").unwrap_err();
+        let error = command(&loaded, "write-user", &mut Recorder::default()).unwrap_err().to_string();
+        let returned = std::time::Instant::now();
+        let (released, written) = reader.join().unwrap();
         assert!(error.contains("the plugin passed its time limit while the host served a call"), "{error}");
-        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        assert!(returned > released, "the call returned {:?} before the disk let the write through", released - returned);
+        assert_eq!(written, "written by plugin");
     });
 }
 

@@ -26,6 +26,9 @@ sha2 = { workspace = true }
 same-file = { workspace = true }
 getrandom = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 image = { workspace = true }

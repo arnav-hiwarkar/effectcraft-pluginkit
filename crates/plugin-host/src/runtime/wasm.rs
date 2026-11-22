@@ -202,7 +202,7 @@ fn host_call(mut caller: Caller<'_, State>, _ctx: u32, request: u32, request_len
     };
     let request = slice(request, request_len)?;
     let bulk_in = slice(bulk, bulk_len)?;
-    let (reply, bulk_out, paused) = native::serve_erased(caller.data().ctx, &request, &bulk_in, caller.data().deadline);
+    let (reply, bulk_out, paused) = native::serve_erased(caller.data().ctx, &request, &bulk_in);
     if !paused.is_zero()
         && let Some(deadline) = caller.data().deadline.and_then(|deadline| deadline.checked_add(paused))
     {
@@ -234,7 +234,8 @@ const KEY_FILE: &str = "key";
 const MAC_LEN: usize = 32;
 
 fn cached(engine: &Engine, bytes: &[u8], cache: &Path) -> Result<Module, PluginError> {
-    let path = cache.join(format!("{}.cwasm", cache_name(engine, bytes)));
+    let name = cache_name(engine, bytes);
+    let path = cache.join(format!("{name}.cwasm"));
     let key = match install_key(cache) {
         Ok(key) => key,
         Err(error) => {
@@ -242,13 +243,15 @@ fn cached(engine: &Engine, bytes: &[u8], cache: &Path) -> Result<Module, PluginE
             return engine.precompile_module(bytes).and_then(|compiled| native::fresh_module(engine, &compiled)).map_err(load_error);
         }
     };
-    if let Some(module) = std::fs::read(&path).ok().as_deref().and_then(|entry| signed_body(&key, entry)).and_then(|body| native::compiled_module(engine, body))
+    if let Some(module) =
+        std::fs::read(&path).ok().as_deref().and_then(|entry| signed_body(&key, &name, entry)).and_then(|body| native::compiled_module(engine, body))
     {
         return Ok(module);
     }
     let mut compiled = engine.precompile_module(bytes).map_err(load_error)?;
     let module = native::fresh_module(engine, &compiled).map_err(load_error)?;
-    compiled.extend_from_slice(&hmac(&key, &compiled));
+    let mac = hmac(&key, &[name.as_bytes(), &compiled]);
+    compiled.extend_from_slice(&mac);
     let staged = path.with_extension(format!("{}.part", std::process::id()));
     let stored = std::fs::write(&staged, &compiled).and_then(|()| std::fs::rename(&staged, &path));
     if let Err(error) = stored {
@@ -258,46 +261,77 @@ fn cached(engine: &Engine, bytes: &[u8], cache: &Path) -> Result<Module, PluginE
     Ok(module)
 }
 
-fn signed_body<'a>(key: &[u8; 32], entry: &'a [u8]) -> Option<&'a [u8]> {
+fn signed_body<'a>(key: &[u8; 32], name: &str, entry: &'a [u8]) -> Option<&'a [u8]> {
     let (body, mac) = entry.split_at_checked(entry.len().checked_sub(MAC_LEN)?)?;
-    let expected = hmac(key, body);
+    let expected = hmac(key, &[name.as_bytes(), body]);
     (mac.iter().zip(expected).fold(0, |differ, (a, b)| differ | (a ^ b)) == 0).then_some(body)
 }
 
-fn hmac(key: &[u8], message: &[u8]) -> [u8; 32] {
+fn hmac(key: &[u8], message: &[&[u8]]) -> [u8; 32] {
     let mut padded = [0u8; 64];
     padded[..key.len()].copy_from_slice(key);
     let pad = |byte: u8| padded.map(|k| k ^ byte);
-    let inner = Sha256::new().chain_update(pad(0x36)).chain_update(message).finalize();
+    let inner = message.iter().fold(Sha256::new().chain_update(pad(0x36)), |digest, part| digest.chain_update(part)).finalize();
     Sha256::new().chain_update(pad(0x5c)).chain_update(inner).finalize().into()
 }
 
 fn install_key(cache: &Path) -> std::io::Result<[u8; 32]> {
-    let path = cache.join(KEY_FILE);
-    let owner_only = |meta: &std::fs::Metadata| {
-        #[cfg(unix)]
-        return std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o077 == 0;
-        #[cfg(not(unix))]
-        return meta.is_file();
-    };
-    if let Ok(meta) = std::fs::symlink_metadata(&path)
-        && meta.is_file()
-        && owner_only(&meta)
-        && let Ok(Ok(key)) = std::fs::read(&path).map(<[u8; 32]>::try_from)
-    {
-        return Ok(key);
-    }
-    let mut key = [0u8; 32];
-    getrandom::fill(&mut key).map_err(|e| std::io::Error::other(e.to_string()))?;
     std::fs::create_dir_all(cache)?;
-    let staged = path.with_extension(format!("{}.part", std::process::id()));
+    let path = cache.join(KEY_FILE);
+    match read_key(&path) {
+        Ok(key) => return Ok(key),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            log::warn!("{}: replacing an unusable cache key: {error}", path.display());
+            if let Err(error) = std::fs::remove_file(&path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(error);
+            }
+        }
+    }
+    publish_key(&path)?;
+    read_key(&path)
+}
+
+fn publish_key(path: &Path) -> std::io::Result<()> {
+    let (mut key, mut tag) = ([0u8; 32], [0u8; 8]);
+    getrandom::fill(&mut key).and_then(|()| getrandom::fill(&mut tag)).map_err(|e| std::io::Error::other(e.to_string()))?;
+    let staged = path.with_extension(format!("{}.{:x}.part", std::process::id(), u64::from_le_bytes(tag)));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let written = options.open(&staged).and_then(|mut file| std::io::Write::write_all(&mut file, &key));
+    let published = written.and_then(|()| match std::fs::hard_link(&staged, path) {
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        linked => linked,
+    });
     let _ = std::fs::remove_file(&staged);
-    std::io::Write::write_all(&mut options.open(&staged)?, &key)?;
-    std::fs::rename(&staged, &path)?;
+    published
+}
+
+fn read_key(path: &Path) -> std::io::Result<[u8; 32]> {
+    #[cfg(unix)]
+    let file = {
+        use rustix::fs::{Mode, OFlags};
+        std::fs::File::from(rustix::fs::open(path, OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())?)
+    };
+    #[cfg(not(unix))]
+    let file = std::fs::File::open(path)?;
+    let meta = file.metadata()?;
+    #[cfg(unix)]
+    let private = {
+        use std::os::unix::fs::MetadataExt;
+        meta.uid() == rustix::process::getuid().as_raw() && meta.mode() & 0o077 == 0
+    };
+    #[cfg(not(unix))]
+    let private = true;
+    if !meta.is_file() || !private || meta.len() != 32 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "the key must be a 32-byte file only its owner can read"));
+    }
+    let mut key = [0u8; 32];
+    std::io::Read::read_exact(&mut &file, &mut key)?;
     Ok(key)
 }
 
@@ -344,14 +378,14 @@ fn missing(export: &str) -> PluginError {
 
 #[cfg(test)]
 mod tests {
-    use super::{KEY_FILE, cache_name, cached, engine, hmac};
+    use super::{KEY_FILE, cache_name, cached, engine, hmac, install_key};
 
     const EMPTY: &[u8] = &[0, 0x61, 0x73, 0x6d, 1, 0, 0, 0];
     const ONE_IMPORT: &[u8] = &[0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 1, 4, 1, 0x60, 0, 0, 2, 7, 1, 1, b'a', 1, b'b', 0, 0];
 
     #[test]
     fn hmac_sha256_matches_rfc_4231_test_case_2() {
-        let mac = hmac(b"Jefe", b"what do ya want for nothing?");
+        let mac = hmac(b"Jefe", &[b"what do ya ", b"want for nothing?"]);
         let hex: String = mac.iter().map(|byte| format!("{byte:02x}")).collect();
         assert_eq!(hex, "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
     }
@@ -368,5 +402,53 @@ mod tests {
         let signed = std::fs::read(&entry).unwrap();
         assert_eq!(cached(engine, EMPTY, dir.path()).unwrap().imports().len(), 0);
         assert_eq!(std::fs::read(&entry).unwrap(), signed);
+    }
+
+    #[test]
+    fn a_signed_entry_copied_over_another_plugins_entry_is_recompiled_not_loaded() {
+        let engine = engine().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let entry = |bytes: &[u8]| dir.path().join(format!("{}.cwasm", cache_name(engine, bytes)));
+        assert_eq!(cached(engine, ONE_IMPORT, dir.path()).unwrap().imports().len(), 1);
+        assert_eq!(cached(engine, EMPTY, dir.path()).unwrap().imports().len(), 0);
+        std::fs::copy(entry(ONE_IMPORT), entry(EMPTY)).unwrap();
+        assert_eq!(cached(engine, EMPTY, dir.path()).unwrap().imports().len(), 0);
+    }
+
+    #[test]
+    fn processes_that_make_the_key_at_the_same_time_all_end_up_with_the_one_key_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let start = std::sync::Barrier::new(16);
+        let keys: Vec<_> = std::thread::scope(|scope| {
+            let racers: Vec<_> = (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        install_key(dir.path()).map_err(|e| e.to_string())
+                    })
+                })
+                .collect();
+            racers.into_iter().map(|racer| racer.join().unwrap()).collect()
+        });
+        let on_disk: [u8; 32] = std::fs::read(dir.path().join(KEY_FILE)).unwrap().try_into().unwrap();
+        assert_eq!(keys, vec![Ok(on_disk); 16]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_key_others_can_read_or_a_link_in_its_place_is_never_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(KEY_FILE);
+        let planted = dir.path().join("planted");
+        std::fs::write(&planted, [7u8; 32]).unwrap();
+        std::fs::set_permissions(&planted, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+        std::os::unix::fs::symlink(&planted, &path).unwrap();
+        assert_ne!(install_key(dir.path()).unwrap(), [7u8; 32]);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, [9u8; 32]).unwrap();
+        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
+        assert_ne!(install_key(dir.path()).unwrap(), [9u8; 32]);
+        let key = install_key(dir.path()).unwrap();
+        assert_eq!(install_key(dir.path()).unwrap(), key);
     }
 }

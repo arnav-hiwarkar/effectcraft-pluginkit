@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -31,7 +30,41 @@ pub(crate) struct Identity {
 pub(crate) struct Picked {
     path: PathBuf,
     writable: bool,
-    held: Option<Handle>,
+    held: Option<Arc<Handle>>,
+    folder: Option<Arc<Folder>>,
+}
+
+#[cfg(unix)]
+type Folder = std::os::fd::OwnedFd;
+#[cfg(not(unix))]
+type Folder = Handle;
+
+#[cfg(unix)]
+fn pin_folder(dir: &Path) -> std::io::Result<Folder> {
+    use rustix::fs::{Mode, OFlags};
+    Ok(rustix::fs::open(dir, OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC, Mode::empty())?)
+}
+
+#[cfg(not(unix))]
+fn pin_folder(dir: &Path) -> std::io::Result<Folder> {
+    Handle::from_path(dir)
+}
+
+#[cfg(unix)]
+fn create_in(folder: &Folder, path: &Path) -> std::io::Result<File> {
+    use rustix::fs::{Mode, OFlags};
+    let name = path.file_name().ok_or(std::io::ErrorKind::InvalidInput)?;
+    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    Ok(File::from(rustix::fs::openat(folder, name, flags, Mode::from_raw_mode(0o666))?))
+}
+
+#[cfg(not(unix))]
+fn create_in(folder: &Folder, path: &Path) -> std::io::Result<File> {
+    let parent = path.parent().ok_or(std::io::ErrorKind::InvalidInput)?;
+    if Handle::from_path(parent)? != *folder {
+        return Err(std::io::Error::other("the folder it was picked in has moved"));
+    }
+    OpenOptions::new().write(true).create_new(true).open(path)
 }
 
 impl Picked {
@@ -45,30 +78,41 @@ impl Identity {
         self.picked.lock().is_ok_and(|picked| picked.iter().any(|chosen| chosen.matches(Path::new(path), write)))
     }
 
-    fn remember_pick(&self, path: PathBuf, writable: bool) {
-        let held = Handle::from_path(&path).ok();
-        if let Ok(mut picked) = self.picked.lock() {
-            picked.retain(|chosen| chosen.path != path);
-            picked.push(Picked { path, writable, held });
-        }
+    pub fn remember_pick(&self, path: PathBuf, writable: bool) -> Result<(), String> {
+        user_path(self, &path)?;
+        let held = Handle::from_path(&path).ok().map(Arc::new);
+        let folder = match (writable, &held, path.parent()) {
+            (true, None, Some(parent)) => Some(Arc::new(pin_folder(parent).map_err(|e| format!("{}: {e}", parent.display()))?)),
+            _ => None,
+        };
+        let mut picked = self.picked.lock().map_err(|_| "the picked files are unavailable")?;
+        picked.retain(|chosen| chosen.path != path);
+        picked.push(Picked { path, writable, held, folder });
+        Ok(())
     }
 
     fn open_picked(&self, path: &str, write: bool) -> Result<File, String> {
-        let mut picked = self.picked.lock().map_err(|_| "the picked files are unavailable")?;
-        let chosen = picked.iter_mut().find(|chosen| chosen.matches(Path::new(path), write)).ok_or(format!("`{path}` was not picked"))?;
-        let opened = match (write, chosen.held.is_some()) {
-            (true, false) => OpenOptions::new().write(true).create_new(true).open(path),
-            (true, true) => OpenOptions::new().write(true).open(path),
-            (false, true) => File::open(path),
-            (false, false) => return Err(format!("{path}: the picked file did not exist when it was picked")),
+        let (held, folder) = {
+            let picked = self.picked.lock().map_err(|_| "the picked files are unavailable")?;
+            let chosen = picked.iter().find(|chosen| chosen.matches(Path::new(path), write)).ok_or(format!("`{path}` was not picked"))?;
+            (chosen.held.clone(), chosen.folder.clone())
+        };
+        let opened = match (write, &held, folder) {
+            (true, Some(_), _) => OpenOptions::new().write(true).open(path),
+            (false, Some(_), _) => File::open(path),
+            (true, None, Some(folder)) => create_in(&folder, Path::new(path)),
+            _ => return Err(format!("{path}: the picked file did not exist when it was picked")),
         };
         let file = opened.map_err(|e| format!("{path}: {e}"))?;
         let found = file.try_clone().and_then(Handle::from_file).map_err(|e| format!("{path}: {e}"))?;
-        match &chosen.held {
+        match held {
             Some(held) if *held != found => Err(format!("`{path}` is no longer the file the user picked; ask the user to pick it again")),
             Some(_) => Ok(file),
             None => {
-                chosen.held = Some(found);
+                let mut picked = self.picked.lock().map_err(|_| "the picked files are unavailable")?;
+                if let Some(chosen) = picked.iter_mut().find(|chosen| chosen.matches(Path::new(path), write)) {
+                    chosen.held = Some(Arc::new(found));
+                }
                 Ok(file)
             }
         }
@@ -83,7 +127,6 @@ pub(crate) struct HostCx<'a> {
     pub task: Option<Arc<Slot>>,
     pub on_task_thread: bool,
     pub paused: Duration,
-    pub deadline: Option<Instant>,
 }
 
 pub(crate) enum Bulk {
@@ -162,7 +205,31 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
         HostCall::Source { time } => image(cx.host.source(time)),
         HostCall::Masks => plain(json!(cx.host.masks())),
         HostCall::Scene => cx.host.scene().map(|scene| (json!(scene), Bulk::None)).ok_or("no scene here".into()),
-        call @ (HostCall::ReadFile { .. } | HostCall::WriteFile { .. } | HostCall::ListFiles { .. }) => on_disk(cx, call, bulk),
+        HostCall::ReadFile { root: Root::User, path } if !cx.plugin.grants.contains(&Permission::FilesRead) => {
+            let mut bytes = Vec::new();
+            cx.plugin.open_picked(&path, false)?.read_to_end(&mut bytes).map_err(|e| format!("{path}: {e}"))?;
+            Ok((Value::Null, Bulk::Bytes(bytes)))
+        }
+        HostCall::WriteFile { root: Root::User, path } if !cx.plugin.grants.contains(&Permission::FilesWrite) => {
+            let mut file = cx.plugin.open_picked(&path, true)?;
+            file.set_len(0).and_then(|()| file.write_all(bulk)).map_err(|e| format!("{path}: {e}"))?;
+            plain(Value::Null)
+        }
+        HostCall::ReadFile { root, path } => {
+            let bytes = std::fs::read(resolve(cx.plugin, root, &path)?).map_err(|e| format!("{path}: {e}"))?;
+            Ok((Value::Null, Bulk::Bytes(bytes)))
+        }
+        HostCall::WriteFile { root, path } => {
+            std::fs::write(resolve(cx.plugin, root, &path)?, bulk).map_err(|e| format!("{path}: {e}"))?;
+            plain(Value::Null)
+        }
+        HostCall::ListFiles { root, path } => {
+            let dir = resolve(cx.plugin, root, &path)?;
+            let mut names: Vec<String> =
+                std::fs::read_dir(dir).map_err(|e| format!("{path}: {e}"))?.filter_map(|entry| entry.ok()?.file_name().into_string().ok()).collect();
+            names.sort();
+            plain(json!(names))
+        }
         HostCall::CacheGet { key } => Ok(match cx.plugin.cache.get(&key) {
             Some(bytes) => (Value::Bool(true), Bulk::Shared(bytes)),
             None => (Value::Bool(false), Bulk::None),
@@ -206,7 +273,7 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             cx.paused += started.elapsed();
             let chosen = chosen?;
             if let Some(path) = &chosen {
-                cx.plugin.remember_pick(path.clone(), request.save);
+                cx.plugin.remember_pick(path.clone(), request.save)?;
             }
             plain(json!(chosen.map(|path| path.to_string_lossy().into_owned())))
         }
@@ -215,52 +282,6 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
         HostCall::ParamsAt { time } => cx.host.params_at(time).map(|answer| (json!(answer), Bulk::None)).ok_or("no parameters at that time".into()),
         HostCall::ClipboardRead => cx.host.clipboard().map(|text| (json!(text), Bulk::None)),
         HostCall::ClipboardWrite { text } => cx.host.set_clipboard(&text).map(|()| (Value::Null, Bulk::None)),
-    }
-}
-
-fn on_disk(cx: &HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk), String> {
-    let Some(deadline) = cx.deadline else { return disk(cx.plugin, call, bulk) };
-    let (engine, bulk) = (cx.engine.clone(), bulk.to_vec());
-    let (send, receive) = channel();
-    std::thread::Builder::new()
-        .name("craft-plugin-disk".into())
-        .spawn(move || {
-            let _ = send.send(disk(&engine.identity, call, &bulk));
-        })
-        .map_err(|e| e.to_string())?;
-    receive.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap_or_else(|_| Err("the disk did not answer within the time limit".into()))
-}
-
-fn disk(plugin: &Identity, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk), String> {
-    let plain = |value: Value| Ok((value, Bulk::None));
-    match call {
-        HostCall::ReadFile { root: Root::User, path } if !plugin.grants.contains(&Permission::FilesRead) => {
-            let mut bytes = Vec::new();
-            plugin.open_picked(&path, false)?.read_to_end(&mut bytes).map_err(|e| format!("{path}: {e}"))?;
-            Ok((Value::Null, Bulk::Bytes(bytes)))
-        }
-        HostCall::WriteFile { root: Root::User, path } if !plugin.grants.contains(&Permission::FilesWrite) => {
-            let mut file = plugin.open_picked(&path, true)?;
-            file.set_len(0).and_then(|()| file.write_all(bulk)).map_err(|e| format!("{path}: {e}"))?;
-            plain(Value::Null)
-        }
-        HostCall::ReadFile { root, path } => {
-            let bytes = std::fs::read(resolve(plugin, root, &path)?).map_err(|e| format!("{path}: {e}"))?;
-            Ok((Value::Null, Bulk::Bytes(bytes)))
-        }
-        HostCall::WriteFile { root, path } => {
-            let target = resolve(plugin, root, &path)?;
-            std::fs::write(target, bulk).map_err(|e| format!("{path}: {e}"))?;
-            plain(Value::Null)
-        }
-        HostCall::ListFiles { root, path } => {
-            let dir = resolve(plugin, root, &path)?;
-            let mut names: Vec<String> =
-                std::fs::read_dir(dir).map_err(|e| format!("{path}: {e}"))?.filter_map(|entry| entry.ok()?.file_name().into_string().ok()).collect();
-            names.sort();
-            plain(json!(names))
-        }
-        _ => Err("not a file call".into()),
     }
 }
 
@@ -306,4 +327,52 @@ fn resolve(plugin: &Identity, root: Root, path: &str) -> Result<PathBuf, String>
     let anchor = if joined.exists() { joined.clone() } else { joined.parent().unwrap_or(&base).to_path_buf() };
     let anchor = anchor.canonicalize().map_err(|e| format!("{path}: {e}"))?;
     anchor.starts_with(&base).then_some(joined).ok_or(format!("`{path}` leaves the plugin's folder"))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::sync::mpsc::channel;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use super::Identity;
+    use crate::cache::{BUDGET, Cache};
+    use crate::images::{IMAGE_BUDGET, Images};
+
+    fn identity(dir: &std::path::Path) -> Identity {
+        Identity {
+            id: "test.serve".into(),
+            dir: dir.to_path_buf(),
+            data_dir: dir.join("data"),
+            app_folders: vec![dir.join("app")],
+            grants: Default::default(),
+            cache: Arc::new(Cache::new(BUDGET)),
+            tasks: Default::default(),
+            picked: Mutex::new(Vec::new()),
+            images: Images::new(IMAGE_BUDGET),
+        }
+    }
+
+    #[test]
+    fn a_stalled_open_of_a_picked_file_does_not_hold_up_other_permission_checks() {
+        let dir = tempfile::tempdir().unwrap();
+        let picked = dir.path().join("picked.txt");
+        std::fs::write(&picked, "chosen").unwrap();
+        let identity = identity(dir.path());
+        identity.remember_pick(picked.clone(), false).unwrap();
+        std::fs::remove_file(&picked).unwrap();
+        assert!(std::process::Command::new("mkfifo").arg(&picked).status().unwrap().success());
+        let path = picked.to_str().unwrap();
+        std::thread::scope(|scope| {
+            let opener = scope.spawn(|| identity.open_picked(path, false).map(drop));
+            std::thread::sleep(Duration::from_millis(100));
+            let (send, answered) = channel();
+            let identity = &identity;
+            scope.spawn(move || send.send(identity.picked(path, false)));
+            let answer = answered.recv_timeout(Duration::from_secs(5));
+            drop(std::fs::OpenOptions::new().write(true).open(&picked));
+            assert_eq!(answer, Ok(true));
+            assert_eq!(opener.join().unwrap(), Err(format!("`{path}` is no longer the file the user picked; ask the user to pick it again")));
+        });
+    }
 }
