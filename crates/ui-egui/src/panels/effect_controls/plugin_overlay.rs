@@ -153,7 +153,9 @@ pub(super) fn effect_overlay(
             resp.request_focus();
             ui.data_mut(|d| d.insert_temp(id, Grab { shown: shown.clone(), from, pass }));
         }
-        let grab = ui.data(|d| d.get_temp::<Grab>(id)).filter(|grab| resp.dragged() && grab.pass + 1 >= pass && shown.continues(&grab.shown, index));
+        let grab = ui
+            .data(|d| d.get_temp::<Grab>(id))
+            .filter(|grab| (resp.dragged() || resp.drag_stopped()) && grab.pass + 1 >= pass && shown.continues(&grab.shown, index));
         match grab {
             Some(grab) => {
                 ui.data_mut(|d| d.insert_temp(id, Grab { pass, ..grab.clone() }));

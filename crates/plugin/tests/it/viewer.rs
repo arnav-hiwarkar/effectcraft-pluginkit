@@ -39,13 +39,17 @@ fn shown(app: &mut App, panels: &mut Panels) -> Arc<Shown> {
     try_shown(app, panels).expect("the effect draws an overlay")
 }
 
-fn drag(app: &mut App, panels: &mut Panels, shown: &Shown, handle: usize, delta: [f64; 2], merge: &str) {
+fn post_drag(app: &mut App, panels: &mut Panels, shown: &Shown, handle: usize, delta: [f64; 2], merge: &str) {
     let project = app.session.project.clone();
     let layer = project.comp(app.session.active_comp_id().unwrap()).unwrap().layers.iter().find(|layer| layer.name == "Aim").unwrap();
     let commands = panels.drag(shown, handle, delta, layer.effects().unwrap().groups().next().unwrap(), merge).unwrap();
     for (id, params) in commands {
         app.session.execute_checked(&id, params).unwrap();
     }
+}
+
+fn drag(app: &mut App, panels: &mut Panels, shown: &Shown, handle: usize, delta: [f64; 2], merge: &str) {
+    post_drag(app, panels, shown, handle, delta, merge);
     settle(app, panels);
 }
 
@@ -288,4 +292,32 @@ fn an_overlay_and_its_grab_do_not_carry_over_to_a_reopened_project_with_the_same
     aim_layer(&mut app);
     let second = shown(&mut app, &mut panels);
     assert_eq!((Arc::ptr_eq(&first, &second), second.continues(&first, 0)), (false, false));
+}
+
+#[test]
+fn a_custom_handle_dragged_back_to_where_its_value_started_sets_that_value() {
+    let mut app = app("test.viewer-back", &[]);
+    let mut panels = Panels::default();
+    aim_layer(&mut app);
+    let start = shown(&mut app, &mut panels);
+    drag(&mut app, &mut panels, &start, 6, [4.0, 5.0], "back");
+    drag(&mut app, &mut panels, &start, 6, [-1.0, -2.0], "back");
+    assert_eq!(value(&mut app, "pin"), json!("0,0"));
+}
+
+#[test]
+fn drags_of_three_gestures_queued_behind_a_slow_call_keep_three_undo_steps() {
+    let mut app = app("test.viewer-gestures", &["document.read"]);
+    let mut panels = Panels::default();
+    aim_layer(&mut app);
+    let start = shown(&mut app, &mut panels);
+    hold_the_worker(&mut app, &mut panels);
+    for (delta, gesture) in [([4.0, 5.0], "one"), ([6.0, 7.0], "two"), ([8.0, 9.0], "three")] {
+        post_drag(&mut app, &mut panels, &start, 6, delta, gesture);
+    }
+    crate::panels::release(&app);
+    settle(&mut app, &mut panels);
+    let last = value(&mut app, "pin");
+    app.session.execute_checked("edit.undo", json!({})).unwrap();
+    assert_eq!((last, value(&mut app, "pin")), (json!("9,11"), json!("7,9")));
 }

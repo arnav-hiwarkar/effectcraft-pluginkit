@@ -559,14 +559,15 @@ impl Panels {
             self.lanes.insert(request.key.clone(), VecDeque::new());
             return self.send(request);
         };
-        let moving = |call: &Call| matches!(call, Call::Tool { event, .. } if event.kind == ToolEventKind::Move);
-        let kind = std::mem::discriminant(&request.call);
-        let replaced = match request.call {
-            Call::Overlay { .. } | Call::Drag { .. } => waiting.iter().position(|other| std::mem::discriminant(&other.call) == kind),
-            _ if moving(&request.call) && waiting.back().is_some_and(|last| moving(&last.call)) => Some(waiting.len() - 1),
-            _ => None,
+        let merges = |queued: &Request| match (&queued.call, &request.call) {
+            (Call::Overlay { .. }, Call::Overlay { .. }) => true,
+            (Call::Drag { key: handle, .. }, Call::Drag { key, .. }) => handle == key && queued.edit == request.edit,
+            (Call::Tool { event: last, .. }, Call::Tool { event, .. }) => last.kind == ToolEventKind::Move && event.kind == ToolEventKind::Move,
+            _ => false,
         };
-        match replaced {
+        let kind = std::mem::discriminant(&request.call);
+        let latest = waiting.iter().rposition(|queued| std::mem::discriminant(&queued.call) == kind);
+        match latest.filter(|at| merges(&waiting[*at])) {
             Some(at) => waiting[at] = request,
             None => waiting.push_back(request),
         }

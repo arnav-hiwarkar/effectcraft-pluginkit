@@ -247,8 +247,37 @@ fn a_plugin_menu_command_is_queued_and_the_menu_returns_before_it_runs() {
     let ctx = harness.ctx.clone();
     let app = harness.state_mut();
     let ran = crate::menus::invoke(app, &ctx, "plugin.run", json!({"plugin": "test.viewer-tool-ui", "command": "edit"}));
-    let names = |h: &Harness<'_, EffectcraftApp>| -> Vec<String> { h.state().session.active_comp().unwrap().layers.iter().map(|layer| layer.name.clone()).collect() };
+    let names =
+        |h: &Harness<'_, EffectcraftApp>| -> Vec<String> { h.state().session.active_comp().unwrap().layers.iter().map(|layer| layer.name.clone()).collect() };
     let before = names(&harness);
     settle(&mut harness, |h| h.state().plugin_ui.panels.idle());
     assert_eq!((ran, before, names(&harness)), (Ok(Value::Null), vec![], vec!["From Plugin".to_string()]));
+}
+
+#[test]
+fn a_handle_drag_whose_last_move_arrives_with_the_release_ends_where_the_pointer_was_released() {
+    let mut session = halo_session();
+    let layer = session.active_comp().unwrap().layers[0].clone();
+    let effect = layer.effects().unwrap().groups().next().unwrap().uid;
+    session.state.selected_layers = vec![layer.id];
+    session.state.selected_props = vec![(LayerId(layer.id.0), effect)];
+    let mut harness = harness(session);
+    harness.state_mut().ui.viewer.zoom = Some(1.0);
+    settle(&mut harness, |h| shown_frame(h).is_some() && h.state().auto.find(&format!("viewer.pluginHandle.{effect}.0")).is_some());
+    stable_frame(&mut harness);
+    let centre = element(&harness, &format!("viewer.pluginHandle.{effect}.0")).center();
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    let (middle, end) = (centre + Vec2::new(20.0, 10.0), centre + Vec2::new(40.0, 20.0));
+    let frames = [
+        vec![egui::Event::PointerMoved(centre)],
+        vec![button(centre, true)],
+        vec![egui::Event::PointerMoved(middle)],
+        vec![egui::Event::PointerMoved(end), button(end, false)],
+    ];
+    for events in frames {
+        harness.input_mut().events.extend(events);
+        settle(&mut harness, |h| h.state().plugin_ui.panels.idle());
+    }
+    let light = harness.state_mut().session.execute("prop.get", json!({"layer": "Sky", "path": "effects/#1/light"})).unwrap()["value"].clone();
+    assert_eq!(light, json!([136.0, 74.0]));
 }
