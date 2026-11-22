@@ -95,7 +95,7 @@ pub struct Collapsed {
 
 /// Cache key of a frame-blended footage frame: `seed` (which frames, how they mix, the footage
 /// file) and the Interpret Footage settings that change the decoded pixels.
-fn effect_instance(layer: &Layer, group: &effectcraft_project::PropGroup) -> u64 {
+pub fn effect_instance(layer: &Layer, group: &effectcraft_project::PropGroup) -> u64 {
     layer.id.0.wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(32) ^ group.uid
 }
 

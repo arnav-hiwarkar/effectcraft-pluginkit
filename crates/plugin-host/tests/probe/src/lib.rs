@@ -434,6 +434,66 @@ impl Effect for Spin {
     }
 }
 
+struct Aim;
+
+impl Effect for Aim {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("aim", "Aim", "Probe")
+            .param(Param::point("centre", "Centre", [0.5, 0.5]))
+            .param(Param::angle("turn", "Turn", 0.0))
+            .param(Param::slider("reach", "Reach", 10.0, 0.0..=100.0))
+            .group("Box", [Param::point("min", "Box Min", [0.25, 0.25]), Param::point("max", "Box Max", [0.5, 0.5])])
+            .param(Param::custom("pin", "Pin", "0,0"))
+    }
+
+    fn overlay(&self, cx: &Cx, overlay: &mut Overlay) {
+        let [x, y] = cx.point("centre");
+        let turn = cx.f("turn").to_radians();
+        overlay.point(cx, "centre");
+        overlay.angle("turn", [x, y], [x + 8.0 * turn.cos(), y + 8.0 * turn.sin()]);
+        overlay.radius("reach", [x, y], cx.f("reach") * 2.0, 2.0);
+        overlay.rect(cx, "Box/min", "Box/max");
+        overlay.custom("pin", "pin", [1.0, 2.0]).named("Pin");
+        overlay.space(Space::Comp).line(&[[0.0, 0.0], [4.0, 4.0]]);
+    }
+
+    fn drag(&self, _cx: &Cx, key: &str, to: [f64; 2], value: &mut String) {
+        if key == "pin" {
+            *value = format!("{},{}", to[0], to[1]);
+        }
+    }
+}
+
+#[derive(Default)]
+struct Stamp {
+    seen: Vec<String>,
+    null: Option<u64>,
+}
+
+impl Tool for Stamp {
+    fn event(&mut self, event: &ToolEvent, overlay: &mut Overlay) -> Result<()> {
+        let [x, y] = event.comp;
+        self.seen.push(format!("{:?} {x} {y}", event.kind));
+        match event.kind {
+            ToolEventKind::Down => {
+                self.seen = vec![format!("Down {x} {y}")];
+                let reply = host::command("layer.newNull", json!({"name": "Stamp"}))?;
+                self.null = reply["layer"].as_u64();
+            }
+            ToolEventKind::Move | ToolEventKind::Up => {
+                if let Some(layer) = self.null {
+                    host::command("prop.set", json!({"layer": layer, "path": "transform/position", "value": [x, y]}))?;
+                }
+            }
+            _ => {}
+        }
+        for (row, line) in self.seen.iter().enumerate() {
+            overlay.text([x, y + 12.0 * row as f64], line);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 struct Counter {
     clicks: u32,
@@ -469,6 +529,8 @@ fn make() -> Plugin {
         .effect(Passes)
         .effect(GpuFill)
         .effect(GpuMatte)
+        .effect(Aim)
+        .tool("stamp", "Stamp", Stamp::default())
         .panel("counter", "Counter", Counter::default())
         .command("edit", "Edit Document", || {
             let reply = host::command("layer.newNull", json!({"name": "From Plugin"}))?;

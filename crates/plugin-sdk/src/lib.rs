@@ -5,20 +5,22 @@ mod manifest;
 pub mod math;
 mod plugin;
 mod ui;
+mod viewer;
 mod wire;
 
 pub use effect::{Cx, Effect, Frame, Image, Pass, Rows};
 pub use manifest::{Entry, MANIFEST_FILE, Manifest, ManifestError, Permission, RunMode, native_target};
 pub use plugin::{Error, Plugin, Result, Task};
 pub use ui::{Canvas, Panel, Ui};
+pub use viewer::{Bind, Cursor, Handle, Mark, Overlay, Space, Tool, ToolEvent, ToolEventKind, ToolSpec};
 pub use wire::*;
 
 pub mod prelude {
     pub use crate::host;
     pub use crate::{
         AudioRequest, Blend, Camera, Canvas, Cull, Cx, Effect, EffectSpec, Error, Frame, FrameRequest, GpuData, GpuImage, GpuPass, GpuPlan, Image, Layout,
-        Light, LightKind, MaskPath, Paint, Panel, Param, Pass, PickFile, Pixel, Plugin, Pointer, PointerPhase, Result, Root, Rows, Scene, Task, TaskState,
-        TaskStatus, Ui,
+        Light, LightKind, MaskPath, Overlay, Paint, Panel, Param, Pass, PickFile, Pixel, Plugin, Pointer, PointerPhase, Result, Root, Rows, Scene, Space, Task,
+        TaskState, TaskStatus, Tool, ToolEvent, ToolEventKind, Ui,
     };
 }
 

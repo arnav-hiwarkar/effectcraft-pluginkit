@@ -5,6 +5,7 @@ mod lumen;
 mod media;
 mod params;
 mod render;
+mod viewer;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

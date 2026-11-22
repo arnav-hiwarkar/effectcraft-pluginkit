@@ -25,3 +25,7 @@ pub use registry::{Bundle, BundleError, Consent, Registry};
 pub mod ui {
     pub use craft_plugin::{ControlsReply, Modifiers, Paint, Pointer, PointerPhase, Shape, TextStyle, UiEvent, UiEventKind, UiInput, Widget};
 }
+
+pub mod viewer {
+    pub use craft_plugin::{Bind, Cursor, Handle, Mark, Overlay, Space, ToolEvent, ToolEventKind, ToolSpec};
+}

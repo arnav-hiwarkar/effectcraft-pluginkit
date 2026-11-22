@@ -4,6 +4,7 @@ use crate::Result;
 use crate::abi::Buffer;
 use crate::host;
 use crate::ui::Ui;
+use crate::viewer::Overlay;
 use crate::wire::{EffectSpec, HostCall, ImageDesc, Layout, MaskPath, ParamsAt, Pixel, RenderCx, Scene, Value};
 
 pub trait Effect: Send + Sync + 'static {
@@ -22,6 +23,10 @@ pub trait Effect: Send + Sync + 'static {
     fn pass(&self, _cx: &Cx, pass: &Pass, _out: &mut Frame) -> Result<()> {
         Err(format!("this effect has no CPU kernel `{}`", pass.kernel).into())
     }
+
+    fn overlay(&self, _cx: &Cx, _overlay: &mut Overlay) {}
+
+    fn drag(&self, _cx: &Cx, _key: &str, _to: [f64; 2], _value: &mut String) {}
 }
 
 pub struct Pass<'a> {
