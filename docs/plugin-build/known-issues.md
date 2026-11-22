@@ -69,3 +69,44 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 ## Seen while running the full Mac gate
 
 - **`effectcraft-media` integration tests hang on this Mac, on upstream `main` too.** `cargo test -p effectcraft-media --test it` stops at 0 % CPU with several `footage::` tests unfinished (`vp9_webm_frames`, `concurrent_requests`, `cache_budget_evicts`, `mxf_mpeg2_with_pcm_audio` and others, a different set each run). A sample shows the threads parked in `effectcraft_media::pool::Inner::frame_px` and `run_decode`, waiting on a channel. One of those tests passes in 0.2 s when run alone. The same suite hangs the same way in a worktree of untouched `main` (563fea65), and this branch does not change `crates/media`. So the full `cargo xtask ci` gate cannot finish on this Mac. Not investigated further.
+
+## Seen while trying the app by hand, not fixed
+
+- **A recovered auto-save opens only the first composition.** File ▸ Save writes the open comps, the
+  active comp and each comp's current time (`Project::to_file_json_with_view` with `Session::saved_view`,
+  `crates/engine/src/cmd/file.rs`). An auto-save writes the bare project (`Project::to_json_compact` in
+  `Session::autosave_now`, `crates/engine/src/settings/session_settings.rs`, both the background and the
+  direct path), so the file has no `openComps`, `activeComp` or `compTimes`. Every comp and every change up
+  to the last auto-save comes back; the tabs, the active comp and the current times do not. Seen on a
+  seven-comp project killed after an auto-save: Open Auto-Save restored all seven comps and the edits in
+  comps 1, 3 and 5, with only comp 1 open. Upstream code, not plugin code. Fix: write
+  `to_file_json_with_view(&self.saved_view(), true)` in both paths, with a test that opens the auto-save
+  in a fresh session and checks `open_comps` and `active_comp`, in the foreground and in the background.
+- **Work after the last auto-save is lost on a crash.** By design: the default interval is 20 minutes
+  (Settings ▸ Auto-Save). Not a bug, noted because it looks like one when testing recovery.
+- **A recovered project keeps the auto-save as its path.** Open Auto-Save opens
+  `EffectCraft Auto-Save/<name> auto-save N.ecproj`, so File ▸ Save writes there rather than to the
+  original project. The user has to Save As over the original.
+- **Launching the app from an agent's shell can get it stopped about 30 minutes later**, with no log line
+  and no crash report, because the shell's process group is cleaned up. Start it in its own session
+  (`setsid` or a double fork) or from the user's own Terminal; `pluginkit/demo/start.sh` is the demo
+  launcher.
+
+## Found by the speed study, not fixed
+
+The measurements and the ranked list of changes are in `pluginkit/reports/speed-study.md`.
+
+- **A native plugin whose layout has a reach renders the whole frame on one core.** `Plugin::render`
+  (`crates/plugin-host/src/plugin.rs:135-138`) bands only when `reach == 0 || copies_pixels()`, so a native
+  `Layout::neighbourhood(n)` effect gets one call for the whole frame. Native Retro Neon takes 56 to 72 ms at
+  1080p against 34 to 42 ms sandboxed. Fix: snapshot the input and give each band pointers to the snapshot and
+  its own rows, as the pass path does for native plugins.
+- **Sandboxed frame copies run as nested parallel tasks.** `copy` in `crates/plugin-host/src/runtime/wasm.rs`
+  splits each band's copy into 1 MiB rayon tasks inside bands that already run in parallel. A plain
+  `copy_from_slice` is 10 to 25 % faster on copy-bound effects (Probe 1080p 1.68 → 1.27 ms, Plasma Beam
+  5.0 → 4.5 ms).
+- **The shipped Lumen Glow module was built without SIMD.** It is byte-identical to a build without
+  `+simd128`, while Plasma Beam, Halo and Retro have it. It made no measured difference for Lumen, but every
+  package should come out of `cargo xtask plugin` with the same flags.
+- **Timeout checks cost 8 to 35 % of sandboxed compute** (Plasma Beam 4.44 → 3.23 ms with them off, Halo
+  25 → 17.5 ms). They are needed to stop a plugin that hangs; the options are in the study.
