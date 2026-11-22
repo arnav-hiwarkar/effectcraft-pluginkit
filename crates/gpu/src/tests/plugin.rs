@@ -26,6 +26,7 @@ fn tint_program() -> GpuProgram {
 fn register(id: &str, wgsl: &str, program: GpuProgram) {
     dynamic::register(DynamicEffect {
         owner: "test".into(),
+        files: None,
         id: id.into(),
         name: id.into(),
         category: "Test".into(),

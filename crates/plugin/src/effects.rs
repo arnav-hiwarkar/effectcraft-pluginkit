@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use craft_plugin_host::{Call, EffectSpec, GpuImage, Host, Layout, MaskPath, Param, ParamKind, Pixels, RenderCx, Scene, Value as Wire};
@@ -10,6 +11,7 @@ use effectcraft_engine::project::ParamUi;
 use crate::manage::Loaded;
 
 const MAX_PADDING: u32 = 4096;
+const MAX_STAMPED_FILES: usize = 256;
 
 pub(crate) fn effect_id(plugin: &str, effect: &str) -> String {
     format!("{plugin}.{effect}")
@@ -36,8 +38,30 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
             reads_other_frames: spec.reads_other_frames,
             reads_comp_scene: spec.reads_scene,
             revision: loaded.revision,
+            files: Some(folders_stamp(vec![loaded.bundle.dir.clone(), loaded.data_dir.clone()])),
         });
     }
+}
+
+fn folders_stamp(folders: Vec<std::path::PathBuf>) -> dynamic::StampDyn {
+    Box::new(move || {
+        let mut stamps = Vec::new();
+        let mut pending = folders.clone();
+        while let Some(dir) = pending.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for entry in entries.flatten().take(MAX_STAMPED_FILES.saturating_sub(stamps.len())) {
+                let Ok(meta) = entry.metadata() else { continue };
+                if meta.is_dir() {
+                    pending.push(entry.path());
+                }
+                stamps.push((entry.path(), meta.len(), meta.modified().ok()));
+            }
+        }
+        stamps.sort();
+        let mut hasher = std::hash::DefaultHasher::new();
+        stamps.hash(&mut hasher);
+        hasher.finish()
+    })
 }
 
 pub(crate) fn unregister(plugin: &str) {

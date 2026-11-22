@@ -2074,6 +2074,7 @@ fn comp_content_key_for_renderer(project: &effectcraft_project::Project, comp: e
         h.write(it.name.as_bytes());
         match &it.kind {
             ItemKind::Comp(c) => {
+                c.layers.iter().flat_map(crate::cache::effect_revisions).for_each(|revision| h.write_u64(revision));
                 let quiet = silent(id, c);
                 let heard = |l| heard.contains(id, l);
                 if quiet.is_empty() {

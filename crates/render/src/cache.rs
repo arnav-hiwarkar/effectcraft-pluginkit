@@ -1029,7 +1029,7 @@ pub(crate) fn reads_layers(ctx: &EvalCtx, layer: &Layer) -> bool {
     layer.switches.effects && layer.effects().is_some_and(|fx| fx.groups().any(|g| g.enabled && reads(ctx, layer, g, 0)))
 }
 
-fn effect_revisions(layer: &Layer) -> impl Iterator<Item = u64> {
+pub(crate) fn effect_revisions(layer: &Layer) -> impl Iterator<Item = u64> {
     layer.effects().into_iter().flat_map(|fx| fx.groups()).filter_map(|g| match &g.kind {
         effectcraft_project::GroupKind::Effect { effect } => Some(effectcraft_effects::revision(effect)).filter(|r| *r != 0),
         _ => None,

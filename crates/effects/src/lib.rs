@@ -1526,7 +1526,10 @@ pub fn reads_other_frames(id: &str) -> bool {
 }
 
 pub fn revision(id: &str) -> u64 {
-    dynamic::get(id).map_or(0, |r| r.effect.revision)
+    dynamic::get(id).map_or(0, |r| match &r.effect.files {
+        Some(stamp) => r.effect.revision ^ stamp().rotate_left(1),
+        None => r.effect.revision,
+    })
 }
 
 /// Does effect `id` read its own parameters at earlier times (the stepped particle systems sample
