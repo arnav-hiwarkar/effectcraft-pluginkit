@@ -114,7 +114,9 @@ pub fn sin_cos(x: f32) -> (f32, f32) {
     (sin(x), cos(x))
 }
 
-/// The angle of the point `(x, y)` in `-PI..=PI`, like `f32::atan2(y, x)`. `atan2(0.0, 0.0)` is `0`.
+/// The angle of the point `(x, y)` in `-PI..=PI`, like `f32::atan2(y, x)`, including the sign of a zero `y` and
+/// of a zero `x`. `atan2` of two zeros is `0`. A NaN argument gives a finite angle, not NaN: checking for it would
+/// cost every call.
 /// Largest absolute error against `f32::atan2` over a `-20..=20` grid and around the axes: 5e-6.
 #[inline(always)]
 pub fn atan2(y: f32, x: f32) -> f32 {
@@ -129,10 +131,10 @@ pub fn atan2(y: f32, x: f32) -> f32 {
     if ay > ax {
         r = FRAC_PI_2 - r;
     }
-    if x < 0.0 {
+    if x.is_sign_negative() {
         r = PI - r;
     }
-    if y < 0.0 { -r } else { r }
+    if y.is_sign_negative() { -r } else { r }
 }
 
 /// `sqrt(x * x + y * y)` when the larger of `|x|` and `|y|` is `0` or lies in `1e-19..=1e18`. Largest relative
@@ -309,6 +311,12 @@ mod tests {
         assert_eq!(atan2(0.0, 0.0), 0.0);
         assert_eq!(atan2(0.0, 1.0), 0.0);
         assert_eq!(atan2(1.0, 0.0), FRAC_PI_2);
+        assert_eq!(atan2(-0.0, -1.0), -PI);
+        assert_eq!(atan2(0.0, -1.0), PI);
+        assert_eq!(atan2(-0.0, 1.0).to_bits(), (-0.0f32).to_bits());
+        assert_eq!(atan2(1.0, -0.0), FRAC_PI_2);
+        assert_eq!(atan2(-1.0, -0.0), -FRAC_PI_2);
+        assert!(atan2(f32::NAN, 1.0).is_finite());
     }
 
     #[test]
