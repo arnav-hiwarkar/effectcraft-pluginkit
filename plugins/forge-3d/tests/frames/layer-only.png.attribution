@@ -1,0 +1,8 @@
+asset:        layer-only.png
+title:        Stored test frame "layer-only" of the forge-3d reference plugin
+author:       EffectCraft contributors
+source:       original work
+license:      MIT OR Apache-2.0
+license-file: LICENSE-MIT
+added:        2026-11-22 by EffectCraft contributors (Claude agent, plugin stored-frame tests)
+notes:        Rendered by the plugin's own code on the test kit's built-in test image; the plugin's frame test compares its render with this file. Rewrite it with UPDATE_FRAMES=1 cargo test in plugins/forge-3d.

@@ -37,6 +37,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Layers
         run: cargo run --quiet --package xtask -- layers
+      - name: Assets are attributed
+        run: cargo run --quiet --package xtask -- assets
       - name: Format
         run: cargo fmt --check -p craft-plugin -p craft-plugin-host -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-ui-egui -p effectcraft-engine -p effectcraft-automation -p xtask
       - name: Kit and adapter tests
@@ -51,12 +53,18 @@ jobs:
           cargo test -p effectcraft-ui-egui --lib -- plugin i18n:: menus::
           cargo test -p effectcraft-project --lib
           cargo test -p effectcraft-gpu --lib plugin
+          cargo test -p effectcraft-render -p effectcraft-raster
+          cargo test -p effectcraft-ui-egui --lib -- viewer_frames effect_controls
+          cargo test -p effectcraft-ui-egui --test it -- ui_recovery plugin
+          cargo test -p xtask
       - name: Web build
         run: cargo run --quiet --package xtask -- wasm
       - name: Desktop app builds
         run: cargo check -p effectcraft
       - name: Plugins end to end
         run: ./plugins/e2e.sh
+      - name: New plugin templates and the cookbook
+        run: ./plugins/new-plugin-check.sh
       - name: Plugin crate tests
         run: |
           for manifest in plugins/*/Cargo.toml; do
