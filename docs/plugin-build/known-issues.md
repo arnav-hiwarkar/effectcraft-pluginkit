@@ -86,12 +86,6 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 
 ## Seen in the third build
 
-- **One UI test fails now and then under load.** `app::viewer_frames::tests::the_viewers_show_a_still_reloaded_at_the_same_size`
-  compares the viewer's frame key across two steps and saw the `opts` part change. It failed once for a
-  worker and once in a full run at load 15 to 30, passed 15 of 15 alone and 4 of 4 full runs at load 13.
-  The key's `opts` mixes in the fast-preview draft state and a process-wide LUT generation, so a slow
-  frame or a parallel test can move it. Upstream code; the cause was not pinned down.
-
 ## Found by the region work, not fixed
 
 - **Only the last plugin effects of a stack render a part.** A plugin effect gets the shown part grown by

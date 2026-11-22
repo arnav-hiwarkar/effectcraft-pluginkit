@@ -256,10 +256,13 @@ impl EffectcraftApp {
 
 #[cfg(test)]
 mod tests {
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// #3493: the viewer shows the frame again once the LUT file it was graded with changes,
     /// though its key was otherwise the same (same project revision, frame and options).
     #[test]
     fn the_viewer_shows_a_lut_file_changed_on_disk() {
+        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let lut = dir.path().join("viewer.cube");
         let write = |text: &str, secs: u64| {
@@ -299,6 +302,7 @@ mod tests {
     /// frame having the key of the one on screen. A reload's purge gives the frames new keys, once.
     #[test]
     fn the_viewers_show_a_still_reloaded_at_the_same_size() {
+        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let png = dir.path().join("still.png");
         let save = |rgb: [u8; 3]| image::RgbaImage::from_pixel(64, 36, image::Rgba([rgb[0], rgb[1], rgb[2], 255])).save(&png).unwrap();
