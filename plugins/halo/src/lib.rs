@@ -35,11 +35,11 @@ impl Effect for Halo {
         let pack = settings::pack(cx, settings::occlusion(cx));
         let ghosts = place(&pack);
         let x0 = frame.origin[0];
-        for (y, read, row) in frame.rows() {
+        for (y, row) in frame.rows_in_place() {
             let py = y as f32 + 0.5;
-            for (x, (pixel, source)) in row.iter_mut().zip(read).enumerate() {
+            for (x, pixel) in row.iter_mut().enumerate() {
                 let light = flare(&pack, &ghosts, (x0 + x) as f32 + 0.5, py);
-                *pixel = composite(&pack, *source, light);
+                *pixel = composite(&pack, *pixel, light);
             }
         }
         Ok(())
