@@ -24,7 +24,7 @@
 //! effectcraft-cli render --template T.ectemplate [--values V.json] --out FILE
 //! effectcraft-cli render-frame --template T.ectemplate [--values V.json] [--time S] [--out F.png]
 //! effectcraft-cli render F.ecproj --queue                    render the project's Render Queue
-//! effectcraft-cli bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--gpu [--adv3d]]   render timings
+//! effectcraft-cli bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--cached] [--gpu [--adv3d]]   render timings
 //!     (--gpu: CPU vs GPU ms/frame for every comp at Full and Half)
 //! effectcraft-cli bench --ops [--small] [--layers N] [--comps N] [--footage N]   everyday-operation timings
 //!     on a large generated project (open, save, auto-save, undo/redo, timeline, Project panel)
@@ -127,7 +127,7 @@ const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|se
                                            --progress: progress lines on stderr when it is not a terminal
                                            (progress <frames done> <total> <seconds elapsed> <seconds left|->)
   render/render-frame --template T.ectemplate [--values V.json]   render one template instance
-  bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--gpu [--adv3d]]   per-layer/effect render timings;
+  bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--cached] [--gpu [--adv3d]]   per-layer/effect render timings;
                                            --play N renders N consecutive frames with/without the layer cache;
                                            --gpu compares CPU and GPU ms/frame for every comp at Full and Half
   bench --ops [--small] [--layers N] [--comps N] [--footage N]
@@ -223,6 +223,7 @@ const FLAGS: &[&str] = &[
     "--queue",
     "--ops",
     "--roto",
+    "--cached",
     "--small",
     "--adv3d",
     "--autosave",
@@ -1065,7 +1066,7 @@ fn bench_cmd(args: &Args) -> Result<(), Failure> {
     if args.flag("--roto") {
         return bench_roto(args);
     }
-    let mut s = effectcraft_host::session();
+    let mut s = session(args)?;
     match &args.project {
         Some(p) => s.execute("file.open", json!({"path": p})),
         None => s.execute("file.openDemoProject", json!({})),
@@ -1083,6 +1084,9 @@ fn bench_cmd(args: &Args) -> Result<(), Failure> {
     bench(&s, cid, t, opts, args.num("--n")?.unwrap_or(10.0).max(1.0) as usize);
     if let Some(n) = args.num("--play")? {
         bench_play(&s, cid, t, opts, n.max(1.0) as usize);
+    }
+    if args.flag("--cached") {
+        bench_cached(&s, cid, t, opts, args.num("--n")?.unwrap_or(10.0).max(1.0) as usize);
     }
     Ok(())
 }
@@ -1346,6 +1350,24 @@ fn bench_play(s: &Session, cid: ItemId, t: Tick, opts: RenderOpts, n: usize) {
     }
     let st = cache.stats();
     note!("  layer cache: {} hits, {} misses, {} entries, {:.1} MB", st.hits, st.misses, st.entries, st.bytes as f64 / 1e6);
+}
+
+/// `bench --cached`: median of `n` renders of the frame at `t` from a layer cache that already
+/// holds it, and of `n` renders of the next frame from a cache that holds frame `t`.
+fn bench_cached(s: &Session, cid: ItemId, t: Tick, opts: RenderOpts, n: usize) {
+    let Some(comp) = s.project.comp(cid) else { return };
+    let next = comp.frame_rate.tick_of(comp.frame_rate.frame_at(t) + 1);
+    let cache = LayerCache::default();
+    render_timed(s, cid, t, opts, Some(&cache));
+    let mut hit: Vec<f64> = (0..n).map(|_| render_timed(s, cid, t, opts, Some(&cache)).0).collect();
+    let mut step: Vec<f64> = (0..n)
+        .map(|_| {
+            let warm = LayerCache::default();
+            render_timed(s, cid, t, opts, Some(&warm));
+            render_timed(s, cid, next, opts, Some(&warm)).0
+        })
+        .collect();
+    note!("bench-cached: same frame median {:.2} ms; next frame median {:.2} ms", median(&mut hit), median(&mut step));
 }
 
 /// Median wall time (ms) of `n` runs of `f` after one warm-up run.
