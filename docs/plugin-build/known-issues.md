@@ -2,6 +2,8 @@
 
 Found while the plugin system was built and reviewed, and not fixed. Each entry says where to look.
 [decisions.tsv](decisions.tsv) is the log of what was decided and how each step was checked.
+[roadmap.md](roadmap.md) lists what the third build did and what was put off; [speed.md](speed.md) has the
+measured speed before and after.
 
 - **wasmtime and libloading licences.** House rule 26 wants every new dependency's licence on `standards/licences.md` in craft-contrib. wasmtime is Apache-2.0 WITH LLVM-exception, libloading is ISC. I did not check the list (it is in a storytold repo). Check before any upstream proposal.
 - **`files.read` and `files.write` on Windows.** The plugin gate widens a plugin's roots to the filesystem root. On Windows that is the current drive only, so a plugin with `files.write` cannot write to another drive. Conservative, not a hole.
