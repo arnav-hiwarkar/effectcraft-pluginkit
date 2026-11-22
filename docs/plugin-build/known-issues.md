@@ -46,7 +46,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **A process of the same user that reads the cache key can still sign a compiled module.** Compiled cache entries carry an HMAC-SHA-256 under `Plugins/.compiled/key` (mode 0600, made from OS randomness), so a planted entry without the key is compiled again (`cached` in `crates/plugin-host/src/runtime/wasm.rs`). The key file is readable by every process of the same user; only the helper process with an OS sandbox would close this.
 - **A native task that ignores cancel keeps its thread.** Only a sandboxed task can be interrupted.
 - **In the CLI a task's document requests are answered only inside `plugin.tasks {wait}`.**
-- **`host::frame` of one layer hides every other layer**, including the layer's track matte.
 - **Effects cannot read audio.** The render path reaches footage audio, not the comp mix.
 - **A layer with its video switch off reads as empty through a layer parameter.**
 - **Plugin panels and custom controls cannot be fully used from the keyboard.** A canvas cannot take focus and custom controls get no key events. House rule 21 asks for this. (`crates/ui-egui/src/panels/plugin_view.rs`, Opus finding 8)

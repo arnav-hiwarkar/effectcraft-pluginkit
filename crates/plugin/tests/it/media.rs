@@ -80,3 +80,33 @@ fn a_task_started_in_one_project_cannot_edit_the_project_opened_after_it() {
     assert_eq!(state["status"], json!(TaskStatus::Cancelled), "{state}");
     assert_eq!(app.layer_names(), Vec::<String>::new());
 }
+
+#[test]
+fn a_frame_of_one_layer_keeps_its_track_matte() {
+    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut app = app("test.media-solo", &["document.read"]);
+    let plate = solid(&mut app, "Plate", "#0000ff", 64);
+    let matte = solid(&mut app, "Matte", "#ff0000", 8);
+    app.session.execute("prop.set", json!({"layer": matte, "path": "transform/position", "value": [4, 4]})).unwrap();
+    app.session.execute("layer.setTrackMatte", json!({"layer": plate, "matte": matte, "kind": "alpha"})).unwrap();
+    app.session.execute("layer.setSwitch", json!({"layers": [matte], "switch": "video", "value": true})).unwrap();
+
+    let corner = finished(&mut app, "frame", json!({"time": 0.0, "scale": 1.0}));
+    assert_eq!(corner["center"], json!([0.0, 0.0, 0.0, 0.0]));
+    let alone = finished(&mut app, "frame", json!({"time": 0.0, "scale": 1.0, "layer": "Plate"}));
+    assert_eq!(alone["center"], json!([0.0, 0.0, 0.0, 0.0]));
+}
+
+#[test]
+fn a_frame_of_one_3d_layer_is_lit_by_the_comp_lights() {
+    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut app = app("test.media-solo-lit", &["document.read"]);
+    let plate = solid(&mut app, "Plate", "#ffffff", 64);
+    app.session.execute("layer.setSwitch", json!({"layers": [plate], "switch": "threeD", "value": true})).unwrap();
+    app.session.execute("layer.newLight", json!({"kind": "Ambient", "intensity": 25})).unwrap();
+    solid(&mut app, "Corner", "#ff0000", 4);
+
+    let lit = finished(&mut app, "frame", json!({"time": 0.0, "scale": 1.0, "layer": "Plate"}));
+    let quarter = 64.0f32 / 255.0;
+    assert_eq!(lit["center"], json!([quarter, quarter, quarter, 1.0]));
+}

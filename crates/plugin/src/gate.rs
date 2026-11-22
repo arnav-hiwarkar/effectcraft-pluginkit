@@ -99,10 +99,10 @@ fn only_layer(project: &Project, comp: ItemId, layer: LayerId, video: bool) -> R
     let comp = solo.comp_mut(comp).ok_or("the composition is gone")?;
     for other in comp.layers.iter_mut() {
         let keep = other.id == layer;
-        if video {
-            other.switches.video &= keep;
-        } else {
+        if !video {
             other.switches.audio &= keep;
+        } else if !keep && !other.is_light() && !other.is_camera() {
+            other.switches.video = false;
         }
     }
     Ok(solo)

@@ -281,7 +281,7 @@ All are in `craft_plugin::host`.
 | `start(task, args)`: starts a task, returns its id | None |
 | `task(id)`: `TaskState { status: Running, Done, Failed or Cancelled, progress, message, result, error }` | None |
 | `cancel(id)` | None |
-| `frame(FrameRequest { comp, layer, time, scale })`: the comp (the active one when `comp` is `None`), or one layer with its effects, as a premultiplied RGBA f32 `Image`. Refused inside an effect's `layout` or `render`. `scale` is above 0 and at most 4. | `document.read` |
+| `frame(FrameRequest { comp, layer, time, scale })`: the comp (the active one when `comp` is `None`), or one layer with its effects, its track matte and the comp's cameras and lights (every other layer is hidden), as a premultiplied RGBA f32 `Image`. Refused inside an effect's `layout` or `render`. `scale` is above 0 and at most 4. | `document.read` |
 | `audio(AudioRequest { layer, start, duration, rate })`: interleaved f32 samples of the active comp's mix, or of one layer, with the channel count (2). Rates 1000 to 192000 Hz, at most 2^25 sample frames per call. Refused inside an effect. | `document.read` |
 | `pick_file(PickFile { save, title, extensions })`: the app's file dialog, `Some(path)` or `None`. The chosen path is then readable, and writable when `save` is set, through `Root::User` for the rest of the session. The host holds the identity of the picked file: once it is replaced, for example by a link, reading or writing it fails with `is no longer the file the user picked`, and the plugin should ask the user to pick it again. Panels and commands only. Refused in headless runs. | None |
 | `upload_image(key, width, height, rgba8)`: stores an image for `ui.image` and `c.image` | None |
