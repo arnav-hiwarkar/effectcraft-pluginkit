@@ -76,7 +76,8 @@ pub fn ln(x: f32) -> f32 {
 }
 
 /// `x^y` for finite `x >= 0` and any `y` whose result lies in `1e-37..=1e37`. `pow(0.0, y)` is exactly `0` for
-/// `y > 0`; a negative `x` is treated like `0`.
+/// `y > 0`; a negative `x` is treated like `0`. A positive `x` below `f32::MIN_POSITIVE` (about `1.2e-38`) is
+/// treated like `f32::MIN_POSITIVE`, as in [`log2`]: normalising it would cost every call.
 /// Largest relative error against `f64::powf` for `x` in `1e-3..=1e3`, `y` in `-8..=8`: 2e-5.
 #[inline(always)]
 pub fn pow(x: f32, y: f32) -> f32 {
@@ -134,7 +135,10 @@ pub fn atan2(y: f32, x: f32) -> f32 {
     if y < 0.0 { -r } else { r }
 }
 
-/// `sqrt(x * x + y * y)` for `|x|, |y| <= 1e18`. Largest relative error against `f32::hypot`: 1.5e-7.
+/// `sqrt(x * x + y * y)` when the larger of `|x|` and `|y|` is `0` or lies in `1e-19..=1e18`. Largest relative
+/// error against `f32::hypot` over that range: 1.5e-7. Below `1e-19` the squares are subnormal and the result loses
+/// precision, and below `1e-22` it is `0`; scaling the arguments would cost every call, and no pixel value is that
+/// small and nonzero.
 #[inline(always)]
 pub fn hypot(x: f32, y: f32) -> f32 {
     (x * x + y * y).sqrt()
@@ -266,6 +270,8 @@ mod tests {
         assert_eq!(pow(0.0, 2.0), 0.0);
         assert_eq!(pow(-3.0, 0.5), 0.0);
         assert_eq!(pow(0.0, 0.0), 1.0);
+        assert_eq!(pow(f32::from_bits(1 << 22), 0.5), pow(f32::MIN_POSITIVE, 0.5));
+        assert_eq!(pow(f32::MIN_POSITIVE, 0.5), exp2(-63.0));
     }
 
     #[test]
@@ -317,6 +323,9 @@ mod tests {
         assert!(error < 1.5e-7, "{error}");
         assert_eq!(hypot(3.0, 4.0), 5.0);
         assert_eq!(hypot(0.0, 0.0), 0.0);
+        let at_the_limit = hypot(1e-19, 0.5e-19);
+        assert!(relative(at_the_limit, 1.118_033_988_749_895e-19) < 1.5e-7, "{at_the_limit:e}");
+        assert_eq!(hypot(1e-30, 0.0), 0.0);
     }
 
     #[test]
