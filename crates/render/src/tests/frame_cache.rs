@@ -41,6 +41,8 @@ fn a_frame_of_a_comp_where_nothing_animates_comes_from_the_cache_without_composi
     let (img, drawn) = profiled(&p, cid, t, &cache);
     let after = cache.stats();
     assert_eq!((drawn, after.hits - before.hits, after.misses - before.misses), (0, 1, 0));
+    let level = |n: [f32; 4]| n.map(|v| v * (1.0 / 255.0));
+    assert_eq!((img.get(10, 15), img.get(190, 5)), (level([102.0, 39.0, 26.0, 128.0]), [0.0; 4]));
     assert!(img == render_cached(&p, cid, t, None));
 }
 
@@ -54,6 +56,7 @@ fn a_comp_with_animation_composites_every_frame() {
     let t = Tick::from_seconds_f64(0.5);
     let (img, drawn) = profiled(&p, cid, t, &cache);
     assert_eq!(drawn, 3);
+    assert_eq!(img.get(5, 45), [102.0, 39.0, 26.0, 128.0].map(|v| v * (1.0 / 255.0)));
     assert!(img == render_cached(&p, cid, t, None));
 }
 

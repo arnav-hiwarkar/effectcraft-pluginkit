@@ -167,7 +167,7 @@ fn box_passes(img: &Image, rx: &[usize], ry: &[usize], repeat: bool, levels: Opt
 
 fn quantize_all(px: &mut [Px], levels: Option<f32>) {
     if let Some(l) = levels {
-        px.par_chunks_mut(2048).for_each(|c| crate::quantize_slice(c, l));
+        px.par_chunks_mut(crate::QUANTIZE_CHUNK).for_each(|c| crate::quantize_slice(c, l));
     }
 }
 

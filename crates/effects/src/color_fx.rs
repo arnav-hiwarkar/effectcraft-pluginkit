@@ -188,7 +188,7 @@ fn hue_saturation(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let cs = ctx.params.f("colorizeSaturation") as f32 / 100.0;
     let cl = ctx.params.f("colorizeLightness") as f32 / 100.0;
     let ranges = huesat_ranges(ctx);
-    ctx.map_straight(&mut b.img, |c| {
+    b.img.map_straight_quantized(ctx.env.quantize_output, |c| {
         let (h, s, l) = rgb_to_hsl(c[0], c[1], c[2]);
         let (h, s, l) = if colorize {
             (ch, cs, (l + cl * if cl > 0.0 { 1.0 - l } else { l }).clamp(0.0, 1.0))
@@ -286,7 +286,7 @@ fn levels(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let chans = levels_channel_settings(ctx);
     let ident = |l: &([f32; 5], (bool, bool))| l.0 == LEVELS_IDENTITY;
     if chans.iter().all(ident) {
-        ctx.map_straight(&mut b.img, master);
+        b.img.map_straight_quantized(ctx.env.quantize_output, master);
         return b;
     }
     b.img.map_straight(master);

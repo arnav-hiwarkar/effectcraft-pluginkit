@@ -39,7 +39,6 @@ fn map_ca_out(img: &mut Image, levels: Option<f32>, f: impl Fn([f32; 3], f32) ->
 fn map_ca_px(px: &mut [f32; 4], f: &impl Fn([f32; 3], f32) -> ([f32; 3], f32)) {
     let (c, a) = unpremul(*px);
     if a <= 0.0 && px[0] == 0.0 && px[1] == 0.0 && px[2] == 0.0 {
-        // Fully transparent: only alpha transforms can change it.
         let (_, na) = f([0.0; 3], 0.0);
         if na > 0.0 {
             *px = [0.0, 0.0, 0.0, na.clamp(0.0, 1.0)];

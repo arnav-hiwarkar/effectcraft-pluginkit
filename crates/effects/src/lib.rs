@@ -691,26 +691,9 @@ impl EffectCtx<'_> {
     pub fn unchanged(&self, b: Buf) -> Buf {
         if self.env.input_quantized { b } else { self.quantized(b) }
     }
-    pub fn map_straight(&self, img: &mut Image, f: impl Fn([f32; 3]) -> [f32; 3] + Sync) {
-        if self.env.quantize_output.is_none() {
-            img.map_straight(f);
-            return;
-        }
-        img.data.par_chunks_mut(QUANTIZE_CHUNK).for_each(|chunk| {
-            for p in chunk.iter_mut() {
-                let a = p[3];
-                if a <= 0.0 {
-                    continue;
-                }
-                let c = f([p[0] / a, p[1] / a, p[2] / a]);
-                *p = [c[0] * a, c[1] * a, c[2] * a, a];
-            }
-            self.quantize_chunk(chunk);
-        });
-    }
 }
 
-pub const QUANTIZE_CHUNK: usize = 2048;
+pub use effectcraft_raster::QUANTIZE_CHUNK;
 
 pub type RenderFn = fn(&EffectCtx, Buf) -> Buf;
 
