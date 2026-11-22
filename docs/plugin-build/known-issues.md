@@ -43,7 +43,7 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 ## From the second build and its reviews, not fixed
 
-- **Another process of the same user can plant a compiled module.** The compiled cache is named by a SHA-256 of the module and plugins cannot write to it, but the files are not signed.
+- **A process of the same user that reads the cache key can still sign a compiled module.** Compiled cache entries carry an HMAC-SHA-256 under `Plugins/.compiled/key` (mode 0600, made from OS randomness), so a planted entry without the key is compiled again (`cached` in `crates/plugin-host/src/runtime/wasm.rs`). The key file is readable by every process of the same user; only the helper process with an OS sandbox would close this.
 - **A native task that ignores cancel keeps its thread.** Only a sandboxed task can be interrupted.
 - **In the CLI a task's document requests are answered only inside `plugin.tasks {wait}`.**
 - **`host::frame` of one layer hides every other layer**, including the layer's track matte.
