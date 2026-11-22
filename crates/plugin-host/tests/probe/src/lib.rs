@@ -391,9 +391,28 @@ impl Effect for HalfDone {
         EffectSpec::new("half-done", "Half Done", "Probe")
     }
 
-    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         frame.pixels.fill([9.0; 4]);
+        if frame.origin[1] + frame.height < cx.size[1] as usize {
+            return Ok(());
+        }
         Err("gave up half way".into())
+    }
+}
+
+struct MarkBand;
+
+impl Effect for MarkBand {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("mark-band", "Mark Band", "Probe")
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let (top, rows) = (frame.origin[1] as f32, frame.height as f32);
+        for (y, row) in frame.rows_mut() {
+            row.fill([top, rows, y as f32, 1.0]);
+        }
+        Ok(())
     }
 }
 
@@ -439,6 +458,7 @@ fn make() -> Plugin {
         .effect(SceneCamera)
         .effect(Spin)
         .effect(HalfDone)
+        .effect(MarkBand)
         .effect(Recurse)
         .effect(Memo)
         .effect(Report)

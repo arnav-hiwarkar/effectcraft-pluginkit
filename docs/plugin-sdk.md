@@ -127,7 +127,8 @@ Tell the app how much of the frame each output pixel needs, in `layout()`.
 
 - If each pixel depends only on itself, return `Layout::pointwise()`. The app renders bands of the frame
   on all cores.
-- If each row depends on rows at most `n` away, return `Layout::neighbourhood(n)`.
+- If each row depends on rows at most `n` away, return `Layout::neighbourhood(n)`. Each band is
+  rendered with `n` extra rows above and below, so a smaller `n` does less repeated work.
 - If the effect spills past the layer, add `.padded(n)`.
 - If the effect needs the whole frame, describe it as passes: `Layout::whole_frame().passes(plan)`. The
   app runs each pass on the GPU when there is one, and otherwise calls your `pass` method for bands of
@@ -382,7 +383,7 @@ The package then holds both builds, and the manifest's `entry` names each:
 ```
 
 The plugin runs sandboxed. For a plugin with both builds, the manager shows **Run Unsandboxed**. It
-loads the native build, which renders in place with no copy and may use threads, and it shows the
+loads the native build, which renders on the app's memory with one copy per band and may use threads, and it shows the
 warning that the plugin has full access to the computer. The choice holds for that version only; a new
 version runs sandboxed again. **Run Sandboxed** switches back. From the command line:
 

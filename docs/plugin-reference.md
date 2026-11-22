@@ -177,6 +177,11 @@ degrees) and `feather` (0 to 1). Light a surface with `colour` times `intensity`
 | `frame.width`, `frame.height` | Size of this call's pixels. |
 | `frame.origin` | Position of this call's first pixel in the full frame. Not `[0, 0]` in a band. |
 
+With `Layout::pointwise()` or `Layout::neighbourhood(n)` the app renders bands on all cores, for sandboxed
+and native builds alike. A band's call gets its own rows plus `n` rows above and below, and the app keeps
+only the band's own rows. The rendered bands go into a new frame that replaces the layer's frame only when
+every call succeeded, so an effect that fails, in any band, leaves the layer as it was.
+
 `frame.rows_mut()` yields `(y, row)` with `y` measured in the full frame. `frame.at(x, y)` takes
 coordinates within this call's pixels, so subtract `frame.origin` from a full-frame position first.
 

@@ -15,7 +15,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 - **Late plugin start skips parameter migration.** A project opened while its plugin is disabled keeps its saved parameters. If the plugin later starts with a new parameter, existing instances lack it. The render uses the declared default for a missing value (`wire_params` in `crates/plugin/src/effects.rs`), but the parameter has no property, so it cannot be shown or keyframed until the effect is applied again. Migrating needs a hook when a plugin starts late.
 - **A slow host call is not interrupted.** The call fails when the host call returns past the limit, but the app cannot stop its own file read on a stalled disk. Instantiation has its own 5 s limit on top of the call limit. Interrupting needs host calls that run on another thread.
-- **Native plugins can leave a partly written frame.** A native effect that changes pixels and then fails leaves those changes. Sandboxed effects do not.
 - **Reloading leaks the old effect descriptions.** Each reload leaks a few kilobytes of strings, because the effect registry hands out `'static` references.
 - **A dangling link is also possible in the automation confinement.** `crates/automation/src/confine.rs` falls back to the parent folder when a path does not resolve. This is upstream code and affects agents too.
 
@@ -45,7 +44,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 - **A picked file is remembered by path.** If the file the user picked is later replaced by a link, the plugin reads what the link points to. (`crates/plugin-host/src/runtime/serve.rs`, Sol finding 5)
 - **A task answers against the project that is open when its request is served.** A task started in one project can edit another if the user opens it meanwhile. Tasks are not cancelled when a project opens. (`crates/plugin/src/manage.rs` `pump`, Sol finding 8)
-- **A failed band leaves a partly processed frame.** Pointwise bands render in place, so when one band fails the frame holds the other bands' output. The error is logged. (`crates/plugin-host/src/plugin.rs`, Sol finding 12)
 - **Another process of the same user can plant a compiled module.** The compiled cache is named by a SHA-256 of the module and plugins cannot write to it, but the files are not signed.
 - **A native task that ignores cancel keeps its thread.** Only a sandboxed task can be interrupted.
 - **In the CLI a task's document requests are answered only inside `plugin.tasks {wait}`.**
@@ -83,17 +81,8 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 The measurements and the ranked list of changes are in `pluginkit/reports/speed-study.md`.
 
-- **A native plugin whose layout has a reach renders the whole frame on one core.** `Plugin::render`
-  (`crates/plugin-host/src/plugin.rs:135-138`) bands only when `reach == 0 || copies_pixels()`, so a native
-  `Layout::neighbourhood(n)` effect gets one call for the whole frame. Native Retro Neon takes 56 to 72 ms at
-  1080p against 34 to 42 ms sandboxed. Fix: snapshot the input and give each band pointers to the snapshot and
-  its own rows, as the pass path does for native plugins.
-- **Sandboxed frame copies run as nested parallel tasks.** `copy` in `crates/plugin-host/src/runtime/wasm.rs`
-  splits each band's copy into 1 MiB rayon tasks inside bands that already run in parallel. A plain
-  `copy_from_slice` is 10 to 25 % faster on copy-bound effects (Probe 1080p 1.68 → 1.27 ms, Plasma Beam
-  5.0 → 4.5 ms).
-- **The shipped Lumen Glow module was built without SIMD.** It is byte-identical to a build without
-  `+simd128`, while Plasma Beam, Halo and Retro have it. It made no measured difference for Lumen, but every
-  package should come out of `cargo xtask plugin` with the same flags.
+- **A large reach repeats most of a band.** A `Layout::neighbourhood(n)` band renders its own rows plus `n`
+  above and below. Retro Neon has `n = 67` at 1080p, so each of ten 108-row bands renders 242 rows. Fewer,
+  taller bands, or a pass plan, would repeat less. (`Plugin::render` in `crates/plugin-host/src/plugin.rs`)
 - **Timeout checks cost 8 to 35 % of sandboxed compute** (Plasma Beam 4.44 → 3.23 ms with them off, Halo
   25 → 17.5 ms). They are needed to stop a plugin that hangs; the options are in the study.

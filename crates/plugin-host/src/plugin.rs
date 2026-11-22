@@ -120,7 +120,7 @@ impl Plugin {
         effect: &str,
         cx: &RenderCx,
         reach: Option<u32>,
-        pixels: &mut [Pixel],
+        pixels: &mut Vec<Pixel>,
         make_host: impl Fn() -> H + Sync,
     ) -> Result<(), PluginError> {
         let (width, height) = (cx.size[0] as usize, cx.size[1] as usize);
@@ -131,38 +131,21 @@ impl Plugin {
             return Ok(());
         }
         let even_rows = height.div_ceil((height / MIN_BAND_ROWS).clamp(1, rayon::current_num_threads()));
-        let band_rows = reach.map_or(even_rows, |reach| even_rows.max(reach as usize + 1));
-        let banded = reach.filter(|reach| {
-            let reach = *reach as usize;
-            (reach == 0 || self.engine.copies_pixels()) && band_rows + 2 * reach < height
-        });
-        let Some(reach) = banded else {
-            let frame = FrameDesc { width: cx.size[0], height: cx.size[1], origin: [0, 0] };
-            let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
-            return self.call(&call, Some(pixels), &mut make_host());
+        let (band_rows, reach) = match reach.map(|reach| reach as usize) {
+            Some(reach) if even_rows.max(reach + 1) + 2 * reach < height => (even_rows.max(reach + 1), reach),
+            _ => (height, 0),
         };
-        if reach == 0 {
-            return pixels.par_chunks_mut(band_rows * width).enumerate().try_for_each(|(band, rows)| {
-                let frame = FrameDesc { width: cx.size[0], height: (rows.len() / width) as u32, origin: [0, (band * band_rows) as u32] };
-                let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
-                self.exchange::<()>(&call, Io::InPlace(rows), &mut make_host())
-            });
-        }
-        let firsts: Vec<usize> = (0..height).step_by(band_rows).collect();
-        let rendered: Vec<Vec<Pixel>> = firsts
-            .into_par_iter()
-            .map(|first| {
-                let last = (first + band_rows).min(height);
-                let top = first.saturating_sub(reach as usize);
-                let bottom = (last + reach as usize).min(height);
-                let frame = FrameDesc { width: cx.size[0], height: (bottom - top) as u32, origin: [0, top as u32] };
-                let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
-                let mut core = vec![[0.0; 4]; (last - first) * width];
-                let io = Io::Region { input: &pixels[top * width..bottom * width], output: &mut core, skip: (first - top) * width };
-                self.exchange::<()>(&call, io, &mut make_host()).map(|()| core)
-            })
-            .collect::<Result<_, _>>()?;
-        pixels.par_chunks_mut(band_rows * width).zip(rendered).for_each(|(rows, core)| rows.copy_from_slice(&core));
+        let input: &[Pixel] = pixels;
+        let mut output = vec![[0.0; 4]; input.len()];
+        output.par_chunks_mut(band_rows * width).enumerate().try_for_each(|(band, rows)| {
+            let first = band * band_rows;
+            let (top, bottom) = (first.saturating_sub(reach), (first + rows.len() / width + reach).min(height));
+            let frame = FrameDesc { width: cx.size[0], height: (bottom - top) as u32, origin: [0, top as u32] };
+            let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
+            let io = Io::Region { input: &input[top * width..bottom * width], output: rows, skip: (first - top) * width };
+            self.exchange::<()>(&call, io, &mut make_host())
+        })?;
+        *pixels = output;
         Ok(())
     }
 
@@ -195,7 +178,7 @@ impl Plugin {
         effect: &str,
         cx: &RenderCx,
         plan: &GpuPlan,
-        pixels: &mut [Pixel],
+        pixels: &mut Vec<Pixel>,
         make_host: impl Fn() -> H + Sync,
     ) -> Result<(), PluginError> {
         let area = |size: [u32; 2]| size[0] as usize * size[1] as usize;
@@ -225,8 +208,7 @@ impl Plugin {
             written[target] = out;
             ran?;
         }
-        let chunk = cx.size[0] as usize * MIN_BAND_ROWS;
-        pixels.par_chunks_mut(chunk.max(1)).zip(written[0].par_chunks(chunk.max(1))).for_each(|(to, from)| to.copy_from_slice(from));
+        *pixels = std::mem::take(&mut written[0]);
         Ok(())
     }
 

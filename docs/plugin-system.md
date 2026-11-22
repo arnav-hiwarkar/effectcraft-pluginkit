@@ -123,7 +123,7 @@ There is no network permission. A sandboxed plugin cannot open a connection.
 | Path | Cost on top of the effect's own work | Use it for |
 |---|---|---|
 | GPU passes | None. The app runs the plugin's WGSL on its own textures. | Anything expressible as image passes |
-| Native, CPU | None. The plugin writes into the app's buffer. | Trusted plugins |
+| Native, CPU | One copy of each band into the new frame, which replaces the old one when every band succeeded | Trusted plugins |
 | Sandboxed, CPU | One copy of the frame in and one out | Everything else |
 
 Measured on a ten-core Apple M-series laptop that was also running other builds, 1920×1080 `f32` RGBA,

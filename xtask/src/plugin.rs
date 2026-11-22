@@ -75,10 +75,7 @@ fn build(dir: &Path, native: bool) -> Result<PathBuf, String> {
     let built = if native {
         dir.join("target/release").join(native_file(&name))
     } else {
-        command.args(["--target", WASM_TARGET]);
-        if std::env::var_os(WASM_RUSTFLAGS.0).is_none() {
-            command.env(WASM_RUSTFLAGS.0, WASM_RUSTFLAGS.1);
-        }
+        command.args(["--target", WASM_TARGET]).env_remove("CARGO_ENCODED_RUSTFLAGS").env_remove("RUSTFLAGS").env(WASM_RUSTFLAGS.0, WASM_RUSTFLAGS.1);
         dir.join("target").join(WASM_TARGET).join("release").join(format!("{name}.wasm"))
     };
     if !command.status().map_err(|e| e.to_string())?.success() {
