@@ -30,6 +30,9 @@ use crate::eval::EvalCtx;
 use crate::reads::ReadFiles;
 
 mod dependencies;
+mod value_hash;
+
+use value_hash::hash_value;
 
 /// Thread-safe, memory-budgeted cache of processed layer buffers, optionally backed by the
 /// persistent [`DiskCache`](crate::disk_cache::DiskCache): a memory miss reads the disk, and
@@ -317,6 +320,16 @@ impl LayerCache {
             }
         }
         self.insert_mem(key, buf, files, started.map(|t| t.elapsed()))
+    }
+
+    pub(crate) fn get_in_memory(&self, key: u64) -> Option<(Arc<Buf>, Arc<ReadFiles>)> {
+        self.kept(key, true)
+    }
+
+    pub(crate) fn insert_in_memory(&self, key: u64, buf: Arc<Buf>, files: Arc<ReadFiles>, took: std::time::Duration) {
+        if !self.gated() {
+            self.insert_mem(key, buf, files, Some(took));
+        }
     }
 
     /// The buffer kept in memory under `key` with its files, if it is not made of a file dropped
@@ -635,32 +648,49 @@ impl LayerStore for PrefetchStore {
     }
 }
 
-/// FNV-1a style 64-bit hasher fed by `Debug` output (exact float formatting) and raw values.
+/// 64-bit hasher of raw values ([`hash_value`] for whole serialisable values): each 64-bit word
+/// goes through the SplitMix64 finaliser, a bijection, so a single changed word always changes
+/// the key.
 struct KeyHasher(u64);
+
+impl KeyHasher {
+    fn mix(&mut self, word: u64) {
+        let mut z = self.0 ^ word;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        self.0 = z ^ (z >> 31);
+    }
+}
 
 impl Hasher for KeyHasher {
     fn finish(&self) -> u64 {
         self.0
     }
     fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 ^= b as u64;
-            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+        self.mix(bytes.len() as u64);
+        let (words, rest) = bytes.as_chunks::<8>();
+        for w in words {
+            self.mix(u64::from_le_bytes(*w));
+        }
+        if !rest.is_empty() {
+            self.mix(rest.iter().rev().fold(0, |w, &b| w << 8 | u64::from(b)));
         }
     }
-}
-
-impl std::fmt::Write for KeyHasher {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        Hasher::write(self, s.as_bytes());
-        Ok(())
+    fn write_u8(&mut self, v: u8) {
+        self.mix(u64::from(v));
     }
-}
-
-fn hash_debug(h: &mut KeyHasher, v: &impl std::fmt::Debug) {
-    use std::fmt::Write;
-    let _ = write!(h, "{v:?}");
-    Hasher::write_u8(h, 0xff);
+    fn write_u16(&mut self, v: u16) {
+        self.mix(u64::from(v));
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.mix(u64::from(v));
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.mix(v);
+    }
+    fn write_usize(&mut self, v: usize) {
+        self.mix(v as u64);
+    }
 }
 
 /// Time-based layer content: does any part of the source/effects read the clock directly
@@ -729,7 +759,7 @@ fn hash_overrides(h: &mut KeyHasher, ctx: &EvalCtx, id: effectcraft_project::Lay
     for o in ctx.property_overrides.iter().filter(|o| o.layer == id) {
         o.prop.hash(h);
         o.font.hash(h);
-        hash_debug(h, &o.value);
+        hash_value(h, &o.value);
     }
     for m in ctx.media_overrides.iter().filter(|m| m.layer == id) {
         m.item.hash(h);
@@ -742,7 +772,7 @@ fn hash_values(h: &mut KeyHasher, ctx: &EvalCtx, layer: &Layer, g: &PropGroup) {
             Node::Prop(p) => {
                 if !p.keys.is_empty() || p.has_expression() {
                     p.uid.hash(h);
-                    hash_debug(h, &ctx.value(layer, p));
+                    hash_value(h, &ctx.value(layer, p));
                 }
             }
             Node::Group(sub) => hash_values(h, ctx, layer, sub),
@@ -821,12 +851,6 @@ fn cached_footage(ctx: &EvalCtx, item: effectcraft_project::ItemId) -> bool {
 /// Motion Blur On, or Same As Layer with the layer blurred)?
 fn mask_motion_blur(ctx: &EvalCtx, layer: &Layer, blur: bool) -> bool {
     use effectcraft_project::{GroupKind, MaskMotionBlur};
-    fn animated(g: &PropGroup) -> bool {
-        g.children.iter().any(|c| match c {
-            Node::Prop(p) => !p.keys.is_empty() || p.has_expression(),
-            Node::Group(sub) => animated(sub),
-        })
-    }
     ctx.comp.enable_motion_blur
         && layer.masks().is_some_and(|m| {
             m.groups().any(|g| match g.kind {
@@ -836,6 +860,28 @@ fn mask_motion_blur(ctx: &EvalCtx, layer: &Layer, blur: bool) -> bool {
                 _ => false,
             })
         })
+}
+
+fn animated(g: &PropGroup) -> bool {
+    g.children.iter().any(|c| match c {
+        Node::Prop(p) => !p.keys.is_empty() || p.has_expression(),
+        Node::Group(sub) => animated(sub),
+    })
+}
+
+pub(crate) fn timeless(layer: &Layer) -> bool {
+    !animated(&layer.props) && !time_dependent(layer, true)
+}
+
+pub(crate) fn frame_key(ctx: &EvalCtx, contents: &[u64], visible: &[effectcraft_project::LayerId], opts: &crate::RenderOpts) -> u64 {
+    let mut h = KeyHasher(0x6a09_e667_f3bc_c908);
+    hash_value(&mut h, &ctx.project.settings);
+    ctx.comp_id.hash(&mut h);
+    hash_value(&mut h, ctx.comp);
+    hash_value(&mut h, opts);
+    contents.hash(&mut h);
+    visible.hash(&mut h);
+    h.finish()
 }
 
 fn has_expression(g: &PropGroup) -> bool {
@@ -886,16 +932,16 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
         LayerSource::Solid { item } => {
             let it = ctx.project.item(*item)?;
             let ItemKind::Solid(s) = &it.kind else { return None };
-            hash_debug(&mut h, s);
+            hash_value(&mut h, s);
         }
         LayerSource::Text | LayerSource::Shape => {}
         LayerSource::Footage { item } if footage || cached_footage(ctx, ctx.media_item(layer, *item)) => {
             let item = ctx.media_item(layer, *item);
             let it = ctx.project.item(item)?;
             let ItemKind::Footage(f) = &it.kind else { return None };
-            hash_debug(&mut h, f);
+            hash_value(&mut h, f);
             // A proxy (and its Use Proxy switch) changes the pixels.
-            hash_debug(&mut h, &it.proxy);
+            hash_value(&mut h, &it.proxy);
             item.hash(&mut h);
             // A still is the same at every time (unless a proxy, which may be a movie, stands in).
             if f.kind != FootageKind::Still || it.proxy.is_some() {
@@ -931,9 +977,9 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
     // into the key: a Font override, effect parameter or any other source-affecting override
     // must not reuse another instance's processed buffer.
     hash_overrides(&mut h, ctx, layer.id);
-    hash_debug(&mut h, &layer.source);
+    hash_value(&mut h, &layer.source);
     // (Audio, Lock and Shy don't change pixels.)
-    hash_debug(&mut h, &layer.switches.pixels());
+    hash_value(&mut h, &layer.switches.pixels());
     // Mask motion blur and effects that read the shutter depend on whether the layer is motion
     // blurred in this render and on the comp's shutter. A footprint has no effects, so only its
     // masks put the shutter in the key.
@@ -971,13 +1017,13 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
                         seen <= n
                     }
                 });
-                hash_debug(&mut h, &first);
+                hash_value(&mut h, &first);
                 hash_values(&mut h, ctx, layer, &first);
                 continue;
             }
         }
         // Static structure: values, keyframes, expressions, enabled flags, effect ids, modes.
-        hash_debug(&mut h, c);
+        hash_value(&mut h, c);
         if let Node::Group(g) = c {
             hash_values(&mut h, ctx, layer, g);
         }
@@ -1006,7 +1052,7 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
     }
     // Effects that see the comp camera or lights (#397) change when they or the layer move.
     if effects != EffectScope::Footprint && reads_comp_scene(layer) {
-        hash_debug(&mut h, &crate::comp_scene(ctx, layer));
+        hash_value(&mut h, &crate::comp_scene(ctx, layer));
     }
     if effects != EffectScope::Footprint {
         effect_revisions(layer).for_each(|revision| revision.hash(&mut h));
@@ -1052,7 +1098,7 @@ fn reads_comp_scene(layer: &Layer) -> bool {
 pub fn styles_key(ctx: &EvalCtx, layer: &Layer, content_key: u64) -> u64 {
     let mut h = KeyHasher(content_key ^ 0x9e37_79b9_7f4a_7c15);
     if let Some(g) = layer.layer_styles() {
-        hash_debug(&mut h, g);
+        hash_value(&mut h, g);
         hash_values(&mut h, ctx, layer, g);
     }
     h.finish()

@@ -188,7 +188,7 @@ fn hue_saturation(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let cs = ctx.params.f("colorizeSaturation") as f32 / 100.0;
     let cl = ctx.params.f("colorizeLightness") as f32 / 100.0;
     let ranges = huesat_ranges(ctx);
-    b.img.map_straight(|c| {
+    ctx.map_straight(&mut b.img, |c| {
         let (h, s, l) = rgb_to_hsl(c[0], c[1], c[2]);
         let (h, s, l) = if colorize {
             (ch, cs, (l + cl * if cl > 0.0 { 1.0 - l } else { l }).clamp(0.0, 1.0))
@@ -282,23 +282,28 @@ fn levels(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let ob = ctx.params.f("outBlack") as f32;
     let ow = ctx.params.f("outWhite") as f32;
     let clip = levels_clip(ctx);
-    b.img.map_straight(|c| c.map(|v| level(v, [ib, iw, g, ob, ow], clip)));
+    let master = |c: [f32; 3]| c.map(|v| level(v, [ib, iw, g, ob, ow], clip));
     let chans = levels_channel_settings(ctx);
     let ident = |l: &([f32; 5], (bool, bool))| l.0 == LEVELS_IDENTITY;
     if chans.iter().all(ident) {
+        ctx.map_straight(&mut b.img, master);
         return b;
     }
+    b.img.map_straight(master);
     use rayon::prelude::*;
-    b.img.data.par_iter_mut().for_each(|px| {
-        let (c, a) = crate::util::unpremul(*px);
-        let mut o = c;
-        for i in 0..3 {
-            if !ident(&chans[i]) {
-                o[i] = level(c[i], chans[i].0, chans[i].1);
+    b.img.data.par_chunks_mut(crate::QUANTIZE_CHUNK).for_each(|chunk| {
+        for px in chunk.iter_mut() {
+            let (c, a) = crate::util::unpremul(*px);
+            let mut o = c;
+            for i in 0..3 {
+                if !ident(&chans[i]) {
+                    o[i] = level(c[i], chans[i].0, chans[i].1);
+                }
             }
+            let na = if ident(&chans[3]) { a } else { level(a, chans[3].0, chans[3].1).clamp(0.0, 1.0) };
+            *px = crate::util::premul(o, na);
         }
-        let na = if ident(&chans[3]) { a } else { level(a, chans[3].0, chans[3].1).clamp(0.0, 1.0) };
-        *px = crate::util::premul(o, na);
+        ctx.quantize_chunk(chunk);
     });
     b
 }

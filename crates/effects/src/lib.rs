@@ -75,6 +75,8 @@ pub mod warp_stab;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use rayon::prelude::*;
+
 pub use card3d::{CompCamera, CompLight, CompScene, SceneLight, SceneLightKind};
 pub use color_fx::{
     BW_TINT_LUMA, EXPOSURE_LINEAR_GAMMA, HUESAT_CHANNELS, HUESAT_RANGES, LEVELS_CHANNELS, LUMA_601, PHOTO_FILTER_CUSTOM, PHOTO_FILTERS, exposure_settings,
@@ -457,6 +459,8 @@ pub fn adjustment_crop(offset: [f64; 2], canvas_offset: [f64; 2], size: (u32, u3
 /// layer rectangle first only inflates working images on highly scaled text and shapes (#3357).
 pub const SKIPS_COVER: &[&str] = &["ec.blur.gaussian", "ec.blur.fastbox", "ec.stylize.glow", "ec.distort.turbulentdisplace", "ec.perspective.dropshadow"];
 
+pub const QUANTIZES_OUTPUT: &[&str] = &["ec.blur.gaussian", "ec.color.levels", "ec.color.curves", "ec.color.huesaturation", "ec.stylize.glow"];
+
 /// The grid phase [`Buf::align`] keeps and the step [`cover_pad`] grows in: covers the levels
 /// of the resampling pyramid used for downscaled layers.
 pub const GRID_ALIGN: u32 = 64;
@@ -626,6 +630,8 @@ pub struct EffectEnv<'a> {
     /// Retimers clamp their source requests to it.
     pub layer_span: Option<(f64, f64)>,
     pub instance: u64,
+    pub quantize_output: Option<f32>,
+    pub input_quantized: bool,
 }
 
 /// What an effect gets to render with.
@@ -668,7 +674,40 @@ impl EffectCtx<'_> {
     pub fn fps(&self) -> f64 {
         if self.env.frame_rate > 0.0 { self.env.frame_rate } else { 30.0 }
     }
+    pub fn quantize_chunk(&self, px: &mut [effectcraft_raster::Px]) {
+        if let Some(l) = self.env.quantize_output {
+            effectcraft_raster::quantize_slice(px, l);
+        }
+    }
+    pub fn quantized(&self, mut b: Buf) -> Buf {
+        if self.env.quantize_output.is_some() {
+            b.img.data.par_chunks_mut(QUANTIZE_CHUNK).for_each(|c| self.quantize_chunk(c));
+        }
+        b
+    }
+    pub fn unchanged(&self, b: Buf) -> Buf {
+        if self.env.input_quantized { b } else { self.quantized(b) }
+    }
+    pub fn map_straight(&self, img: &mut Image, f: impl Fn([f32; 3]) -> [f32; 3] + Sync) {
+        if self.env.quantize_output.is_none() {
+            img.map_straight(f);
+            return;
+        }
+        img.data.par_chunks_mut(QUANTIZE_CHUNK).for_each(|chunk| {
+            for p in chunk.iter_mut() {
+                let a = p[3];
+                if a <= 0.0 {
+                    continue;
+                }
+                let c = f([p[0] / a, p[1] / a, p[2] / a]);
+                *p = [c[0] * a, c[1] * a, c[2] * a, a];
+            }
+            self.quantize_chunk(chunk);
+        });
+    }
 }
+
+pub const QUANTIZE_CHUNK: usize = 2048;
 
 pub type RenderFn = fn(&EffectCtx, Buf) -> Buf;
 
@@ -690,6 +729,9 @@ impl EffectSpec {
     /// renderer's full-layer cover and keep the pyramid grid phase (#1205).
     pub fn skips_cover(&self) -> bool {
         SKIPS_COVER.contains(&self.id)
+    }
+    pub fn quantizes_output(&self) -> bool {
+        QUANTIZES_OUTPUT.contains(&self.id) && dynamic::get(self.id).is_none()
     }
 }
 
@@ -1590,6 +1632,9 @@ pub(crate) fn run_fx(id: &str, vals: &[(&str, Value)], img: Image, time: f64, en
     let ctx = EffectCtx { params: &params, time, layer_size: [img.width as f64, img.height as f64], seed: 1, adjustment: false, env };
     apply(s, &ctx, Buf { img, offset: [0.0, 0.0], scale: 1.0 })
 }
+
+#[cfg(test)]
+mod quantize_output_tests;
 
 #[cfg(test)]
 mod tests {

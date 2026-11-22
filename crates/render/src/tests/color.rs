@@ -238,14 +238,14 @@ fn layer_cache_is_keyed_by_colour_settings() {
     };
     let a = frame(&p);
     assert!((a - 77.0 / 255.0).abs() < 1e-7);
-    assert_eq!(cache.stats().entries, 1);
+    assert_eq!(cache.stats().entries, 2, "the layer and the frame");
     p.settings.bit_depth = BitDepth::Bpc32;
     let b = frame(&p);
     assert!((b - 0.3).abs() < 1e-7, "stale 8 bpc pixels: {b}");
     p.settings.working_space = Some(ColorSpace::Srgb);
     p.settings.linearize = true;
     let _ = frame(&p);
-    assert_eq!(cache.stats().entries, 3, "each setting renders its own entry");
+    assert_eq!(cache.stats().entries, 6, "each setting renders its own layer and frame");
     // Back to 8 bpc reuses the first entry.
     p.settings.bit_depth = BitDepth::Bpc8;
     p.settings.working_space = None;

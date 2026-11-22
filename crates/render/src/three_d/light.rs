@@ -14,7 +14,7 @@ use super::camera::layer_frame;
 use crate::EvalCtx;
 
 /// An evaluated light.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub struct LightState {
     pub kind: LightKind,
     /// World position (point/spot; parallel lights use it only for the shadow source).

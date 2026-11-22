@@ -60,7 +60,8 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **Curves keeps the selected channel per effect, not per instance of the effect**, unless the fix for Opus finding 7 landed (see the log).
 - **`polygon` on a canvas fills convex shapes only.**
 - **`plugin dev` was not run against a live app, and double-clicking a `.craftplugin` was not tried on a built app.**
-- **An 8-bit quantise pass runs after every CPU effect**, about a fifth of a five-effect stack in one profile. Advancing one frame re-composites every cached layer. Layer cache keys are built by formatting the property tree as text. (`pluginkit/reports/app-perf.md` in the build notes)
+- **The 8/16 bpc quantise pass still runs after most CPU effects.** Gaussian Blur, Levels, Curves, Hue/Saturation and Glow quantise their own output (`QUANTIZES_OUTPUT` in `crates/effects`); every other built-in effect and every plugin effect is followed by a full-frame pass.
+- **An animated comp re-composites every cached layer on each frame.** Only a comp where nothing animates is served whole from the layer cache.
 - **No network host call.** A sandboxed plugin cannot open a connection; a native plugin can.
 - **The capability page names other companies' products as examples.** House rule 22 is about feature names; check `standards/naming.md` before this goes upstream.
 

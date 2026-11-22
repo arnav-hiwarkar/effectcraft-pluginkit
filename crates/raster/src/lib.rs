@@ -18,8 +18,8 @@ use effectcraft_color::{BlendMode, blend_pixel};
 use rayon::prelude::*;
 
 pub use blur::{
-    RADIAL_BLUR_SAMPLES, box_blur, directional_blur, gaussian_blur, gaussian_blur_exact, gaussian_blur_unbounded, gaussian_blur_unbounded_at,
-    gaussian_is_exact, radial_blur, radial_blur_spin_degrees, radial_blur_zoom_scale,
+    RADIAL_BLUR_SAMPLES, box_blur, directional_blur, gaussian_blur, gaussian_blur_exact, gaussian_blur_quantized, gaussian_blur_unbounded,
+    gaussian_blur_unbounded_at, gaussian_is_exact, radial_blur, radial_blur_spin_degrees, radial_blur_zoom_scale,
 };
 pub use channels3d::AuxChannels;
 pub use warp::{Sampling, WarpOpts, accumulate_warp, composite_warp, composite_warp_changed, composite_warp_reference, resample};
@@ -37,6 +37,23 @@ pub const MAX_PADDED_SIDE: u32 = 30_000;
 #[inline(always)]
 pub fn quantize_px(p: &mut Px, levels: f32, inv: f32) {
     *p = quantize_levels(*p, levels, inv).map(|n| n * inv);
+}
+
+pub fn quantize_slice(px: &mut [Px], levels: f32) {
+    let inv = 1.0 / levels;
+    // Runs of all-zero pixels (+0.0 in every channel) quantise to themselves: skip them a
+    // cache line at a time (sparse shape, precomp and glow buffers are mostly empty).
+    let (blocks, rest) = px.as_chunks_mut::<4>();
+    for b in blocks {
+        if b.as_flattened().iter().fold(0, |a, v| a | v.to_bits()) != 0 {
+            for p in b {
+                quantize_px(p, levels, inv);
+            }
+        }
+    }
+    for p in rest {
+        quantize_px(p, levels, inv);
+    }
 }
 
 /// [`quantize_px`]'s steps: the whole number of `levels` each channel rounds to (0..=levels).
@@ -207,14 +224,20 @@ impl Image {
     /// oversized pad first (`padded_size`); legitimate bounded pads are byte-identical.
     pub fn padded(&self, pad: u32) -> Image {
         let eff = self.effective_pad(pad);
-        let mut out = Image::new(self.width + 2 * eff, self.height + 2 * eff);
-        let ow = out.width as usize;
-        for y in 0..self.height as usize {
-            let src = &self.data[y * self.width as usize..(y + 1) * self.width as usize];
-            let o = (y + eff as usize) * ow + eff as usize;
-            out.data[o..o + self.width as usize].copy_from_slice(src);
+        let (width, height) = (self.width + 2 * eff, self.height + 2 * eff);
+        if self.width == 0 {
+            return Image::new(width, height);
         }
-        out
+        let (e, ow) = (eff as usize, width as usize);
+        let mut data = Vec::with_capacity(ow * height as usize);
+        data.resize(e * ow, [0.0; 4]);
+        for row in self.data.chunks_exact(self.width as usize).take(self.height as usize) {
+            data.resize(data.len() + e, [0.0; 4]);
+            data.extend_from_slice(row);
+            data.resize(data.len() + e, [0.0; 4]);
+        }
+        data.resize(ow * height as usize, [0.0; 4]);
+        Image { width, height, data }
     }
     /// Sub-rectangle copy (clipped).
     pub fn crop(&self, x: i64, y: i64, w: u32, h: u32) -> Image {
@@ -525,6 +548,22 @@ mod tests {
         // The source lands intact at the clamped offset, not the requested one.
         assert_eq!(out.get(29_994, 6), [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(out.get(0, 0), [0.0; 4]); // clamped pad region stays transparent
+    }
+
+    #[test]
+    fn padded_puts_every_source_pixel_at_its_offset_and_zeros_around_it() {
+        let mut img = Image::new(3, 2);
+        for (i, p) in img.data.iter_mut().enumerate() {
+            *p = [i as f32 + 1.0, 0.5, -0.0, 1.0];
+        }
+        let out = img.padded(2);
+        assert_eq!((out.width, out.height), (7, 6));
+        for y in 0..6i64 {
+            for x in 0..7i64 {
+                let want = if (2..5).contains(&x) && (2..4).contains(&y) { img.get(x - 2, y - 2) } else { [0.0; 4] };
+                assert_eq!(out.get(x, y).map(f32::to_bits), want.map(f32::to_bits), "({x}, {y})");
+            }
+        }
     }
 
     #[test]
