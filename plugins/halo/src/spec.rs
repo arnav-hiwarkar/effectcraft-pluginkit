@@ -1,5 +1,5 @@
 use craft_plugin::prelude::*;
-use craft_plugin::{ParamKind, Value};
+use craft_plugin::Value;
 
 use crate::flare::wgsl_constants;
 use crate::looks;
@@ -63,25 +63,32 @@ pub fn spec() -> EffectSpec {
     with_look_presets(spec)
 }
 
-fn default_value(kind: &ParamKind) -> Option<Value> {
-    Some(match kind {
-        ParamKind::Slider { default, .. } | ParamKind::Percent { default } | ParamKind::Angle { default } => Value::Number(*default),
-        ParamKind::Checkbox { default } => Value::Bool(*default),
-        ParamKind::Popup { default, .. } => Value::Number(f64::from(*default)),
-        ParamKind::Color { default } => Value::List(default.to_vec()),
-        _ => return None,
+fn with_look_presets(spec: EffectSpec) -> EffectSpec {
+    (1..looks::NAMES.len()).fold(spec, |spec, index| {
+        let look = looks::look(index);
+        let counts = [("look", index as u32), ("Rays/count", look.ray_count), ("Ghosts/count", look.ghost_count), ("Ghosts/blades", look.blades)];
+        spec.preset(looks::NAMES[index], counts.map(|(id, count)| (id, Value::Number(f64::from(count)))))
     })
 }
 
-fn with_look_presets(spec: EffectSpec) -> EffectSpec {
-    let neutral: Vec<(String, Value)> = spec
-        .params
-        .iter()
-        .filter(|param| ELEMENTS.iter().any(|element| param.id.starts_with(&format!("{element}/"))))
-        .filter_map(|param| Some((param.id.clone(), default_value(&param.kind)?)))
-        .collect();
-    (1..looks::NAMES.len()).fold(spec, |spec, index| {
-        let values = std::iter::once(("look", Value::Number(index as f64))).chain(neutral.iter().map(|(id, value)| (id.as_str(), value.clone())));
-        spec.preset(looks::NAMES[index], values.collect::<Vec<_>>())
-    })
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    fn preset(name: &str) -> BTreeMap<String, Value> {
+        spec().presets.into_iter().find(|preset| preset.name == name).map(|preset| preset.values).expect("the preset exists")
+    }
+
+    #[test]
+    fn a_look_preset_writes_the_look_and_its_counts_and_leaves_the_element_controls_alone() {
+        let sun: BTreeMap<String, Value> = [("look", 1.0), ("Rays/count", 14.0), ("Ghosts/count", 7.0), ("Ghosts/blades", 6.0)]
+            .into_iter()
+            .map(|(id, value)| (id.to_string(), Value::Number(value)))
+            .collect();
+        assert_eq!(preset("Sun"), sun);
+        assert_eq!(preset("Night Street").get("Rays/count"), Some(&Value::Number(16.0)));
+        assert_eq!(spec().presets.len(), 6);
+    }
 }

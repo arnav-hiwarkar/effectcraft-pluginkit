@@ -44,7 +44,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **Effects cannot read audio.** The render path reaches footage audio, not the comp mix.
 - **Forge 3D draws only on the GPU.** Draw passes render to an `Rgba16Float` target that is created per frame and copied.
 - **Ember simulates from frame 0 on every render when a parameter has an expression**, because the history cannot be hashed. It reads the masks at the current time for every step.
-- **A Halo preset sets the look and resets the element controls.** It does not write absolute slider values.
 - **Custom Effect Controls rows cannot subscribe to app events or set timers.** They are called again on their own widget events, a new value or a new width. (`crates/plugin/src/panels.rs`)
 - **Curves keeps the selected channel per effect, not per instance of the effect**, unless the fix for Opus finding 7 landed (see the log).
 - **`polygon` on a canvas fills convex shapes only.**

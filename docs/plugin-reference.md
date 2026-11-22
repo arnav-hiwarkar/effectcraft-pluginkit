@@ -94,6 +94,10 @@ set of values. Ids are the full parameter ids, including the group prefix. Value
 reads them in, except points: a point is a fraction of the layer, like a parameter's default. Ids
 the effect does not declare, and layer and mask parameters, are ignored.
 
+A preset writes the absolute value of every parameter it names, so the controls show them, and leaves the
+parameters it does not name as the user set them. A look that names `look` and the counts of its elements
+(`("Rays/count", Value::Number(14.0))`) therefore does not reset the element controls.
+
 The engine lists them with `effect.presets {layer?, effect}` → `{presets: [name]}` and applies one
 with `effect.applyPreset {layer?, effect, preset}`. Applying sets every value at the current layer
 time in one undo step: a keyframed parameter gets a keyframe, a static one changes its value.

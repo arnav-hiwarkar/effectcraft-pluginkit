@@ -263,8 +263,14 @@ involved), do not reuse checkpoints between frames. `plugins/ember` does this.
 
 `.preset(name, values)` on the spec names a set of parameter values, for example a look popup that
 also sets the sliders. The app applies one with `effect.applyPreset {layer, effect, preset}` in one
-undo step and lists them with `effect.presets`. `plugins/halo` has a preset per look. See
-[Presets](plugin-reference.md#presets).
+undo step and lists them with `effect.presets`. A preset writes absolute values to the parameters it names
+and leaves the others alone. `plugins/halo` has a preset per look that sets the look and its element counts:
+
+```rust
+.preset("Sun", [("look", Value::Number(1.0)), ("Rays/count", Value::Number(14.0)), ("Ghosts/count", Value::Number(7.0))])
+```
+
+See [Presets](plugin-reference.md#presets).
 
 ## Add a panel
 
