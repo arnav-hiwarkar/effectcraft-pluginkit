@@ -272,6 +272,16 @@ and leaves the others alone. `plugins/halo` has a preset per look that sets the 
 
 See [Presets](plugin-reference.md#presets).
 
+## Give a slider its own ranges
+
+A slider's hard range is what is allowed, and `cx.f` never returns a value outside it. The soft range is what the
+slider shows, and `.log()` spaces it by ratio:
+
+```rust
+Param::slider("gain", "Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log()
+Param::percent("mix", "Mix", 50.0).range(-100.0..=300.0)
+```
+
 ## Add a panel
 
 A panel keeps its own state. The app calls `ui` once to draw the panel and keeps what it returned: it

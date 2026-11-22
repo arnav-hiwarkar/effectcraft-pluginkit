@@ -117,3 +117,17 @@ fn choosing_a_preset_sets_its_parameters_in_one_undoable_step() {
     assert_eq!((value(&mut app, "effects/#1/level"), value(&mut app, "effects/#1/spot")), (json!(10.0), json!([32.0, 18.0])));
     assert!(app.session.execute_checked("effect.applyPreset", json!({"layer": "Sim", "effect": 1, "preset": "Quiet"})).is_err());
 }
+
+#[test]
+fn a_slider_shows_its_soft_range_in_log_scale_and_a_percent_takes_a_range() {
+    let mut app = app("test.params-ranges", &[]);
+    let listed = app.session.execute_checked("effect.list", json!({"filter": "test.params-ranges.ranges"})).unwrap();
+    let params = &listed[0]["params"];
+    let param = |id: &str| params.as_array().unwrap().iter().find(|p| p["id"] == id).unwrap().clone();
+    let gain = param("gain");
+    assert_eq!((&gain["min"], &gain["max"], &gain["sliderMin"], &gain["sliderMax"], &gain["log"]), (&json!(0.0), &json!(1000.0), &json!(0.01), &json!(10.0), &json!(true)));
+    let mix = param("mix");
+    assert_eq!((&mix["min"], &mix["max"], &mix["sliderMin"], &mix["sliderMax"], &mix["percent"]), (&json!(-100.0), &json!(300.0), &json!(-100.0), &json!(300.0), &json!(true)));
+    let plain = param("plain");
+    assert_eq!((&plain["sliderMax"], plain.get("log"), plain.get("percent")), (&json!(20.0), None, None));
+}

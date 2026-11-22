@@ -549,7 +549,7 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         let cur = pr.value_at(lt);
         let mut nv = cur.coerce_json(&v).ok_or_else(|| bad("prop.set", format!("can't use {v} for a {} property", cur.kind_name())))?;
         // Clamp to slider ranges.
-        if let effectcraft_project::ParamUi::Slider { min, max, .. } = pr.ui
+        if let effectcraft_project::ParamUi::Slider { min, max, .. } | effectcraft_project::ParamUi::Scaled { min, max, .. } = pr.ui
             && let effectcraft_keyframe::Value::Scalar(x) = nv
         {
             nv = effectcraft_keyframe::Value::Scalar(x.clamp(min, max));

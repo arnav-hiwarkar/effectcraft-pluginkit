@@ -98,9 +98,15 @@ pub(crate) fn unregister(plugin: &str) {
 
 fn declare(param: &Param) -> DynamicParam {
     let (default, ui) = match &param.kind {
-        ParamKind::Slider { default, min, max } => {
-            let decimals = if max - min <= 10.0 { 2 } else { 1 };
-            let ui = ParamUi::Slider { min: *min, max: *max, slider_min: *min, slider_max: *max, decimals };
+        ParamKind::Slider { default, min, max, soft, log, percent } => {
+            let [slider_min, slider_max] = soft.map(|[low, high]| [low.max(*min), high.min(*max)]).filter(|[low, high]| low < high).unwrap_or([*min, *max]);
+            let decimals = if slider_max - slider_min <= 10.0 { 2 } else { 1 };
+            let log = *log && slider_min > 0.0;
+            let ui = if log || *percent {
+                ParamUi::Scaled { min: *min, max: *max, slider_min, slider_max, decimals, log, percent: *percent }
+            } else {
+                ParamUi::Slider { min: *min, max: *max, slider_min, slider_max, decimals }
+            };
             (Value::Scalar(*default), ui)
         }
         ParamKind::Percent { default } => (Value::Scalar(*default), ParamUi::Percent),

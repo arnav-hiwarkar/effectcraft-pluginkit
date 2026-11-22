@@ -430,7 +430,7 @@ fn units(pr: &Property) -> &'static str {
     }
     match pr.ui {
         ParamUi::Angle => "degrees/sec",
-        ParamUi::Percent => "%/sec",
+        ParamUi::Percent | ParamUi::Scaled { percent: true, .. } => "%/sec",
         ParamUi::Slider { .. } if pr.match_id == "opacity" => "%/sec",
         _ if pr.match_id == "opacity" => "%/sec",
         ParamUi::Pixels => "pixels/sec",

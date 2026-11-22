@@ -107,8 +107,8 @@ Panels, commands, the CLI and automation all use these two commands.
 
 | Builder | Read in `render` with | Value |
 |---|---|---|
-| `Param::slider(id, name, default, min..=max)` | `cx.f(id)` | number |
-| `Param::percent(id, name, default)` | `cx.f(id)` | 0 to 100 |
+| `Param::slider(id, name, default, min..=max)` | `cx.f(id)` | number, always inside `min..=max` |
+| `Param::percent(id, name, default)` | `cx.f(id)` | a number shown with `%`, not limited |
 | `Param::angle(id, name, default)` | `cx.f(id)` | degrees |
 | `Param::checkbox(id, name, default)` | `cx.bool(id)` | |
 | `Param::popup(id, name, &["A", "B"], default)` | `cx.index(id)` | option index |
@@ -119,6 +119,20 @@ Panels, commands, the CLI and automation all use these two commands.
 | `Param::custom(id, name, default)` | `cx.text(id)` | text the plugin owns; `controls` draws its row |
 | `Param::layer(id, name)` | `cx.layer(id)` | another layer's pixels |
 | `Param::mask(id, name)` | `cx.index(id)` | index into `cx.masks()` |
+
+A slider has two ranges. `min..=max` is the hard range: what the user can type and what `cx.f` returns, even
+when an expression or a script pushes the value outside it. `.soft(low..=high)` is what the slider under the
+row shows, so a value up to 1000 can be typed while the slider covers 0.01 to 10. `.log()` spaces the slider
+by ratio, which suits gains and sizes; it needs a soft (or hard) minimum above 0 and is linear otherwise.
+`.range(min..=max)` gives a percent parameter a hard range and a slider (a percent without one has none).
+
+```rust
+Param::slider("gain", "Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log()
+Param::percent("mix", "Mix", 50.0).range(-100.0..=300.0)
+```
+
+A parameter declared without these behaves as before. `effect.list` reports `sliderMin`, `sliderMax`,
+`log` and `percent` for them.
 
 A new version of a plugin may add parameters. Effects already applied in a project gain them with their
 defaults when the project opens, or when the plugin starts while the project is open. The second is one undo step,
@@ -341,8 +355,10 @@ A reply of an older SDK is a bare widget list. The app redraws such a panel ever
 thread, and does not send it key or drop events.
 
 Widgets: `label`, `heading`, `weak`, `mono`, `error`, `button`, `button_enabled`, `checkbox`, `slider`, `number`,
-`text_edit`, `popup`, `color`, `separator`, `space`, and the containers `row`, `column` and `group`.
+`number_in`, `text_edit`, `popup`, `color`, `separator`, `space`, and the containers `row`, `column` and `group`.
 Value widgets take `&mut` state and return `true` on the frame the user changed it.
+`ui.number_in(text, &mut value, speed, min..=max, decimals)` is `number` with a range the value stays in and a
+fixed number of decimals.
 
 | Widget | Shows |
 |---|---|

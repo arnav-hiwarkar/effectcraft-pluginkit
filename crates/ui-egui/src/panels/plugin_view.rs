@@ -281,12 +281,19 @@ impl Renderer<'_> {
                     self.emit(*id, UiEventKind::Number(number));
                 }
             }
-            Widget::Number { id, text, value, speed } => {
+            Widget::Number { id, text, value, speed, range, decimals } => {
                 let mut number = *value;
                 let response = ui
                     .horizontal(|ui| {
                         let label = ui.label(self.text(text, TextStyle::Body));
-                        ui.add(egui::DragValue::new(&mut number).speed(finite_or(*speed, 1.0))).labelled_by(label.id)
+                        let mut drag = egui::DragValue::new(&mut number).speed(finite_or(*speed, 1.0));
+                        if let Some([low, high]) = range {
+                            drag = drag.range(finite_or(*low, f64::MIN)..=finite_or(*high, f64::MAX));
+                        }
+                        if let Some(decimals) = decimals {
+                            drag = drag.fixed_decimals(usize::from(*decimals));
+                        }
+                        ui.add(drag).labelled_by(label.id)
                     })
                     .inner;
                 self.register(*id, &response, text);
@@ -728,6 +735,21 @@ mod tests {
         let mut harness = harness(vec![Widget::Canvas { id: 7, size: [f32::INFINITY, f32::NAN], shapes }]);
         harness.run();
         assert!(harness.state().iter().all(|event| event.id == 7));
+    }
+    #[test]
+    fn dragging_a_number_with_a_range_stops_at_the_range_and_keeps_its_decimals() {
+        let number = Widget::Number { id: 3, text: "Count".into(), value: 2.0, speed: 1.0, range: Some([0.0, 5.0]), decimals: Some(1) };
+        let mut harness = harness(vec![number]);
+        harness.run();
+        assert_eq!(harness.get_by_role(egui::Role::SpinButton).value().as_deref(), Some("2.0"));
+        let at = harness.get_by_role(egui::Role::SpinButton).rect().center();
+        harness.drag_at(at);
+        harness.run();
+        harness.hover_at(at + vec2(200.0, 0.0));
+        harness.run();
+        harness.drop_at(at + vec2(200.0, 0.0));
+        harness.run();
+        assert_eq!(harness.state().last().map(|event| &event.kind), Some(&UiEventKind::Number(5.0)));
     }
 
     #[test]

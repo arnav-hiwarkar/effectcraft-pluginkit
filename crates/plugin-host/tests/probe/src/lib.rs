@@ -496,6 +496,17 @@ impl Effect for Report {
     }
 }
 
+struct Ranges;
+
+impl Effect for Ranges {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("ranges", "Ranges", "Probe")
+            .param(Param::slider("gain", "Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log())
+            .param(Param::percent("mix", "Mix", 50.0).range(-100.0..=300.0))
+            .param(Param::slider("plain", "Plain", 5.0, 0.0..=20.0))
+    }
+}
+
 struct SceneCamera;
 
 impl Effect for SceneCamera {
@@ -697,6 +708,7 @@ fn make() -> Plugin {
         .effect(Recurse)
         .effect(Memo)
         .effect(Report)
+        .effect(Ranges)
         .effect(GpuInvert)
         .effect(GpuSoften)
         .effect(HostKernels)
