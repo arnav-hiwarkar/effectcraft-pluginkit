@@ -1046,13 +1046,13 @@ pub fn recovery(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
     let Some(c) = choice else { return };
     app.dialog = None;
     app.recovery = None;
-    let path = match c {
-        "autosave" => r.autosave,
-        "project" => r.project,
+    let params = match c {
+        "autosave" => r.autosave.map(|a| json!({"path": a, "autosaveOf": r.project})),
+        "project" => r.project.map(|p| json!({"path": p})),
         _ => None,
     };
-    if let Some(p) = path
-        && let Err(e) = crate::menus::invoke(app, ctx, "file.open", json!({"path": p}))
+    if let Some(params) = params
+        && let Err(e) = crate::menus::invoke(app, ctx, "file.open", params)
     {
         app.ui.status = e;
     }

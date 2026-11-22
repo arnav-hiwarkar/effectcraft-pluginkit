@@ -313,6 +313,11 @@ impl Session {
     pub(crate) fn note_project_path(&mut self, path: &str) {
         self.prefs.push_recent(path);
         self.save_prefs();
+        self.note_project_replaced();
+    }
+
+    /// The project was replaced: the recovery record starts over for the new one.
+    pub(crate) fn note_project_replaced(&mut self) {
         let _ = self.autosave_wait();
         self.autosave =
             autosave::AutoSaveState { last: self.autosave.last, sentinel: self.autosave.sentinel, background: self.autosave.background, ..Default::default() };
@@ -357,7 +362,8 @@ impl Session {
     ///
     /// With [`autosave::AutoSaveState::background`] the project is serialised and written on a
     /// background thread (the path is returned at once; [`Session::autosave_wait`] waits).
-    /// Auto-saves are compact JSON (opened like any project); File ▸ Save writes pretty JSON.
+    /// Auto-saves are compact project files with the open comps, the active comp and each comp's
+    /// time, so a recovered project comes back as it was left.
     pub fn autosave_now(&mut self) -> Result<String> {
         // One write at a time: the previous one must land before its slot rotates.
         self.autosave_wait()?;
@@ -368,11 +374,12 @@ impl Session {
         let path = plan.path.to_string_lossy().into_owned();
         if self.autosave.background && !cfg!(target_arch = "wasm32") {
             let project = self.project.clone();
+            let view = self.saved_view();
             let config = self.config.clone();
             let job = plan.clone();
             let pending =
                 autosave::PendingWrite::spawn(plan.path.clone(), plan.slot, self.revision, self.path.clone(), self.script_ui.project_epoch, move || {
-                    let json = project.to_json_compact();
+                    let json = project.to_file_json_with_view(&view, true).map_err(std::io::Error::other)?;
                     match &config {
                         Some(c) => job.write(c.files(), json.as_bytes()),
                         None => job.write(&crate::config::StdFiles, json.as_bytes()),
@@ -381,7 +388,7 @@ impl Session {
                 .map_err(fail)?;
             self.autosave.pending = Some(pending);
         } else {
-            let json = self.project.to_json_compact();
+            let json = self.project.to_file_json_with_view(&self.saved_view(), true).map_err(|e| fail(std::io::Error::other(e)))?;
             plan.write(self.file_ops(), json.as_bytes()).map_err(fail)?;
             self.commit_autosave(path.clone(), plan.slot, self.revision);
         }

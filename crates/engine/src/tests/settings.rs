@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::config::{ConfigStore, DirConfig, MemoryConfig, atomic_write, atomic_write_with};
 use crate::prefs::{PREFS_FILE, Prefs};
 use crate::shortcuts::{DEFAULT_PRESET, Keymaps, normalize};
-use crate::{Session, autosave};
+use crate::{ItemId, Session, autosave};
 
 fn tmp(name: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -960,6 +960,84 @@ fn background_autosave_session(dir: &std::path::Path) -> (Session, Arc<AutosaveT
     s.autosave.background = true;
     s.begin_recovery();
     (s, store)
+}
+
+fn three_comp_session(dir: &std::path::Path, background: bool) -> (Session, [ItemId; 3]) {
+    let mut s = Session { config: Some(Arc::new(DirConfig::new(dir.join("config")))), ..Default::default() };
+    s.prefs.auto_save.location = "custom".into();
+    s.prefs.auto_save.folder = dir.join("saves").to_string_lossy().into_owned();
+    s.autosave.background = background;
+    let mut ids = Vec::new();
+    for name in ["A", "B", "C"] {
+        s.execute("comp.new", json!({"name": name, "width": 320, "height": 180, "duration": 10})).unwrap();
+        ids.push(s.state.active_comp.unwrap());
+    }
+    s.open_comp(ids[1]);
+    (s, [ids[0], ids[1], ids[2]])
+}
+
+fn autosave_keeps_the_open_comps_and_the_active_comp(background: bool, name: &str) {
+    let dir = tmp(name);
+    let (mut s, [a, b, c]) = three_comp_session(&dir, background);
+    assert_eq!(s.state.open_comps, [a, b, c]);
+    let path = s.autosave_now().unwrap();
+    s.autosave_wait().unwrap();
+    let mut fresh = Session::default();
+    fresh.execute("file.open", json!({"path": path})).unwrap();
+    assert_eq!(fresh.state.open_comps, [a, b, c]);
+    assert_eq!(fresh.state.active_comp, Some(b));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn foreground_autosave_keeps_the_open_comps_and_the_active_comp() {
+    autosave_keeps_the_open_comps_and_the_active_comp(false, "autosave-view-foreground");
+}
+
+#[test]
+fn background_autosave_keeps_the_open_comps_and_the_active_comp() {
+    autosave_keeps_the_open_comps_and_the_active_comp(true, "autosave-view-background");
+}
+
+#[test]
+fn a_recovered_auto_save_saves_over_the_original_project() {
+    let dir = tmp("recover-original");
+    let (mut s, _) = three_comp_session(&dir, false);
+    let original = dir.join("work.ecproj").to_string_lossy().into_owned();
+    s.execute("file.saveAs", json!({"path": original})).unwrap();
+    let saved_text = std::fs::read_to_string(&original).unwrap();
+    s.execute("layer.newNull", json!({"name": "unsaved work"})).unwrap();
+    let autosave = s.autosave_now().unwrap();
+    s.autosave_wait().unwrap();
+    let autosave_text = std::fs::read_to_string(&autosave).unwrap();
+    assert!(!saved_text.contains("unsaved work"));
+    assert!(autosave_text.contains("unsaved work"));
+
+    let mut fresh = Session::default();
+    fresh.execute("file.open", json!({"path": autosave, "autosaveOf": original})).unwrap();
+    assert_eq!(fresh.path.as_deref(), Some(original.as_str()));
+    assert!(fresh.is_dirty());
+    fresh.execute("file.save", json!({})).unwrap();
+    assert!(std::fs::read_to_string(&original).unwrap().contains("unsaved work"));
+    assert_eq!(std::fs::read_to_string(&autosave).unwrap(), autosave_text);
+    assert!(!fresh.is_dirty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_recovered_auto_save_without_an_original_is_an_untitled_project() {
+    let dir = tmp("recover-untitled");
+    let (mut s, [a, b, c]) = three_comp_session(&dir, false);
+    let autosave = s.autosave_now().unwrap();
+    let mut fresh = Session::default();
+    fresh.execute("file.open", json!({"path": autosave, "autosaveOf": null})).unwrap();
+    assert_eq!(fresh.path, None);
+    assert!(fresh.is_dirty());
+    assert_eq!(fresh.state.open_comps, [a, b, c]);
+    let error = fresh.execute("file.save", json!({})).unwrap_err().to_string();
+    assert!(error.contains("no path"), "{error}");
+    assert!(fresh.prefs.recent_projects.is_empty(), "{:?}", fresh.prefs.recent_projects);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
