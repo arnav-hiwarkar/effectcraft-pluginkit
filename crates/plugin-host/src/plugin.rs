@@ -100,6 +100,13 @@ impl Plugin {
             let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
             return self.call(&call, Some(pixels), &mut make_host());
         };
+        if reach == 0 {
+            return pixels.par_chunks_mut(band_rows * width).enumerate().try_for_each(|(band, rows)| {
+                let frame = FrameDesc { width: cx.size[0], height: (rows.len() / width) as u32, origin: [0, (band * band_rows) as u32] };
+                let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
+                self.exchange::<()>(&call, Io::InPlace(rows), &mut make_host())
+            });
+        }
         let firsts: Vec<usize> = (0..height).step_by(band_rows).collect();
         let rendered: Vec<Vec<Pixel>> = firsts
             .into_par_iter()

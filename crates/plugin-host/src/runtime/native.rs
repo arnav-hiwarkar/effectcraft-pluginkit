@@ -38,6 +38,18 @@ pub(crate) fn serve_erased(ctx: usize, request: &[u8], bulk: &[u8]) -> (Vec<u8>,
     guarded(cx, request, bulk)
 }
 
+pub(crate) fn compiled_module(engine: &wasmtime::Engine, path: &Path) -> Option<wasmtime::Module> {
+    // SAFETY: files in the compile cache are written only by `wasm::cached` from `Engine::precompile_module`, in a
+    // directory beside the plugin data directories that no plugin id can name, so no plugin can write it; wasmtime
+    // rejects a file whose header does not match this engine's version and settings.
+    unsafe { wasmtime::Module::deserialize_file(engine, path) }.ok()
+}
+
+pub(crate) fn fresh_module(engine: &wasmtime::Engine, compiled: &[u8]) -> wasmtime::Result<wasmtime::Module> {
+    // SAFETY: `compiled` was just produced by `Engine::precompile_module` on this same engine.
+    unsafe { wasmtime::Module::deserialize(engine, compiled) }
+}
+
 pub(crate) struct NativeGuest {
     call: CallFn,
     alloc: AllocFn,

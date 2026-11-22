@@ -1,8 +1,12 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use craft_plugin::{ABI, Outcome, Pixel};
 use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc};
+
+use rayon::prelude::*;
 
 use super::native;
 use super::serve::HostCx;
@@ -51,9 +55,9 @@ pub(crate) struct WasmModule {
 }
 
 impl WasmModule {
-    pub fn compile(bytes: &[u8]) -> Result<WasmModule, PluginError> {
+    pub fn compile(bytes: &[u8], cache: &Path) -> Result<WasmModule, PluginError> {
         let engine = engine()?;
-        let module = Module::new(engine, bytes).map_err(load_error)?;
+        let module = cached(engine, bytes, cache)?;
         let mut linker = Linker::new(engine);
         linker.func_wrap("craft", "host_call", host_call).map_err(load_error)?;
         Ok(WasmModule { module, linker })
@@ -109,7 +113,8 @@ impl WasmGuest {
         };
         let pixel_bytes: &[u8] = bytemuck::cast_slice(input);
         let pixels = self.pixel_buffer(pixel_bytes.len())?;
-        self.memory.write(&mut self.store, pixels as usize, pixel_bytes)?;
+        let place = self.memory.data_mut(&mut self.store).get_mut(pixels as usize..).and_then(|tail| tail.get_mut(..pixel_bytes.len()));
+        copy(place.ok_or_else(|| wasmtime::format_err!("the frame does not fit in plugin memory"))?, pixel_bytes);
 
         let request_at = self.alloc.call(&mut self.store, len(request)?)?;
         if request_at == 0 {
@@ -134,14 +139,15 @@ impl WasmGuest {
             return Ok(reply);
         }
 
-        match io {
-            Io::None => {}
-            Io::InPlace(output) => self.memory.read(&self.store, pixels as usize, bytemuck::cast_slice_mut(output))?,
-            Io::Region { output, skip, .. } => {
-                let from = pixels as usize + skip * size_of::<Pixel>();
-                self.memory.read(&self.store, from, bytemuck::cast_slice_mut(output))?
-            }
-        }
+        let (output, skip): (&mut [Pixel], usize) = match io {
+            Io::None => return Ok(reply),
+            Io::InPlace(output) => (output, 0),
+            Io::Region { output, skip, .. } => (output, skip),
+        };
+        let output: &mut [u8] = bytemuck::cast_slice_mut(output);
+        let from = pixels as usize + skip * size_of::<Pixel>();
+        let rendered = self.memory.data(&self.store).get(from..).and_then(|tail| tail.get(..output.len()));
+        copy(output, rendered.ok_or_else(|| wasmtime::format_err!("the frame does not fit in plugin memory"))?);
         Ok(reply)
     }
 
@@ -190,6 +196,30 @@ fn host_call(mut caller: Caller<'_, State>, _ctx: u32, request: u32, request_len
     let [bulk_at, bulk_len] = place(bulk_out.bytes())?;
     memory.write(&mut caller, out as usize, bytemuck::cast_slice(&[reply_at, reply_len, bulk_at, bulk_len]))?;
     Ok(())
+}
+
+fn cached(engine: &Engine, bytes: &[u8], cache: &Path) -> Result<Module, PluginError> {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    engine.precompile_compatibility_hash().hash(&mut hasher);
+    let path = cache.join(format!("{:016x}.cwasm", hasher.finish()));
+    if let Some(module) = native::compiled_module(engine, &path) {
+        return Ok(module);
+    }
+    let compiled = engine.precompile_module(bytes).map_err(load_error)?;
+    let module = native::fresh_module(engine, &compiled).map_err(load_error)?;
+    let staged = path.with_extension(format!("{}.part", std::process::id()));
+    let stored = std::fs::create_dir_all(cache).and_then(|()| std::fs::write(&staged, &compiled)).and_then(|()| std::fs::rename(&staged, &path));
+    if let Err(error) = stored {
+        log::warn!("{}: the compiled plugin was not cached: {error}", path.display());
+        let _ = std::fs::remove_file(&staged);
+    }
+    Ok(module)
+}
+
+fn copy(to: &mut [u8], from: &[u8]) {
+    const CHUNK: usize = 1 << 20;
+    to.par_chunks_mut(CHUNK).zip(from.par_chunks(CHUNK)).for_each(|(to, from)| to.copy_from_slice(from));
 }
 
 fn succeeded(reply: &[u8]) -> bool {

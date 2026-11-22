@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 const USAGE: &str = "usage: cargo xtask plugin <plugin-dir> [--native] [--out DIR]\n       cargo xtask plugin new <name> [--panel] [--gpu]\n       cargo xtask plugin dev <plugin-dir> [--bridge PORT]";
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
+const WASM_RUSTFLAGS: (&str, &str) = ("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS", "-C target-feature=+simd128,+bulk-memory,+nontrapping-fptoint");
 const DEFAULT_BRIDGE: &str = "9877";
 const PACKAGE_EXTENSION: &str = "craftplugin";
 const POLL: Duration = Duration::from_secs(1);
@@ -75,6 +76,9 @@ fn build(dir: &Path, native: bool) -> Result<PathBuf, String> {
         dir.join("target/release").join(native_file(&name))
     } else {
         command.args(["--target", WASM_TARGET]);
+        if std::env::var_os(WASM_RUSTFLAGS.0).is_none() {
+            command.env(WASM_RUSTFLAGS.0, WASM_RUSTFLAGS.1);
+        }
         dir.join("target").join(WASM_TARGET).join("release").join(format!("{name}.wasm"))
     };
     if !command.status().map_err(|e| e.to_string())?.success() {
