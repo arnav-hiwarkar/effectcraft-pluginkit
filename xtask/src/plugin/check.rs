@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use craft_plugin::{Contributions, Manifest, Permission};
 use craft_plugin_host::testing::TestPlugin;
@@ -47,7 +46,10 @@ fn manifest_fields(raw: &Value, cargo: &str, report: &mut Report) {
     for asked in raw["permissions"].as_array().into_iter().flatten() {
         let asked = asked.as_str().unwrap_or_default();
         if !names.contains(&asked) {
-            report.error(format!("plugin.json asks for the unknown permission `{asked}`"), format!("use one of {}", names.join(", ")));
+            report.error(
+                format!("plugin.json asks for the unknown permission `{asked}`; the app refuses to load the plugin"),
+                format!("use one of {}", names.join(", ")),
+            );
         }
     }
     if raw["description"].as_str().is_none_or(|text| text.trim().is_empty()) {
@@ -203,18 +205,22 @@ struct Source {
     text: String,
 }
 
-fn sources(dir: &Path) -> Vec<Source> {
+fn files(dir: &Path) -> Vec<(String, String)> {
     let root = dir.join("src");
     let mut out = Vec::new();
     for path in walk(&root).into_iter().filter(|path| path.extension().is_some_and(|ext| ext == "rs")) {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let file = path.strip_prefix(dir).unwrap_or(&path).display().to_string();
-        let mut in_tests = false;
+        let text = text.split("\nmod tests").next().unwrap_or_default().to_string();
+        out.push((path.strip_prefix(dir).unwrap_or(&path).display().to_string(), text));
+    }
+    out
+}
+
+fn sources(files: &[(String, String)]) -> Vec<Source> {
+    let mut out = Vec::new();
+    for (file, text) in files {
         for (n, line) in text.lines().enumerate() {
-            in_tests |= line.trim_start().starts_with("mod tests");
-            if !in_tests {
-                out.push(Source { file: file.clone(), line: n + 1, text: line.to_string() });
-            }
+            out.push(Source { file: file.clone(), line: n + 1, text: line.to_string() });
         }
     }
     out
@@ -293,44 +299,53 @@ fn permissions(sources: &[Source], manifest: &Manifest, report: &mut Report) {
     }
 }
 
-pub(super) fn unread_fields(messages: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for line in messages.lines() {
-        let Ok(message) = serde_json::from_str::<Value>(line) else { continue };
-        let message = &message["message"];
-        if message["code"]["code"] != "dead_code" {
-            continue;
+pub(super) fn unread_params(files: &[(String, String)]) -> Vec<(String, String)> {
+    let mut declared = Vec::new();
+    let mut elsewhere = String::new();
+    for (file, text) in files {
+        let mut rest = text.as_str();
+        while let Some(start) = rest.find("params! {") {
+            elsewhere.push_str(&rest[..start]);
+            let block = &rest[start..];
+            let mut depth = 0;
+            let end = block
+                .char_indices()
+                .find(|&(_, c)| {
+                    depth += i32::from(c == '{') - i32::from(c == '}');
+                    c == '}' && depth == 0
+                })
+                .map_or(block.len(), |(at, _)| at + 1);
+            let first_line = text[..text.len() - rest.len() + start].lines().count().max(1);
+            for (offset, line) in block[..end].lines().enumerate() {
+                let line = line.trim().trim_start_matches("pub ");
+                if let Some((name, kind)) = line.split_once(':')
+                    && kind.contains('=')
+                    && !name.is_empty()
+                    && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                {
+                    declared.push((name.to_string(), format!("{file}:{}", first_line + offset)));
+                }
+            }
+            rest = &block[end..];
         }
-        let text = message["message"].as_str().unwrap_or_default();
-        if !(text.starts_with("field") && text.ends_with("never read")) {
-            continue;
-        }
-        let at = message["spans"]
-            .as_array()
-            .and_then(|spans| spans.iter().find(|span| span["is_primary"] == true))
-            .map(|span| format!("{}:{}", span["file_name"].as_str().unwrap_or_default(), span["line_start"]))
-            .unwrap_or_default();
-        for name in text.split('`').skip(1).step_by(2) {
-            out.push((name.to_string(), at.clone()));
-        }
+        elsewhere.push_str(rest);
     }
-    out
+    let used = |name: &str| {
+        elsewhere.match_indices(name).any(|(at, _)| {
+            let before = elsewhere[..at].chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+            let after = elsewhere[at + name.len()..].chars().next().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+            before && after
+        })
+    };
+    declared.into_iter().filter(|(name, _)| !used(name)).collect()
 }
 
-fn typed(dir: &Path, contributions: &Contributions, report: &mut Report) -> Result<(), String> {
-    let out = Command::new(env!("CARGO"))
-        .args(["check", "--quiet", "--message-format", "json", "--manifest-path"])
-        .arg(dir.join("Cargo.toml"))
-        .output()
-        .map_err(|e| e.to_string())?;
-    let leaves: BTreeMap<&str, &str> =
-        contributions.effects.iter().flat_map(|e| &e.params).map(|p| (p.id.rsplit('/').next().unwrap_or(&p.id), p.id.as_str())).collect();
-    for (field, at) in unread_fields(&String::from_utf8_lossy(&out.stdout)) {
-        if let Some(id) = leaves.get(field.as_str()) {
-            report.warn(format!("{at}: the parameter `{id}` is declared but never read"), "use it in layout or render, or remove it from params!");
-        }
+fn typed(sources: &[(String, String)], contributions: &Contributions, report: &mut Report) {
+    let leaves: BTreeMap<&str, &str> = contributions.effects.iter().flat_map(|e| &e.params).map(|p| (p.id.rsplit('/').next().unwrap_or(&p.id), p.id.as_str())).collect();
+    for (field, at) in unread_params(sources) {
+        let id = leaves.get(field.as_str()).copied().unwrap_or(&field);
+        report.warn(format!("{at}: the parameter `{id}` is declared in params! but never read"), "use it in layout or render, or remove it");
     }
-    Ok(())
 }
 
 pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
@@ -339,7 +354,12 @@ pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
     let raw = json_file(&dir.join("plugin.json"))?;
     let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap_or_default();
     manifest_fields(&raw, &cargo, &mut report);
-    let manifest = match Manifest::parse(&raw.to_string()) {
+    let names: Vec<&str> = Permission::ALL.iter().map(|p| p.name()).collect();
+    let mut known = raw.clone();
+    if let Some(asked) = known["permissions"].as_array_mut() {
+        asked.retain(|permission| permission.as_str().is_some_and(|name| names.contains(&name)));
+    }
+    let manifest = match Manifest::parse(&known.to_string()) {
         Ok(manifest) => Some(manifest),
         Err(error) => {
             report.error(error.to_string(), "fix plugin.json; the app refuses to load it until then");
@@ -350,6 +370,11 @@ pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
         other_plugins(root, &dir, &manifest.id, &mut report);
         let scratch = tempfile::tempdir().map_err(|e| e.to_string())?;
         let bundle_dir = if cargo.is_empty() { dir.clone() } else { assemble(&dir, scratch.path(), false, Messages::Short)?.0 };
+        if !cargo.is_empty() && known != raw {
+            let mut bundled = json_file(&bundle_dir.join("plugin.json"))?;
+            bundled["permissions"] = known["permissions"].clone();
+            std::fs::write(bundle_dir.join("plugin.json"), bundled.to_string()).map_err(|e| e.to_string())?;
+        }
         let bundle = Bundle::open(&bundle_dir).map_err(|e| e.to_string())?;
         module(&bundle_dir, &bundle.manifest, &mut report);
         package(&bundle_dir, &raw, &mut report)?;
@@ -358,10 +383,11 @@ pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
                 let described = plugin.plugin().contributions();
                 contributions(described, &mut report);
                 if !cargo.is_empty() {
-                    let sources = sources(&dir);
+                    let files = files(&dir);
+                    let sources = sources(&files);
                     reads(&sources, described, &mut report);
                     permissions(&sources, manifest, &mut report);
-                    typed(&dir, described, &mut report)?;
+                    typed(&files, described, &mut report);
                 }
             }
             Err(error) => report.error(format!("the plugin does not load: {error}"), "run its tests (cargo test) to see where it fails"),
@@ -390,12 +416,10 @@ mod tests {
     }
 
     #[test]
-    fn unread_fields_come_from_the_compiler_dead_code_messages() {
-        let one = r#"{"reason":"compiler-message","message":{"code":{"code":"dead_code"},"message":"field `tint` is never read","spans":[{"is_primary":true,"file_name":"src/lib.rs","line_start":7}]}}"#;
-        let two = r#"{"reason":"compiler-message","message":{"code":{"code":"dead_code"},"message":"fields `a` and `b` are never read","spans":[{"is_primary":false,"file_name":"src/lib.rs","line_start":3},{"is_primary":true,"file_name":"src/lib.rs","line_start":4}]}}"#;
-        let other = r#"{"reason":"compiler-message","message":{"code":{"code":"unused_variables"},"message":"unused variable: `x`","spans":[]}}"#;
-        let found = unread_fields(&[one, two, other, "not json"].join("\n"));
-        assert_eq!(found, [("tint".into(), "src/lib.rs:7".into()), ("a".into(), "src/lib.rs:4".into()), ("b".into(), "src/lib.rs:4".into())]);
+    fn a_params_field_that_no_code_outside_the_declaration_names_is_unread() {
+        let lib = "params! {\n    struct S {\n        radius: f64 = slider(\"Radius\", 1.0, 0.0..=2.0),\n        \"Colour\" {\n            tint: [f32; 4] = color(\"Tint\", [1.0; 4]),\n            spare: f64 = percent(\"Spare\", 1.0),\n        }\n    }\n}\nfn f(s: S) -> f64 { s.radius * s.radius_scale }\n";
+        let other = ("src/look.rs".to_string(), "fn g(S { tint, .. }: S) {}".to_string());
+        assert_eq!(unread_params(&[("src/lib.rs".into(), lib.into()), other]), [("spare".to_string(), "src/lib.rs:6".to_string())]);
     }
 
     #[test]
@@ -418,7 +442,7 @@ mod tests {
         let mut report = Report::default();
         manifest_fields(&serde_json::json!({ "permissions": ["clipbard", "clipboard"] }), "[package]\nname = \"x\"\n", &mut report);
         assert_eq!(report.errors(), 1);
-        assert_eq!(report.0[0].what, "plugin.json asks for the unknown permission `clipbard`");
+        assert_eq!(report.0[0].what, "plugin.json asks for the unknown permission `clipbard`; the app refuses to load the plugin");
         assert_eq!(report.0[0].fix, "use one of document.read, document.write, files.read, files.write, clipboard");
         assert_eq!(report.0.iter().map(|f| f.what.as_str()).skip(1).collect::<Vec<_>>(), ["plugin.json has no description", "the plugin has no licence"]);
     }
