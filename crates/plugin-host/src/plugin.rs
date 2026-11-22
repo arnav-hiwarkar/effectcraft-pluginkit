@@ -50,6 +50,7 @@ pub(crate) enum Io<'a> {
     None,
     InPlace(&'a mut [Pixel]),
     Region { input: &'a [Pixel], output: &'a mut [Pixel], skip: usize },
+    Render { input: &'a [Pixel], out: &'a mut [Pixel] },
     Pass { src: &'a [Pixel], aux: &'a [Pixel], out: &'a mut [Pixel] },
 }
 
@@ -166,6 +167,7 @@ impl Plugin {
         let full = Rect::of_size(cx.size);
         let separate = self.contributions.separate_input;
         let mut area = area.map_or(full, |area| area.clipped(cx.size));
+        let pointwise = layout.reach == Some(0) && !(separate && layout.maps_input);
         if !separate {
             (area.left, area.right) = (full.left, full.right);
         }
@@ -176,6 +178,22 @@ impl Plugin {
         let (rows, out_width) = (area.height() as usize, area.width() as usize);
         let bands = (rows / MIN_BAND_ROWS).clamp(1, rayon::current_num_threads());
         let even_rows = rows.div_ceil(bands);
+        if pointwise && out_width == width {
+            let (top, bottom) = (area.top as usize, area.bottom as usize);
+            let call = |band: usize, rows: &[Pixel]| {
+                let frame =
+                    FrameDesc { width: cx.size[0], height: (rows.len() / width) as u32, origin: [0, (top + band * even_rows) as u32], ..Default::default() };
+                Call::Render { effect: effect.into(), cx: cx.clone(), frame }
+            };
+            let shown = &mut pixels[top * width..bottom * width];
+            shown
+                .par_chunks_mut(even_rows * width)
+                .enumerate()
+                .try_for_each(|(band, rows)| self.exchange::<()>(&call(band, rows), Io::InPlace(rows), &mut make_host()))?;
+            pixels.truncate(bottom * width);
+            pixels.drain(..top * width);
+            return Ok(area);
+        }
         let reach = layout.reach.map(|reach| reach as usize);
         let band_rows = match reach {
             _ if separate && layout.maps_input => even_rows,
@@ -185,7 +203,12 @@ impl Plugin {
             _ => rows,
         };
         let input: &[Pixel] = pixels;
-        let mut output = vec![[0.0; 4]; out_width * rows];
+        let mut output = match pointwise {
+            true => {
+                input.chunks_exact(width).skip(area.top as usize).take(rows).flat_map(|row| &row[area.left as usize..area.right as usize]).copied().collect()
+            }
+            false => vec![[0.0; 4]; out_width * rows],
+        };
         output.par_chunks_mut(band_rows * out_width).enumerate().try_for_each(|(band, written)| {
             let top = area.top + (band * band_rows) as i32;
             let out = Rect { top, bottom: top + (written.len() / out_width) as i32, ..area };
@@ -213,7 +236,7 @@ impl Plugin {
                 let mut table: [Pixel; 3] = bytemuck::cast([address(held), address(&[]), [written.as_mut_ptr() as u64, written.len() as u64]]);
                 self.exchange::<()>(&call, Io::InPlace(&mut table), &mut make_host())
             } else {
-                self.exchange::<()>(&call, Io::Pass { src: held, aux: &[], out: written }, &mut make_host())
+                self.exchange::<()>(&call, Io::Render { input: held, out: written }, &mut make_host())
             }
         })?;
         *pixels = output;

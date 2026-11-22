@@ -161,6 +161,49 @@ impl<'p> Pixels<'p> {
     }
 }
 
+struct InPlace {
+    band: (usize, usize),
+    copies: Vec<Vec<Pixel>>,
+}
+
+thread_local! {
+    static IN_PLACE: std::cell::RefCell<Vec<InPlace>> = const { std::cell::RefCell::new(Vec::new()) };
+    static SPARE: std::cell::RefCell<Vec<Pixel>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+struct Ended;
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        let copies = IN_PLACE.with_borrow_mut(Vec::pop).map(|scope| scope.copies).unwrap_or_default();
+        if let Some(largest) = copies.into_iter().max_by_key(Vec::capacity) {
+            SPARE.set(largest);
+        }
+    }
+}
+
+pub(crate) fn in_place<R>(band: &mut [Pixel], run: impl for<'a> FnOnce(&'a mut [Pixel]) -> R) -> R {
+    IN_PLACE.with_borrow_mut(|scopes| scopes.push(InPlace { band: (band.as_ptr() as usize, band.len()), copies: Vec::new() }));
+    let _ended = Ended;
+    run(band)
+}
+
+pub(crate) fn snapshot(band: &mut [Pixel]) -> (&[Pixel], &mut [Pixel]) {
+    let key = (band.as_ptr() as usize, band.len());
+    if band.is_empty() || !IN_PLACE.with_borrow(|scopes| scopes.last().is_some_and(|scope| scope.band == key)) {
+        return (&[], band);
+    }
+    let mut copy = SPARE.take();
+    copy.clear();
+    copy.extend_from_slice(band);
+    let (at, len) = (copy.as_ptr(), copy.len());
+    IN_PLACE.with_borrow_mut(|scopes| scopes.last_mut().map(|scope| scope.copies.push(copy)));
+    // SAFETY: `copy` now belongs to the innermost `in_place` scope, which neither changes nor frees it before that
+    // scope ends. `band` is that scope's band: the only way to hold it mutably is through the borrow `in_place`
+    // passed to its closure, which cannot outlive the closure, so the returned slice cannot outlive the scope.
+    (unsafe { std::slice::from_raw_parts(at, len) }, band)
+}
+
 thread_local! {
     static PANIC: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }

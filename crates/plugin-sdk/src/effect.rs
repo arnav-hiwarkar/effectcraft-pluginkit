@@ -229,6 +229,9 @@ impl<'a> Frame<'a> {
     }
 
     pub fn rows(&mut self) -> impl Iterator<Item = (usize, &'a [Pixel], &mut [Pixel])> {
+        if self.input.pixels.is_empty() {
+            (self.input.pixels, self.pixels) = crate::abi::snapshot(std::mem::take(&mut self.pixels));
+        }
         let ([x0, y0], width, input) = (self.origin, self.width, self.input);
         self.pixels.chunks_exact_mut(width.max(1)).enumerate().map(move |(i, out)| {
             let y = y0 + i;
@@ -238,12 +241,20 @@ impl<'a> Frame<'a> {
     }
 
     pub fn map(&mut self, f: impl Fn(Pixel) -> Pixel) {
+        if self.input.pixels.is_empty() {
+            self.pixels.iter_mut().for_each(|pixel| *pixel = f(*pixel));
+            return;
+        }
         for (_, read, out) in self.rows() {
             out.iter_mut().zip(read).for_each(|(out, read)| *out = f(*read));
         }
     }
 
     pub fn at(&self, x: isize, y: isize) -> Pixel {
+        if self.input.pixels.is_empty() {
+            let own = Rows { width: self.width, height: self.input.height, first_row: self.origin[1], pixels: self.pixels };
+            return own.at(x - self.origin[0] as isize, y);
+        }
         self.input.at(x, y)
     }
 }

@@ -133,14 +133,16 @@ impl Plugin {
             Call::Render { effect, cx, frame } => {
                 let (width, height) = (frame.width as usize, frame.height as usize);
                 let origin = [frame.origin[0] as usize, frame.origin[1] as usize];
-                let snapshot;
                 let (read, window, out) = match frame.input {
                     None => {
                         let pixels = pixels.into_packed();
-                        snapshot = pixels.to_vec();
-                        let whole =
-                            Window { size: [frame.width, frame.origin[1].saturating_add(frame.height)], first_row: frame.origin[1], rows: frame.height };
-                        (&snapshot[..], whole, pixels)
+                        if pixels.len() != width.saturating_mul(height) {
+                            return Err(format!("frame is {width}x{height} at {origin:?} but {} pixels were passed", pixels.len()).into());
+                        }
+                        let (effect, input) = (self.find_effect(&effect)?, Rows { width, height: cx.size[1] as usize, first_row: origin[1], pixels: &[] });
+                        let cx = Cx::new(cx);
+                        crate::abi::in_place(pixels, |pixels| effect.render(&cx, &mut Frame { width, height, origin, pixels, input }))?;
+                        return Ok(serde_json::Value::Null);
                     }
                     Some(window) if frame.spread => {
                         let (read, _, out) = pixels.spread()?;
@@ -316,6 +318,38 @@ mod tests {
             assert!(matches!(&refused, Outcome::Err(why) if why.contains("by address")), "{refused:?}");
         }
         assert_eq!(written, vec![[0.0; 4]; 4]);
+    }
+
+    struct TurnLeft;
+
+    impl Effect for TurnLeft {
+        fn spec(&self) -> EffectSpec {
+            EffectSpec::new("turn-left", "Turn Left", "Test")
+        }
+
+        fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+            let first = frame.at(0, frame.origin[1] as isize)[0];
+            for (_, read, out) in frame.rows() {
+                out.iter_mut().enumerate().for_each(|(x, pixel)| *pixel = [read[(x + 1) % read.len()][0], first, 0.0, 1.0]);
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_frame_without_input_rows_changes_in_place_and_its_rows_read_the_input_as_it_was() {
+        let plugin = Plugin::new().effect(TurnLeft);
+        let mut pixels: Vec<Pixel> = (1..7).map(|v| [v as f32, 0.0, 0.0, 1.0]).collect();
+        let frame = crate::wire::FrameDesc { width: 3, height: 2, origin: [0, 4], input: None, spread: false };
+        let call = Call::Render { effect: "turn-left".into(), cx: crate::RenderCx { size: [3, 9], ..Default::default() }, frame };
+        let at = pixels.as_ptr();
+        let reply: Outcome<serde_json::Value> = serde_json::from_slice(&plugin.dispatch(&serde_json::to_vec(&call).unwrap(), &mut pixels)).unwrap();
+        assert!(matches!(reply, Outcome::Ok(_)), "{reply:?}");
+        assert_eq!(
+            pixels.iter().map(|pixel| [pixel[0], pixel[1]]).collect::<Vec<_>>(),
+            [[2.0, 1.0], [3.0, 1.0], [1.0, 1.0], [5.0, 1.0], [6.0, 1.0], [4.0, 1.0]]
+        );
+        assert_eq!(pixels.as_ptr(), at);
     }
 
     #[test]

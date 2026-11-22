@@ -105,7 +105,7 @@ impl Engine {
                 Io::None => Ok(guest.call(request, None, &mut cx)),
                 Io::InPlace(pixels) => Ok(guest.call(request, Some(pixels), &mut cx)),
                 Io::Region { input, output, skip } => Ok(guest.render_band(request, input, output, skip, &mut cx)),
-                Io::Pass { .. } => Err(PluginError::Protocol("native plugins read pass images through their addresses".into())),
+                Io::Render { .. } | Io::Pass { .. } => Err(PluginError::Protocol("native plugins read their images through their addresses".into())),
             },
             Kind::Wasm { module, main, .. } if stateful => {
                 let mut slot = main.lock().map_err(|_| PluginError::Trap("an earlier call panicked".into()))?;

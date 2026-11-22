@@ -241,6 +241,23 @@ fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
 Write every pixel of `frame.pixels`. `frame.map(f)` writes each pixel from the input pixel under it, and
 `frame.rows()` yields `(y, input row, output row)` for a loop over both.
 
+An effect that reads no other pixels says so with `Layout::pointwise()`. Its `frame.pixels` then starts
+out holding the input, and when whole rows show the app changes the layer's frame in place, so the
+cheapest loop reads and writes `frame.pixels` directly. `frame.map` and `frame.rows()` work the same as
+before.
+
+```rust
+fn layout(&self, _cx: &Cx) -> Layout {
+    Layout::pointwise()
+}
+
+fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+    let limit = cx.f("limit") as f32;
+    frame.pixels.iter_mut().for_each(|pixel| pixel[3] = pixel[3].min(limit));
+    Ok(())
+}
+```
+
 The app asks an effect only for the part of the layer that shows in the frame it renders: a layer half
 outside the comp, or a viewer zoomed in, renders that part. A band is part of that rectangle. An effect
 that shifts its picture says where its input comes from:
