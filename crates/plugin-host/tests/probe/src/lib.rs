@@ -334,6 +334,9 @@ impl Effect for HostKernels {
             "bicubic zoom",
             "full over",
             "no over",
+            "tiny curve range",
+            "huge resample",
+            "huge to linear",
         ];
         let modes = ["over", "add", "subtract", "multiply", "screen", "overlay", "darken", "lighten", "difference"];
         EffectSpec::new("host-kernels", "Host Kernels", "Probe")
@@ -387,6 +390,12 @@ impl Effect for HostKernels {
                 let top_image = GpuPass::matrix(source, soft, [top, [0.0; 4], [0.0; 4], [0.0, 0.0, 0.0, 1.0]]);
                 plan.pass(top_image).pass(GpuPass::blend_images(source, soft, output, BlendMode::Over, amount))
             }
+            21 => {
+                let ramp = (0..4096).map(|i| i as f32 / 4095.0 * 1e-36).collect();
+                plan.pass(GpuPass::brightness_curve(source, output, Measure::MaxChannel, ramp, 1e-36))
+            }
+            22 => plan.pass(GpuPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some([2.0, 2.0]) }, source, output)),
+            23 => plan.pass(GpuPass::to_linear(source, output)),
             _ => {
                 let quarter = frame.map(|side| side.div_ceil(4));
                 let (small, blurred) = (plan.scratch(quarter), plan.scratch(quarter));

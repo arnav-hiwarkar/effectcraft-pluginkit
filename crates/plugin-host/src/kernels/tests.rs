@@ -500,7 +500,7 @@ fn craft_pointwise(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 "
     );
-    assert_eq!(screen.data, [1.0, 3.0, 1.0, 0.0, 0.25, 2.0, 0.5]);
+    assert_eq!(screen.data, [1.0, 3.0, 2.0, 0.0, 0.25, 2.0, 0.5]);
     let other_numbers = step(&plan(0.75, BlendMode::Screen, vec![0.0, 0.5, 1.0]));
     assert_eq!((other_numbers.wgsl == screen.wgsl, other_numbers.data[6]), (true, 0.75));
     assert!(step(&plan(0.5, BlendMode::Multiply, vec![0.0, 0.25, 2.0])).wgsl.contains("craft_amount(v0, v0 * i0, craft_data(6u))"));

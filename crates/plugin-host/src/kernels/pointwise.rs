@@ -18,10 +18,7 @@ pub(crate) fn row(kernel: &HostKernel, src: &[Pixel], top: &[Pixel], y: usize, o
         HostKernel::Matrix { rows } => pairs.for_each(|(o, p)| *o = rows.map(|row| row[0] * p[0] + row[1] * p[1] + row[2] * p[2] + row[3] * p[3])),
         HostKernel::ToLinear => transfers().decode.row(src, out),
         HostKernel::ToSrgb => transfers().encode.row(src, out),
-        HostKernel::BrightnessCurve { measure, curve, range } => {
-            let steps_per_unit = (curve.len() - 1) as f32 / range;
-            pairs.for_each(|(o, p)| *o = brightness_curve(*measure, curve, steps_per_unit, *p));
-        }
+        HostKernel::BrightnessCurve { measure, curve, range } => pairs.for_each(|(o, p)| *o = brightness_curve(*measure, curve, *range, *p)),
         HostKernel::Dither { seed, origin } => {
             let row_y = (y as i64).wrapping_sub(origin[1]) as u32;
             pairs.enumerate().for_each(|(x, (o, p))| *o = dither(*p, (x as i64).wrapping_sub(origin[0]) as u32, row_y, *seed));
@@ -76,20 +73,24 @@ pub(crate) fn measure(measure: Measure, p: Pixel) -> f32 {
     }
 }
 
-pub(crate) fn lookup(curve: &[f32], steps_per_unit: f32, m: f32) -> f32 {
+fn lookup(curve: &[f32], range: f32, m: f32) -> f32 {
     let last = curve.len() - 1;
-    let t = m * steps_per_unit;
+    if m > range {
+        let (a, b) = (curve[last - 1], curve[last]);
+        return if a == b { b } else { b + (b - a) * ((m - range) / range * last as f32) };
+    }
+    let t = m / range * last as f32;
     let i = (t as usize).min(last - 1);
     let (a, b) = (curve[i], curve[i + 1]);
     a + (b - a) * (t - i as f32)
 }
 
-fn brightness_curve(kind: Measure, curve: &[f32], steps_per_unit: f32, p: Pixel) -> Pixel {
+fn brightness_curve(kind: Measure, curve: &[f32], range: f32, p: Pixel) -> Pixel {
     let m = measure(kind, p);
     if m <= 0.0 {
         return [0.0, 0.0, 0.0, p[3]];
     }
-    let gain = lookup(curve, steps_per_unit, m) / m;
+    let gain = lookup(curve, range, m) / m;
     [p[0] * gain, p[1] * gain, p[2] * gain, p[3]]
 }
 
@@ -128,9 +129,9 @@ impl Transfer {
     fn row(&self, src: &[Pixel], out: &mut [Pixel]) {
         let (segments, exact) = (&self.segments[..], self.exact);
         let eval = |x: f32| {
-            let i = (x.to_bits() >> SEGMENT_SHIFT).saturating_sub(FIRST_SEGMENT);
-            match segments.get(i as usize) {
-                Some([value, slope]) => value + slope * (x - f32::from_bits((FIRST_SEGMENT + i) << SEGMENT_SHIFT)),
+            let i = (x.to_bits() >> SEGMENT_SHIFT).checked_sub(FIRST_SEGMENT);
+            match i.and_then(|i| Some((i, segments.get(i as usize)?))) {
+                Some((i, [value, slope])) => value + slope * (x - f32::from_bits((FIRST_SEGMENT + i) << SEGMENT_SHIFT)),
                 None => exact(x),
             }
         };

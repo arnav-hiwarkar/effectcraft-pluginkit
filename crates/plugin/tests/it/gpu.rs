@@ -318,3 +318,30 @@ fn host_kernel_edge_cases_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() 
     }
     assert_eq!(wrong, Vec::<String>::new());
 }
+
+#[test]
+fn extreme_values_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() {
+    let app = app("test.gpu-kernel-extremes", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
+    let filled = |pixel: [f32; 4]| Buf { img: Image { width: 4, height: 4, data: vec![pixel; 16] }, offset: [0.0, 0.0], scale: 1.0 };
+    let cases = [
+        ("a curve over 0..1e-36", 21, filled([1e-36, 0.0, 0.0, 1.0]), [6, 6], [1e-36, 0.0, 0.0, 1.0]),
+        ("halving 1.25e38", 22, filled([1.25e38, 0.0, 0.0, 1.0]), [3, 3], [1.25e38 * 0.875 * 0.875, 0.0, 0.0, 0.875 * 0.875]),
+        ("decoding sRGB 1e16", 23, filled([1e16, 0.0, 0.0, 1.0]), [6, 6], [2f32.powi(126), 0.0, 0.0, 1.0]),
+    ];
+    let mut wrong = Vec::new();
+    for (case, kernel, input, [x, y], want) in cases {
+        let params = params(spec, &[("kernel", f64::from(kernel))]);
+        let cpu = effects::apply(spec, &ctx(&params), input.clone());
+        assert_eq!(app.plugins.render_error(spec.id), None, "{case}: the CPU render succeeded");
+        let on_gpu = gpu.effects(&[FxStep { spec, ctx: ctx(&params) }], &input, None).unwrap_or_else(|| panic!("{case}: the GPU ran the plan"));
+        for (backend, out) in [("CPU", &cpu.img), ("GPU", &on_gpu.img)] {
+            let got = out.data[(y * out.width + x) as usize];
+            if !got.iter().zip(want).all(|(g, w)| (g - w).abs() <= w.abs() * 1e-6) {
+                wrong.push(format!("{case} on the {backend}: {got:?}, not {want:?}"));
+            }
+        }
+    }
+    assert_eq!(wrong, Vec::<String>::new());
+}

@@ -145,8 +145,7 @@ fn pointwise(fused: &Fused, resampled: Option<(usize, Filter)>, f: Vec<f32>) -> 
             HostKernel::ToLinear => format!("craft_linear({v})"),
             HostKernel::ToSrgb => format!("craft_srgb({v})"),
             HostKernel::BrightnessCurve { measure, curve, range } => {
-                let steps_per_unit = (curve.len() - 1) as f32 / range;
-                data.extend([f32::from(*measure == Measure::Luma), curve.len() as f32, steps_per_unit].into_iter().chain(curve.iter().copied()));
+                data.extend([f32::from(*measure == Measure::Luma), curve.len() as f32, *range].into_iter().chain(curve.iter().copied()));
                 format!("craft_brightness_curve({at}u, {v})")
             }
             HostKernel::Dither { seed, origin } => {
