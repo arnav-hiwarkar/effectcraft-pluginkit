@@ -1,4 +1,4 @@
-use crate::passes::blur::taps;
+use crate::blur::taps;
 use crate::pixel::{Mix, luma};
 use crate::profile::Profile;
 use crate::settings::{Settings, View};

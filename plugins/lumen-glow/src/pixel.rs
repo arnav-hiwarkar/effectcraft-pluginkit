@@ -20,10 +20,6 @@ pub fn luma(rgb: [f32; 3]) -> f32 {
     LUMA[0] * rgb[0] + LUMA[1] * rgb[1] + LUMA[2] * rgb[2]
 }
 
-pub fn brightest(p: Pixel) -> f32 {
-    p[0].max(p[1]).max(p[2])
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Mix {
     columns: [Pixel; 3],
@@ -57,10 +53,6 @@ impl Mix {
         let [a, b, c] = self.columns;
         let [x, y, z] = other.columns;
         Mix { columns: [add(a, x), add(b, y), add(c, z)] }
-    }
-
-    pub fn from_floats(floats: &[f32]) -> Mix {
-        Mix { columns: std::array::from_fn(|c| std::array::from_fn(|r| floats.get(4 * c + r).copied().unwrap_or(0.0))) }
     }
 
     pub fn columns(&self) -> [Pixel; 3] {

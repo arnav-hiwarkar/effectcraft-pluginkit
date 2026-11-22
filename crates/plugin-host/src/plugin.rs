@@ -12,7 +12,7 @@ use serde::de::DeserializeOwned;
 
 use crate::host::{Host, Origin};
 use crate::journal::LogLine;
-use crate::kernels::{self, Image};
+use crate::kernels::{self, Image, Step};
 use crate::registry::Bundle;
 use crate::runtime::Engine;
 
@@ -247,19 +247,34 @@ impl Plugin {
             GpuImage::Scratch(index) => Some(index as usize + 1),
             GpuImage::Texture(_) | GpuImage::Layer(_) => None,
         };
-        for pass in &plan.passes {
-            let Some(target) = slot(pass.out) else { continue };
-            let mut out = std::mem::take(&mut written[target]);
+        for step in kernels::steps(plan, cx.size) {
+            let out_image = match &step {
+                Step::Single(index) => plan.passes[*index].out,
+                Step::Fused(fused) => fused.out,
+            };
+            let Some(target) = slot(out_image) else { continue };
+            let reads_target = matches!(&step, Step::Fused(fused) if fused.inputs.contains(&out_image));
+            let mut out = if reads_target { vec![[0.0; 4]; area(sizes[target])] } else { std::mem::take(&mut written[target]) };
             let read = |image: GpuImage| match slot(image) {
                 None => Image { size: cx.size, pixels },
                 Some(index) => Image { size: sizes[index], pixels: &written[index] },
             };
-            let ran = match &pass.host {
-                Some(kernel) => {
-                    kernels::run(kernel, read(pass.src), pass.aux.map(read), sizes[target], &mut out);
+            let ran = match &step {
+                Step::Fused(fused) => {
+                    let inputs: Vec<Image> = fused.inputs.iter().map(|image| read(*image)).collect();
+                    kernels::run_fused(fused, &inputs, sizes[target][0] as usize, &mut out);
                     Ok(())
                 }
-                None => self.run_pass(effect, cx, pass, read(pass.src), pass.aux.map(read), sizes[target], &mut out, &make_host),
+                Step::Single(index) => {
+                    let pass = &plan.passes[*index];
+                    match &pass.host {
+                        Some(kernel) => {
+                            kernels::run(kernel, read(pass.src), pass.aux.map(read), sizes[target], &mut out);
+                            Ok(())
+                        }
+                        None => self.run_pass(effect, cx, pass, read(pass.src), pass.aux.map(read), sizes[target], &mut out, &make_host),
+                    }
+                }
             };
             written[target] = out;
             ran?;
