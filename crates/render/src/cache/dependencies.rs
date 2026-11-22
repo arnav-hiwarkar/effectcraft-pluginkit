@@ -36,6 +36,7 @@ impl Dependencies<'_> {
                 // A LUT file edited on disk changes the pixels without an edit (#3493).
                 crate::reads::lut_files(ctx, layer, g).hash(self.h);
             }
+            super::effect_revisions(layer).for_each(|revision| revision.hash(self.h));
         }
         self.other_times = previous;
         Some(())

@@ -158,3 +158,40 @@ fn render_jobs_settings_and_waiting_are_refused_even_with_every_permission() {
         assert!(refused.contains("refused"), "{command}: {refused}");
     }
 }
+
+#[test]
+fn an_effect_write_after_a_step_that_reshapes_the_document_needs_file_permissions() {
+    let mut app = app("test.gate-reorder", EDITOR);
+    app.session.execute("layer.newSolid", json!({"name": "Graded"})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "ec.blur.gaussian"})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "ec.utility.applylut"})).unwrap();
+    let blurriness = |app: &mut crate::App| app.session.execute_checked("prop.get", json!({"path": "effects/#1/blurriness"})).unwrap()["value"].clone();
+    let before = blurriness(&mut app);
+    for reshape in [
+        json!({"command": "effect.duplicate", "params": {"effect": 1}}),
+        json!({"command": "effect.reorder", "params": {"effect": 1, "index": 1}}),
+        json!({"command": "layer.select", "params": {"layers": ["Graded"]}}),
+    ] {
+        let batch = json!({"steps": [reshape, {"command": "prop.set", "params": {"path": "effects/#1/blurriness", "value": 50.0}}]});
+        let denied = app.relay("engine.batch", batch).unwrap_err();
+        assert!(denied.contains("files.read"), "{denied}");
+    }
+    assert_eq!(blurriness(&mut app), before);
+    let batch = json!({"steps": [
+        {"command": "prop.set", "params": {"path": "transform/opacity", "value": 50.0}},
+        {"command": "layer.select", "params": {"layers": ["Graded"]}},
+        {"command": "prop.set", "params": {"path": "transform/rotation", "value": 10.0}},
+    ]});
+    app.relay("engine.batch", batch).expect("transform writes stay allowed after any step");
+}
+
+#[test]
+fn commands_that_reach_outside_the_document_need_file_permissions() {
+    let mut app = app("test.gate-outside", EDITOR);
+    app.session.execute("layer.newText", json!({"text": "Title"})).unwrap();
+    let fonts = app.relay("text.fonts", json!({"rescan": true})).unwrap_err();
+    assert!(fonts.contains("files.read"), "{fonts}");
+    let font = app.relay("layer.setText", json!({"font": "Inter"})).unwrap_err();
+    assert!(font.contains("files.write"), "{font}");
+    app.relay("layer.setText", json!({"text": "Subtitle"})).expect("changing the text alone stays a document edit");
+}

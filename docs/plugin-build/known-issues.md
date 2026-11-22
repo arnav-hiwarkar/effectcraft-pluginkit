@@ -5,19 +5,16 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 - **wasmtime and libloading licences.** House rule 26 wants every new dependency's licence on `standards/licences.md` in craft-contrib. wasmtime is Apache-2.0 WITH LLVM-exception, libloading is ISC. I did not check the list (it is in a storytold repo). Check before any upstream proposal.
 - **`files.read` and `files.write` on Windows.** The plugin gate widens a plugin's roots to the filesystem root. On Windows that is the current drive only, so a plugin with `files.write` cannot write to another drive. Conservative, not a hole.
-- **Docs that still describe the removed plug-in system.** `docs/agents.md`, `docs/gaps.md`, `docs/target-app-parity.md`, `docs/file-format-parity.md`, `docs/scripting-parity.md`, `docs/control-protocol.md`, `docs/preferences.md`, `docs/web.md`, `docs/releasing.md`, `docs/effects-parity.md`, `docs/roadmap.md` mention effect plug-ins, helpers or the Plug-in Library. Not rewritten.
 - **House rule 10 (git dependencies only from storytold) and rule 9 (shared code in craft-libs).** The two kit crates live in this repository so the fork builds on its own. Moving them to craft-libs is a plain move when wanted.
-- **Dead links after the removal.** `docs/gaps.md` links to the deleted `external-helpers.md` and ADR 0001, and `docs/agents.md` line 698 links to the deleted `publishing-plugins.md` and line 779 names `effect.plugins.*`.
+- **Plugin files outside the plugin's folders are not in the cache key.** An effect that reads a file through `files.read` keeps its cached frames when that file changes. The key holds only the plugin's own folders, which can be listed cheaply.
 - **Possibly dead branch.** `show_result_errors` in `crates/ui-egui/src/menus/frontend.rs` still formats `{file, error}` items, a shape only the removed bundle install produced. The test near `menus/tests.rs:900` uses the removed command id `effect.installBundle` as a fixture.
 - **ScriptUI panel bundles.** The removed `Install Effect Plug-in Bundle (Folder)` command also copied `.jsx` panels. Single panels still install through `file.installScriptUIPanel`.
 - **SDK gaps reported by the Plasma Beam author.** A percent parameter is fixed at 0 to 100. A preset cannot set the visible parameter values (After Effects plugins do this). `cx.f` does not clamp to the slider range, so expression-driven values can leave it. A whole-frame sandboxed effect cannot use more than one core.
 
 ## From the Sol review, not fixed
 
-- **Cache keys of dependent layers.** A layer that samples another layer through a layer parameter, and the comp thumbnail, do not include the sampled layer's plugin revision. Reloading a changed plugin can leave those two caches stale until something else changes. (`crates/render/src/cache/dependencies.rs`, `disk_cache.rs`)
-- **Effects that read data files.** The render cache does not know when a plugin's data file changes, so an effect that reads a palette file keeps the cached frame after the file changes.
-- **Late plugin start skips parameter migration.** A project opened while its plugin is disabled keeps its saved parameters. If the plugin later starts with a new parameter, existing instances lack it. (Missing values now fall back to the declared default once the adapter change lands.)
-- **Time limits do not cover host work.** A plugin blocked inside a slow host call, such as a file read on a stalled disk, is not interrupted. Instantiation has its own 5 s limit on top of the call limit.
+- **Late plugin start skips parameter migration.** A project opened while its plugin is disabled keeps its saved parameters. If the plugin later starts with a new parameter, existing instances lack it. The render uses the declared default for a missing value (`wire_params` in `crates/plugin/src/effects.rs`), but the parameter has no property, so it cannot be shown or keyframed until the effect is applied again. Migrating needs a hook when a plugin starts late.
+- **A slow host call is not interrupted.** The call fails when the host call returns past the limit, but the app cannot stop its own file read on a stalled disk. Instantiation has its own 5 s limit on top of the call limit. Interrupting needs host calls that run on another thread.
 - **Native plugins can leave a partly written frame.** A native effect that changes pixels and then fails leaves those changes. Sandboxed effects do not.
 - **Reloading leaks the old effect descriptions.** Each reload leaks a few kilobytes of strings, because the effect registry hands out `'static` references.
 - **A dangling link is also possible in the automation confinement.** `crates/automation/src/confine.rs` falls back to the parent folder when a path does not resolve. This is upstream code and affects agents too.
@@ -33,14 +30,12 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **SDK: padding is one number for all four sides.** A horizontal streak pays for vertical padding too.
 - **SDK: pointer events carry no modifier keys**, and only the last pointer event per frame reaches a canvas.
 - **SDK: `read_file` cannot tell a missing file from a failed read.**
-- **GPU: a plugin kernel that loops forever can time out the GPU context.** Compile errors quote line numbers that include the prelude. The shader cache keeps entries of unloaded plugins until the GPU context is dropped. On WebGPU a bad plugin shader is not contained.
+- **GPU: a plugin kernel that runs for seconds stalls the GPU context.** naga already bounds loops (`ShaderRuntimeChecks::checked`), but a bounded loop can still run for seconds and wgpu 30 has no dispatch time limit; only the OS watchdog and the 10 s readback deadline end it. Compile errors quote line numbers that include the prelude. The shader cache keeps entries of unloaded plugins until the GPU context is dropped. On WebGPU a bad plugin shader is not contained.
 - **UI: plugin labels have no automation id**, so the control channel cannot read a panel's text. A click made just before a tab is hidden is delivered when it reopens.
 
 ## From the Opus review, not fixed
 
-- **A batch can change which effect a path names.** The check for writing text-valued effect properties resolves `effects/#1/x` before the batch runs. A batch that reorders effects and then writes a same-named parameter of a different type is not caught. It needs two effects that share a parameter id with different types.
-- **`text.fonts {rescan}`** lists the user's installed fonts to any plugin with `document.read`.
-- **`layer.setText {font}`** saves the recent-fonts list to the settings file as a side effect.
+- **Some queries need `document.write`.** The gate reads `journal` from the command table, and commands declared with `cmd!` are journaled even when they only read, such as `text.fonts` and `text.fontFeatures`. `crates/plugin/src/gate/census.tsv` shows each decision. Too strict, not a hole; the fix is in the engine's command table.
 - **Background jobs** (`camera.analyze`, `layer.sceneEditDetection`) apply their result later, outside the plugin's batch and its undo step. Plugins can start them but cannot wait for them.
 - **Panel events are dropped when the panel call fails**, so the click that crashed a plugin is lost.
 - **Glide: `keys.interpolation` runs on the whole selection**, so keys on properties Glide reports as skipped still lose their continuous and roving flags. (`plugins/glide/src/apply.rs`)

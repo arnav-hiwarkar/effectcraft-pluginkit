@@ -7,6 +7,7 @@ use crate::{Buf, EffectCtx, EffectSpec, ParamSpec};
 
 pub type RenderDyn = Box<dyn Fn(&EffectCtx, Buf) -> Buf + Send + Sync>;
 pub type GpuDyn = Box<dyn Fn(&EffectCtx, Grid) -> Option<GpuProgram> + Send + Sync>;
+pub type StampDyn = Box<dyn Fn() -> u64 + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Grid {
@@ -60,6 +61,7 @@ pub struct DynamicEffect {
     pub reads_other_frames: bool,
     pub reads_comp_scene: bool,
     pub revision: u64,
+    pub files: Option<StampDyn>,
 }
 
 pub struct Registered {

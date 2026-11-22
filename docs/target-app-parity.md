@@ -144,7 +144,7 @@ Feature depth (≈ 50%) feeds the overall *ready* number with the other dimensio
 | Performance | 35% | 50–100 | Internal numbers only; users report stutter and slow scrubbing | [gaps.md](gaps.md#g5-performance-at-real-world-scale) |
 | Stability | 45% | 40–80 | Open crash reports #580, #501, #426, #341, #234, #879 (#591, #306 and #511 are closed); no CI runs the tests on pull requests | [gaps.md](gaps.md#g3-stability-and-a-green-main) |
 | Platforms | 65% | 30–60 | Releases for macOS, Windows x64/x86/ARM64, Linux, FreeBSD and the web (more than After Effects), but Linux and Windows users hit basic bugs | [gaps.md](gaps.md#g2-real-user-reliability-on-every-platform) |
-| Ecosystem and plug-ins | 20% | 40–80 | After Effects scripts and expressions mostly carry over; no After Effects SDK plug-ins, `.ffx` presets or `.mogrt`; our WebAssembly plug-in API has no third-party plug-ins yet | [plugins.md](plugins.md) |
+| Ecosystem and plug-ins | 20% | 40–80 | After Effects scripts and expressions mostly carry over; no After Effects SDK plug-ins, `.ffx` presets or `.mogrt`; our WebAssembly plug-in API has no third-party plug-ins yet | [plugin-system.md](plugin-system.md) |
 | AI features | 35% | 40–80 (overlaps Tracking) | Roto Brush (MobileSAM) and face tracking (MediaPipe) as optional downloads; Object Matte (point / box prompt, same model; viewer tool, background tracking, Freeze, disk cache) unmeasured against After Effects; the After Effects bundle ships Whisper, BERT and Marian tokenizers and a shot-cut model we have no equivalent of | [gaps.md](gaps.md) |
 | Agent control (beyond After Effects) | ahead | — | Every command is drivable over MCP, the control channel and the CLI | [agents.md](agents.md) |
 
@@ -337,7 +337,7 @@ approximated effects (Key Cleaner) and Liquify's viewer brush; JPX / JBIG2 image
 imported PDF/AI files (mesh shadings and CCITT landed in M13.12) and Illustrator procset EPS; and codec depth (B-frames, SAO/CDEF; HEVC and AV1 export and Opus SILK/hybrid landed in M13.4). Face tracking and a true Subspace Warp
 landed in M13.3. ScriptUI (dialogs that block `show()`, palettes, dockable ScriptUI panels, File ▸ Scripts install
 and sample scripts), puppet pin recording and the remaining "better than After Effects" items — a
-versioned effect plug-in API with sandboxed WebAssembly plug-ins ([plugins.md](plugins.md)),
+versioned effect plug-in API with sandboxed WebAssembly plug-ins ([plugin-system.md](plugin-system.md)),
 branching undo history in the History panel, and a bit-identical rendering test across runs and
 thread counts — landed in M13.1 (GPU particles landed in M12.7). Render Queue field render, crop/resize, templates and logs, and VP9 inter frames landed in M10.2.
 
@@ -696,8 +696,8 @@ Fixes from measured reports:
 ### Update: plug-ins and extensions as in After Effects; ease presets become a ScriptUI panel
 
 EffectCraft's core keeps After Effects parity; what After Effects users get from third parties is
-an extension, on the same extension points After Effects has ([plugins.md](plugins.md) compares
-them: scripts, ScriptUI panels, effect plug-ins, with a guide to writing a panel).
+an extension, on the same extension points After Effects has: scripts, ScriptUI panels and plugins
+([plugin-system.md](plugin-system.md) describes the plugins that replaced the first effect plug-in API).
 
 - **ScriptUI panels** in `Scripts/ScriptUI Panels/` of the settings folder are listed at the
   bottom of the Window menu and dock like any panel (as before); the panels open when the app quits
