@@ -92,7 +92,7 @@ fn replicator(c: &Controls) -> Replicator {
     }
 }
 
-fn plan(cx: &Cx) -> Option<GpuPlan> {
+fn plan(cx: &Cx) -> Option<Plan> {
     let scene = cx.scene().filter(|scene| scene.projection.is_some()).unwrap_or_else(|| Scene::centred(cx.layer_size));
     let view_projection = scene.view_projection(cx)?;
     let eye = scene.camera.map_or_else(|| Scene::centred(cx.layer_size).camera.unwrap_or_default().position, |camera| camera.position);
@@ -116,12 +116,12 @@ fn plan(cx: &Cx) -> Option<GpuPlan> {
 
     let (vertices, indices) = stored_mesh(c.model.min(MODELS.len() - 1));
     let samples = if c.smooth { 2 } else { 1 };
-    let mut plan = GpuPlan::new();
+    let mut plan = Plan::new();
     let canvas = plan.scratch([cx.size[0] * samples, cx.size[1] * samples]);
-    let vertices = plan.buffer(GpuData::Cache(vertices));
-    let indices = plan.buffer(GpuData::Cache(indices));
-    let instances = plan.buffer(GpuData::Floats(instances));
-    let draw = GpuPass::draw("forge", canvas)
+    let vertices = plan.buffer(PlanData::Cache(vertices));
+    let indices = plan.buffer(PlanData::Cache(indices));
+    let instances = plan.buffer(PlanData::Floats(instances));
+    let draw = PlanPass::draw("forge", canvas)
         .vertices(vertices, &mesh::LAYOUT)
         .indices(indices)
         .instances(instances, &scene::INSTANCE_LAYOUT)
@@ -130,7 +130,7 @@ fn plan(cx: &Cx) -> Option<GpuPlan> {
         .floats(&floats)
         .uints(&[light_count]);
     let keep_layer = if c.show_layer { 1.0 } else { 0.0 };
-    Some(plan.pass(draw).pass(GpuPass::new("forge_over", GpuImage::Source, GpuImage::Output).aux(canvas).floats(&[keep_layer])))
+    Some(plan.pass(draw).pass(PlanPass::new("forge_over", PlanImage::Source, PlanImage::Output).aux(canvas).floats(&[keep_layer])))
 }
 
 impl Effect for Forge {
@@ -154,7 +154,7 @@ craft_plugin::export!(plugin);
 
 #[cfg(test)]
 mod tests {
-    use craft_plugin::GpuData;
+    use craft_plugin::PlanData;
     use craft_plugin_host::assert_frame;
     use craft_plugin_host::testing::TestPlugin;
 
@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(plan.validate([320, 180]), Ok(()));
         assert_eq!(plan.images, [[640, 360]]);
         assert_eq!(plan.passes.iter().map(|pass| pass.kernel.as_str()).collect::<Vec<_>>(), ["forge", "forge_over"]);
-        let copies = plan.buffers.iter().find_map(|buffer| if let GpuData::Floats(floats) = buffer { Some(floats.len()) } else { None });
+        let copies = plan.buffers.iter().find_map(|buffer| if let PlanData::Floats(floats) = buffer { Some(floats.len()) } else { None });
         assert_eq!(copies, Some(6 * 20));
         let plain = render.set("smooth", false).layout().unwrap().gpu.unwrap();
         assert_eq!(plain.images, [[320, 180]]);

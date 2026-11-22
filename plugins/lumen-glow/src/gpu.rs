@@ -1,64 +1,64 @@
 use craft_plugin::prelude::*;
 
 use crate::pixel::Mix;
-use crate::plan::Plan;
+use crate::plan::GlowPlan;
 use crate::settings::{Blend, Settings, View};
 
 const HALF: [f32; 2] = [2.0, 2.0];
 const DOUBLE: [f32; 2] = [0.5, 0.5];
 
-pub fn plan(settings: &Settings, frame: [u32; 2]) -> Option<GpuPlan> {
+pub fn plan(settings: &Settings, frame: [u32; 2]) -> Option<Plan> {
     if frame.contains(&0) {
         return None;
     }
-    let plan = Plan::new(settings);
+    let plan = GlowPlan::new(settings);
     let sizes: Vec<[u32; 2]> = plan.sizes(frame.map(|s| s as usize)).into_iter().map(|s| s.map(|v| v as u32)).collect();
-    let mut gpu = GpuPlan::new();
+    let mut gpu = Plan::new();
     let [work, base] = [gpu.scratch(frame), gpu.scratch(frame)];
     let glow = glow(&mut gpu, settings, &plan, &sizes, work, frame);
     composite(&mut gpu, settings, &plan.core, glow, work, base);
     Some(gpu)
 }
 
-fn linear(gpu: &mut GpuPlan, settings: &Settings, work: GpuImage) -> GpuImage {
+fn linear(gpu: &mut Plan, settings: &Settings, work: PlanImage) -> PlanImage {
     if !settings.gamma {
-        return GpuImage::Source;
+        return PlanImage::Source;
     }
-    gpu.passes.push(GpuPass::transfer(GpuImage::Source, work, Encoding::Linear, Negatives::Linear));
+    gpu.passes.push(PlanPass::transfer(PlanImage::Source, work, Encoding::Linear, Negatives::Linear));
     work
 }
 
-fn emission(settings: &Settings, src: GpuImage, work: GpuImage) -> GpuPass {
+fn emission(settings: &Settings, src: PlanImage, work: PlanImage) -> PlanPass {
     let (curve, range) = settings.knee.curve();
-    GpuPass::brightness_curve(src, work, Measure::MaxChannel, curve, range)
+    PlanPass::brightness_curve(src, work, Measure::MaxChannel, curve, range)
 }
 
-fn glow(gpu: &mut GpuPlan, settings: &Settings, plan: &Plan, sizes: &[[u32; 2]], work: GpuImage, frame: [u32; 2]) -> Option<GpuImage> {
-    let images: Vec<([GpuImage; 2], [u32; 2])> = sizes.iter().map(|&size| ([gpu.scratch(size), gpu.scratch(size)], size)).collect();
+fn glow(gpu: &mut Plan, settings: &Settings, plan: &GlowPlan, sizes: &[[u32; 2]], work: PlanImage, frame: [u32; 2]) -> Option<PlanImage> {
+    let images: Vec<([PlanImage; 2], [u32; 2])> = sizes.iter().map(|&size| ([gpu.scratch(size), gpu.scratch(size)], size)).collect();
     let finest = images.first()?.0[0];
     let source = linear(gpu, settings, work);
     gpu.passes.push(emission(settings, source, work));
-    gpu.passes.push(GpuPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some(HALF) }, work, finest));
+    gpu.passes.push(PlanPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some(HALF) }, work, finest));
     for (pair, level) in images.windows(2).zip(plan.levels.iter().skip(1)) {
-        gpu.passes.push(GpuPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some(level.halve.map(factor)) }, pair[0].0[0], pair[1].0[0]));
+        gpu.passes.push(PlanPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some(level.halve.map(factor)) }, pair[0].0[0], pair[1].0[0]));
     }
-    let mut coarser: Option<(GpuImage, [bool; 2])> = None;
+    let mut coarser: Option<(PlanImage, [bool; 2])> = None;
     for (level, &([pyramid, scratch], _)) in plan.levels.iter().zip(&images).rev() {
         let [x, y] = level.kernels();
-        gpu.passes.push(GpuPass::convolve(pyramid, scratch, Taps::Separable { x, y }));
+        gpu.passes.push(PlanPass::convolve(pyramid, scratch, Taps::Separable { x, y }));
         if let Some((image, halve)) = coarser {
             let scale = halve.map(|halved| 1.0 / factor(halved));
-            gpu.passes.push(GpuPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some(scale) }, image, pyramid));
+            gpu.passes.push(PlanPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some(scale) }, image, pyramid));
         }
-        gpu.passes.push(GpuPass::matrix(scratch, scratch, mix_rows(&level.mix, settings.glow_opacity)));
+        gpu.passes.push(PlanPass::matrix(scratch, scratch, mix_rows(&level.mix, settings.glow_opacity)));
         if coarser.is_some() {
-            gpu.passes.push(GpuPass::blend_images(scratch, pyramid, scratch, BlendMode::Add, 1.0));
+            gpu.passes.push(PlanPass::blend_images(scratch, pyramid, scratch, BlendMode::Add, 1.0));
         }
         coarser = Some((scratch, level.halve));
     }
     let (summed, _) = coarser?;
     let spread = gpu.scratch(frame);
-    gpu.passes.push(GpuPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some(DOUBLE) }, summed, spread));
+    gpu.passes.push(PlanPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some(DOUBLE) }, summed, spread));
     Some(spread)
 }
 
@@ -85,35 +85,35 @@ fn diagonal(colour: f32, alpha: f32) -> [[f32; 4]; 4] {
     })
 }
 
-fn composite(gpu: &mut GpuPlan, settings: &Settings, core: &Mix, glow: Option<GpuImage>, work: GpuImage, base: GpuImage) {
+fn composite(gpu: &mut Plan, settings: &Settings, core: &Mix, glow: Option<PlanImage>, work: PlanImage, base: PlanImage) {
     let source = linear(gpu, settings, work);
-    let mut pass = |pass: GpuPass| gpu.passes.push(pass);
+    let mut pass = |pass: PlanPass| gpu.passes.push(pass);
     if settings.view == View::Final {
-        pass(GpuPass::matrix(source, base, diagonal(settings.source_opacity, settings.source_opacity)));
+        pass(PlanPass::matrix(source, base, diagonal(settings.source_opacity, settings.source_opacity)));
     }
     pass(emission(settings, source, work));
     match settings.view {
-        View::GlowSource => pass(GpuPass::matrix(work, work, diagonal(1.0, 0.0))),
+        View::GlowSource => pass(PlanPass::matrix(work, work, diagonal(1.0, 0.0))),
         View::GlowOnly | View::Final => {
-            pass(GpuPass::matrix(work, work, mix_rows(core, settings.glow_opacity)));
+            pass(PlanPass::matrix(work, work, mix_rows(core, settings.glow_opacity)));
             if let Some(spread) = glow {
-                pass(GpuPass::blend_images(work, spread, work, BlendMode::Add, 1.0));
+                pass(PlanPass::blend_images(work, spread, work, BlendMode::Add, 1.0));
             }
         }
     }
     if settings.view == View::Final {
         match settings.blend {
-            Blend::Add => pass(GpuPass::blend_images(base, work, work, BlendMode::Add, 1.0)),
-            Blend::Screen => pass(GpuPass::blend_images(base, work, work, BlendMode::ScreenHdr, 1.0)),
+            Blend::Add => pass(PlanPass::blend_images(base, work, work, BlendMode::Add, 1.0)),
+            Blend::Screen => pass(PlanPass::blend_images(base, work, work, BlendMode::ScreenHdr, 1.0)),
         }
     }
     if settings.gamma {
-        pass(GpuPass::transfer(work, work, Encoding::Srgb, Negatives::Linear));
+        pass(PlanPass::transfer(work, work, Encoding::Srgb, Negatives::Linear));
     }
     if let Some(d) = settings.dither {
-        pass(GpuPass::dither(work, work, d.seed, d.origin));
+        pass(PlanPass::dither(work, work, d.seed, d.origin));
     }
-    pass(GpuPass::light_alpha(work, GpuImage::Output));
+    pass(PlanPass::light_alpha(work, PlanImage::Output));
 }
 
 #[cfg(test)]
@@ -131,9 +131,9 @@ mod tests {
         (Settings::from_cx(&padded), padded.size)
     }
 
-    fn assert_runs_on_the_host(plan: &GpuPlan, frame: [u32; 2], case: &str) {
+    fn assert_runs_on_the_host(plan: &Plan, frame: [u32; 2], case: &str) {
         assert_eq!(plan.check(frame), Ok(()), "{case}");
-        assert_eq!(plan.passes.last().map(|p| p.out), Some(GpuImage::Output), "{case}");
+        assert_eq!(plan.passes.last().map(|p| p.out), Some(PlanImage::Output), "{case}");
         assert!(plan.passes.iter().all(|p| p.host.is_some()), "{case}");
     }
 
@@ -161,7 +161,7 @@ mod tests {
     fn each_level_is_blurred_mixed_and_summed_by_host_kernels() {
         let (settings, frame) = padded(&[("Glow/radius", Value::Number(400.0))], [640, 360], 1.0);
         let plan = plan(&settings, frame).expect("a plan");
-        let levels = Plan::new(&settings).levels.len();
+        let levels = GlowPlan::new(&settings).levels.len();
         let count = |kernel: &str| plan.passes.iter().filter(|p| p.kernel == kernel).count();
         let kernels = ["resample", "convolve", "matrix", "blend", "brightness_curve", "transfer", "dither", "light_alpha"].map(count);
         assert_eq!(kernels, [2 * levels, levels, levels + 2, levels + 1, 2, 3, 1, 1]);

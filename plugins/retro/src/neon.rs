@@ -147,18 +147,18 @@ pub fn render(neon: &Neon, frame: &mut Frame) {
     }
 }
 
-pub fn plan(neon: &Neon) -> GpuPlan {
+pub fn plan(neon: &Neon) -> Plan {
     let d = neon.factor();
     let coarse = neon.size.map(|s| s.div_ceil(d));
     let sigmas = neon.sigmas();
-    let mut plan = GpuPlan::new();
+    let mut plan = Plan::new();
     let reduced = plan.scratch(coarse);
     let across = plan.scratch(coarse);
     let glow = plan.scratch(coarse);
-    plan.pass(GpuPass::new("retro_neon_emit", GpuImage::Source, reduced).floats(&neon.floats()).uints(&neon.uints()))
-        .pass(GpuPass::new("retro_blur", reduced, across).floats(&sigmas).uints(&[0, 1]))
-        .pass(GpuPass::new("retro_blur", across, glow).floats(&sigmas).uints(&[1, 0]))
-        .pass(GpuPass::new("retro_neon", GpuImage::Source, GpuImage::Output).aux(glow).floats(&neon.floats()).uints(&neon.uints()))
+    plan.pass(PlanPass::new("retro_neon_emit", PlanImage::Source, reduced).floats(&neon.floats()).uints(&neon.uints()))
+        .pass(PlanPass::new("retro_blur", reduced, across).floats(&sigmas).uints(&[0, 1]))
+        .pass(PlanPass::new("retro_blur", across, glow).floats(&sigmas).uints(&[1, 0]))
+        .pass(PlanPass::new("retro_neon", PlanImage::Source, PlanImage::Output).aux(glow).floats(&neon.floats()).uints(&neon.uints()))
 }
 
 #[cfg(test)]

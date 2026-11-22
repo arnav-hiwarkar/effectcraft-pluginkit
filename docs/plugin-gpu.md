@@ -32,11 +32,11 @@ Three things make up a pass pipeline:
 without a plan to render this frame with `render`.
 
 ```rust
-let mut plan = GpuPlan::new();
+let mut plan = Plan::new();
 let half = plan.scratch([w, h]);
 let plan = plan
-    .pass(GpuPass::new("down", GpuImage::Source, half))
-    .pass(GpuPass::new("up", GpuImage::Source, GpuImage::Output).aux(half).floats(&[strength]));
+    .pass(PlanPass::new("down", PlanImage::Source, half))
+    .pass(PlanPass::new("up", PlanImage::Source, PlanImage::Output).aux(half).floats(&[strength]));
 Layout::whole_frame().gpu(plan)
 ```
 
@@ -44,8 +44,8 @@ A pass reads `src` and, optionally, `aux`, and writes `out`. Each names one of:
 
 | Image | What it is |
 |---|---|
-| `GpuImage::Source` | The effect's input. Read only. |
-| `GpuImage::Output` | The effect's result, the size of the frame. The last pass to write it gives the result. |
+| `PlanImage::Source` | The effect's input. Read only. |
+| `PlanImage::Output` | The effect's result, the size of the frame. The last pass to write it gives the result. |
 | `plan.scratch([w, h])` | A working image of that size, declared on the plan. |
 | `plan.texture(key, [w, h])` | A picture the plugin stored with `host::cache_put(key, bytes)`: RGBA, four little-endian `f32` for each pixel, row 0 at the top. Read only. |
 | `plan.layer(param)` | The layer chosen in layer parameter `param`, resampled onto the padded frame: the same pixels `cx.layer(param)` gives `render`. The size of the frame. Transparent when no layer is chosen or it has nothing to show. Read only. The app binds the texture it already keeps for that layer and resamples it on the GPU, so an unchanged layer is neither rendered nor uploaded again. |
@@ -61,7 +61,7 @@ value `i` with `pass_f(i)` or `pass_u(i)`; values the pass did not give read as 
 
 ### Limits
 
-The app checks every plan with `GpuPlan::validate` before running it, on the GPU and on the CPU, and a
+The app checks every plan with `Plan::validate` before running it, on the GPU and on the CPU, and a
 plan that fails does not run: the effect reports the reason. The GPU then checks only what depends on the
 device and the stored bytes (image sizes the GPU holds, buffer and texture byte counts, indices):
 
@@ -91,11 +91,11 @@ operating system's GPU watchdog and the app's 10 second readback deadline are th
 A draw pass rasterises triangles into its `out` image instead of running a compute kernel.
 
 ```rust
-let mut plan = GpuPlan::new();
-let mesh = plan.buffer(GpuData::Cache("my-mesh/vertices".into()));
-let triangles = plan.buffer(GpuData::Cache("my-mesh/indices".into()));
-let copies = plan.buffer(GpuData::Floats(instance_matrices));
-let draw = GpuPass::draw("mesh", GpuImage::Output)
+let mut plan = Plan::new();
+let mesh = plan.buffer(PlanData::Cache("my-mesh/vertices".into()));
+let triangles = plan.buffer(PlanData::Cache("my-mesh/indices".into()));
+let copies = plan.buffer(PlanData::Floats(instance_matrices));
+let draw = PlanPass::draw("mesh", PlanImage::Output)
     .vertices(mesh, &[3, 3, 2])
     .indices(triangles)
     .instances(copies, &[4, 4, 4, 4])
@@ -109,9 +109,9 @@ A buffer is one of:
 
 | Data | What it is |
 |---|---|
-| `GpuData::Cache(key)` | Bytes the plugin stored with `host::cache_put(key, bytes)`: little-endian `f32` for vertices and instances, `u32` for indices. Store a mesh once and name it in every frame's plan; the app uploads it to the GPU again only when the bytes change. The cache drops its least recently used entries when it is full, so check with `host::cache_has(key)` while building the plan and store the bytes again when it returns `false`. |
-| `GpuData::Floats(values)` | Values sent with the plan. Right for a few hundred numbers that change each frame. |
-| `GpuData::Indices(values)` | Indices sent with the plan. |
+| `PlanData::Cache(key)` | Bytes the plugin stored with `host::cache_put(key, bytes)`: little-endian `f32` for vertices and instances, `u32` for indices. Store a mesh once and name it in every frame's plan; the app uploads it to the GPU again only when the bytes change. The cache drops its least recently used entries when it is full, so check with `host::cache_has(key)` while building the plan and store the bytes again when it returns `false`. |
+| `PlanData::Floats(values)` | Values sent with the plan. Right for a few hundred numbers that change each frame. |
+| `PlanData::Indices(values)` | Indices sent with the plan. |
 
 | Call | Meaning |
 |---|---|
@@ -207,12 +207,12 @@ fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {
 | `out` | The band to fill. Write every pixel: what `out` holds before the call is not defined. `out.rows_mut()` yields `(y, row)` with `y` in the whole output image; `out.origin[1]` is the band's first row. |
 | `pass.out_size` | The whole output image's width and height. |
 
-`GpuPass::reach(n)` says how many source rows above and below its matching source rows an output row
+`PlanPass::reach(n)` says how many source rows above and below its matching source rows an output row
 reads. `reach(0)` is pointwise. The source and the output of a pass may differ in size: output rows `a`
 up to `b` match source rows `a * src_height / out_height`, rounded down, up to `b * src_height /
 out_height`, rounded up, and the same reach applies to `aux` with its own height. A pass that shrinks
 its source by `d` and reads `d` rows for each output row therefore needs `reach(d - 1)` at most.
-`GpuPass::aux_reach(n)` gives `aux` a reach of its own, for example `.reach(0).aux_reach(2)` for a pass
+`PlanPass::aux_reach(n)` gives `aux` a reach of its own, for example `.reach(0).aux_reach(2)` for a pass
 that reads its source pointwise and a half-size `aux` two rows around. A band gets the source rows
 matching its output rows, widened by the reach, natively and in the sandbox alike. Rows outside that
 read as transparent, so a reach that is too small shows as dark lines at band edges, and the test kit
@@ -231,21 +231,21 @@ own. Mix host kernel passes and plugin passes freely in one plan.
 
 | Builder | What it computes |
 |---|---|
-| `GpuPass::blur(src, out, [rx, ry])` | Gaussian blur reaching `rx` and `ry` pixels (standard deviation a third of the radius), 0 to 512. |
-| `GpuPass::box_blur(src, out, [rx, ry])` | Box blur of that radius; a fractional radius weighs the outer pixels by its fraction. |
-| `GpuPass::resample(src, out, Filter::Bilinear)` | `src` scaled to the size of `out`, `Filter::Bilinear` or `Filter::Bicubic` (Catmull-Rom). Shrinking widens the filter, so every source pixel counts. |
-| `GpuPass::blend_images(base, top, out, mode, amount)` | `top` over `base` in a `BlendMode`, mixed by `amount` (0 keeps `base`). |
-| `GpuPass::curves(src, out, &table)` | A lookup table per channel: entry `i` of `n` holds the output for input `i / (n - 1)`, red, green, blue and alpha, 2 to 4096 entries. |
-| `GpuPass::convolve(src, out, Taps::Separable { x, y })` | A separable kernel, odd tap counts up to 1025, centred on the pixel. |
-| `GpuPass::convolve(src, out, Taps::Full { width, weights })` | A full kernel, odd sides up to 31, row by row. |
-| `GpuPass::warp(src, displacement, out, [ax, ay])` | Each pixel read from `src` at its position plus `ax` times the red and `ay` times the green of `displacement`, bilinear. |
-| `GpuPass::matrix(src, out, rows)` | A 4×4 colour matrix: output channel `i` is `rows[i]` dotted with the input pixel. |
-| `GpuPass::to_linear(src, out)`, `GpuPass::to_srgb(src, out)` | The sRGB transfer curve on red, green and blue as they are (no division by alpha), alpha kept. Negative values mirror around zero and values above 1 continue the curve; results saturate at 2^126. |
-| `GpuPass::transfer(src, out, to, negatives)` | The same curve towards `Encoding::Linear` or `Encoding::Srgb`, with `Negatives::Mirror` as above or `Negatives::Linear`, which continues the straight segment through zero (`x / 12.92`, `x * 12.92`). |
-| `GpuPass::brightness_curve(src, out, measure, curve, range)` | Each pixel's colour scaled so that its brightness `m` becomes `curve(m)`, hue and alpha kept. `measure` is `Measure::MaxChannel` (the largest of red, green and blue) or `Measure::Luma` (Rec. 709). Entry `i` of `n` holds the output for `m = range * i / (n - 1)`; past `range` the last segment continues. A pixel with no brightness becomes black. Threshold, soft knee and highlight or shadow selection are curves. |
-| `GpuPass::dither(src, out, seed, origin)` | Triangular noise of at most one 8-bit level on red, green and blue, the same for a seed and a pixel position minus `origin` on the CPU and the GPU. Values at or beyond 0 and 1 are left exact. |
-| `GpuPass::light_alpha(src, out)` | Alpha raised to the brightest colour channel, at most 1, so light added onto transparent pixels stays visible as valid premultiplied colour. |
-| `GpuPass::host(HostKernel::..., src, out)` | Any kernel with all its fields, for example `HostKernel::Resample { filter, scale: Some([2.0, 2.0]) }` to fix the source pixels per output pixel instead of taking it from the sizes. |
+| `PlanPass::blur(src, out, [rx, ry])` | Gaussian blur reaching `rx` and `ry` pixels (standard deviation a third of the radius), 0 to 512. |
+| `PlanPass::box_blur(src, out, [rx, ry])` | Box blur of that radius; a fractional radius weighs the outer pixels by its fraction. |
+| `PlanPass::resample(src, out, Filter::Bilinear)` | `src` scaled to the size of `out`, `Filter::Bilinear` or `Filter::Bicubic` (Catmull-Rom). Shrinking widens the filter, so every source pixel counts. |
+| `PlanPass::blend_images(base, top, out, mode, amount)` | `top` over `base` in a `BlendMode`, mixed by `amount` (0 keeps `base`). |
+| `PlanPass::curves(src, out, &table)` | A lookup table per channel: entry `i` of `n` holds the output for input `i / (n - 1)`, red, green, blue and alpha, 2 to 4096 entries. |
+| `PlanPass::convolve(src, out, Taps::Separable { x, y })` | A separable kernel, odd tap counts up to 1025, centred on the pixel. |
+| `PlanPass::convolve(src, out, Taps::Full { width, weights })` | A full kernel, odd sides up to 31, row by row. |
+| `PlanPass::warp(src, displacement, out, [ax, ay])` | Each pixel read from `src` at its position plus `ax` times the red and `ay` times the green of `displacement`, bilinear. |
+| `PlanPass::matrix(src, out, rows)` | A 4×4 colour matrix: output channel `i` is `rows[i]` dotted with the input pixel. |
+| `PlanPass::to_linear(src, out)`, `PlanPass::to_srgb(src, out)` | The sRGB transfer curve on red, green and blue as they are (no division by alpha), alpha kept. Negative values mirror around zero and values above 1 continue the curve; results saturate at 2^126. |
+| `PlanPass::transfer(src, out, to, negatives)` | The same curve towards `Encoding::Linear` or `Encoding::Srgb`, with `Negatives::Mirror` as above or `Negatives::Linear`, which continues the straight segment through zero (`x / 12.92`, `x * 12.92`). |
+| `PlanPass::brightness_curve(src, out, measure, curve, range)` | Each pixel's colour scaled so that its brightness `m` becomes `curve(m)`, hue and alpha kept. `measure` is `Measure::MaxChannel` (the largest of red, green and blue) or `Measure::Luma` (Rec. 709). Entry `i` of `n` holds the output for `m = range * i / (n - 1)`; past `range` the last segment continues. A pixel with no brightness becomes black. Threshold, soft knee and highlight or shadow selection are curves. |
+| `PlanPass::dither(src, out, seed, origin)` | Triangular noise of at most one 8-bit level on red, green and blue, the same for a seed and a pixel position minus `origin` on the CPU and the GPU. Values at or beyond 0 and 1 are left exact. |
+| `PlanPass::light_alpha(src, out)` | Alpha raised to the brightest colour channel, at most 1, so light added onto transparent pixels stays visible as valid premultiplied colour. |
+| `PlanPass::host(HostKernel::..., src, out)` | Any kernel with all its fields, for example `HostKernel::Resample { filter, scale: Some([2.0, 2.0]) }` to fix the source pixels per output pixel instead of taking it from the sizes. |
 
 Rules shared by all of them:
 
@@ -262,7 +262,7 @@ Rules shared by all of them:
 - A pass's `floats`, `uints` and `reach` are ignored; the app knows what each kernel reads.
 - `blend_images`, `curves`, `matrix`, `to_linear`, `to_srgb`, `transfer`, `brightness_curve`, `dither`
   and `light_alpha` are pointwise: each output pixel depends only on the same pixel of its inputs. A pointwise
-  pass may write the image it reads, as in `GpuPass::matrix(work, work, rows)`.
+  pass may write the image it reads, as in `PlanPass::matrix(work, work, rows)`.
 - Consecutive pointwise passes of one size run as one loop over the frame on the CPU and one shader on the
   GPU. An image they write that no later pass reads is never stored. The loop ends before a pass that would
   need a third stored image, and after a pass whose image a later, non-fused pass reads. On the GPU a
@@ -355,7 +355,7 @@ impl Effect for Tint {
 
     fn layout(&self, cx: &Cx) -> Layout {
         let [r, g, b, _] = cx.color("color");
-        Layout::pointwise().gpu(GpuPlan::new().pass(GpuPass::new("tint_apply", GpuImage::Source, GpuImage::Output).floats(&[r, g, b])))
+        Layout::pointwise().gpu(Plan::new().pass(PlanPass::new("tint_apply", PlanImage::Source, PlanImage::Output).floats(&[r, g, b])))
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
@@ -403,11 +403,11 @@ impl Effect for Soften {
 
     fn layout(&self, cx: &Cx) -> Layout {
         let frame = [cx.size[0] + 2 * PADDING, cx.size[1] + 2 * PADDING];
-        let mut plan = GpuPlan::new();
+        let mut plan = Plan::new();
         let half = plan.scratch([frame[0].div_ceil(2), frame[1].div_ceil(2)]);
         let plan = plan
-            .pass(GpuPass::new("soften_down", GpuImage::Source, half))
-            .pass(GpuPass::new("soften_up", GpuImage::Source, GpuImage::Output).aux(half).floats(&[cx.f("strength") as f32]));
+            .pass(PlanPass::new("soften_down", PlanImage::Source, half))
+            .pass(PlanPass::new("soften_up", PlanImage::Source, PlanImage::Output).aux(half).floats(&[cx.f("strength") as f32]));
         Layout::whole_frame().padded(PADDING).gpu(plan)
     }
 

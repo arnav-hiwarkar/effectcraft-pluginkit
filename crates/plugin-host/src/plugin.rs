@@ -5,7 +5,7 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use craft_plugin::{
-    Call, Contributions, FrameDesc, GpuImage, GpuPass, GpuPlan, Layout, LogLevel, Manifest, Outcome, Permission, Pixel, Rect, RenderCx, TaskState, Window,
+    Call, Contributions, FrameDesc, Layout, LogLevel, Manifest, Outcome, Permission, Pixel, Plan, PlanImage, PlanPass, Rect, RenderCx, TaskState, Window,
 };
 use rayon::prelude::*;
 use serde::de::DeserializeOwned;
@@ -275,7 +275,7 @@ impl Plugin {
         &self,
         effect: &str,
         cx: &RenderCx,
-        plan: &GpuPlan,
+        plan: &Plan,
         pixels: &mut Vec<Pixel>,
         make_host: impl Fn() -> H + Sync,
     ) -> Result<(), PluginError> {
@@ -289,11 +289,11 @@ impl Plugin {
         plan.check(cx.size).map_err(PluginError::Failed)?;
         let sizes: Vec<[u32; 2]> = [cx.size].into_iter().chain(plan.images.iter().copied()).collect();
         let mut written: Vec<Vec<Pixel>> = vec![Vec::new(); sizes.len()];
-        let slot = |image: GpuImage| match image {
-            GpuImage::Source => None,
-            GpuImage::Output => Some(0),
-            GpuImage::Scratch(index) => Some(index as usize + 1),
-            GpuImage::Texture(_) | GpuImage::Layer(_) => None,
+        let slot = |image: PlanImage| match image {
+            PlanImage::Source => None,
+            PlanImage::Output => Some(0),
+            PlanImage::Scratch(index) => Some(index as usize + 1),
+            PlanImage::Texture(_) | PlanImage::Layer(_) => None,
         };
         let mut spare: Vec<Vec<Pixel>> = Vec::new();
         for step in kernels::steps(plan, cx.size) {
@@ -320,7 +320,7 @@ impl Plugin {
             } else {
                 std::mem::take(&mut written[target])
             };
-            let read = |image: GpuImage| match slot(image) {
+            let read = |image: PlanImage| match slot(image) {
                 None => Image { size: cx.size, pixels },
                 Some(index) => Image { size: sizes[index], pixels: &written[index] },
             };
@@ -344,7 +344,7 @@ impl Plugin {
             written[target] = out;
             ran?;
             for (index, buffer) in written.iter_mut().enumerate().skip(1) {
-                if !buffer.is_empty() && !kernels::live_after(&plan.passes[end..], GpuImage::Scratch(index as u32 - 1)) {
+                if !buffer.is_empty() && !kernels::live_after(&plan.passes[end..], PlanImage::Scratch(index as u32 - 1)) {
                     spare.push(std::mem::take(buffer));
                 }
             }
@@ -361,7 +361,7 @@ impl Plugin {
         &self,
         effect: &str,
         cx: &RenderCx,
-        pass: &GpuPass,
+        pass: &PlanPass,
         src: Image,
         aux: Option<Image>,
         size: [u32; 2],

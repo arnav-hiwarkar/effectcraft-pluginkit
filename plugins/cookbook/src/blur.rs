@@ -15,7 +15,7 @@ impl Effect for Blur {
 
     fn layout(&self, cx: &Cx) -> Layout {
         let radius = (Settings::read(cx).radius * cx.scale) as f32;
-        let plan = GpuPlan::new().pass(GpuPass::blur(GpuImage::Source, GpuImage::Output, [radius; 2]));
+        let plan = Plan::new().pass(PlanPass::blur(PlanImage::Source, PlanImage::Output, [radius; 2]));
         Layout::whole_frame().passes(plan)
     }
 }

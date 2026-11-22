@@ -20,13 +20,13 @@ impl Effect for Glow {
         let padding = radius.ceil() as u32;
         let frame = cx.padded(padding).size;
         let quarter = frame.map(|side| side.div_ceil(4));
-        let mut plan = GpuPlan::new();
+        let mut plan = Plan::new();
         let (small, blurred, glow) = (plan.scratch(quarter), plan.scratch(quarter), plan.scratch(frame));
         let plan = plan
-            .pass(GpuPass::resample(GpuImage::Source, small, Filter::Bilinear))
-            .pass(GpuPass::blur(small, blurred, [radius / 4.0; 2]))
-            .pass(GpuPass::resample(blurred, glow, Filter::Bilinear))
-            .pass(GpuPass::blend_images(GpuImage::Source, glow, GpuImage::Output, BlendMode::Screen, settings.amount as f32));
+            .pass(PlanPass::resample(PlanImage::Source, small, Filter::Bilinear))
+            .pass(PlanPass::blur(small, blurred, [radius / 4.0; 2]))
+            .pass(PlanPass::resample(blurred, glow, Filter::Bilinear))
+            .pass(PlanPass::blend_images(PlanImage::Source, glow, PlanImage::Output, BlendMode::Screen, settings.amount as f32));
         Layout::whole_frame().padded(padding).passes(plan)
     }
 }

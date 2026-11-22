@@ -11,8 +11,8 @@ use crate::flare::{Pack, composite, flare, place};
 
 struct Halo;
 
-fn gpu_pass(pack: &Pack) -> GpuPlan {
-    GpuPlan::new().pass(GpuPass::new("halo_render", GpuImage::Source, GpuImage::Output).floats(&pack.f).uints(&pack.u))
+fn gpu_pass(pack: &Pack) -> Plan {
+    Plan::new().pass(PlanPass::new("halo_render", PlanImage::Source, PlanImage::Output).floats(&pack.f).uints(&pack.u))
 }
 
 impl Effect for Halo {

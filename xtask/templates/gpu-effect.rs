@@ -27,8 +27,8 @@ impl Effect for Tint {
     fn layout(&self, cx: &Cx) -> Layout {
         let settings = Settings::read(cx);
         let [r, g, b, _] = settings.tint;
-        let tint = GpuPass::new("{{snake}}_tint", GpuImage::Source, GpuImage::Output).floats(&[(settings.amount / 100.0) as f32, r, g, b]);
-        Layout::pointwise().passes(GpuPlan::new().pass(tint))
+        let tint = PlanPass::new("{{snake}}_tint", PlanImage::Source, PlanImage::Output).floats(&[(settings.amount / 100.0) as f32, r, g, b]);
+        Layout::pointwise().passes(Plan::new().pass(tint))
     }
 
     fn pass(&self, _cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {

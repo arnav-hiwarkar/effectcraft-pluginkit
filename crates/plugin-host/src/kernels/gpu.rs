@@ -1,13 +1,13 @@
 use std::fmt::Write;
 
-use craft_plugin::{BlendMode, Encoding, Filter, GpuImage, GpuPass, GpuPlan, HostKernel, Measure, Negatives, Taps};
+use craft_plugin::{BlendMode, Encoding, Filter, HostKernel, Measure, Negatives, Plan, PlanImage, PlanPass, Taps};
 
 use super::fuse::{Fused, Op, Ref, Step, live_after, steps};
 use super::{blur_taps, resample_scale};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StepImage {
-    Plan(GpuImage),
+    Plan(PlanImage),
     Temp(usize),
 }
 
@@ -25,12 +25,12 @@ pub struct GpuStep {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lowered<'a> {
-    Plugin(&'a GpuPass),
+    Plugin(&'a PlanPass),
     Host(GpuStep),
 }
 
-pub fn lower(plan: &GpuPlan, frame: [u32; 2]) -> (Vec<Lowered<'_>>, Vec<[u32; 2]>) {
-    let size = |image: GpuImage| plan.size_of(image, frame).unwrap_or(frame);
+pub fn lower(plan: &Plan, frame: [u32; 2]) -> (Vec<Lowered<'_>>, Vec<[u32; 2]>) {
+    let size = |image: PlanImage| plan.size_of(image, frame).unwrap_or(frame);
     let mut temps = Vec::new();
     let mut lowered = Vec::new();
     let steps = steps(plan, frame);
@@ -97,7 +97,7 @@ pub fn lower(plan: &GpuPlan, frame: [u32; 2]) -> (Vec<Lowered<'_>>, Vec<[u32; 2]
     (lowered, temps)
 }
 
-fn resampled_input(plan: &GpuPlan, resample: &GpuPass, fused: &Fused, size: impl Fn(GpuImage) -> [u32; 2]) -> Option<GpuStep> {
+fn resampled_input(plan: &Plan, resample: &PlanPass, fused: &Fused, size: impl Fn(PlanImage) -> [u32; 2]) -> Option<GpuStep> {
     let Some(HostKernel::Resample { filter, scale }) = &resample.host else { return None };
     let slot = fused.inputs.iter().position(|image| *image == resample.out)?;
     if live_after(&plan.passes[fused.passes.end..], resample.out) {

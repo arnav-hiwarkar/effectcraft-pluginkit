@@ -20,7 +20,7 @@ pub struct Level {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Plan {
+pub struct GlowPlan {
     pub core: Mix,
     pub levels: Vec<Level>,
 }
@@ -31,10 +31,10 @@ impl Level {
     }
 }
 
-impl Plan {
-    pub fn new(settings: &Settings) -> Plan {
+impl GlowPlan {
+    pub fn new(settings: &Settings) -> GlowPlan {
         if settings.view == View::GlowSource {
-            return Plan { core: Mix::ZERO, levels: Vec::new() };
+            return GlowPlan { core: Mix::ZERO, levels: Vec::new() };
         }
         let radius_scale = settings.channel_radius_scale();
         let octaves = radius_scale.iter().map(|m| Profile::octave_count(settings.profile.radius * m)).max().unwrap_or(1);
@@ -54,7 +54,7 @@ impl Plan {
             let previous = levels.last().map(|l| l.factor);
             levels.push(chain.level(previous, axis_sigma, mix));
         }
-        Plan { core, levels }
+        GlowPlan { core, levels }
     }
 
     pub fn sizes(&self, frame: [usize; 2]) -> Vec<[usize; 2]> {
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn levels_double_in_resolution_step_and_keep_small_blurs() {
-        let plan = Plan::new(&settings_with(&[("Glow/radius", Value::Number(400.0))]));
+        let plan = GlowPlan::new(&settings_with(&[("Glow/radius", Value::Number(400.0))]));
         let factors: Vec<usize> = plan.levels.iter().map(|l| l.factor[0]).collect();
         assert_eq!(factors, [2, 4, 8, 8, 16, 32, 64]);
         assert!(plan.levels.iter().all(|l| l.blur.iter().all(|b| (0.5..=2.0).contains(b))), "{:?}", plan.levels);
@@ -127,17 +127,17 @@ mod tests {
 
     #[test]
     fn half_resolution_uses_one_level_fewer_at_the_same_layer_sigmas() {
-        let full = Plan::new(&settings_with(&[("Glow/radius", Value::Number(400.0))]));
+        let full = GlowPlan::new(&settings_with(&[("Glow/radius", Value::Number(400.0))]));
         let mut half_settings = settings_with(&[("Glow/radius", Value::Number(400.0))]);
         half_settings.scale = 0.5;
-        let half = Plan::new(&half_settings);
+        let half = GlowPlan::new(&half_settings);
         assert_eq!(half.levels.len() + 1, full.levels.len());
         assert_eq!(&half.levels[1..].iter().map(|l| l.factor).collect::<Vec<_>>()[..], &[[4, 4], [8, 8], [8, 8], [16, 16], [32, 32]]);
     }
 
     #[test]
     fn horizontal_aspect_keeps_vertical_resolution() {
-        let plan = Plan::new(&settings_with(&[("Glow/radius", Value::Number(400.0)), ("Glow/aspect", Value::Number(0.6))]));
+        let plan = GlowPlan::new(&settings_with(&[("Glow/radius", Value::Number(400.0)), ("Glow/aspect", Value::Number(0.6))]));
         let factors: Vec<[usize; 2]> = plan.levels.iter().map(|l| l.factor).collect();
         assert_eq!(factors, [[2, 2], [4, 2], [8, 2], [8, 2], [16, 4], [32, 8], [64, 8]]);
     }

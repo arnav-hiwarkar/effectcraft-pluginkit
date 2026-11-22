@@ -415,7 +415,7 @@ pub struct Layout {
     #[serde(default)]
     pub reach: Option<u32>,
     #[serde(default)]
-    pub gpu: Option<GpuPlan>,
+    pub gpu: Option<Plan>,
     #[serde(default)]
     pub cpu: bool,
     #[serde(default)]
@@ -463,12 +463,12 @@ impl Layout {
         self
     }
 
-    pub fn gpu(mut self, plan: GpuPlan) -> Self {
+    pub fn gpu(mut self, plan: Plan) -> Self {
         self.gpu = Some(plan);
         self
     }
 
-    pub fn passes(mut self, plan: GpuPlan) -> Self {
+    pub fn passes(mut self, plan: Plan) -> Self {
         self.gpu = Some(plan);
         self.cpu = true;
         self
@@ -512,21 +512,21 @@ pub const MAX_TEXTURES: usize = 16;
 pub const MAX_TEXELS: u64 = 1 << 24;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-pub struct GpuPlan {
+pub struct Plan {
     #[serde(default)]
     pub images: Vec<[u32; 2]>,
     #[serde(default)]
-    pub buffers: Vec<GpuData>,
+    pub buffers: Vec<PlanData>,
     #[serde(default)]
     pub textures: Vec<GpuTexture>,
     #[serde(default)]
     pub layers: Vec<String>,
-    pub passes: Vec<GpuPass>,
+    pub passes: Vec<PlanPass>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum GpuData {
+pub enum PlanData {
     Cache(String),
     Floats(Vec<f32>),
     Indices(Vec<u32>),
@@ -539,12 +539,12 @@ pub struct GpuTexture {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct GpuPass {
+pub struct PlanPass {
     pub kernel: String,
-    pub src: GpuImage,
+    pub src: PlanImage,
     #[serde(default)]
-    pub aux: Option<GpuImage>,
-    pub out: GpuImage,
+    pub aux: Option<PlanImage>,
+    pub out: PlanImage,
     #[serde(default)]
     pub f: Vec<f32>,
     #[serde(default)]
@@ -599,42 +599,42 @@ pub enum Cull {
     Front,
 }
 
-impl GpuPlan {
+impl Plan {
     pub fn new() -> Self {
-        GpuPlan::default()
+        Plan::default()
     }
 
-    pub fn scratch(&mut self, size: [u32; 2]) -> GpuImage {
+    pub fn scratch(&mut self, size: [u32; 2]) -> PlanImage {
         self.images.push(size);
-        GpuImage::Scratch(self.images.len().saturating_sub(1) as u32)
+        PlanImage::Scratch(self.images.len().saturating_sub(1) as u32)
     }
 
-    pub fn buffer(&mut self, data: GpuData) -> u32 {
+    pub fn buffer(&mut self, data: PlanData) -> u32 {
         self.buffers.push(data);
         self.buffers.len().saturating_sub(1) as u32
     }
 
-    pub fn texture(&mut self, key: &str, size: [u32; 2]) -> GpuImage {
+    pub fn texture(&mut self, key: &str, size: [u32; 2]) -> PlanImage {
         self.textures.push(GpuTexture { key: key.to_string(), size });
-        GpuImage::Texture(self.textures.len().saturating_sub(1) as u32)
+        PlanImage::Texture(self.textures.len().saturating_sub(1) as u32)
     }
 
-    pub fn layer(&mut self, param: &str) -> GpuImage {
+    pub fn layer(&mut self, param: &str) -> PlanImage {
         self.layers.push(param.to_string());
-        GpuImage::Layer(self.layers.len().saturating_sub(1) as u32)
+        PlanImage::Layer(self.layers.len().saturating_sub(1) as u32)
     }
 
-    pub fn pass(mut self, pass: GpuPass) -> Self {
+    pub fn pass(mut self, pass: PlanPass) -> Self {
         self.passes.push(pass);
         self
     }
 
-    pub fn size_of(&self, image: GpuImage, frame: [u32; 2]) -> Option<[u32; 2]> {
+    pub fn size_of(&self, image: PlanImage, frame: [u32; 2]) -> Option<[u32; 2]> {
         match image {
-            GpuImage::Source | GpuImage::Output => Some(frame),
-            GpuImage::Scratch(index) => self.images.get(index as usize).copied(),
-            GpuImage::Texture(index) => self.textures.get(index as usize).map(|texture| texture.size),
-            GpuImage::Layer(index) => ((index as usize) < self.layers.len()).then_some(frame),
+            PlanImage::Source | PlanImage::Output => Some(frame),
+            PlanImage::Scratch(index) => self.images.get(index as usize).copied(),
+            PlanImage::Texture(index) => self.textures.get(index as usize).map(|texture| texture.size),
+            PlanImage::Layer(index) => ((index as usize) < self.layers.len()).then_some(frame),
         }
     }
 
@@ -703,21 +703,21 @@ impl GpuPlan {
         if texels > MAX_TEXELS {
             return Err(format!("the textures and layers hold {texels} pixels; the limit is {MAX_TEXELS}"));
         }
-        let mut written = vec![GpuImage::Source];
+        let mut written = vec![PlanImage::Source];
         let mut depth_size = None;
         for (n, pass) in self.passes.iter().enumerate() {
             if pass.f.len() > MAX_PASS_FLOATS || pass.u.len() > MAX_PASS_UINTS {
                 let (floats, uints) = (pass.f.len(), pass.u.len());
                 return Err(format!("pass {n} has {floats} floats and {uints} uints; the limits are {MAX_PASS_FLOATS} and {MAX_PASS_UINTS}"));
             }
-            if matches!(pass.out, GpuImage::Source | GpuImage::Texture(_) | GpuImage::Layer(_)) {
+            if matches!(pass.out, PlanImage::Source | PlanImage::Texture(_) | PlanImage::Layer(_)) {
                 return Err(format!("pass {n} writes {:?}, which passes only read", pass.out));
             }
             for image in std::iter::once(pass.src).chain(pass.aux) {
                 if self.size_of(image, frame).is_none() {
                     return Err(format!("pass {n} reads {image:?}, which the plan does not declare"));
                 }
-                if matches!(image, GpuImage::Output | GpuImage::Scratch(_)) && !written.contains(&image) {
+                if matches!(image, PlanImage::Output | PlanImage::Scratch(_)) && !written.contains(&image) {
                     return Err(format!("pass {n} reads {image:?} before a pass writes it"));
                 }
                 if image == pass.out && !pass.host.as_ref().is_some_and(HostKernel::pointwise) {
@@ -746,89 +746,89 @@ impl GpuPlan {
             }
             written.push(pass.out);
         }
-        if !written.contains(&GpuImage::Output) {
+        if !written.contains(&PlanImage::Output) {
             return Err("no pass writes the output image".into());
         }
         Ok(())
     }
 }
 
-impl GpuPass {
-    pub fn new(kernel: &str, src: GpuImage, out: GpuImage) -> Self {
-        GpuPass { kernel: kernel.to_string(), src, aux: None, out, f: Vec::new(), u: Vec::new(), draw: None, reach: None, aux_reach: None, host: None }
+impl PlanPass {
+    pub fn new(kernel: &str, src: PlanImage, out: PlanImage) -> Self {
+        PlanPass { kernel: kernel.to_string(), src, aux: None, out, f: Vec::new(), u: Vec::new(), draw: None, reach: None, aux_reach: None, host: None }
     }
 
-    pub fn host(kernel: HostKernel, src: GpuImage, out: GpuImage) -> Self {
+    pub fn host(kernel: HostKernel, src: PlanImage, out: PlanImage) -> Self {
         let name = kernel.name();
-        GpuPass { host: Some(kernel), ..GpuPass::new(name, src, out) }
+        PlanPass { host: Some(kernel), ..PlanPass::new(name, src, out) }
     }
 
-    pub fn blur(src: GpuImage, out: GpuImage, radius: [f32; 2]) -> Self {
-        GpuPass::host(HostKernel::Blur { shape: BlurShape::Gaussian, radius }, src, out)
+    pub fn blur(src: PlanImage, out: PlanImage, radius: [f32; 2]) -> Self {
+        PlanPass::host(HostKernel::Blur { shape: BlurShape::Gaussian, radius }, src, out)
     }
 
-    pub fn box_blur(src: GpuImage, out: GpuImage, radius: [f32; 2]) -> Self {
-        GpuPass::host(HostKernel::Blur { shape: BlurShape::Box, radius }, src, out)
+    pub fn box_blur(src: PlanImage, out: PlanImage, radius: [f32; 2]) -> Self {
+        PlanPass::host(HostKernel::Blur { shape: BlurShape::Box, radius }, src, out)
     }
 
-    pub fn resample(src: GpuImage, out: GpuImage, filter: Filter) -> Self {
-        GpuPass::host(HostKernel::Resample { filter, scale: None }, src, out)
+    pub fn resample(src: PlanImage, out: PlanImage, filter: Filter) -> Self {
+        PlanPass::host(HostKernel::Resample { filter, scale: None }, src, out)
     }
 
-    pub fn blend_images(base: GpuImage, top: GpuImage, out: GpuImage, mode: BlendMode, amount: f32) -> Self {
-        GpuPass::host(HostKernel::Blend { mode, amount }, base, out).aux(top)
+    pub fn blend_images(base: PlanImage, top: PlanImage, out: PlanImage, mode: BlendMode, amount: f32) -> Self {
+        PlanPass::host(HostKernel::Blend { mode, amount }, base, out).aux(top)
     }
 
-    pub fn curves(src: GpuImage, out: GpuImage, table: &[Pixel]) -> Self {
-        GpuPass::host(HostKernel::Curves { table: table.to_vec() }, src, out)
+    pub fn curves(src: PlanImage, out: PlanImage, table: &[Pixel]) -> Self {
+        PlanPass::host(HostKernel::Curves { table: table.to_vec() }, src, out)
     }
 
-    pub fn convolve(src: GpuImage, out: GpuImage, taps: Taps) -> Self {
-        GpuPass::host(HostKernel::Convolve { taps }, src, out)
+    pub fn convolve(src: PlanImage, out: PlanImage, taps: Taps) -> Self {
+        PlanPass::host(HostKernel::Convolve { taps }, src, out)
     }
 
-    pub fn warp(src: GpuImage, displacement: GpuImage, out: GpuImage, amount: [f32; 2]) -> Self {
-        GpuPass::host(HostKernel::Warp { amount }, src, out).aux(displacement)
+    pub fn warp(src: PlanImage, displacement: PlanImage, out: PlanImage, amount: [f32; 2]) -> Self {
+        PlanPass::host(HostKernel::Warp { amount }, src, out).aux(displacement)
     }
 
-    pub fn matrix(src: GpuImage, out: GpuImage, rows: [[f32; 4]; 4]) -> Self {
-        GpuPass::host(HostKernel::Matrix { rows }, src, out)
+    pub fn matrix(src: PlanImage, out: PlanImage, rows: [[f32; 4]; 4]) -> Self {
+        PlanPass::host(HostKernel::Matrix { rows }, src, out)
     }
 
-    pub fn to_linear(src: GpuImage, out: GpuImage) -> Self {
-        GpuPass::host(HostKernel::ToLinear, src, out)
+    pub fn to_linear(src: PlanImage, out: PlanImage) -> Self {
+        PlanPass::host(HostKernel::ToLinear, src, out)
     }
 
-    pub fn to_srgb(src: GpuImage, out: GpuImage) -> Self {
-        GpuPass::host(HostKernel::ToSrgb, src, out)
+    pub fn to_srgb(src: PlanImage, out: PlanImage) -> Self {
+        PlanPass::host(HostKernel::ToSrgb, src, out)
     }
 
-    pub fn transfer(src: GpuImage, out: GpuImage, to: Encoding, negatives: Negatives) -> Self {
-        GpuPass::host(HostKernel::Transfer { to, negatives }, src, out)
+    pub fn transfer(src: PlanImage, out: PlanImage, to: Encoding, negatives: Negatives) -> Self {
+        PlanPass::host(HostKernel::Transfer { to, negatives }, src, out)
     }
 
-    pub fn brightness_curve(src: GpuImage, out: GpuImage, measure: Measure, curve: Vec<f32>, range: f32) -> Self {
-        GpuPass::host(HostKernel::BrightnessCurve { measure, curve, range }, src, out)
+    pub fn brightness_curve(src: PlanImage, out: PlanImage, measure: Measure, curve: Vec<f32>, range: f32) -> Self {
+        PlanPass::host(HostKernel::BrightnessCurve { measure, curve, range }, src, out)
     }
 
-    pub fn dither(src: GpuImage, out: GpuImage, seed: u32, origin: [i64; 2]) -> Self {
-        GpuPass::host(HostKernel::Dither { seed, origin }, src, out)
+    pub fn dither(src: PlanImage, out: PlanImage, seed: u32, origin: [i64; 2]) -> Self {
+        PlanPass::host(HostKernel::Dither { seed, origin }, src, out)
     }
 
-    pub fn light_alpha(src: GpuImage, out: GpuImage) -> Self {
-        GpuPass::host(HostKernel::LightAlpha, src, out)
+    pub fn light_alpha(src: PlanImage, out: PlanImage) -> Self {
+        PlanPass::host(HostKernel::LightAlpha, src, out)
     }
 
-    pub fn draw(kernel: &str, out: GpuImage) -> Self {
-        GpuPass { draw: Some(Draw::default()), ..GpuPass::new(kernel, GpuImage::Source, out) }
+    pub fn draw(kernel: &str, out: PlanImage) -> Self {
+        PlanPass { draw: Some(Draw::default()), ..PlanPass::new(kernel, PlanImage::Source, out) }
     }
 
-    pub fn src(mut self, image: GpuImage) -> Self {
+    pub fn src(mut self, image: PlanImage) -> Self {
         self.src = image;
         self
     }
 
-    pub fn aux(mut self, image: GpuImage) -> Self {
+    pub fn aux(mut self, image: PlanImage) -> Self {
         self.aux = Some(image);
         self
     }
@@ -893,7 +893,7 @@ impl GpuPass {
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum GpuImage {
+pub enum PlanImage {
     Source,
     Output,
     Scratch(u32),
@@ -1518,12 +1518,12 @@ mod tests {
 
     const FRAME: [u32; 2] = [53, 37];
 
-    fn finish() -> GpuPass {
-        GpuPass::new("tint", GpuImage::Source, GpuImage::Output)
+    fn finish() -> PlanPass {
+        PlanPass::new("tint", PlanImage::Source, PlanImage::Output)
     }
 
-    fn plan(images: Vec<[u32; 2]>, passes: Vec<GpuPass>) -> GpuPlan {
-        GpuPlan { images, passes, ..Default::default() }
+    fn plan(images: Vec<[u32; 2]>, passes: Vec<PlanPass>) -> Plan {
+        Plan { images, passes, ..Default::default() }
     }
 
     #[test]
@@ -1538,14 +1538,14 @@ mod tests {
 
     #[test]
     fn one_check_refuses_every_plan_beyond_the_limits() {
-        let tint = |src, out| GpuPass::new("tint", src, out);
-        let scratch = GpuImage::Scratch(0);
-        let mut draw_without_buffer = plan(vec![], vec![GpuPass::draw("mesh", GpuImage::Output)]);
+        let tint = |src, out| PlanPass::new("tint", src, out);
+        let scratch = PlanImage::Scratch(0);
+        let mut draw_without_buffer = plan(vec![], vec![PlanPass::draw("mesh", PlanImage::Output)]);
         draw_without_buffer.passes[0] = draw_without_buffer.passes[0].clone().vertices(0, &[3]);
         let mut depth_on_two_sizes = plan(vec![[8, 8]], vec![]);
-        let mesh = depth_on_two_sizes.buffer(GpuData::Floats(vec![0.0; 9]));
+        let mesh = depth_on_two_sizes.buffer(PlanData::Floats(vec![0.0; 9]));
         depth_on_two_sizes.passes =
-            vec![GpuPass::draw("mesh", scratch).vertices(mesh, &[3]).depth(), GpuPass::draw("mesh", GpuImage::Output).vertices(mesh, &[3]).depth()];
+            vec![PlanPass::draw("mesh", scratch).vertices(mesh, &[3]).depth(), PlanPass::draw("mesh", PlanImage::Output).vertices(mesh, &[3]).depth()];
         let mut too_many_pictures = plan(vec![], vec![finish()]);
         for i in 0..17 {
             too_many_pictures.layer(&format!("layer{i}"));
@@ -1556,40 +1556,40 @@ mod tests {
         for size in [[u32::MAX, u32::MAX], [u32::MAX, 2], [1, 1]] {
             wrapping_texels.texture("huge", size);
         }
-        let (source, output) = (GpuImage::Source, GpuImage::Output);
-        let host = |kernel| plan(vec![], vec![GpuPass::host(kernel, source, output)]);
-        let small_top = plan(vec![[8, 8]], vec![tint(source, scratch), GpuPass::blend_images(source, scratch, output, BlendMode::Add, 1.0)]);
-        let drawing_blur = plan(vec![], vec![GpuPass { draw: Some(Draw::default()), ..GpuPass::blur(source, output, [1.0; 2]) }]);
+        let (source, output) = (PlanImage::Source, PlanImage::Output);
+        let host = |kernel| plan(vec![], vec![PlanPass::host(kernel, source, output)]);
+        let small_top = plan(vec![[8, 8]], vec![tint(source, scratch), PlanPass::blend_images(source, scratch, output, BlendMode::Add, 1.0)]);
+        let drawing_blur = plan(vec![], vec![PlanPass { draw: Some(Draw::default()), ..PlanPass::blur(source, output, [1.0; 2]) }]);
         let separable = |x: usize, y: usize| Taps::Separable { x: vec![0.5; x], y: vec![0.5; y] };
-        let (tall, wide) = (GpuImage::Scratch(0), GpuImage::Scratch(1));
+        let (tall, wide) = (PlanImage::Scratch(0), PlanImage::Scratch(1));
         let resampled_through_tall_and_wide = plan(
             vec![[53, 74], [106, 37], [106, 74]],
             vec![
-                GpuPass::resample(source, tall, Filter::Bilinear),
-                GpuPass::resample(tall, wide, Filter::Bilinear),
-                GpuPass::resample(wide, output, Filter::Bilinear),
+                PlanPass::resample(source, tall, Filter::Bilinear),
+                PlanPass::resample(tall, wide, Filter::Bilinear),
+                PlanPass::resample(wide, output, Filter::Bilinear),
             ],
         );
         let mut scratch_and_draw = plan(vec![[53, 37]; 8], vec![]);
-        let mesh = scratch_and_draw.buffer(GpuData::Floats(vec![0.0; 9]));
-        scratch_and_draw.passes = vec![GpuPass::draw("mesh", output).vertices(mesh, &[3])];
+        let mesh = scratch_and_draw.buffer(PlanData::Floats(vec![0.0; 9]));
+        scratch_and_draw.passes = vec![PlanPass::draw("mesh", output).vertices(mesh, &[3])];
         let cases = [
             ("no passes", plan(vec![], vec![]), "1 to 128 passes"),
             ("129 passes", plan(vec![], vec![finish(); 129]), "1 to 128 passes"),
             ("33 images", plan(vec![[8, 8]; 33], vec![finish()]), "at most 32 scratch images"),
             ("empty image", plan(vec![[0, 8]], vec![finish()]), "scratch image 0 is 0x8"),
             ("huge image", plan(vec![[2 * 53 + 1, 8]], vec![finish()]), "scratch image 0 is 107x8"),
-            ("unwritten read", plan(vec![[8, 8]], vec![tint(scratch, GpuImage::Output)]), "before a pass writes it"),
-            ("undeclared image", plan(vec![], vec![tint(GpuImage::Source, scratch), finish()]), "does not declare"),
-            ("no output", plan(vec![[8, 8]], vec![tint(GpuImage::Source, scratch)]), "no pass writes the output"),
-            ("reads own output", plan(vec![[8, 8]], vec![tint(GpuImage::Source, scratch), tint(scratch, scratch), finish()]), "reads the image it writes"),
-            ("writes source", plan(vec![], vec![tint(GpuImage::Source, GpuImage::Source), finish()]), "which passes only read"),
-            ("writes a layer", plan(vec![], vec![tint(GpuImage::Source, GpuImage::Layer(0)), finish()]), "which passes only read"),
-            ("undeclared layer", plan(vec![], vec![tint(GpuImage::Layer(0), GpuImage::Output)]), "does not declare"),
+            ("unwritten read", plan(vec![[8, 8]], vec![tint(scratch, PlanImage::Output)]), "before a pass writes it"),
+            ("undeclared image", plan(vec![], vec![tint(PlanImage::Source, scratch), finish()]), "does not declare"),
+            ("no output", plan(vec![[8, 8]], vec![tint(PlanImage::Source, scratch)]), "no pass writes the output"),
+            ("reads own output", plan(vec![[8, 8]], vec![tint(PlanImage::Source, scratch), tint(scratch, scratch), finish()]), "reads the image it writes"),
+            ("writes source", plan(vec![], vec![tint(PlanImage::Source, PlanImage::Source), finish()]), "which passes only read"),
+            ("writes a layer", plan(vec![], vec![tint(PlanImage::Source, PlanImage::Layer(0)), finish()]), "which passes only read"),
+            ("undeclared layer", plan(vec![], vec![tint(PlanImage::Layer(0), PlanImage::Output)]), "does not declare"),
             ("too much scratch", plan(vec![[2 * 53, 2 * 37]; 3], vec![finish()]), "exceed 8 times"),
             (
                 "scratch at the limit and a blur temporary",
-                plan(vec![[53, 37]; 8], vec![GpuPass::blur(source, scratch, [1.0; 2]), finish()]),
+                plan(vec![[53, 37]; 8], vec![PlanPass::blur(source, scratch, [1.0; 2]), finish()]),
                 "the scratch images and the images the passes work in (blur temporaries, resample intermediates, draw targets) together exceed 8 times",
             ),
             ("scratch at the limit and a resample's intermediate", resampled_through_tall_and_wide, "together exceed 8 times"),
@@ -1603,28 +1603,28 @@ mod tests {
             ("depth on two sizes", depth_on_two_sizes, "depth buffer on an image of another size"),
             (
                 "wide blur",
-                plan(vec![], vec![GpuPass::blur(source, output, [600.0, 1.0])]),
+                plan(vec![], vec![PlanPass::blur(source, output, [600.0, 1.0])]),
                 "pass 0 (blur): `radius` is [600.0, 1.0]; each axis must be 0 to 512",
             ),
-            ("blur of nan", plan(vec![], vec![GpuPass::box_blur(source, output, [f32::NAN, 1.0])]), "`radius` is [NaN, 1.0]"),
+            ("blur of nan", plan(vec![], vec![PlanPass::box_blur(source, output, [f32::NAN, 1.0])]), "`radius` is [NaN, 1.0]"),
             ("blend without top", host(HostKernel::Blend { mode: BlendMode::Over, amount: 1.0 }), "pass 0 (blend): `aux` is missing"),
             ("blend of sizes", small_top, "pass 1 (blend): `aux` is 8x8 but `out` is 53x37"),
-            ("even taps", plan(vec![], vec![GpuPass::convolve(source, output, separable(3, 2))]), "`y` has 2 taps; give an odd number from 1 to 1025"),
-            ("too many taps", plan(vec![], vec![GpuPass::convolve(source, output, separable(1027, 1))]), "`x` has 1027 taps"),
+            ("even taps", plan(vec![], vec![PlanPass::convolve(source, output, separable(3, 2))]), "`y` has 2 taps; give an odd number from 1 to 1025"),
+            ("too many taps", plan(vec![], vec![PlanPass::convolve(source, output, separable(1027, 1))]), "`x` has 1027 taps"),
             ("ragged full taps", host(HostKernel::Convolve { taps: Taps::Full { width: 3, weights: vec![1.0; 6] } }), "`weights` has 6 values for `width` 3"),
-            ("one point curve", plan(vec![], vec![GpuPass::curves(source, output, &[[0.0; 4]])]), "`table` has 1 entries; it needs 2 to 4096"),
-            ("infinite matrix", plan(vec![], vec![GpuPass::matrix(source, output, [[f32::INFINITY; 4]; 4])]), "`rows` holds a value that is not a finite"),
-            ("far warp", plan(vec![], vec![GpuPass::warp(source, source, output, [5000.0, 0.0])]), "`amount` is [5000.0, 0.0]"),
+            ("one point curve", plan(vec![], vec![PlanPass::curves(source, output, &[[0.0; 4]])]), "`table` has 1 entries; it needs 2 to 4096"),
+            ("infinite matrix", plan(vec![], vec![PlanPass::matrix(source, output, [[f32::INFINITY; 4]; 4])]), "`rows` holds a value that is not a finite"),
+            ("far warp", plan(vec![], vec![PlanPass::warp(source, source, output, [5000.0, 0.0])]), "`amount` is [5000.0, 0.0]"),
             ("zero scale", host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some([0.0, 1.0]) }), "`scale` is [0.0, 1.0]"),
             ("drawing blur", drawing_blur, "pass 0 (blur): a host kernel pass cannot also draw"),
             (
                 "flat brightness range",
-                plan(vec![], vec![GpuPass::brightness_curve(source, output, Measure::Luma, vec![0.0, 1.0], 0.0)]),
+                plan(vec![], vec![PlanPass::brightness_curve(source, output, Measure::Luma, vec![0.0, 1.0], 0.0)]),
                 "pass 0 (brightness_curve): `range` is 0; it must be a finite number above 0",
             ),
             (
                 "one point brightness curve",
-                plan(vec![], vec![GpuPass::brightness_curve(source, output, Measure::MaxChannel, vec![1.0], 1.0)]),
+                plan(vec![], vec![PlanPass::brightness_curve(source, output, Measure::MaxChannel, vec![1.0], 1.0)]),
                 "`curve` has 1 entries",
             ),
         ];
@@ -1650,18 +1650,18 @@ mod tests {
 
     #[test]
     fn host_kernel_plans_pass_both_checks_and_plans_without_kernels_still_parse() {
-        let mut plan = GpuPlan::new();
+        let mut plan = Plan::new();
         let (half, blurred, glow) = (plan.scratch([27, 19]), plan.scratch([27, 19]), plan.scratch(FRAME));
         let plan = plan
-            .pass(GpuPass::resample(GpuImage::Source, half, Filter::Bicubic))
-            .pass(GpuPass::blur(half, blurred, [512.0, 0.0]))
-            .pass(GpuPass::resample(blurred, glow, Filter::Bilinear))
-            .pass(GpuPass::blend_images(GpuImage::Source, glow, GpuImage::Output, BlendMode::Screen, 0.5));
+            .pass(PlanPass::resample(PlanImage::Source, half, Filter::Bicubic))
+            .pass(PlanPass::blur(half, blurred, [512.0, 0.0]))
+            .pass(PlanPass::resample(blurred, glow, Filter::Bilinear))
+            .pass(PlanPass::blend_images(PlanImage::Source, glow, PlanImage::Output, BlendMode::Screen, 0.5));
         assert_eq!(plan.check(FRAME), Ok(()));
-        let sent: GpuPlan = serde_json::from_str(&serde_json::to_string(&plan).unwrap()).unwrap();
+        let sent: Plan = serde_json::from_str(&serde_json::to_string(&plan).unwrap()).unwrap();
         assert_eq!(sent, plan);
         let before_kernels = r#"{"passes":[{"kernel":"tint","src":"source","out":"output","f":[1.0],"reach":2}]}"#;
-        let old: GpuPlan = serde_json::from_str(before_kernels).unwrap();
+        let old: Plan = serde_json::from_str(before_kernels).unwrap();
         assert_eq!(old.passes, vec![finish().floats(&[1.0]).reach(2)]);
     }
 

@@ -258,19 +258,19 @@ fn glow_taps(sigma: f32) -> Vec<f32> {
     weights.into_iter().map(|w| w / total).collect()
 }
 
-pub fn plan(crt: &Crt) -> GpuPlan {
+pub fn plan(crt: &Crt) -> Plan {
     let d = crt.factor();
     let coarse = crt.size.map(|s| s.div_ceil(d));
-    let mut plan = GpuPlan::new();
+    let mut plan = Plan::new();
     let reduced = plan.scratch(coarse);
     let glow = plan.scratch(coarse);
     let taps = glow_taps(crt.coarse_sigma());
     let blur_reach = taps.len() as u32 / 2;
     let glow_rows = crt.bend().div_ceil(d) + 2;
-    plan.pass(GpuPass::new("retro_crt_emit", GpuImage::Source, reduced).floats(&[crt.glow_threshold]).uints(&[d]).reach(d))
-        .pass(GpuPass::convolve(reduced, glow, craft_plugin::Taps::Separable { x: taps.clone(), y: taps }).reach(blur_reach))
+    plan.pass(PlanPass::new("retro_crt_emit", PlanImage::Source, reduced).floats(&[crt.glow_threshold]).uints(&[d]).reach(d))
+        .pass(PlanPass::convolve(reduced, glow, craft_plugin::Taps::Separable { x: taps.clone(), y: taps }).reach(blur_reach))
         .pass(
-            GpuPass::new("retro_crt", GpuImage::Source, GpuImage::Output)
+            PlanPass::new("retro_crt", PlanImage::Source, PlanImage::Output)
                 .aux(glow)
                 .floats(&crt.floats())
                 .uints(&crt.uints())
