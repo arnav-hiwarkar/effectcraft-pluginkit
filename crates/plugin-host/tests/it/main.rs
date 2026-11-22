@@ -754,6 +754,17 @@ fn a_pass_writing_the_image_it_reads_is_refused() {
 }
 
 #[test]
+fn a_pass_that_writes_nothing_leaves_its_image_transparent() {
+    each_kind(|kind| {
+        let mut plan = GpuPlan::new();
+        let scratch = plan.scratch(PASS_FRAME);
+        let plan = plan.pass(GpuPass::new("probe_red", GpuImage::Source, scratch)).pass(GpuPass::new("probe_nothing", scratch, GpuImage::Output));
+        let pixels = run_plan(kind, &plan).unwrap();
+        assert_eq!(pixels, vec![[0.0; 4]; pixels.len()], "{kind:?}");
+    });
+}
+
+#[test]
 fn a_failing_pass_fails_the_render() {
     each_kind(|kind| {
         let plan = GpuPlan::new().pass(GpuPass::new("nope", GpuImage::Source, GpuImage::Output).reach(0));
