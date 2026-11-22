@@ -1,9 +1,12 @@
 use std::collections::BTreeSet;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use craft_plugin::{AudioDesc, HostCall, ImageDesc, LogLevel, Outcome, Permission, Pixel, Root};
+use same_file::Handle;
 use serde_json::{Value, json};
 
 use super::tasks::{Slot, Tasks};
@@ -20,14 +23,54 @@ pub(crate) struct Identity {
     pub grants: BTreeSet<Permission>,
     pub cache: Arc<Cache>,
     pub tasks: Tasks,
-    pub picked: Mutex<Vec<(PathBuf, bool)>>,
+    pub picked: Mutex<Vec<Picked>>,
     pub images: Images,
+}
+
+pub(crate) struct Picked {
+    path: PathBuf,
+    writable: bool,
+    held: Option<Handle>,
+}
+
+impl Picked {
+    fn matches(&self, path: &Path, write: bool) -> bool {
+        self.path == path && (self.writable || !write)
+    }
 }
 
 impl Identity {
     pub fn picked(&self, path: &str, write: bool) -> bool {
-        let path = Path::new(path);
-        self.picked.lock().is_ok_and(|picked| picked.iter().any(|(chosen, writable)| chosen == path && (*writable || !write)))
+        self.picked.lock().is_ok_and(|picked| picked.iter().any(|chosen| chosen.matches(Path::new(path), write)))
+    }
+
+    fn remember_pick(&self, path: PathBuf, writable: bool) {
+        let held = Handle::from_path(&path).ok();
+        if let Ok(mut picked) = self.picked.lock() {
+            picked.retain(|chosen| chosen.path != path);
+            picked.push(Picked { path, writable, held });
+        }
+    }
+
+    fn open_picked(&self, path: &str, write: bool) -> Result<File, String> {
+        let mut picked = self.picked.lock().map_err(|_| "the picked files are unavailable")?;
+        let chosen = picked.iter_mut().find(|chosen| chosen.matches(Path::new(path), write)).ok_or(format!("`{path}` was not picked"))?;
+        let opened = match (write, chosen.held.is_some()) {
+            (true, false) => OpenOptions::new().write(true).create_new(true).open(path),
+            (true, true) => OpenOptions::new().write(true).open(path),
+            (false, true) => File::open(path),
+            (false, false) => return Err(format!("{path}: the picked file did not exist when it was picked")),
+        };
+        let file = opened.map_err(|e| format!("{path}: {e}"))?;
+        let found = file.try_clone().and_then(Handle::from_file).map_err(|e| format!("{path}: {e}"))?;
+        match &chosen.held {
+            Some(held) if *held != found => Err(format!("`{path}` is no longer the file the user picked; ask the user to pick it again")),
+            Some(_) => Ok(file),
+            None => {
+                chosen.held = Some(found);
+                Ok(file)
+            }
+        }
     }
 }
 
@@ -109,6 +152,16 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
         HostCall::Source { time } => image(cx.host.source(time)),
         HostCall::Masks => plain(json!(cx.host.masks())),
         HostCall::Scene => cx.host.scene().map(|scene| (json!(scene), Bulk::None)).ok_or("no scene here".into()),
+        HostCall::ReadFile { root: Root::User, path } if !cx.plugin.grants.contains(&Permission::FilesRead) => {
+            let mut bytes = Vec::new();
+            cx.plugin.open_picked(&path, false)?.read_to_end(&mut bytes).map_err(|e| format!("{path}: {e}"))?;
+            Ok((Value::Null, Bulk::Bytes(bytes)))
+        }
+        HostCall::WriteFile { root: Root::User, path } if !cx.plugin.grants.contains(&Permission::FilesWrite) => {
+            let mut file = cx.plugin.open_picked(&path, true)?;
+            file.set_len(0).and_then(|()| file.write_all(bulk)).map_err(|e| format!("{path}: {e}"))?;
+            plain(Value::Null)
+        }
         HostCall::ReadFile { root, path } => {
             let bytes = std::fs::read(resolve(cx.plugin, root, &path)?).map_err(|e| format!("{path}: {e}"))?;
             Ok((Value::Null, Bulk::Bytes(bytes)))
@@ -157,8 +210,8 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             let chosen = cx.host.pick_file(&request);
             cx.paused += started.elapsed();
             let chosen = chosen?;
-            if let (Some(path), Ok(mut picked)) = (&chosen, cx.plugin.picked.lock()) {
-                picked.push((path.clone(), request.save));
+            if let Some(path) = &chosen {
+                cx.plugin.remember_pick(path.clone(), request.save);
             }
             plain(json!(chosen.map(|path| path.to_string_lossy().into_owned())))
         }

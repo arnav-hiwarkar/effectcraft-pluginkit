@@ -1530,6 +1530,7 @@ dependencies = [
  "libloading",
  "log",
  "rayon",
+ "same-file",
  "serde",
  "serde_json",
  "sha2",

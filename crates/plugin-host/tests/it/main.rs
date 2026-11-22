@@ -675,6 +675,41 @@ fn a_picked_file_becomes_readable_without_the_files_permission_but_not_writable(
     });
 }
 
+#[cfg(unix)]
+#[test]
+fn a_picked_file_replaced_by_a_link_is_refused_and_a_new_save_target_is_not_followed() {
+    each_kind(|kind| {
+        let outside = tempfile::tempdir().unwrap();
+        let (chosen, secret) = (outside.path().join("chosen.txt"), outside.path().join("secret.txt"));
+        std::fs::write(&chosen, "chosen by the user").unwrap();
+        std::fs::write(&secret, "not for the plugin").unwrap();
+        let loaded = load(kind, &[]);
+        let mut host = Recorder { picked: Some(chosen.clone()), ..Default::default() };
+        command(&loaded, "pick-and-read", &mut host).unwrap_err();
+        std::fs::write(loaded._dir.path().join("user-target.txt"), chosen.to_str().unwrap()).unwrap();
+        command(&loaded, "read-user", &mut host).unwrap();
+        assert_eq!(std::fs::read_to_string(loaded.data.path().join("data/read.txt")).unwrap(), "chosen by the user", "{kind:?}");
+
+        std::fs::remove_file(&chosen).unwrap();
+        std::os::unix::fs::symlink(&secret, &chosen).unwrap();
+        let error = command(&loaded, "read-user", &mut host).unwrap_err().to_string();
+        assert!(error.contains("is no longer the file the user picked"), "{kind:?} {error}");
+        assert_eq!(std::fs::read_to_string(loaded.data.path().join("data/read.txt")).unwrap(), "chosen by the user", "{kind:?}");
+
+        let target = outside.path().join("new.txt");
+        let saver = load(kind, &[]);
+        let mut host = Recorder { picked: Some(target.clone()), ..Default::default() };
+        saver.plugin.call::<()>(&Call::Command { command: "pick-and-save".into() }, None, &mut host).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "saved", "{kind:?}");
+        std::fs::remove_file(&target).unwrap();
+        std::os::unix::fs::symlink(&secret, &target).unwrap();
+        std::fs::write(saver._dir.path().join("user-target.txt"), target.to_str().unwrap()).unwrap();
+        let error = saver.plugin.call::<()>(&Call::Command { command: "write-user".into() }, None, &mut host).unwrap_err().to_string();
+        assert!(error.contains("is no longer the file the user picked"), "{kind:?} {error}");
+        assert_eq!(std::fs::read_to_string(&secret).unwrap(), "not for the plugin", "{kind:?}");
+    });
+}
+
 const PASS_FRAME: [u32; 2] = [37, 301];
 
 fn ramp() -> Vec<Pixel> {
