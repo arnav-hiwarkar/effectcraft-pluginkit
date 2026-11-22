@@ -52,8 +52,9 @@ pub fn render(settings: &Settings, paths: &[Path], size: [usize; 2], frame: &mut
         .map(|(path, salt)| beam::stroke(path, &settings.shape, &settings.motion, salt))
         .collect();
     let rows = frame.origin[1]..frame.origin[1] + frame.height;
-    let core = core_plane(&strokes, size, rows);
-    let glow = glow::render(strokes.iter().map(|s| s.glow.as_slice()), &settings.glow, settings.shape.glow_radius, settings.reach, &settings.shading, size);
+    let core = core_plane(&strokes, size, rows.clone());
+    let glow =
+        glow::render(strokes.iter().map(|s| s.glow.as_slice()), &settings.glow, settings.shape.glow_radius, settings.reach, &settings.shading, size, rows);
     composite(frame, core.as_ref(), glow.as_ref(), &settings.shading);
 }
 

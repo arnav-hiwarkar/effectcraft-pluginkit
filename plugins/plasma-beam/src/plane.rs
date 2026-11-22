@@ -42,6 +42,10 @@ impl Plane {
         Plane { image: Image::new(size[0], size[1]), origin, pitch }
     }
 
+    pub fn window(origin: [i32; 2], size: [usize; 2], pitch: f32, rows: std::ops::Range<usize>) -> Plane {
+        Plane { image: Image::window(size[0], size[1], rows), origin, pitch }
+    }
+
     pub fn draw(&mut self, nodes: &[Node]) {
         match nodes {
             [] => {}
@@ -60,6 +64,8 @@ impl Plane {
         let reach = a.radius.max(b.radius) + 1.0;
         let xs = pixel_range(a.at[0].min(b.at[0]) - reach, a.at[0].max(b.at[0]) + reach, self.image.width);
         let ys = pixel_range(a.at[1].min(b.at[1]) - reach, a.at[1].max(b.at[1]) + reach, self.image.height);
+        let stored = self.image.rows();
+        let ys = ys.start.max(stored.start)..ys.end.min(stored.end);
         let axis = [b.at[0] - a.at[0], b.at[1] - a.at[1]];
         let length_sq = axis[0] * axis[0] + axis[1] * axis[1];
         let inverse = if length_sq > 1e-12 { 1.0 / length_sq } else { 0.0 };
