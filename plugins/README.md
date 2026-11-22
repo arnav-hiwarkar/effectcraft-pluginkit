@@ -84,3 +84,21 @@ cargo run --manifest-path plugins/ember/Cargo.toml --release --example showcase 
 
 Keyframed parameters are read at the current frame only, so the simulation uses today's values for its whole history;
 emitter motion is the constant `Emitter Motion` velocity, which `Inherit Emitter Motion` passes to new particles.
+
+## Retro
+
+`plugins/retro` holds two effects in one plugin, both under Stylize.
+
+- **CRT Display** bends the picture into a curved screen with rounded black corners, then applies an aperture
+  grille, slot mask or dot mask at a pitch in layer pixels, scanlines that roll slowly over time, a
+  horizontal red and blue convergence error, a phosphor glow of the bright parts, a vignette, animated noise
+  and flicker, and a brightness gain that makes up for the light the mask and scanlines remove.
+- **Neon Outline** finds edges on luma or alpha, shapes them with a threshold, softness and thickness,
+  colours the line core, and adds a bloom made from three blur radii summed with a falloff. It draws over
+  the source or, with Lines Only, on its own.
+
+Both do their wide blurs at a half, quarter or eighth of the resolution and declare
+`Layout::neighbourhood(reach)`, so the app renders the CPU path in bands on all cores when the reach fits a
+band. The GPU path is four compute passes per effect. `plugins/retro/check` tests the two paths against
+each other through the real host (`cargo test --manifest-path plugins/retro/check/Cargo.toml`), and
+`plugins/retro/bench.sh` prints the CPU sandboxed, CPU native and GPU times at 1920×1080.

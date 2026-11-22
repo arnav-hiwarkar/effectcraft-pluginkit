@@ -60,9 +60,9 @@ pub fn plugin_dir() -> PathBuf {
 
 pub fn build_bundle(dir: &Path, native: bool) -> PathBuf {
     let plugin = plugin_dir();
-    let mut args = vec!["build", "--release", "--quiet", "--manifest-path"];
     let manifest = plugin.join("Cargo.toml");
-    args.push(manifest.to_str().expect("utf-8 path"));
+    let target = plugin.join("target");
+    let mut args = vec!["build", "--release", "--quiet", "--manifest-path", manifest.to_str().expect("utf-8 path"), "--target-dir", target.to_str().expect("utf-8 path")];
     if !native {
         args.extend(["--target", "wasm32-unknown-unknown"]);
     }
