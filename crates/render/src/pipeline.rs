@@ -717,7 +717,9 @@ impl<'a> Renderer<'a> {
         }
         let t0 = web_time::Instant::now();
         let (canvas, files) = self.recorded(key, |r| r.finish_frame(&r.with_reads(&ctx), canvas));
-        if let (Some(c), Some(k)) = (self.cache_to_keep(), key) {
+        if let (Some(c), Some(k)) = (self.cache_to_keep(), key)
+            && !files.files().iter().any(|f| f.stamp == crate::reads::FileStamp::Missing)
+        {
             c.insert_in_memory(k, Arc::new(Buf { img: canvas.clone(), offset: [0.0; 2], scale: s }), files, t0.elapsed());
         }
         canvas

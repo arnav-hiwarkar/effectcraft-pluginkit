@@ -126,3 +126,46 @@ fn a_hidden_matte_that_ends_clears_the_cached_frame() {
     let after = render_cached(&p, cid, Tick::from_seconds_f64(1.5), Some(&cache));
     assert_eq!((before.get(100, 50), after.get(100, 50)), ([1.0, 0.0, 0.0, 1.0], [0.0; 4]));
 }
+
+struct Plate(std::sync::atomic::AtomicBool);
+
+impl crate::FootageSource for Plate {
+    fn frame(&self, _: ItemId, _: &effectcraft_project::Footage, _: Tick) -> Option<std::sync::Arc<Image>> {
+        self.0.load(std::sync::atomic::Ordering::SeqCst).then(|| std::sync::Arc::new(Image::filled(200, 100, [0.0, 1.0, 0.0, 1.0])))
+    }
+    fn recording(&self, reads: &crate::reads::ReadLog, f: &mut dyn FnMut()) {
+        let stamp = match self.0.load(std::sync::atomic::Ordering::SeqCst) {
+            true => crate::reads::FileStamp::Native { len: 1, modified: Some(1) },
+            false => crate::reads::FileStamp::Missing,
+        };
+        reads.note(crate::reads::ReadFile::new("plate.png", stamp));
+        f();
+    }
+}
+
+#[test]
+fn a_frame_rendered_while_its_still_was_missing_is_not_kept() {
+    let (mut p, cid, comp) = setup();
+    let f = effectcraft_project::Footage {
+        path: "plate.png".into(),
+        kind: effectcraft_project::FootageKind::Still,
+        width: 200,
+        height: 100,
+        pixel_aspect: 1.0,
+        has_video: true,
+        ..Default::default()
+    };
+    let fid = p.add_item("plate", effectcraft_color::Label::Aqua, None, ItemKind::Footage(f));
+    let l = effectcraft_project::build::layer(&mut p, &comp, "plate", LayerSource::Footage { item: fid }, (200, 100), None);
+    p.comp_mut(cid).unwrap().layers = vec![l].into();
+    let plate = Plate(false.into());
+    let cache = LayerCache::default();
+    let render = |t: f64| {
+        let mut r = Renderer::new(&p, &plate, RenderOpts::default());
+        r.cache = Some(&cache);
+        r.comp_frame(cid, Tick::from_seconds_f64(t)).get(100, 50)
+    };
+    let missing = render(0.0);
+    plate.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!((missing, render(0.5)), ([0.0; 4], [0.0, 1.0, 0.0, 1.0]));
+}
