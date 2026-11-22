@@ -90,6 +90,14 @@ struct Grab {
     pass: u64,
 }
 
+fn focused_handle_key() -> egui::Id {
+    egui::Id::unique("plugin-handle-focused")
+}
+
+pub(crate) fn handle_has_focus(ctx: &egui::Context) -> bool {
+    ctx.memory(|m| m.focused()).is_some_and(|focused| ctx.data(|d| d.get_temp::<egui::Id>(focused_handle_key())) == Some(focused))
+}
+
 pub(super) fn effect_overlay(
     app: &mut EffectcraftApp,
     ui: &mut egui::Ui,
@@ -136,6 +144,7 @@ pub(super) fn effect_overlay(
             }
         }
         if resp.has_focus() {
+            ui.data_mut(|d| d.insert_temp(focused_handle_key(), id));
             painter.circle_stroke(s, HANDLE_REACH * 0.6, Stroke::new(1.5, t.accent));
         }
         if resp.hovered() {
