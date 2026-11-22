@@ -32,7 +32,8 @@ def session(*steps):
     setup = [
         ("comp.new", {"name": "T", "width": 320, "height": 180, "duration": SECONDS, "frameRate": FPS}),
         ("layer.newSolid", {"name": "Beat"}),
-        ("effect.apply", {"layer": "Beat", "effect": "ec.audio.tone"}),
+        ("effect.apply", {"layers": ["Beat"], "effect": "ec.audio.tone"}),
+        ("layer.setSwitch", {"layers": ["Beat"], "switch": "audio", "value": True}),
         *[("prop.set", {"layer": "Beat", "path": f"effects/#1/frequency{i}", "value": 0}) for i in range(2, 6)],
         ("prop.set", {"layer": "Beat", "path": "effects/#1/frequency1", "value": 100}),
         ("prop.addKey", {"layer": "Beat", "path": "effects/#1/level", "time": 0, "value": 0}),

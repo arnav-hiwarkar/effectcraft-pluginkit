@@ -3,6 +3,8 @@ use serde_json::{Value, json};
 
 use crate::{App, app};
 
+static ONE_SESSION_PUMPS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn finished(app: &mut App, task: &str, args: Value) -> Value {
     let id = effectcraft_plugin::start_task(&app.id, task, args).expect("the task starts");
     let tasks = app.session.execute("plugin.tasks", json!({"wait": true, "timeout": 30})).expect("the tasks finish");
@@ -18,6 +20,7 @@ fn solid(app: &mut App, name: &str, color: &str, size: u32) -> u64 {
 
 #[test]
 fn a_task_renders_the_comp_or_one_layer_with_its_effects() {
+    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut app = app("test.media-frame", &["document.read"]);
     solid(&mut app, "Red", "#ff0000", 64);
     solid(&mut app, "Green", "#00ff00", 16);
@@ -32,11 +35,12 @@ fn a_task_renders_the_comp_or_one_layer_with_its_effects() {
 
 #[test]
 fn a_task_reads_the_comp_mix_or_one_layer_of_audio() {
+    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut app = app("test.media-audio", &["document.read"]);
     let loud = solid(&mut app, "Loud", "#808080", 8);
     solid(&mut app, "Quiet", "#808080", 8);
     app.session.execute("effect.apply", json!({"layers": [loud], "effect": "ec.audio.tone"})).unwrap();
-    app.session.execute("layer.switch", json!({"layer": loud, "switch": "audio", "value": true})).ok();
+    app.session.execute("layer.setSwitch", json!({"layers": [loud], "switch": "audio", "value": true})).unwrap();
 
     let mix = finished(&mut app, "audio", json!({"duration": 0.5}));
     assert_eq!((mix["channels"].clone(), mix["rate"].clone(), mix["len"].clone()), (json!(2), json!(8000), json!(8000)));
