@@ -56,7 +56,7 @@ impl Host for FakeHost {
 const PANEL_SIZE: [f32; 2] = [300.0, 900.0];
 
 fn frame(panel: &mut GlidePanel<FakeHost>, events: Vec<UiEvent>) -> Vec<Widget> {
-    let input = UiInput { events, size: PANEL_SIZE };
+    let input = UiInput { events, size: PANEL_SIZE, ..Default::default() };
     let mut ui = Ui::new(&input);
     panel.ui(&mut ui);
     ui.finish()
@@ -90,7 +90,7 @@ fn labels(widgets: &[Widget]) -> Vec<String> {
 }
 
 fn pointer(id: u64, pos: [f32; 2], phase: PointerPhase) -> Vec<UiEvent> {
-    vec![UiEvent { id, kind: UiEventKind::Pointer(Pointer { pos, phase }) }]
+    vec![UiEvent { id, kind: UiEventKind::Pointer(Pointer::new(pos, phase)) }]
 }
 
 fn click(id: u64) -> Vec<UiEvent> {

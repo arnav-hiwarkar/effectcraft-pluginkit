@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::effect::{Cx, Effect, Frame};
 use crate::ui::{Panel, Ui};
-use crate::wire::{Call, CommandSpec, Contributions, EffectSpec, Outcome, PanelSpec, Pixel};
+use crate::wire::{Call, CommandSpec, Contributions, ControlsReply, EffectSpec, Outcome, PanelSpec, Pixel};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error(pub String);
@@ -102,6 +102,12 @@ impl Plugin {
                 state.lock().map_err(|_| Error("the panel panicked earlier".into()))?.ui(&mut ui);
                 json(&ui.finish())
             }
+            Call::Controls { effect, param, value, input } => {
+                let mut edited = value.clone();
+                let mut ui = Ui::new(&input);
+                self.find_effect(&effect)?.controls(&param, &mut edited, &mut ui);
+                json(&ControlsReply { widgets: ui.finish(), value: (edited != value).then_some(edited) })
+            }
             Call::Command { command } => {
                 let (_, run) = self.commands.iter().find(|(spec, _)| spec.id == command).ok_or_else(|| Error(format!("no command `{command}`")))?;
                 run()?;
@@ -117,4 +123,45 @@ impl Plugin {
 
 fn json(value: &impl Serialize) -> Result<serde_json::Value> {
     Ok(serde_json::to_value(value)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::{Param, ParamKind, UiEvent, UiEventKind, UiInput, Widget};
+
+    struct Toggle;
+
+    impl Effect for Toggle {
+        fn spec(&self) -> EffectSpec {
+            EffectSpec::new("toggle", "Toggle", "Test").param(Param::custom("state", "State", "off"))
+        }
+
+        fn controls(&self, param: &str, value: &mut String, ui: &mut Ui) {
+            if ui.button(param) {
+                *value = if value == "off" { "on".into() } else { "off".into() };
+            }
+        }
+    }
+
+    fn controls(plugin: &Plugin, value: &str, events: Vec<UiEvent>) -> ControlsReply {
+        let input = UiInput { events, ..Default::default() };
+        let call = Call::Controls { effect: "toggle".into(), param: "state".into(), value: value.into(), input };
+        let reply = plugin.dispatch(&serde_json::to_vec(&call).unwrap_or_default(), &mut []);
+        match serde_json::from_slice::<Outcome<ControlsReply>>(&reply) {
+            Ok(Outcome::Ok(reply)) => reply,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_custom_param_declares_its_default_text_and_its_control_returns_the_new_value_only_when_it_changes() {
+        let plugin = Plugin::new().effect(Toggle);
+        assert_eq!(plugin.contributions().effects[0].params[0].kind, ParamKind::Custom { default: "off".into() });
+        let idle = controls(&plugin, "off", vec![]);
+        assert_eq!(idle.value, None);
+        let Widget::Button { id, .. } = idle.widgets[0] else { panic!("button expected") };
+        let clicked = controls(&plugin, "off", vec![UiEvent { id, kind: UiEventKind::Click }]);
+        assert_eq!(clicked.value.as_deref(), Some("on"));
+    }
 }

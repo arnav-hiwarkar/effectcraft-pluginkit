@@ -55,3 +55,15 @@ pub fn cache_remove(key: &str) {
 pub fn list_files(root: Root, path: &str) -> Result<Vec<String>> {
     call(&HostCall::ListFiles { root, path: path.into() }, &[]).map(|(names, _)| names)
 }
+
+pub const MAX_IMAGE_SIDE: u32 = 8192;
+
+pub fn upload_image(key: &str, width: u32, height: u32, rgba8: &[u8]) -> Result<()> {
+    if width == 0 || height == 0 || width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE {
+        return Err(Error(format!("an image is 1 to {MAX_IMAGE_SIDE} pixels on a side, not {width}x{height}")));
+    }
+    if rgba8.len() != width as usize * height as usize * 4 {
+        return Err(Error(format!("a {width}x{height} image has {} bytes, not {}", width as usize * height as usize * 4, rgba8.len())));
+    }
+    call::<serde_json::Value>(&HostCall::UploadImage { key: key.into(), width, height }, rgba8).map(|_| ())
+}

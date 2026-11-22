@@ -16,7 +16,7 @@ pub mod prelude {
     pub use crate::host;
     pub use crate::{
         Blend, Camera, Canvas, Cull, Cx, Effect, EffectSpec, Error, Frame, GpuData, GpuImage, GpuPass, GpuPlan, Image, Layout, Light, LightKind, MaskPath,
-        Paint, Panel, Param, Pixel, Plugin, PointerPhase, Result, Root, Scene, Ui,
+        Paint, Panel, Param, Pixel, Plugin, Pointer, PointerPhase, Result, Root, Scene, Ui,
     };
 }
 
