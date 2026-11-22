@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -11,9 +12,10 @@ const DEFAULT_BRIDGE: &str = "9877";
 const POLL: Duration = Duration::from_secs(1);
 const ANSWER_WAIT: Duration = Duration::from_secs(60);
 
-fn newest_change(dir: &Path) -> (usize, SystemTime) {
-    let mut count = 0;
-    let mut newest = SystemTime::UNIX_EPOCH;
+type Stamps = BTreeMap<PathBuf, (u64, SystemTime)>;
+
+fn source_stamps(dir: &Path) -> Stamps {
+    let mut stamps = Stamps::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(folder) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&folder) else { continue };
@@ -25,14 +27,21 @@ fn newest_change(dir: &Path) -> (usize, SystemTime) {
                     stack.push(entry.path());
                 }
             } else if name != "Cargo.lock"
-                && let Ok(modified) = entry.metadata().and_then(|m| m.modified())
+                && let Ok(meta) = entry.metadata()
+                && let Ok(modified) = meta.modified()
             {
-                count += 1;
-                newest = newest.max(modified);
+                stamps.insert(entry.path(), (meta.len(), modified));
             }
         }
     }
-    (count, newest)
+    stamps
+}
+
+fn swap_in(staged: &Path, live: &Path) -> std::io::Result<()> {
+    if live.exists() {
+        std::fs::remove_dir_all(live)?;
+    }
+    std::fs::rename(staged, live)
 }
 
 enum Failure {
@@ -124,6 +133,23 @@ impl Dev {
         }
     }
 
+    fn rebuild(&mut self, dir: &Path, out: &Path, printed: &mut impl Write) {
+        let started = Instant::now();
+        let staging = out.join(".staging");
+        let built = assemble(dir, &staging, false, Messages::Short).and_then(|(staged, manifest)| {
+            let id = manifest["id"].as_str().unwrap_or_default().to_string();
+            let bundle = out.join(&id);
+            swap_in(&staged, &bundle).map_err(|e| format!("{}: {e}", bundle.display()))?;
+            Ok(Built { bundle, id, seconds: started.elapsed().as_secs_f64() })
+        });
+        match built {
+            Ok(built) => self.waiting = Some(built),
+            Err(error) => {
+                let _ = writeln!(printed, "not reloaded: {error}");
+            }
+        }
+    }
+
     fn print_log(&mut self, out: &mut impl Write) {
         let Some(id) = &self.running else { return };
         let Ok(lines) = self.control.execute("plugin.log", json!({ "id": id, "after": self.after })) else { return };
@@ -143,17 +169,10 @@ pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
     let mut seen = None;
     let mut stdout = std::io::stdout();
     loop {
-        let stamp = newest_change(&dir);
-        if seen != Some(stamp) {
+        let stamp = source_stamps(&dir);
+        if seen.as_ref() != Some(&stamp) {
             seen = Some(stamp);
-            let started = Instant::now();
-            match assemble(&dir, &out, false, Messages::Short) {
-                Ok((bundle, manifest)) => {
-                    let id = manifest["id"].as_str().unwrap_or_default().to_string();
-                    dev.waiting = Some(Built { bundle, id, seconds: started.elapsed().as_secs_f64() });
-                }
-                Err(error) => println!("not reloaded: {error}"),
-            }
+            dev.rebuild(&dir, &out, &mut stdout);
         }
         dev.reload(&mut stdout);
         dev.print_log(&mut stdout);
@@ -168,17 +187,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn renaming_a_file_is_a_change_even_when_the_count_and_the_newest_time_stay() {
+        let work = tempfile::tempdir().unwrap();
+        super::super::tests::folder(work.path());
+        let before = source_stamps(work.path());
+        let old = std::fs::metadata(work.path().join("assets/b.txt")).unwrap().modified().unwrap();
+        std::fs::rename(work.path().join("assets/b.txt"), work.path().join("assets/c.txt")).unwrap();
+        std::fs::File::options().write(true).open(work.path().join("assets/c.txt")).unwrap().set_modified(old).unwrap();
+        assert_ne!(source_stamps(work.path()), before);
+    }
+
+    #[test]
+    fn a_failed_build_leaves_the_live_bundle_and_the_pending_reload_as_they_were() {
+        let work = tempfile::tempdir().unwrap();
+        let source = work.path().join("source");
+        super::super::tests::folder(&source);
+        std::fs::write(source.join("Cargo.toml"), "[package\n").unwrap();
+        let out = work.path().join("dist");
+        let live = out.join("com.example.t");
+        std::fs::create_dir_all(live.join("assets")).unwrap();
+        std::fs::write(live.join("assets/b.txt"), "running").unwrap();
+        let mut dev = Dev::new("0");
+        let mut printed = Vec::new();
+        dev.rebuild(&source, &out, &mut printed);
+        assert_eq!(std::fs::read_to_string(live.join("assets/b.txt")).unwrap(), "running");
+        assert!(dev.waiting.is_none());
+        assert!(String::from_utf8(printed).unwrap().starts_with("not reloaded: "));
+    }
+
+    #[test]
     fn writing_a_lock_file_or_a_stored_frame_does_not_count_as_a_source_change() {
         let work = tempfile::tempdir().unwrap();
         super::super::tests::folder(work.path());
-        let before = newest_change(work.path());
+        let before = source_stamps(work.path());
         std::thread::sleep(Duration::from_millis(20));
         std::fs::write(work.path().join("Cargo.lock"), "version = 4").unwrap();
         std::fs::create_dir_all(work.path().join("tests/frames")).unwrap();
         std::fs::write(work.path().join("tests/frames/a.png"), "png").unwrap();
-        assert_eq!(newest_change(work.path()), before);
+        assert_eq!(source_stamps(work.path()), before);
         std::fs::write(work.path().join("assets/b.txt"), "changed").unwrap();
-        assert_ne!(newest_change(work.path()), before);
+        assert_ne!(source_stamps(work.path()), before);
     }
 
     fn serve(replies: Vec<Value>) -> (String, std::thread::JoinHandle<Vec<Value>>) {
