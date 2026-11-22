@@ -513,6 +513,12 @@ reason has still landed.
 | `window.plugins` | | Opens the plugin manager |
 | `window.pluginPanel` | `plugin`, `panel` | Opens a plugin panel |
 
+`keys.info {keys?}` describes the selected keyframes, and plugins with `document.read` use it. Each key has
+its `index` among its property's keys and the property's `keyCount`. For a spatial property, `segmentLength`
+is the length in pixels of the path from this key to the next (`null` on the last key) and `pathLength` the
+length of the whole path. `dims` is the number of dimensions the layer shows (2 for scale on a 2D layer) and
+`easeDims` the number `keys.setEase` works on (3); `inEase` and `outEase` have `easeDims` entries.
+
 An automation agent confined to folders cannot run any of these except `plugin.list`.
 
 Installed plugins live in `Plugins/` in the settings folder. `Plugins/state.json` records each approval.

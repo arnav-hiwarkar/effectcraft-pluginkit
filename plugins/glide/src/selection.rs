@@ -13,6 +13,8 @@ pub enum KeyValue {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SelectedKey {
+    pub index: usize,
+    pub segment_length: Option<f64>,
     pub time: f64,
     pub comp_time: f64,
     pub value: KeyValue,
@@ -53,6 +55,9 @@ struct RawKey {
     prop: u64,
     #[serde(default)]
     name: String,
+    index: usize,
+    #[serde(default)]
+    segment_length: Option<f64>,
     time: f64,
     comp_time: f64,
     value: Value,
@@ -68,16 +73,6 @@ struct RawKey {
     in_ease: Vec<Option<RawEase>>,
     #[serde(default)]
     out_ease: Vec<Option<RawEase>>,
-}
-
-#[derive(Deserialize)]
-struct RawTimedKey {
-    time: f64,
-}
-
-#[derive(Deserialize)]
-struct RawProperty {
-    keys: Vec<RawTimedKey>,
 }
 
 fn ease(raw: Option<RawEase>) -> Option<Ease> {
@@ -97,6 +92,8 @@ pub fn parse(info: &Value) -> Result<Vec<PropertyKeys>, String> {
     let mut properties: Vec<PropertyKeys> = Vec::new();
     for key in raw {
         let selected = SelectedKey {
+            index: key.index,
+            segment_length: key.segment_length,
             time: key.time,
             comp_time: key.comp_time,
             value: key_value(&key.value),
@@ -124,19 +121,9 @@ pub fn parse(info: &Value) -> Result<Vec<PropertyKeys>, String> {
     Ok(properties)
 }
 
-pub fn key_times(property: &Value) -> Result<Vec<f64>, String> {
-    let raw: RawProperty = serde_json::from_value(property.clone()).map_err(|e| format!("Unexpected property data: {e}"))?;
-    Ok(raw.keys.into_iter().map(|k| k.time).collect())
-}
-
 impl PropertyKeys {
-    pub fn pairs(&self, all_times: &[f64]) -> Vec<Pair<'_>> {
-        let index_of = |key: &SelectedKey| all_times.iter().position(|t| (t - key.time).abs() < SAME_TIME);
-        self.keys
-            .windows(2)
-            .filter(|w| matches!((index_of(&w[0]), index_of(&w[1])), (Some(a), Some(b)) if b == a + 1))
-            .map(|w| Pair { property: self, start: &w[0], end: &w[1] })
-            .collect()
+    pub fn pairs(&self) -> Vec<Pair<'_>> {
+        self.keys.windows(2).filter(|w| w[1].index == w[0].index + 1).map(|w| Pair { property: self, start: &w[0], end: &w[1] }).collect()
     }
 }
 
@@ -166,12 +153,12 @@ mod tests {
 
     fn info() -> Value {
         json!([
-            {"layer": 4, "prop": 15, "name": "Opacity", "time": 2.002, "compTime": 2.002, "value": 100.0, "spatial": null,
+            {"layer": 4, "prop": 15, "name": "Opacity", "index": 1, "time": 2.002, "compTime": 2.002, "value": 100.0, "spatial": null,
              "continuous": false, "autoBezier": false, "roving": false,
              "inEase": [{"speed": 49.95, "influence": 16.666666666666664}], "outEase": [null]},
-            {"layer": 4, "prop": 9, "name": "Position", "time": 0.0, "compTime": 0.5, "value": [100.0, 100.0, 0.0], "spatial": "autoBezier",
+            {"layer": 4, "prop": 9, "name": "Position", "index": 0, "time": 0.0, "compTime": 0.5, "value": [100.0, 100.0, 0.0], "spatial": "autoBezier",
              "continuous": true, "autoBezier": false, "roving": false, "inEase": [null], "outEase": [{"speed": 224.9, "influence": 50.0}]},
-            {"layer": 4, "prop": 15, "name": "Opacity", "time": 0.0, "compTime": 0.0, "value": 0.0, "spatial": null,
+            {"layer": 4, "prop": 15, "name": "Opacity", "index": 0, "time": 0.0, "compTime": 0.0, "value": 0.0, "spatial": null,
              "continuous": false, "autoBezier": true, "roving": false, "inEase": [null], "outEase": [{"speed": 0.0, "influence": 50.0}]}
         ])
     }
@@ -198,6 +185,8 @@ mod tests {
     #[test]
     fn only_neighbouring_selected_keys_form_pairs() {
         let key = |time: f64| SelectedKey {
+            index: time as usize,
+            segment_length: None,
             time,
             comp_time: time,
             value: KeyValue::Components(vec![time]),
@@ -208,14 +197,8 @@ mod tests {
             out_ease: vec![],
         };
         let property = PropertyKeys { layer: 1, prop: 2, name: "Rotation".into(), spatial: false, keys: vec![key(0.0), key(1.0), key(3.0), key(4.0)] };
-        let pairs = property.pairs(&[0.0, 1.0, 2.0, 3.0, 4.0]);
+        let pairs = property.pairs();
         let spans: Vec<_> = pairs.iter().map(|p| (p.start.time, p.end.time)).collect();
         assert_eq!(spans, vec![(0.0, 1.0), (3.0, 4.0)]);
-    }
-
-    #[test]
-    fn property_key_times_come_from_the_property_reply() {
-        let reply = json!({"keys": [{"time": 0.0, "compTime": 0.5}, {"time": 1.001}], "value": 3});
-        assert_eq!(key_times(&reply), Ok(vec![0.0, 1.001]));
     }
 }
