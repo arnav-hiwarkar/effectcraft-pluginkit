@@ -234,7 +234,8 @@ const KEY_FILE: &str = "key";
 const MAC_LEN: usize = 32;
 
 fn cached(engine: &Engine, bytes: &[u8], cache: &Path) -> Result<Module, PluginError> {
-    let path = cache.join(format!("{}.cwasm", cache_name(engine, bytes)));
+    let name = cache_name(engine, bytes);
+    let path = cache.join(format!("{name}.cwasm"));
     let key = match install_key(cache) {
         Ok(key) => key,
         Err(error) => {
@@ -242,13 +243,15 @@ fn cached(engine: &Engine, bytes: &[u8], cache: &Path) -> Result<Module, PluginE
             return engine.precompile_module(bytes).and_then(|compiled| native::fresh_module(engine, &compiled)).map_err(load_error);
         }
     };
-    if let Some(module) = std::fs::read(&path).ok().as_deref().and_then(|entry| signed_body(&key, entry)).and_then(|body| native::compiled_module(engine, body))
+    if let Some(module) =
+        std::fs::read(&path).ok().as_deref().and_then(|entry| signed_body(&key, &name, entry)).and_then(|body| native::compiled_module(engine, body))
     {
         return Ok(module);
     }
     let mut compiled = engine.precompile_module(bytes).map_err(load_error)?;
     let module = native::fresh_module(engine, &compiled).map_err(load_error)?;
-    compiled.extend_from_slice(&hmac(&key, &compiled));
+    let mac = hmac(&key, &[name.as_bytes(), &compiled]);
+    compiled.extend_from_slice(&mac);
     let staged = path.with_extension(format!("{}.part", std::process::id()));
     let stored = std::fs::write(&staged, &compiled).and_then(|()| std::fs::rename(&staged, &path));
     if let Err(error) = stored {
@@ -258,17 +261,17 @@ fn cached(engine: &Engine, bytes: &[u8], cache: &Path) -> Result<Module, PluginE
     Ok(module)
 }
 
-fn signed_body<'a>(key: &[u8; 32], entry: &'a [u8]) -> Option<&'a [u8]> {
+fn signed_body<'a>(key: &[u8; 32], name: &str, entry: &'a [u8]) -> Option<&'a [u8]> {
     let (body, mac) = entry.split_at_checked(entry.len().checked_sub(MAC_LEN)?)?;
-    let expected = hmac(key, body);
+    let expected = hmac(key, &[name.as_bytes(), body]);
     (mac.iter().zip(expected).fold(0, |differ, (a, b)| differ | (a ^ b)) == 0).then_some(body)
 }
 
-fn hmac(key: &[u8], message: &[u8]) -> [u8; 32] {
+fn hmac(key: &[u8], message: &[&[u8]]) -> [u8; 32] {
     let mut padded = [0u8; 64];
     padded[..key.len()].copy_from_slice(key);
     let pad = |byte: u8| padded.map(|k| k ^ byte);
-    let inner = Sha256::new().chain_update(pad(0x36)).chain_update(message).finalize();
+    let inner = message.iter().fold(Sha256::new().chain_update(pad(0x36)), |digest, part| digest.chain_update(part)).finalize();
     Sha256::new().chain_update(pad(0x5c)).chain_update(inner).finalize().into()
 }
 
@@ -351,7 +354,7 @@ mod tests {
 
     #[test]
     fn hmac_sha256_matches_rfc_4231_test_case_2() {
-        let mac = hmac(b"Jefe", b"what do ya want for nothing?");
+        let mac = hmac(b"Jefe", &[b"what do ya ", b"want for nothing?"]);
         let hex: String = mac.iter().map(|byte| format!("{byte:02x}")).collect();
         assert_eq!(hex, "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
     }
@@ -368,5 +371,16 @@ mod tests {
         let signed = std::fs::read(&entry).unwrap();
         assert_eq!(cached(engine, EMPTY, dir.path()).unwrap().imports().len(), 0);
         assert_eq!(std::fs::read(&entry).unwrap(), signed);
+    }
+
+    #[test]
+    fn a_signed_entry_copied_over_another_plugins_entry_is_recompiled_not_loaded() {
+        let engine = engine().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let entry = |bytes: &[u8]| dir.path().join(format!("{}.cwasm", cache_name(engine, bytes)));
+        assert_eq!(cached(engine, ONE_IMPORT, dir.path()).unwrap().imports().len(), 1);
+        assert_eq!(cached(engine, EMPTY, dir.path()).unwrap().imports().len(), 0);
+        std::fs::copy(entry(ONE_IMPORT), entry(EMPTY)).unwrap();
+        assert_eq!(cached(engine, EMPTY, dir.path()).unwrap().imports().len(), 0);
     }
 }
