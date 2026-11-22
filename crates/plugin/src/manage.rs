@@ -477,6 +477,7 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
     let plugins = plugins().ok_or_else(|| failed("plugins are not available".into()))?;
     let text = |key: &str| params.get(key).and_then(Value::as_str).ok_or_else(|| failed(format!("`{id}` needs a `{key}` string")));
     let info = |info: PluginInfo| serde_json::to_value(info).map_err(|e| failed(e.to_string()));
+    let effects_before = effectcraft_engine::effects::dynamic::generation();
     let result = match id {
         "plugin.list" => Ok(json!(plugins.list())),
         "plugin.install" => plugins.install(Path::new(text("path")?)).map_err(failed).and_then(info),
@@ -513,5 +514,10 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
         _ => Err(failed(format!("unknown plugin command `{id}`"))),
     };
     session.plugin_items = plugins.items();
+    if effectcraft_engine::effects::dynamic::generation() != effects_before {
+        for lost in effectcraft_engine::upgrade_effects(Arc::make_mut(&mut session.project)) {
+            log::warn!("{lost} lost its animation when its plug-in started");
+        }
+    }
     result
 }

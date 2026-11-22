@@ -232,3 +232,20 @@ fn reloading_new_code_with_the_same_effect_declarations_reuses_their_description
         assert!(std::ptr::eq(effectcraft_engine::effects::find(effect).unwrap(), first), "reload {extra} leaked a new description");
     }
 }
+
+#[test]
+fn a_plugin_that_starts_after_its_project_opened_gives_existing_instances_their_missing_parameters() {
+    let mut app = app("test.render-late", &[]);
+    let solid = app.session.execute("layer.newSolid", json!({"name": "Red", "color": "#ff3300", "width": 64, "height": 36})).unwrap()["layer"].as_u64();
+    app.session.execute("effect.apply", json!({"effect": "test.render-late.invert"})).unwrap();
+    let comp = app.session.active_comp_id().unwrap();
+    let layer =
+        std::sync::Arc::make_mut(&mut app.session.project).comp_mut(comp).unwrap().layer_mut(effectcraft_engine::project::LayerId(solid.unwrap())).unwrap();
+    let Some(effectcraft_engine::project::Node::Group(instance)) = layer.props.sub_mut("effects").unwrap().children.first_mut() else { panic!("no instance") };
+    instance.children.retain(|node| !matches!(node, effectcraft_engine::project::Node::Prop(prop) if prop.match_id == "amount"));
+    let path = json!({"layer": solid, "path": "effects/#1/amount"});
+    assert!(app.session.execute("prop.get", path.clone()).is_err());
+
+    app.session.execute("plugin.load", json!({"path": app.bundle.path()})).unwrap();
+    assert_eq!(app.session.execute("prop.get", path).unwrap()["value"], json!(1.0));
+}

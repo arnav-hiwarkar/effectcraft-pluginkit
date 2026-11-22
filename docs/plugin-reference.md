@@ -110,6 +110,9 @@ Panels, commands, the CLI and automation all use these two commands.
 | `Param::layer(id, name)` | `cx.layer(id)` | another layer's pixels |
 | `Param::mask(id, name)` | `cx.index(id)` | index into `cx.masks()` |
 
+A new version of a plugin may add parameters. Effects already applied in a project gain them with their
+defaults when the project opens, or when the plugin starts while the project is open.
+
 ### Cx
 
 `Cx` dereferences to these fields.
