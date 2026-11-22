@@ -401,7 +401,8 @@ fn make() -> Plugin {
         .task("frame", "Read A Frame", |task: &Task| {
             let args = task.args();
             let layer = args["layer"].as_str().map(String::from);
-            let request = craft_plugin::FrameRequest { comp: None, layer, time: args["time"].as_f64().unwrap_or(0.0), scale: args["scale"].as_f64().unwrap_or(1.0) };
+            let request =
+                craft_plugin::FrameRequest { comp: None, layer, time: args["time"].as_f64().unwrap_or(0.0), scale: args["scale"].as_f64().unwrap_or(1.0) };
             let image = host::frame(request)?;
             let center = image.at(image.width as isize / 2, image.height as isize / 2);
             Ok(json!({"width": image.width, "height": image.height, "center": center}))
