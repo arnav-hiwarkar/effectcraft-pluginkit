@@ -199,6 +199,17 @@ impl Effect for Passes {
     fn pass(&self, _cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {
         let src = pass.src;
         let sum = |pixels: &[(Pixel, f32)]| -> Pixel { std::array::from_fn(|c| pixels.iter().map(|(pixel, weight)| pixel[c] * weight).sum()) };
+        if pass.kernel == "probe_tall_aux" {
+            let aux = pass.aux.ok_or("probe_tall_aux reads aux")?;
+            for (y, row) in out.rows_mut() {
+                for (x, pixel) in row.iter_mut().enumerate() {
+                    let (x, y) = (x as isize, y as isize);
+                    let tall = sum(&(-3..=3).map(|dy| (aux.at(x, y + dy), (dy + 4) as f32)).collect::<Vec<_>>());
+                    *pixel = std::array::from_fn(|c| src.at(x, y)[c] + tall[c]);
+                }
+            }
+            return Ok(());
+        }
         let kernel: Taps = match pass.kernel {
             "probe_red" => return Ok(out.pixels.fill([1.0, 0.0, 0.0, 1.0])),
             "probe_nothing" => return Ok(()),
@@ -276,6 +287,54 @@ impl Effect for GpuSoften {
             }
         }
         Ok(())
+    }
+}
+
+const KERNEL_PADDING: u32 = 6;
+
+struct HostKernels;
+
+impl Effect for HostKernels {
+    fn spec(&self) -> EffectSpec {
+        let kernels = ["blur", "box blur", "resample", "blend", "curves", "convolve", "full convolve", "warp", "matrix", "glow"];
+        let modes = ["over", "add", "subtract", "multiply", "screen", "overlay", "darken", "lighten", "difference"];
+        EffectSpec::new("host-kernels", "Host Kernels", "Probe")
+            .param(Param::popup("kernel", "Kernel", &kernels, 0))
+            .param(Param::popup("mode", "Mode", &modes, 0))
+            .shader("")
+    }
+
+    fn layout(&self, cx: &Cx) -> Layout {
+        let frame = cx.padded(KERNEL_PADDING).size;
+        let (source, output) = (GpuImage::Source, GpuImage::Output);
+        let mut plan = GpuPlan::new();
+        let (half, soft) = (plan.scratch(frame.map(|side| side.div_ceil(2))), plan.scratch(frame));
+        let blurred = GpuPass::blur(source, soft, [3.0, 5.0]);
+        let curve: Vec<Pixel> = (0..17).map(|i| i as f32 / 16.0).map(|t| [t * t, t.sqrt(), 1.0 - t, t]).collect();
+        let plan = match cx.index("kernel") {
+            0 => plan.pass(GpuPass::blur(source, output, [4.0, 2.5])),
+            1 => plan.pass(GpuPass::box_blur(source, output, [2.5, 0.0])),
+            2 => plan.pass(GpuPass::resample(source, half, Filter::Bilinear)).pass(GpuPass::resample(half, output, Filter::Bicubic)),
+            3 => plan.pass(blurred).pass(GpuPass::blend_images(source, soft, output, BlendMode::ALL[cx.index("mode").min(8)], 0.8)),
+            4 => plan.pass(GpuPass::curves(source, output, &curve)),
+            5 => plan.pass(GpuPass::convolve(source, output, craft_plugin::Taps::Separable { x: vec![-0.5, 2.0, -0.5], y: vec![0.25, 0.5, 0.25] })),
+            6 => plan.pass(GpuPass::convolve(
+                source,
+                output,
+                craft_plugin::Taps::Full { width: 3, weights: vec![0.0, -1.0, 0.0, -1.0, 5.0, -1.0, 0.0, -1.0, 0.0] },
+            )),
+            7 => plan.pass(blurred).pass(GpuPass::warp(source, soft, output, [6.0, -4.0])),
+            8 => plan.pass(GpuPass::matrix(source, output, [[0.0, 0.0, 1.0, 0.0], [0.3, 0.6, 0.1, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]])),
+            _ => {
+                let quarter = frame.map(|side| side.div_ceil(4));
+                let (small, blurred) = (plan.scratch(quarter), plan.scratch(quarter));
+                plan.pass(GpuPass::resample(source, small, Filter::Bilinear))
+                    .pass(GpuPass::blur(small, blurred, [1.5; 2]))
+                    .pass(GpuPass::resample(blurred, soft, Filter::Bilinear))
+                    .pass(GpuPass::blend_images(source, soft, output, BlendMode::Screen, 0.7))
+            }
+        };
+        Layout::whole_frame().padded(KERNEL_PADDING).passes(plan)
     }
 }
 
@@ -466,6 +525,7 @@ fn make() -> Plugin {
         .effect(Report)
         .effect(GpuInvert)
         .effect(GpuSoften)
+        .effect(HostKernels)
         .effect(Passes)
         .effect(GpuFill)
         .effect(GpuMatte)

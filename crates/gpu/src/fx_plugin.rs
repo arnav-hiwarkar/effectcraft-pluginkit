@@ -71,7 +71,8 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
                 let pipeline = compute.next()?;
                 let out = e.image(w, h);
                 let images_bound = KernelImages { src: &src, aux: aux.as_ref(), out: &out };
-                e.dispatch(Kernel::Plugin { pipeline, label: &pass.kernel }, &params(pass), images_bound, None, (w.div_ceil(16), h.div_ceil(16)));
+                let data = (!pass.data.is_empty()).then(|| e.data(&pass.data));
+                e.dispatch(Kernel::Plugin { pipeline, label: &pass.kernel }, &params(pass), images_bound, data.as_ref(), (w.div_ceil(16), h.div_ceil(16)));
                 Some(out)
             }
             Some(_) => {

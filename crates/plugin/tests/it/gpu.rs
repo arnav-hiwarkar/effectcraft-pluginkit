@@ -236,3 +236,26 @@ fn a_gpu_plan_past_its_budget_shows_why_in_the_effect_error() {
     assert!(why.contains(spec.id) && why.contains("past the 0 ms budget") && why.contains("until the plugin is reloaded"), "{why}");
     assert!(!gpu.supports_effect(spec.id), "the next frame renders on the CPU");
 }
+
+#[test]
+fn every_host_kernel_renders_on_the_gpu_within_two_levels_of_the_cpu() {
+    let app = app("test.gpu-kernels", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
+    assert!(spec.gpu && gpu.supports_effect(spec.id), "a plan of host kernels needs no plugin WGSL to run on the GPU");
+    let cases = (0..10).map(|kernel| (kernel, 0)).chain((1..9).map(|mode| (3, mode)));
+    for (kernel, mode) in cases {
+        let params = params(spec, &[("kernel", f64::from(kernel)), ("mode", f64::from(mode))]);
+        let cpu = effects::apply(spec, &ctx(&params), picture());
+        assert_eq!(app.plugins.render_error(spec.id), None, "kernel {kernel} mode {mode}: the CPU render succeeded");
+        let mut unchanged = picture();
+        unchanged.pad(cpu.offset[0] as u32);
+        assert!(worst_difference(&cpu.img, &unchanged.img) > 0.02, "kernel {kernel} mode {mode}: the kernel changes the picture");
+        let out =
+            gpu.effects(&[FxStep { spec, ctx: ctx(&params) }], &picture(), None).unwrap_or_else(|| panic!("kernel {kernel} mode {mode}: the GPU ran the plan"));
+        assert_eq!((out.offset, out.img.width, out.img.height), (cpu.offset, cpu.img.width, cpu.img.height), "kernel {kernel} mode {mode}: geometry");
+        let worst = worst_difference(&cpu.img, &out.img);
+        eprintln!("host kernel {kernel} mode {mode}: GPU and CPU differ by at most {worst:.2e}");
+        assert!(worst < 2.0 / 255.0, "kernel {kernel} mode {mode}: GPU and CPU differ by {worst}");
+    }
+}

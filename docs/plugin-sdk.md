@@ -144,6 +144,34 @@ let plan = GpuPlan::new().pass(GpuPass::new("tint_apply", GpuImage::Source, GpuI
 assert_eq!(plan.validate([1920, 1080]), Ok(()));
 ```
 
+## Host kernels
+
+Blurs, resampling, blends, curves, convolutions, warps and colour matrices need no code of your own.
+Name them as passes of a plan and the app runs them natively on the CPU and with its own WGSL on the
+GPU, with the same result on both. In a sandboxed plugin they run at native speed with no frame copied
+into the sandbox. A glow:
+
+```rust
+fn layout(&self, cx: &Cx) -> Layout {
+    let radius = (cx.px("radius") as f32).clamp(0.0, 2048.0);
+    let padding = radius.ceil() as u32;
+    let frame = cx.padded(padding).size;
+    let mut plan = GpuPlan::new();
+    let quarter = frame.map(|side| side.div_ceil(4));
+    let (small, blurred, glow) = (plan.scratch(quarter), plan.scratch(quarter), plan.scratch(frame));
+    let plan = plan
+        .pass(GpuPass::resample(GpuImage::Source, small, Filter::Bilinear))
+        .pass(GpuPass::blur(small, blurred, [radius / 4.0; 2]))
+        .pass(GpuPass::resample(blurred, glow, Filter::Bilinear))
+        .pass(GpuPass::blend_images(GpuImage::Source, glow, GpuImage::Output, BlendMode::Screen, cx.f("amount") as f32));
+    Layout::whole_frame().padded(padding).passes(plan)
+}
+```
+
+Give the effect `.shader("")` so the GPU runs the plan too. A wrong field fails `plan.validate` with the
+pass and the field it refuses. Mix host kernels with your own passes in one plan when a step is your
+own. [Passes](plugin-gpu.md#host-kernels) lists every kernel and its rules.
+
 ## Fast maths
 
 In a sandboxed plugin, `f32::exp2`, `powf`, `sin`, `atan2` and the other maths functions are not single

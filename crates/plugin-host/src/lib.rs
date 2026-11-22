@@ -2,6 +2,7 @@
 mod cache;
 mod host;
 mod images;
+pub mod kernels;
 mod package;
 mod plugin;
 mod registry;

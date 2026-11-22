@@ -39,7 +39,7 @@ const EXT_ENTRIES: &[&str] = &["classic3d"];
 /// (the compositor's kernels, which declare `out` and helpers the effect files use).
 const BASE_WGSL: [&str; 2] = [include_str!("shaders/common.wgsl"), include_str!("shaders/kernels.wgsl")];
 
-const PLUGIN_PRELUDE: [&str; 2] = [include_str!("shaders/common.wgsl"), include_str!("shaders/plugin.wgsl")];
+const PLUGIN_PRELUDE: [&str; 3] = [include_str!("shaders/common.wgsl"), include_str!("shaders/plugin.wgsl"), include_str!("shaders/plugin_kernels.wgsl")];
 
 const MAX_PLUGIN_KERNELS: usize = 256;
 
