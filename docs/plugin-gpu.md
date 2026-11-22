@@ -84,7 +84,7 @@ A buffer is one of:
 
 | Data | What it is |
 |---|---|
-| `GpuData::Cache(key)` | Bytes the plugin stored with `host::cache_put(key, bytes)`: little-endian `f32` for vertices and instances, `u32` for indices. Store a mesh once and name it in every frame's plan; the app uploads it to the GPU again only when the bytes change. |
+| `GpuData::Cache(key)` | Bytes the plugin stored with `host::cache_put(key, bytes)`: little-endian `f32` for vertices and instances, `u32` for indices. Store a mesh once and name it in every frame's plan; the app uploads it to the GPU again only when the bytes change. The cache drops its least recently used entries when it is full, so check with `host::cache_has(key)` while building the plan and store the bytes again when it returns `false`. |
 | `GpuData::Floats(values)` | Values sent with the plan. Right for a few hundred numbers that change each frame. |
 | `GpuData::Indices(values)` | Indices sent with the plan. |
 

@@ -3,9 +3,6 @@ pub mod mesh;
 pub mod obj;
 pub mod scene;
 
-use std::collections::HashSet;
-use std::sync::Mutex;
-
 use craft_plugin::prelude::*;
 
 use crate::mesh::Mesh;
@@ -19,16 +16,12 @@ const MAX_COPIES: f64 = 24.0;
 struct Forge;
 
 fn stored_mesh(model: usize) -> (String, String) {
-    static STORED: Mutex<Option<HashSet<usize>>> = Mutex::new(None);
     let keys = (format!("forge-3d/mesh/{model}/vertices"), format!("forge-3d/mesh/{model}/indices"));
-    let mut stored = STORED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if stored.get_or_insert_with(HashSet::new).contains(&model) {
+    if host::cache_has(&keys.0) && host::cache_has(&keys.1) {
         return keys;
     }
     let mesh = build(model);
-    if host::cache_put(&keys.0, &mesh.vertex_bytes()).and_then(|()| host::cache_put(&keys.1, &mesh.index_bytes())).is_ok() {
-        stored.get_or_insert_with(HashSet::new).insert(model);
-    }
+    let _ = host::cache_put(&keys.0, &mesh.vertex_bytes()).and_then(|()| host::cache_put(&keys.1, &mesh.index_bytes()));
     keys
 }
 

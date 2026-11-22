@@ -393,3 +393,20 @@ fn forge_3d_lines_up_with_a_3d_layer_in_the_default_view() {
     let Some(centres) = aligned_centres(None, [230.0, 50.0, 300.0]) else { return };
     assert_within_two_pixels(centres, "the comp's default view");
 }
+
+#[test]
+fn a_mesh_dropped_from_the_plugin_cache_is_stored_again_on_the_next_frame() {
+    let Some(gpu) = gpu() else { return };
+    let mut comp = Comp::new([120, 80]);
+    comp.forge(&[("model", json!(0)), ("Transform/size", json!(20.0)), ("show_layer", json!(false))]);
+    let drawn = |image: &Image| image.data.iter().filter(|pixel| pixel[3] > 0.5).count();
+    let before = drawn(&comp.frame(gpu));
+    let forge = effectcraft_plugin::plugins().and_then(|plugins| plugins.get("org.craftkit.forge-3d")).expect("Forge 3D is loaded");
+    let key = "forge-3d/mesh/0/vertices";
+    assert!(forge.plugin.cached(key).is_some(), "the cube's vertices are cached after a frame");
+    forge.plugin.uncache(key);
+    let after = drawn(&comp.frame(gpu));
+    assert!(before > 400, "the cube covers {before} pixels");
+    assert_eq!(after, before, "after its vertices left the cache the cube still draws");
+    assert!(forge.plugin.cached(key).is_some(), "the vertices are back in the cache");
+}

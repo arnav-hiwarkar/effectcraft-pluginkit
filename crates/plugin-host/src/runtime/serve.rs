@@ -118,6 +118,7 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             None => (Value::Bool(false), Bulk::None),
         }),
         HostCall::CachePut { key } => cx.plugin.cache.put(key, bulk).map(|()| (Value::Null, Bulk::None)),
+        HostCall::CacheHas { key } => plain(Value::Bool(cx.plugin.cache.get(&key).is_some())),
         HostCall::CacheRemove { key } => {
             cx.plugin.cache.remove(&key);
             plain(Value::Null)

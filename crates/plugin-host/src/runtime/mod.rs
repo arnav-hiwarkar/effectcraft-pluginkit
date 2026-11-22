@@ -57,6 +57,10 @@ impl Engine {
         self.identity.cache.get(key)
     }
 
+    pub fn uncache(&self, key: &str) {
+        self.identity.cache.remove(key);
+    }
+
     pub fn copies_pixels(&self) -> bool {
         matches!(self.kind, Kind::Wasm { .. })
     }

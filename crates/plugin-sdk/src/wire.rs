@@ -542,6 +542,7 @@ pub enum HostCall {
     Frame { request: FrameRequest },
     Audio { request: AudioRequest },
     PickFile { request: PickFile },
+    CacheHas { key: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

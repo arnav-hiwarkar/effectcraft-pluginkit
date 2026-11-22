@@ -14,7 +14,7 @@ fn access(call: &HostCall, host: &dyn Host, plugin: &Identity, origin: Origin) -
         HostCall::ReadFile { root: Root::User, path } | HostCall::ListFiles { root: Root::User, path } if plugin.picked(path, false) => Access::Free,
         HostCall::WriteFile { root: Root::User, path } if plugin.picked(path, true) => Access::Free,
         HostCall::Log { .. } | HostCall::Notify { .. } | HostCall::Layer { .. } | HostCall::Source { .. } | HostCall::Masks | HostCall::Scene => Access::Free,
-        HostCall::CacheGet { .. } | HostCall::CachePut { .. } | HostCall::CacheRemove { .. } => Access::Free,
+        HostCall::CacheGet { .. } | HostCall::CachePut { .. } | HostCall::CacheRemove { .. } | HostCall::CacheHas { .. } => Access::Free,
         HostCall::Command { id, params } => host.access(id, params),
         HostCall::ReadFile { root: Root::User, .. } | HostCall::ListFiles { root: Root::User, .. } => Access::Needs(vec![Permission::FilesRead]),
         HostCall::WriteFile { root: Root::User, .. } => Access::Needs(vec![Permission::FilesWrite]),
