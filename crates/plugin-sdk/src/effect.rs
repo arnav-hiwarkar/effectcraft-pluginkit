@@ -14,7 +14,8 @@ pub trait Effect: Send + Sync + 'static {
         Layout::whole_frame()
     }
 
-    fn render(&self, _cx: &Cx, _frame: &mut Frame) -> Result<()> {
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        frame.map(|pixel| pixel);
         Ok(())
     }
 

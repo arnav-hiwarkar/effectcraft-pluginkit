@@ -257,6 +257,19 @@ fn a_render_of_a_part_of_the_frame_equals_that_part_cut_from_a_whole_render() {
 }
 
 #[test]
+fn an_effect_without_a_cpu_render_leaves_the_part_it_is_asked_for_unchanged() {
+    let source = numbered(5, 4);
+    let part = Rect { left: 1, top: 1, right: 4, bottom: 3 };
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let mut pixels = source.clone();
+        loaded.plugin.render("plain", &cx(5, 4), &Layout::whole_frame(), Some(part), &mut pixels, Recorder::default).unwrap();
+        assert_eq!(pixels, cut(&source, 5, part), "{kind:?}");
+        assert_eq!(pixels[0], [6.0, 1.0, 0.5, 1.0], "{kind:?}");
+    });
+}
+
+#[test]
 fn an_effect_that_maps_its_input_reads_the_rows_it_names_in_every_band() {
     let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
     let (width, height) = (3usize, 600usize);

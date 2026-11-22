@@ -50,7 +50,7 @@ cancelled even if it returns a result. The last 16 finished tasks of a plugin st
 pub trait Effect: Send + Sync + 'static {
     fn spec(&self) -> EffectSpec;
     fn layout(&self, cx: &Cx) -> Layout;                       // default: Layout::whole_frame()
-    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()>; // default: writes nothing
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()>; // default: writes the input unchanged
     fn input(&self, cx: &Cx, out: Rect) -> Rect;                // default: out; asked only with Layout::maps_input
     fn controls(&self, instance: u64, param: &str, value: &mut String, ui: &mut Ui); // default: draws nothing
     fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()>; // default: an error naming the kernel

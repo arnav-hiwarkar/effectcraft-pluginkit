@@ -91,3 +91,18 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
   worker and once in a full run at load 15 to 30, passed 15 of 15 alone and 4 of 4 full runs at load 13.
   The key's `opts` mixes in the fast-preview draft state and a process-wide LUT generation, so a slow
   frame or a parallel test can move it. Upstream code; the cause was not pinned down.
+
+## Found by the region work, not fixed
+
+- **Only the last plugin effects of a stack render a part.** A plugin effect gets the shown part grown by
+  the margins of the effects after it, and built-in effects declare a margin only for a few 3D channel
+  effects (`pixel_margin` in `crates/effects/src/channel3d.rs`), so a plugin effect followed by a blur or a
+  colour effect renders the whole layer. Plugin effects declare no margin to the pipeline either, so the
+  first of two plugin effects renders whole. The shown part also ignores the layer's masks.
+- **A light sandboxed effect is slower than with in-place frames.** Its band now has an input region and a
+  separate output region in plugin memory, and the output region is zeroed before the call, so Probe
+  sandboxed at 1080p went from 1.64 to 2.55 ms (minimum of three interleaved runs, load 34 to 40). Heavy
+  effects gain: sandboxed Retro Neon 46.6 to 30.2 ms in the same runs.
+- **A moving layer that is partly outside the frame is rendered again on every frame.** Its cache key holds
+  the shown rectangle, which moves with it. A layer wholly inside the frame keeps one key.
+

@@ -404,6 +404,14 @@ impl Effect for Streak {
     }
 }
 
+struct Plain;
+
+impl Effect for Plain {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("plain", "Plain", "Probe")
+    }
+}
+
 struct Tally;
 
 impl Effect for Tally {
@@ -680,6 +688,7 @@ fn make() -> Plugin {
         .effect(Lift)
         .effect(Tally)
         .effect(Streak)
+        .effect(Plain)
         .effect(ReadInputs)
         .effect(SceneCamera)
         .effect(Spin)
