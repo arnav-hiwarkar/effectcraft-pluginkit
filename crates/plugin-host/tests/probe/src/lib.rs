@@ -834,7 +834,7 @@ fn make() -> Plugin {
             host::write_file(Root::Data, "read.txt", &bytes)
         })
         .command("read-kinds", "Read Kinds", || {
-            let reads = [(Root::Data, "absent.txt"), (Root::Data, "gone/deeper.txt"), (Root::Data, ".")];
+            let reads = [(Root::Data, "absent.txt"), (Root::Data, "gone/deeper.txt"), (Root::Data, "."), (Root::Data, "not found: cache")];
             let kinds: Vec<String> = reads
                 .iter()
                 .map(|(root, path)| match host::read_file(*root, path) {

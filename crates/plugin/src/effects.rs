@@ -140,27 +140,15 @@ fn declare(param: &Param) -> DynamicParam {
 
 fn preset_values(spec: &EffectSpec, values: &BTreeMap<String, Wire>) -> Vec<(String, Value)> {
     let convert = |param: &Param, value: &Wire| -> Option<Value> {
-        let number = || match value {
-            Wire::Number(n) => Some(*n),
-            Wire::Bool(b) => Some(f64::from(u8::from(*b))),
-            _ => None,
-        };
-        let list = |n: usize| match value {
-            Wire::List(items) if items.len() >= n => Some(items[..n].to_vec()),
-            _ => None,
-        };
-        Some(match &param.kind {
-            ParamKind::Slider { .. } | ParamKind::Percent { .. } | ParamKind::Angle { .. } => Value::Scalar(number()?),
-            ParamKind::Checkbox { .. } => Value::Bool(number()? != 0.0),
-            ParamKind::Popup { options, .. } => Value::Enum((number()?.max(0.0) as u32).min(options.len().saturating_sub(1) as u32)),
-            ParamKind::Point { .. } => list(2).map(|v| Value::Vec2([v[0], v[1]]))?,
-            ParamKind::Point3 { .. } => list(3).map(|v| Value::Vec3([v[0], v[1], v[2]]))?,
-            ParamKind::Color { .. } => list(4).map(|v| Value::Color([v[0], v[1], v[2], v[3]]))?,
-            ParamKind::Text { .. } | ParamKind::Custom { .. } => match value {
-                Wire::Text(text) => Value::Str(text.clone()),
-                _ => return None,
-            },
-            ParamKind::Layer | ParamKind::Mask => return None,
+        Some(match (&param.kind, param.fit(value.clone()).ok()?) {
+            (ParamKind::Popup { options, .. }, Wire::Number(n)) => Value::Enum((n as u32).min(options.len().saturating_sub(1) as u32)),
+            (ParamKind::Mask | ParamKind::Layer, _) => return None,
+            (_, Wire::Number(n)) => Value::Scalar(n),
+            (_, Wire::Bool(b)) => Value::Bool(b),
+            (ParamKind::Point { .. }, Wire::List(v)) => Value::Vec2([v[0], v[1]]),
+            (ParamKind::Point3 { .. }, Wire::List(v)) => Value::Vec3([v[0], v[1], v[2]]),
+            (_, Wire::List(v)) => Value::Color([v[0], v[1], v[2], v[3]]),
+            (_, Wire::Text(text)) => Value::Str(text),
         })
     };
     spec.params.iter().filter_map(|param| Some((param.id.clone(), convert(param, values.get(&param.id)?)?))).collect()

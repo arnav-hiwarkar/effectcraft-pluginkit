@@ -932,7 +932,7 @@ pub enum HostCall {
     Source { time: f64 },
     Masks,
     Scene,
-    ReadFile { root: Root, path: String },
+    ReadFile { root: Root, path: String, error_kind: Option<bool> },
     WriteFile { root: Root, path: String },
     ListFiles { root: Root, path: String },
     CacheGet { key: String },
@@ -968,7 +968,8 @@ pub enum LogLevel {
     Error,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum FileErrorKind {
     NotFound,
     PermissionDenied,
@@ -978,7 +979,7 @@ pub enum FileErrorKind {
 const NOT_FOUND: &str = "not found: ";
 const DENIED: &str = "permission denied: ";
 
-pub fn file_failure(path: &str, error: &std::io::Error) -> String {
+fn file_failure(path: &str, error: &std::io::Error) -> String {
     let prefix = match error.kind() {
         std::io::ErrorKind::NotFound => NOT_FOUND,
         std::io::ErrorKind::PermissionDenied => DENIED,
@@ -987,13 +988,37 @@ pub fn file_failure(path: &str, error: &std::io::Error) -> String {
     format!("{prefix}{path}: {error}")
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct FileError {
     pub kind: FileErrorKind,
     pub message: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ReadFailed {
+    pub failed: FileError,
+}
+
+impl From<FileError> for String {
+    fn from(error: FileError) -> String {
+        error.message
+    }
+}
+
 impl FileError {
+    pub fn of(path: &str, error: &std::io::Error) -> Self {
+        let kind = match error.kind() {
+            std::io::ErrorKind::NotFound => FileErrorKind::NotFound,
+            std::io::ErrorKind::PermissionDenied => FileErrorKind::PermissionDenied,
+            _ => FileErrorKind::Other,
+        };
+        FileError { kind, message: file_failure(path, error) }
+    }
+
+    pub fn other(message: impl Into<String>) -> Self {
+        FileError { kind: FileErrorKind::Other, message: message.into() }
+    }
+
     pub fn from_reply(message: String) -> Self {
         let kind = if message.starts_with(NOT_FOUND) {
             FileErrorKind::NotFound
@@ -1444,6 +1469,16 @@ mod tests {
 
     fn plan(images: Vec<[u32; 2]>, passes: Vec<GpuPass>) -> GpuPlan {
         GpuPlan { images, passes, ..Default::default() }
+    }
+
+    #[test]
+    fn a_read_asks_for_its_error_kind_as_a_field_and_a_read_from_an_older_sdk_does_not() {
+        let asked = HostCall::ReadFile { root: Root::Data, path: "a".into(), error_kind: Some(true) };
+        assert_eq!(serde_json::to_string(&asked).unwrap(), r#"{"call":"read_file","root":"data","path":"a","error_kind":true}"#);
+        let older: HostCall = serde_json::from_str(r#"{"call":"read_file","root":"data","path":"a"}"#).unwrap();
+        assert!(matches!(older, HostCall::ReadFile { error_kind: None, .. }));
+        let failed = ReadFailed { failed: FileError { kind: FileErrorKind::NotFound, message: "a: gone".into() } };
+        assert_eq!(serde_json::to_string(&failed).unwrap(), r#"{"failed":{"kind":"not_found","message":"a: gone"}}"#);
     }
 
     #[test]

@@ -125,6 +125,15 @@ impl EffectSpec {
                 return Err(format!("effect `{}`: parameter `{}` has the range {min}..={max}; give the smaller end first", self.id, param.id));
             }
         }
+        for preset in &self.presets {
+            for (id, value) in &preset.values {
+                let Some(param) = self.params.iter().find(|param| param.id == *id) else {
+                    let known: Vec<&str> = self.params.iter().map(|param| param.id.as_str()).collect();
+                    return Err(format!("effect `{}`: preset `{}` sets `{id}`, which is not one of its parameters {known:?}", self.id, preset.name));
+                };
+                param.fit(value.clone()).map_err(|error| format!("effect `{}`: preset `{}`: {error}", self.id, preset.name))?;
+            }
+        }
         Ok(())
     }
 }
@@ -313,6 +322,16 @@ mod tests {
         let spec = EffectSpec::new("glow", "Glow", "Stylize").param(Param::slider("gain", "Gain", 1.0, 10.0..=1.0));
         assert_eq!(spec.check(), Err("effect `glow`: parameter `gain` has the range 10..=1; give the smaller end first".to_string()));
         assert_eq!(EffectSpec::new("glow", "Glow", "Stylize").params(Glow::params()).check(), Ok(()));
+    }
+
+    #[test]
+    fn a_preset_with_an_unknown_id_or_a_value_of_the_wrong_kind_is_refused_with_its_name_and_the_id() {
+        let spec = || EffectSpec::new("glow", "Glow", "Stylize").param(Param::slider("radius", "Radius", 20.0, 0.0..=200.0));
+        let misspelt = spec().preset("Wide", [("radus", Value::Number(80.0))]);
+        assert_eq!(misspelt.check(), Err(r#"effect `glow`: preset `Wide` sets `radus`, which is not one of its parameters ["radius"]"#.to_string()));
+        let text = spec().preset("Wide", [("radius", Value::Text("80".into()))]);
+        assert_eq!(text.check(), Err(r#"effect `glow`: preset `Wide`: parameter `radius` takes a number, not the text "80""#.to_string()));
+        assert_eq!(spec().preset("Wide", [("radius", Value::Number(80.0))]).check(), Ok(()));
     }
 
     #[test]

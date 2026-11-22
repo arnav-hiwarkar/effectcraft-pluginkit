@@ -92,8 +92,11 @@ moved at frame 12 also redraws frame 40.
 
 `.preset("Sun", [("look", Value::Number(1.0)), ("Glow/brightness", Value::Number(120.0))])` names a
 set of values. Ids are the full parameter ids, including the group prefix. Values have the form `cx`
-reads them in, except points: a point is a fraction of the layer, like a parameter's default. Ids
-the effect does not declare, and layer and mask parameters, are ignored.
+reads them in, except points: a point is a fraction of the layer, like a parameter's default. A slider
+value is clamped to its hard range. A preset that names an id the effect does not declare, or gives a value
+of the wrong kind, stops the plugin from loading with the effect, the preset and the id, for example
+`effect `glow`: preset `Wide` sets `radus`, which is not one of its parameters ["radius"]`. Layer and mask
+parameters in a preset are ignored.
 
 A preset writes the absolute value of every parameter it names, so the controls show them, and leaves the
 parameters it does not name as the user set them. A look that names `look` and the counts of its elements
@@ -505,7 +508,7 @@ All are in `craft_plugin::host`.
 | `command(id, params)` for a command that only reads | `document.read` |
 | `command(id, params)` for a command that edits the project | `document.write` |
 | `command(…)` that names a file, such as `file.saveCopy` | `files.read` and `files.write`, as well |
-| `read_file(Root::Bundle, path)`, `list_files(Root::Bundle, path)`; `read_file` returns a `FileError { kind, message }` whose `kind` is `NotFound`, `PermissionDenied` or `Other`, and `?` turns it into an `Error` | None |
+| `read_file(Root::Bundle, path)`, `list_files(Root::Bundle, path)`; `read_file` returns a `FileError { kind, message }` whose `kind` is `NotFound`, `PermissionDenied` or `Other`, and `?` turns it into an `Error`. The app sends the kind as its own field, so a file or folder name never changes it | None |
 | `read_file`, `write_file`, `list_files` with `Root::Data` | None |
 | `read_file(Root::User, path)`, `list_files(Root::User, path)` | `files.read` |
 | `write_file(Root::User, path, bytes)` | `files.write` |

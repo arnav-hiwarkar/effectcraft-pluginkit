@@ -321,12 +321,14 @@ fn a_plugin_that_may_only_read_can_list_fonts_and_read_font_features() {
 #[test]
 fn reading_a_file_says_whether_it_was_missing_or_could_not_be_read() {
     let mut app = app("test.read-kinds", &[]);
-    app.run("read-kinds").unwrap();
     let data = app.plugins.get(&app.id).expect("the plugin runs").data_dir.clone();
+    std::fs::create_dir_all(data.join("not found: cache")).unwrap();
+    app.run("read-kinds").unwrap();
     let text = std::fs::read_to_string(data.join("kinds.txt")).unwrap();
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 3, "{text}");
+    assert_eq!(lines.len(), 4, "{text}");
     assert!(lines[0].starts_with("NotFound|") && lines[0].contains("absent.txt"), "{}", lines[0]);
     assert!(lines[1].starts_with("NotFound|") && lines[1].contains("gone/deeper.txt"), "{}", lines[1]);
     assert!(lines[2].starts_with("Other|") && lines[2].contains("plain relative path"), "{}", lines[2]);
+    assert!(lines[3].starts_with("Other|not found: cache: "), "{}", lines[3]);
 }

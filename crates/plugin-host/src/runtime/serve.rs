@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use craft_plugin::{AudioDesc, HostCall, ImageDesc, LogLevel, Outcome, Permission, Pixel, Root, file_failure};
+use craft_plugin::{AudioDesc, FileError, HostCall, ImageDesc, LogLevel, Outcome, Permission, Pixel, Root};
 use same_file::Handle;
 use serde_json::{Value, json};
 
@@ -92,25 +92,25 @@ impl Identity {
         Ok(())
     }
 
-    fn open_picked(&self, path: &str, write: bool) -> Result<File, String> {
+    fn open_picked(&self, path: &str, write: bool) -> Result<File, FileError> {
         let (held, folder) = {
-            let picked = self.picked.lock().map_err(|_| "the picked files are unavailable")?;
-            let chosen = picked.iter().find(|chosen| chosen.matches(Path::new(path), write)).ok_or(format!("`{path}` was not picked"))?;
+            let picked = self.picked.lock().map_err(|_| FileError::other("the picked files are unavailable"))?;
+            let chosen = picked.iter().find(|chosen| chosen.matches(Path::new(path), write)).ok_or(FileError::other(format!("`{path}` was not picked")))?;
             (chosen.held.clone(), chosen.folder.clone())
         };
         let opened = match (write, &held, folder) {
             (true, Some(_), _) => OpenOptions::new().write(true).open(path),
             (false, Some(_), _) => File::open(path),
             (true, None, Some(folder)) => create_in(&folder, Path::new(path)),
-            _ => return Err(format!("{path}: the picked file did not exist when it was picked")),
+            _ => return Err(FileError::other(format!("{path}: the picked file did not exist when it was picked"))),
         };
-        let file = opened.map_err(|e| file_failure(path, &e))?;
-        let found = file.try_clone().and_then(Handle::from_file).map_err(|e| format!("{path}: {e}"))?;
+        let file = opened.map_err(|e| FileError::of(path, &e))?;
+        let found = file.try_clone().and_then(Handle::from_file).map_err(|e| FileError::of(path, &e))?;
         match held {
-            Some(held) if *held != found => Err(format!("`{path}` is no longer the file the user picked; ask the user to pick it again")),
+            Some(held) if *held != found => Err(FileError::other(format!("`{path}` is no longer the file the user picked; ask the user to pick it again"))),
             Some(_) => Ok(file),
             None => {
-                let mut picked = self.picked.lock().map_err(|_| "the picked files are unavailable")?;
+                let mut picked = self.picked.lock().map_err(|_| FileError::other("the picked files are unavailable"))?;
                 if let Some(chosen) = picked.iter_mut().find(|chosen| chosen.matches(Path::new(path), write)) {
                     chosen.held = Some(Arc::new(found));
                 }
@@ -207,19 +207,25 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
         HostCall::Source { time } => image(cx.host.source(time)),
         HostCall::Masks => plain(json!(cx.host.masks())),
         HostCall::Scene => cx.host.scene().map(|scene| (json!(scene), Bulk::None)).ok_or("no scene here".into()),
-        HostCall::ReadFile { root: Root::User, path } if !cx.plugin.grants.contains(&Permission::FilesRead) => {
-            let mut bytes = Vec::new();
-            cx.plugin.open_picked(&path, false)?.read_to_end(&mut bytes).map_err(|e| file_failure(&path, &e))?;
-            Ok((Value::Null, Bulk::Bytes(bytes)))
+        HostCall::ReadFile { root, path, error_kind } => {
+            let read = if root == Root::User && !cx.plugin.grants.contains(&Permission::FilesRead) {
+                cx.plugin.open_picked(&path, false).and_then(|mut file| {
+                    let mut bytes = Vec::new();
+                    file.read_to_end(&mut bytes).map(|_| bytes).map_err(|e| FileError::of(&path, &e))
+                })
+            } else {
+                resolve(cx.plugin, root, &path).and_then(|at| std::fs::read(at).map_err(|e| FileError::of(&path, &e)))
+            };
+            match read {
+                Ok(bytes) => Ok((Value::Null, Bulk::Bytes(bytes))),
+                Err(failed) if error_kind == Some(true) => plain(json!(craft_plugin::ReadFailed { failed })),
+                Err(failed) => Err(failed.message),
+            }
         }
         HostCall::WriteFile { root: Root::User, path } if !cx.plugin.grants.contains(&Permission::FilesWrite) => {
             let mut file = cx.plugin.open_picked(&path, true)?;
             file.set_len(0).and_then(|()| file.write_all(bulk)).map_err(|e| format!("{path}: {e}"))?;
             plain(Value::Null)
-        }
-        HostCall::ReadFile { root, path } => {
-            let bytes = std::fs::read(resolve(cx.plugin, root, &path)?).map_err(|e| file_failure(&path, &e))?;
-            Ok((Value::Null, Bulk::Bytes(bytes)))
         }
         HostCall::WriteFile { root, path } => {
             std::fs::write(resolve(cx.plugin, root, &path)?, bulk).map_err(|e| format!("{path}: {e}"))?;
@@ -308,27 +314,27 @@ fn user_path(plugin: &Identity, path: &Path) -> Result<PathBuf, String> {
     Ok(path.to_path_buf())
 }
 
-fn resolve(plugin: &Identity, root: Root, path: &str) -> Result<PathBuf, String> {
+fn resolve(plugin: &Identity, root: Root, path: &str) -> Result<PathBuf, FileError> {
     let base = match root {
-        Root::User => return user_path(plugin, Path::new(path)),
+        Root::User => return user_path(plugin, Path::new(path)).map_err(FileError::other),
         Root::Bundle => &plugin.dir,
         Root::Data => {
-            std::fs::create_dir_all(&plugin.data_dir).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(&plugin.data_dir).map_err(|e| FileError::other(e.to_string()))?;
             &plugin.data_dir
         }
     };
     let relative = Path::new(path);
     if !relative.components().all(|c| matches!(c, Component::Normal(_))) {
-        return Err(format!("`{path}` must be a plain relative path inside the plugin's folder, such as `presets/look.json`"));
+        return Err(FileError::other(format!("`{path}` must be a plain relative path inside the plugin's folder, such as `presets/look.json`")));
     }
-    let base = base.canonicalize().map_err(|e| e.to_string())?;
+    let base = base.canonicalize().map_err(|e| FileError::other(e.to_string()))?;
     let joined = base.join(relative);
     if joined.symlink_metadata().is_ok_and(|found| found.file_type().is_symlink()) {
-        return Err(format!("`{path}` is a link"));
+        return Err(FileError::other(format!("`{path}` is a link")));
     }
     let anchor = if joined.exists() { joined.clone() } else { joined.parent().unwrap_or(&base).to_path_buf() };
-    let anchor = anchor.canonicalize().map_err(|e| file_failure(path, &e))?;
-    anchor.starts_with(&base).then_some(joined).ok_or(format!("`{path}` leaves the plugin's folder"))
+    let anchor = anchor.canonicalize().map_err(|e| FileError::of(path, &e))?;
+    anchor.starts_with(&base).then_some(joined).ok_or(FileError::other(format!("`{path}` leaves the plugin's folder")))
 }
 
 #[cfg(all(test, unix))]
@@ -375,7 +381,10 @@ mod tests {
             let answer = answered.recv_timeout(Duration::from_secs(5));
             drop(std::fs::OpenOptions::new().write(true).open(&picked));
             assert_eq!(answer, Ok(true));
-            assert_eq!(opener.join().unwrap(), Err(format!("`{path}` is no longer the file the user picked; ask the user to pick it again")));
+            assert_eq!(
+                opener.join().unwrap().map_err(String::from),
+                Err(format!("`{path}` is no longer the file the user picked; ask the user to pick it again"))
+            );
         });
     }
 }
