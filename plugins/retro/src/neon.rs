@@ -1,7 +1,8 @@
+use craft_plugin::math::smoothstep;
 use craft_plugin::prelude::*;
 
 use crate::grid::{Band, Grid, coarse_rows};
-use crate::math::{blur_radius, hash, luma, reduction, smoothstep};
+use crate::math::{blur_radius, hash, luma, reduction};
 
 pub const SOURCES: [&str; 2] = ["Luma", "Alpha"];
 

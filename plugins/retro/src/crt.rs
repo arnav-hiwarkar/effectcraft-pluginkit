@@ -1,3 +1,4 @@
+use craft_plugin::math::cos;
 use craft_plugin::prelude::*;
 
 use crate::grid::{Band, Grid, coarse_rows};
@@ -168,19 +169,19 @@ pub fn mask_rgb(crt: &Crt, x: f32, y: f32) -> [f32; 3] {
         1 => {
             let triad = (x / (3.0 * p)).floor();
             let shift = if triad.rem_euclid(2.0) >= 1.0 { 0.5 } else { 0.0 };
-            let slot = 0.5 + 0.5 * (TAU * fract(y / (3.0 * p) + shift)).cos();
+            let slot = 0.5 + 0.5 * cos(TAU * fract(y / (3.0 * p) + shift));
             (fract(x / (3.0 * p)), 1.0 - s * 0.6 * smooth_gap(slot))
         }
         2 => {
             let row = (y / p).floor();
             let offset = if row.rem_euclid(2.0) >= 1.0 { 0.5 } else { 0.0 };
-            let dot = 0.5 - 0.5 * (TAU * fract(y / p)).cos();
+            let dot = 0.5 - 0.5 * cos(TAU * fract(y / p));
             (fract(x / (3.0 * p) + offset), 1.0 - s * (1.0 - dot))
         }
         _ => (fract(x / (3.0 * p)), 1.0),
     };
     std::array::from_fn(|c| {
-        let w = 0.5 + 0.5 * (TAU * fract(phase - c as f32 / 3.0)).cos();
+        let w = 0.5 + 0.5 * cos(TAU * fract(phase - c as f32 / 3.0));
         (1.0 - s + s * w * w * 1.5).min(1.0 + s) * rows
     })
 }
@@ -190,7 +191,7 @@ fn smooth_gap(slot: f32) -> f32 {
 }
 
 pub fn scan(crt: &Crt, y: f32) -> f32 {
-    let w = 0.5 + 0.5 * (TAU * fract((y + crt.roll) / crt.scan_period)).cos();
+    let w = 0.5 + 0.5 * cos(TAU * fract((y + crt.roll) / crt.scan_period));
     1.0 - crt.scan_strength * (1.0 - w)
 }
 
