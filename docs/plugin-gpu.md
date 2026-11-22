@@ -80,8 +80,9 @@ device and the stored bytes (image sizes the GPU holds, buffer and texture byte 
 
 ### Time
 
-The app first waits for the GPU work queued before the effect, so that time is not counted. It then
-submits the plan's passes together and waits for them. When one frame of the effect takes more than
+The app first builds every pipeline the plan needs and waits for all GPU work queued before the effect,
+so neither is counted; when that earlier work does not finish within 10 seconds, the frame is not timed.
+It then submits the plan's passes together and waits for them. When one frame of the effect takes more than
 2 seconds of GPU time, the effect is stopped: Effect Controls shows an error that names the effect, its
 passes and the budget, and the effect renders on the CPU until the plugin is reloaded.
 

@@ -268,6 +268,33 @@ fn work_queued_before_a_plugin_is_not_charged_to_it() {
     let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [53.0, 37.0], seed: 1, adjustment: false, env: Default::default() };
     assert!(crate::fx_plugin::apply(&mut e, &cheap, &ctx, frame).is_some(), "the cheap plugin runs");
     assert_eq!(cheap.gpu_stopped.get(), None, "the slow work queued before it is not charged to the cheap plugin");
+    register("test.gpu.cheap-unpadded", TINT_WGSL, GpuProgram { passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Output)], ..Default::default() });
+    let unpadded = dynamic::get("test.gpu.cheap-unpadded").expect("registered");
+    let frame = crate::effects::GBuf { img: g.ctx.upload_image(&pattern(5, 53, 37)).expect("uploads"), offset: [0.0, 0.0], scale: 1.0 };
+    let mut other = crate::context::Enc::new(&g.ctx);
+    queue_spin(&mut other);
+    other.submit();
+    let mut e = crate::context::Enc::new(&g.ctx);
+    assert!(crate::fx_plugin::apply(&mut e, &unpadded, &ctx, frame).is_some(), "the cheap plugin runs on a fresh encoder");
+    assert_eq!(unpadded.gpu_stopped.get(), None, "the slow work another encoder submitted is not charged to the cheap plugin");
+}
+
+#[test]
+fn a_plan_that_fails_part_way_leaves_no_recorded_work_behind() {
+    let Some(g) = gpu() else { return };
+    let broken = pass("tint", GpuSlot::Scratch(3), GpuSlot::Output);
+    register(
+        "test.gpu.part-way",
+        TINT_WGSL,
+        GpuProgram { images: vec![[53, 37]], passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Scratch(0)), broken], ..Default::default() },
+    );
+    let registered = dynamic::get("test.gpu.part-way").expect("registered");
+    let mut e = crate::context::Enc::new(&g.ctx);
+    let frame = crate::effects::GBuf { img: g.ctx.upload_image(&pattern(5, 53, 37)).expect("uploads"), offset: [0.0, 0.0], scale: 1.0 };
+    let params = Params::default();
+    let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [53.0, 37.0], seed: 1, adjustment: false, env: Default::default() };
+    assert!(crate::fx_plugin::apply(&mut e, &registered, &ctx, frame).is_none(), "a pass reading an image the plan lacks declines");
+    assert_eq!(e.recorded(), 0, "the first pass's dispatch is not left for the CPU fallback to submit");
 }
 
 fn run_sized(id: &str, size: [u32; 2]) -> Option<Buf> {

@@ -55,42 +55,15 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
     for (layer, param) in program.layers.iter().enumerate() {
         *images.get_mut(index(GpuSlot::Layer(layer), &program)?)? = Some(layer_image(e, ctx, &b, param)?);
     }
+    if let Err(why) = stage.prepare(g) {
+        g.plugin_declined(id, &why);
+        return None;
+    }
     let clock = Clock::start(e);
-    let mut compute = pipelines.iter();
-    for (n, pass) in program.passes.iter().enumerate() {
-        let read = |slot: GpuSlot| images.get(index(slot, &program)?).cloned().flatten();
-        let src = read(pass.src)?;
-        let aux = match pass.aux {
-            Some(slot) => Some(read(slot)?),
-            None => None,
-        };
-        let target = index(pass.out, &program)?;
-        let [w, h] = *sizes.get(target)?;
-        let out = match &pass.draw {
-            None => {
-                let pipeline = compute.next()?;
-                let out = e.image(w, h);
-                let images_bound = KernelImages { src: &src, aux: aux.as_ref(), out: &out };
-                let data = (!pass.data.is_empty()).then(|| e.data(&pass.data));
-                e.dispatch(Kernel::Plugin { pipeline, label: &pass.kernel }, &params(pass), images_bound, data.as_ref(), (w.div_ceil(16), h.div_ceil(16)));
-                Some(out)
-            }
-            Some(_) => {
-                let stays_open = program.passes.get(n + 1).is_some_and(|next| next.out == pass.out && next.draw.as_ref().is_some_and(|draw| !draw.clear));
-                let below = images.get(target).cloned().flatten();
-                let target = Target { index: target, size: [w, h], below: below.as_ref(), stays_open };
-                match stage.draw(e, pass, &params(pass), &src, aux.as_ref(), target) {
-                    Ok(out) => out,
-                    Err(why) => {
-                        g.plugin_declined(id, &why);
-                        return None;
-                    }
-                }
-            }
-        };
-        if let Some(out) = out {
-            *images.get_mut(target)? = Some(out);
-        }
+    if let Err(why) = record(e, &program, &pipelines, &mut stage, &mut images, &sizes) {
+        e.discard();
+        g.plugin_declined(id, &why);
+        return None;
     }
     if let Err(why) = clock.ran(e, id, &program) {
         if registered.gpu_stopped.set(why.clone()).is_ok() {
@@ -101,6 +74,44 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
     b.img = images.get_mut(OUTPUT)?.take()?;
     log::debug!("gpu {}: plugin effect {id} ran {} passes at {}x{}", g.name, program.passes.len(), frame[0], frame[1]);
     Some(b)
+}
+
+fn record(
+    e: &mut Enc,
+    program: &GpuProgram,
+    pipelines: &[wgpu::ComputePipeline],
+    stage: &mut Stage,
+    images: &mut [Option<GpuImage>],
+    sizes: &[[u32; 2]],
+) -> Result<(), String> {
+    let missing = || "the plan names an image or a kernel it does not have".to_string();
+    let mut compute = pipelines.iter();
+    for (n, pass) in program.passes.iter().enumerate() {
+        let read = |slot: GpuSlot| index(slot, program).and_then(|at| images.get(at).cloned().flatten()).ok_or_else(missing);
+        let src = read(pass.src)?;
+        let aux = pass.aux.map(read).transpose()?;
+        let target = index(pass.out, program).ok_or_else(missing)?;
+        let [w, h] = *sizes.get(target).ok_or_else(missing)?;
+        let out = match &pass.draw {
+            None => {
+                let pipeline = compute.next().ok_or_else(missing)?;
+                let out = e.image(w, h);
+                let images_bound = KernelImages { src: &src, aux: aux.as_ref(), out: &out };
+                let data = (!pass.data.is_empty()).then(|| e.data(&pass.data));
+                e.dispatch(Kernel::Plugin { pipeline, label: &pass.kernel }, &params(pass), images_bound, data.as_ref(), (w.div_ceil(16), h.div_ceil(16)));
+                Some(out)
+            }
+            Some(_) => {
+                let stays_open = program.passes.get(n + 1).is_some_and(|next| next.out == pass.out && next.draw.as_ref().is_some_and(|draw| !draw.clear));
+                let below = images.get(target).cloned().flatten();
+                stage.draw(e, pass, &params(pass), &src, aux.as_ref(), Target { index: target, size: [w, h], below: below.as_ref(), stays_open })?
+            }
+        };
+        if let Some(out) = out {
+            *images.get_mut(target).ok_or_else(missing)? = Some(out);
+        }
+    }
+    Ok(())
 }
 
 fn compute_pipelines(g: &GpuContext, id: &str, revision: u64, wgsl: &str, program: &GpuProgram) -> Result<Vec<wgpu::ComputePipeline>, String> {
@@ -138,13 +149,9 @@ struct Clock {
 
 impl Clock {
     fn start(e: &mut Enc) -> Self {
-        let budget = e.g.deferred.is_none().then(|| e.g.plugin_gpu_budget());
-        if budget.is_some() {
-            e.submit();
-            if let Some(earlier) = e.last_submission() {
-                e.g.poll_wait(earlier, crate::readback::TIMEOUT);
-            }
-        }
+        e.submit();
+        let drained = |g: &GpuContext| g.poll_wait(g.queue.submit([]), crate::readback::TIMEOUT);
+        let budget = e.g.deferred.is_none().then(|| e.g.plugin_gpu_budget()).filter(|_| drained(e.g));
         Clock { budget, start: Instant::now() }
     }
 

@@ -1186,10 +1186,11 @@ impl GpuContext {
     /// Waits on `submission_index` up to `timeout` in [`Self::POLL_SLICE`] increments so wgpu
     /// frees resources dropped before that submission without holding `poll_lock` for seconds at a
     /// time. A timeout simply moves on without retiring the context or its readbacks; any other
-    /// poll error retires the readbacks through the failure path.
-    pub(crate) fn poll_wait(&self, submission_index: wgpu::SubmissionIndex, timeout: std::time::Duration) {
+    /// poll error retires the readbacks through the failure path. Returns whether the wait ended
+    /// before `timeout`.
+    pub(crate) fn poll_wait(&self, submission_index: wgpu::SubmissionIndex, timeout: std::time::Duration) -> bool {
         if self.readbacks.check().is_err() {
-            return;
+            return true;
         }
         let deadline = web_time::Instant::now() + timeout;
         loop {
@@ -1209,8 +1210,11 @@ impl GpuContext {
                     true
                 }
             };
-            if done || remaining <= slice {
-                break;
+            if done {
+                return true;
+            }
+            if remaining <= slice {
+                return false;
             }
         }
     }
@@ -2359,9 +2363,24 @@ impl<'g> Enc<'g> {
         dst
     }
 
+    #[cfg(test)]
+    pub(crate) fn recorded(&self) -> usize {
+        self.pending
+    }
+
     /// The last submission of this encoder's work (what a readback after it waits for).
     pub(crate) fn last_submission(&self) -> Option<wgpu::SubmissionIndex> {
         self.last_submit.clone()
+    }
+
+    /// Drop the work recorded since the last submission.
+    pub(crate) fn discard(&mut self) {
+        if let Some((_, id)) = self.enc.take()
+            && let Ok(mut p) = self.g.pool.lock()
+        {
+            p.close(id);
+        }
+        self.pending = 0;
     }
 
     /// Submit recorded work.

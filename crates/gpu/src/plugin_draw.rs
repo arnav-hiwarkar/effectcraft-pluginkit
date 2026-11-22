@@ -348,6 +348,21 @@ impl<'a> Stage<'a> {
         })
     }
 
+    pub fn prepare(&self, g: &GpuContext) -> Result<(), String> {
+        let draws: Vec<(&GpuPass, &GpuDraw)> = self.program.passes.iter().filter_map(|pass| Some((pass, pass.draw.as_ref()?))).collect();
+        for (pass, draw) in &draws {
+            g.plugin_draw_pipeline(self.effect, self.revision, self.wgsl, &draw_key(pass, draw))?;
+            for buffer in [Some(draw.vertices), draw.indices, draw.instances].into_iter().flatten() {
+                self.buffer(g, buffer).ok_or("a GPU buffer could not be kept")?;
+            }
+        }
+        if !draws.is_empty() {
+            g.plugin_draw_pipeline(self.effect, self.revision, self.wgsl, &DrawKey { kernel: BLIT.into(), ..Default::default() })?;
+            g.plugin_pipelines(self.effect, self.revision, self.wgsl, &[RESOLVE])?;
+        }
+        Ok(())
+    }
+
     pub fn draw(
         &mut self,
         e: &mut Enc,
@@ -360,15 +375,7 @@ impl<'a> Stage<'a> {
         let g = e.g;
         let draw = pass.draw.as_ref().ok_or("not a draw pass")?;
         let counts = check_draw(0, draw, self.program, false)?;
-        let key = DrawKey {
-            kernel: pass.kernel.clone(),
-            layout: draw.layout.clone(),
-            instance_layout: draw.instance_layout.clone(),
-            depth: draw.depth,
-            blend: draw.blend,
-            cull: draw.cull,
-        };
-        let pipeline = g.plugin_draw_pipeline(self.effect, self.revision, self.wgsl, &key)?;
+        let pipeline = g.plugin_draw_pipeline(self.effect, self.revision, self.wgsl, &draw_key(pass, draw))?;
         let gone = || "a GPU buffer could not be kept".to_string();
         let vertices = self.buffer(g, draw.vertices).ok_or_else(gone)?;
         let indices = draw.indices.map(|index| self.buffer(g, index).ok_or_else(gone)).transpose()?;
@@ -448,5 +455,16 @@ impl<'a> Stage<'a> {
         let bound = KernelImages { src: &drawn, aux: None, out: &out };
         e.dispatch(Kernel::Plugin { pipeline: &resolve, label: RESOLVE }, &Params::default(), bound, None, (w.div_ceil(16), h.div_ceil(16)));
         Ok(Some(out))
+    }
+}
+
+fn draw_key(pass: &GpuPass, draw: &GpuDraw) -> DrawKey {
+    DrawKey {
+        kernel: pass.kernel.clone(),
+        layout: draw.layout.clone(),
+        instance_layout: draw.instance_layout.clone(),
+        depth: draw.depth,
+        blend: draw.blend,
+        cull: draw.cull,
     }
 }
