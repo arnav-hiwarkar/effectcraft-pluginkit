@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use craft_plugin::{AudioDesc, HostCall, ImageDesc, LogLevel, Outcome, Permission, Pixel, Root};
+use craft_plugin::{AudioDesc, HostCall, ImageDesc, LogLevel, Outcome, Permission, Pixel, Root, file_failure};
 use same_file::Handle;
 use serde_json::{Value, json};
 
@@ -103,7 +103,7 @@ impl Identity {
             (true, None, Some(folder)) => create_in(&folder, Path::new(path)),
             _ => return Err(format!("{path}: the picked file did not exist when it was picked")),
         };
-        let file = opened.map_err(|e| format!("{path}: {e}"))?;
+        let file = opened.map_err(|e| file_failure(path, &e))?;
         let found = file.try_clone().and_then(Handle::from_file).map_err(|e| format!("{path}: {e}"))?;
         match held {
             Some(held) if *held != found => Err(format!("`{path}` is no longer the file the user picked; ask the user to pick it again")),
@@ -207,7 +207,7 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
         HostCall::Scene => cx.host.scene().map(|scene| (json!(scene), Bulk::None)).ok_or("no scene here".into()),
         HostCall::ReadFile { root: Root::User, path } if !cx.plugin.grants.contains(&Permission::FilesRead) => {
             let mut bytes = Vec::new();
-            cx.plugin.open_picked(&path, false)?.read_to_end(&mut bytes).map_err(|e| format!("{path}: {e}"))?;
+            cx.plugin.open_picked(&path, false)?.read_to_end(&mut bytes).map_err(|e| file_failure(&path, &e))?;
             Ok((Value::Null, Bulk::Bytes(bytes)))
         }
         HostCall::WriteFile { root: Root::User, path } if !cx.plugin.grants.contains(&Permission::FilesWrite) => {
@@ -216,7 +216,7 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             plain(Value::Null)
         }
         HostCall::ReadFile { root, path } => {
-            let bytes = std::fs::read(resolve(cx.plugin, root, &path)?).map_err(|e| format!("{path}: {e}"))?;
+            let bytes = std::fs::read(resolve(cx.plugin, root, &path)?).map_err(|e| file_failure(&path, &e))?;
             Ok((Value::Null, Bulk::Bytes(bytes)))
         }
         HostCall::WriteFile { root, path } => {
@@ -325,7 +325,7 @@ fn resolve(plugin: &Identity, root: Root, path: &str) -> Result<PathBuf, String>
         return Err(format!("`{path}` is a link"));
     }
     let anchor = if joined.exists() { joined.clone() } else { joined.parent().unwrap_or(&base).to_path_buf() };
-    let anchor = anchor.canonicalize().map_err(|e| format!("{path}: {e}"))?;
+    let anchor = anchor.canonicalize().map_err(|e| file_failure(path, &e))?;
     anchor.starts_with(&base).then_some(joined).ok_or(format!("`{path}` leaves the plugin's folder"))
 }
 

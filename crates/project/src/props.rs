@@ -20,6 +20,17 @@ pub enum ParamUi {
         slider_max: f64,
         decimals: u8,
     },
+    /// A slider that can also be logarithmic and show a percent sign. Apart from `Slider` so that
+    /// the saved text of every older slider stays the same.
+    Scaled {
+        min: f64,
+        max: f64,
+        slider_min: f64,
+        slider_max: f64,
+        decimals: u8,
+        log: bool,
+        percent: bool,
+    },
     Percent,
     /// Angle in degrees, shown as `revolutions x +degrees`.
     Angle,

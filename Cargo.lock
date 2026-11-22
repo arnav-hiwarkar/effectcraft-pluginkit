@@ -2773,6 +2773,7 @@ dependencies = [
  "effectcraft-host",
  "effectcraft-keyframe",
  "effectcraft-media",
+ "effectcraft-model",
  "effectcraft-path",
  "effectcraft-plugin",
  "effectcraft-project",

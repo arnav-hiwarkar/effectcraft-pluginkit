@@ -171,7 +171,17 @@ pub struct Param {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ParamKind {
-    Slider { default: f64, min: f64, max: f64 },
+    Slider {
+        default: f64,
+        min: f64,
+        max: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        soft: Option<[f64; 2]>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        log: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        percent: bool,
+    },
     Percent { default: f64 },
     Angle { default: f64 },
     Checkbox { default: bool },
@@ -191,11 +201,35 @@ impl Param {
     }
 
     pub fn slider(id: &str, name: &str, default: f64, range: RangeInclusive<f64>) -> Self {
-        Param::new(id, name, ParamKind::Slider { default, min: *range.start(), max: *range.end() })
+        Param::new(id, name, ParamKind::Slider { default, min: *range.start(), max: *range.end(), soft: None, log: false, percent: false })
     }
 
     pub fn percent(id: &str, name: &str, default: f64) -> Self {
         Param::new(id, name, ParamKind::Percent { default })
+    }
+
+    pub fn range(mut self, range: RangeInclusive<f64>) -> Self {
+        let (min, max) = (*range.start(), *range.end());
+        self.kind = match self.kind {
+            ParamKind::Percent { default } => ParamKind::Slider { default, min, max, soft: None, log: false, percent: true },
+            ParamKind::Slider { default, soft, log, percent, .. } => ParamKind::Slider { default, min, max, soft, log, percent },
+            other => other,
+        };
+        self
+    }
+
+    pub fn soft(mut self, range: RangeInclusive<f64>) -> Self {
+        if let ParamKind::Slider { soft, .. } = &mut self.kind {
+            *soft = Some([*range.start(), *range.end()]);
+        }
+        self
+    }
+
+    pub fn log(mut self) -> Self {
+        if let ParamKind::Slider { log, .. } = &mut self.kind {
+            *log = true;
+        }
+        self
     }
 
     pub fn angle(id: &str, name: &str, default: f64) -> Self {
@@ -884,6 +918,52 @@ pub enum LogLevel {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileErrorKind {
+    NotFound,
+    PermissionDenied,
+    Other,
+}
+
+const NOT_FOUND: &str = "not found: ";
+const DENIED: &str = "permission denied: ";
+
+pub fn file_failure(path: &str, error: &std::io::Error) -> String {
+    let prefix = match error.kind() {
+        std::io::ErrorKind::NotFound => NOT_FOUND,
+        std::io::ErrorKind::PermissionDenied => DENIED,
+        _ => "",
+    };
+    format!("{prefix}{path}: {error}")
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileError {
+    pub kind: FileErrorKind,
+    pub message: String,
+}
+
+impl FileError {
+    pub fn from_reply(message: String) -> Self {
+        let kind = if message.starts_with(NOT_FOUND) {
+            FileErrorKind::NotFound
+        } else if message.starts_with(DENIED) {
+            FileErrorKind::PermissionDenied
+        } else {
+            FileErrorKind::Other
+        };
+        FileError { kind, message }
+    }
+}
+
+impl std::fmt::Display for FileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for FileError {}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Root {
@@ -1161,7 +1241,16 @@ pub enum Widget {
     Button { id: u64, text: String, enabled: bool },
     Checkbox { id: u64, text: String, value: bool },
     Slider { id: u64, text: String, value: f64, min: f64, max: f64 },
-    Number { id: u64, text: String, value: f64, speed: f64 },
+    Number {
+        id: u64,
+        text: String,
+        value: f64,
+        speed: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        range: Option<[f64; 2]>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        decimals: Option<u8>,
+    },
     TextEdit { id: u64, value: String, hint: String },
     Popup { id: u64, text: String, options: Vec<String>, selected: u32 },
     Color { id: u64, text: String, value: [f32; 4] },
@@ -1338,5 +1427,24 @@ mod tests {
         let sides = Layout::pointwise().padded_sides(5, 0, 2, 1);
         let again: Layout = serde_json::from_str(&serde_json::to_string(&sides).unwrap()).unwrap();
         assert_eq!(again.padding, [5, 0, 2, 1]);
+    }
+
+    #[test]
+    fn a_slider_or_percent_from_an_older_sdk_has_no_soft_range_and_stays_linear() {
+        let slider: Param = serde_json::from_str(r#"{"id":"a","name":"A","kind":"slider","default":1.0,"min":0.0,"max":2.0}"#).unwrap();
+        assert_eq!(slider, Param::slider("a", "A", 1.0, 0.0..=2.0));
+        let percent: Param = serde_json::from_str(r#"{"id":"b","name":"B","kind":"percent","default":50.0}"#).unwrap();
+        assert_eq!(percent, Param::percent("b", "B", 50.0));
+        assert_eq!(serde_json::to_string(&Param::slider("a", "A", 1.0, 0.0..=2.0)).unwrap(), r#"{"id":"a","name":"A","kind":"slider","default":1.0,"min":0.0,"max":2.0}"#);
+    }
+
+    #[test]
+    fn a_slider_takes_a_soft_range_and_a_log_scale_and_a_percent_takes_a_range() {
+        let gain = Param::slider("g", "Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log();
+        assert_eq!(gain.kind, ParamKind::Slider { default: 1.0, min: 0.0, max: 1000.0, soft: Some([0.01, 10.0]), log: true, percent: false });
+        let mix = Param::percent("m", "Mix", 50.0).range(-100.0..=300.0);
+        assert_eq!(mix.kind, ParamKind::Slider { default: 50.0, min: -100.0, max: 300.0, soft: None, log: false, percent: true });
+        let sent: Param = serde_json::from_str(&serde_json::to_string(&gain).unwrap()).unwrap();
+        assert_eq!(sent, gain);
     }
 }

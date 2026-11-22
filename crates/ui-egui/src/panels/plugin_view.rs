@@ -281,12 +281,19 @@ impl Renderer<'_> {
                     self.emit(*id, UiEventKind::Number(number));
                 }
             }
-            Widget::Number { id, text, value, speed } => {
+            Widget::Number { id, text, value, speed, range, decimals } => {
                 let mut number = *value;
                 let response = ui
                     .horizontal(|ui| {
                         let label = ui.label(self.text(text, TextStyle::Body));
-                        ui.add(egui::DragValue::new(&mut number).speed(finite_or(*speed, 1.0))).labelled_by(label.id)
+                        let mut drag = egui::DragValue::new(&mut number).speed(finite_or(*speed, 1.0));
+                        if let Some([low, high]) = range {
+                            drag = drag.range(finite_or(*low, f64::MIN)..=finite_or(*high, f64::MAX));
+                        }
+                        if let Some(decimals) = decimals {
+                            drag = drag.fixed_decimals(usize::from(*decimals));
+                        }
+                        ui.add(drag).labelled_by(label.id)
                     })
                     .inner;
                 self.register(*id, &response, text);
@@ -523,7 +530,7 @@ impl Renderer<'_> {
             }
             Shape::Polygon { points, fill } => {
                 let points = points.iter().take(MAX_LINE_POINTS).copied().map(at).collect::<Option<Vec<_>>>()?;
-                painter.add(egui::Shape::convex_polygon(points, self.paint(*fill), Stroke::NONE));
+                painter.add(filled_polygon(points, self.paint(*fill)));
             }
             Shape::Image { key, min, max } => {
                 let rect = Rect::from_two_pos(at(*min)?, at(*max)?);
@@ -533,6 +540,21 @@ impl Renderer<'_> {
         }
         Some(())
     }
+}
+
+const MAX_CONCAVE_POINTS: usize = 2048;
+
+pub(crate) fn filled_polygon(points: Vec<egui::Pos2>, fill: Color32) -> egui::Shape {
+    if points.len() > MAX_CONCAVE_POINTS {
+        return egui::Shape::convex_polygon(points, fill, Stroke::NONE);
+    }
+    let outline: Vec<[f64; 2]> = points.iter().map(|point| [f64::from(point.x), f64::from(point.y)]).collect();
+    let mut mesh = egui::Mesh::default();
+    mesh.vertices.extend(points.iter().map(|point| egui::epaint::Vertex { pos: *point, uv: egui::epaint::WHITE_UV, color: fill }));
+    for [a, b, c] in effectcraft_model::triangulate::triangulate(&outline, &[]) {
+        mesh.add_triangle(a as u32, b as u32, c as u32);
+    }
+    egui::Shape::mesh(mesh)
 }
 
 fn drawable(coordinate: f32) -> Option<f32> {
@@ -712,6 +734,41 @@ mod tests {
         assert!(!events.is_empty());
         assert!(events.iter().all(|event| event.id == 7 && matches!(event.kind, UiEventKind::Number(_))), "{events:?}");
         assert_eq!(events.last().map(|event| &event.kind), Some(&UiEventKind::Number(10.0)));
+    }
+
+    #[test]
+    fn dragging_a_number_with_a_range_stops_at_the_range_and_keeps_its_decimals() {
+        let number = Widget::Number { id: 3, text: "Count".into(), value: 2.0, speed: 1.0, range: Some([0.0, 5.0]), decimals: Some(1) };
+        let mut harness = harness(vec![number]);
+        harness.run();
+        assert_eq!(harness.get_by_role(egui::Role::SpinButton).value().as_deref(), Some("2.0"));
+        let at = harness.get_by_role(egui::Role::SpinButton).rect().center();
+        harness.drag_at(at);
+        harness.run();
+        harness.hover_at(at + vec2(200.0, 0.0));
+        harness.run();
+        harness.drop_at(at + vec2(200.0, 0.0));
+        harness.run();
+        assert_eq!(harness.state().last().map(|event| &event.kind), Some(&UiEventKind::Number(5.0)));
+    }
+
+    #[test]
+    fn a_concave_polygon_is_filled_inside_its_outline_and_not_across_its_notch() {
+        let corner = |x: f32, y: f32| egui::pos2(x, y);
+        let arrow = vec![corner(0.0, 0.0), corner(10.0, 0.0), corner(10.0, 4.0), corner(4.0, 4.0), corner(4.0, 10.0), corner(0.0, 10.0)];
+        let egui::Shape::Mesh(mesh) = filled_polygon(arrow, Color32::WHITE) else { panic!("a mesh was expected") };
+        let triangles: Vec<[egui::Pos2; 3]> = mesh.indices.chunks_exact(3).map(|t| [0, 1, 2].map(|k| mesh.vertices[t[k] as usize].pos)).collect();
+        let area = |[a, b, c]: &[egui::Pos2; 3]| ((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)).abs() / 2.0;
+        assert_eq!(triangles.iter().map(area).sum::<f32>(), 64.0);
+        let covers = |point: egui::Pos2| {
+            triangles.iter().any(|[a, b, c]| {
+                let side = |p: egui::Pos2, q: egui::Pos2| (q.x - p.x) * (point.y - p.y) - (q.y - p.y) * (point.x - p.x);
+                let signs = [side(*a, *b), side(*b, *c), side(*c, *a)];
+                signs.iter().all(|s| *s >= 0.0) || signs.iter().all(|s| *s <= 0.0)
+            })
+        };
+        assert!(covers(corner(2.0, 7.0)) && covers(corner(7.0, 2.0)) && covers(corner(1.0, 1.0)));
+        assert!(!covers(corner(7.0, 7.0)), "the notch of the arrow stays empty");
     }
 
     #[test]

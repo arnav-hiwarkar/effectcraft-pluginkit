@@ -1582,3 +1582,54 @@ fn effect_controls_lock_over_the_control_channel() {
     assert_eq!(send(&mut h, json!({"effectControlsLocked": true}))["ok"], false);
     assert_eq!(h.state().ui.effect_controls_lock, None);
 }
+
+fn register_gain_effect() {
+    use effectcraft_engine::effects::dynamic::{self, DynamicEffect, DynamicParam};
+    use effectcraft_engine::project::ParamUi;
+    let log = ParamUi::Scaled { min: 0.0, max: 1000.0, slider_min: 1.0, slider_max: 1000.0, decimals: 1, log: true, percent: false };
+    let mix = ParamUi::Scaled { min: -100.0, max: 300.0, slider_min: -100.0, slider_max: 300.0, decimals: 1, log: false, percent: true };
+    dynamic::register(DynamicEffect {
+        owner: "test.ui.gain".into(),
+        id: "test.ui.gain.gain".into(),
+        name: "Gain Test".into(),
+        category: "Test".into(),
+        params: vec![
+            DynamicParam { id: "gain".into(), name: "Gain".into(), default: KV::Scalar(1.0), ui: log },
+            DynamicParam { id: "mix".into(), name: "Mix".into(), default: KV::Scalar(50.0), ui: mix },
+        ],
+        render: Box::new(|_, buf| buf),
+        shader: None,
+        gpu: None,
+        time_dependent: false,
+        reads_other_frames: false,
+        reads_comp_scene: false,
+        reads_param_history: false,
+        presets: Vec::new(),
+        revision: 1,
+        files: None,
+    });
+}
+
+#[test]
+fn a_log_slider_row_maps_the_track_by_ratio() {
+    register_gain_effect();
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Main", "width": 640, "height": 360, "frameRate": 30, "duration": 10})).unwrap();
+    let layer_id = s.execute("layer.newSolid", json!({"name": "Small", "color": "#ff0000", "width": 200, "height": 100})).unwrap()["layer"].as_u64().unwrap();
+    let fx = s.execute("effect.apply", json!({"layers": [layer_id], "effect": "test.ui.gain.gain"})).unwrap()["effects"][0].as_u64().unwrap();
+    let l = layer(&s, layer_id);
+    let param = |id: &str| l.effects().unwrap().groups().find(|g| g.uid == fx).and_then(|g| g.get(id)).map(|p| p.uid).unwrap();
+    let gain = param("gain");
+    s.state.selected_layers = vec![LayerId(layer_id)];
+    let mut app = EffectcraftApp::new(s);
+    app.show_panel(PanelKind::EffectControls);
+    let mut h = Harness::builder().with_size(egui::vec2(1700.0, 1100.0)).build_eframe(|_| app);
+    settle(&mut h);
+    h.state_mut().ui.fx_slider_open.insert(gain);
+    h.run_steps(3);
+    let track = rect_of(&h, &format!("effectControls.prop.{gain}.slider"));
+    click(&mut h, track.center());
+    let value = layer(&h.state().session, layer_id).effects().unwrap().find(gain).unwrap().value.as_f64();
+    let geometric_mean = (1000.0_f64).sqrt();
+    assert!((value - geometric_mean).abs() < 1.5, "the middle of a log slider from 1 to 1000 is {geometric_mean}, got {value}");
+}

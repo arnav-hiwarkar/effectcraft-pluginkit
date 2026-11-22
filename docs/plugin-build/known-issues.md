@@ -9,7 +9,7 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **Plugin files outside the plugin's folders are not in the cache key.** An effect that reads a file through `files.read` keeps its cached frames when that file changes. The key holds only the plugin's own folders, which can be listed cheaply.
 - **Possibly dead branch.** `show_result_errors` in `crates/ui-egui/src/menus/frontend.rs` still formats `{file, error}` items, a shape only the removed bundle install produced. The test near `menus/tests.rs:900` uses the removed command id `effect.installBundle` as a fixture.
 - **ScriptUI panel bundles.** The removed `Install Effect Plug-in Bundle (Folder)` command also copied `.jsx` panels. Single panels still install through `file.installScriptUIPanel`.
-- **SDK gaps reported by the Plasma Beam author.** A percent parameter is fixed at 0 to 100. A preset cannot set the visible parameter values (After Effects plugins do this). `cx.f` does not clamp to the slider range, so expression-driven values can leave it. A whole-frame sandboxed effect cannot use more than one core.
+- **SDK gap reported by the Plasma Beam author.** A whole-frame sandboxed effect cannot use more than one core.
 
 - **Viewer tools from automation.** A plugin tool is picked only with its toolbar button. `ui.set` and the `tool.*` commands do not name plugin tools (`crates/ui-egui/src/panels/plugin_tools.rs`).
 - **Viewer tools get no pen pressure.** egui reports no pressure for a pen, so `ToolEvent::pressure` is 1 while the button is down and 0 otherwise.
@@ -23,12 +23,8 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 ## Reported by the flagship plugin authors, not fixed
 
 - **Engine: `keys.setEase` changes the side you did not set.** On a continuous key it copies the speed to the other side, and it turns off auto-Bezier so the other side falls back to a stored ease. Glide works around both. (`crates/engine/src/cmd/anim.rs`)
-- **Engine: no path length for spatial properties.** Converting a curve to a speed along a motion path needs the path's length. Glide samples `prop.get` 129 times in a batch. `keys.info` could return it.
 - **Engine: influence cannot go below 0.1 %.** A curve handle exactly on its anchor's column is stored about 6.6e-4 of the value range off.
-- **Engine: `keys.info` gaps.** It does not give a key's index in its property, and reports 2 dimensions for scale on a 2D layer while `keys.setEase` works on 3.
 - **CLI: `bench` does not load plugins**, so plugin effects are missing from its timings. (`bench_cmd` in `apps/effectcraft-cli/src/main.rs`)
-- **SDK: sliders have one range.** No logarithmic mode and no separate soft range. `ui.number` has no range or decimals.
-- **SDK: `read_file` cannot tell a missing file from a failed read.**
 - **GPU: on WebGPU a bad plugin shader is not contained, and plugin GPU work has no time limit there**, because the browser build cannot wait for a submission (`Clock` in `crates/gpu/src/fx_plugin.rs`).
 - **GPU: a runaway plugin kernel stalls the GPU once per load.** A wgpu dispatch cannot be cancelled, so the 2 s budget is checked when a frame's plan has finished. The first frame that passes it stops the effect, which then renders on the CPU until the plugin is reloaded; that one frame still runs to its end (or until the OS GPU watchdog or the 10 s readback limit), and every other GPU effect waits for it. The error lists the plan's passes but cannot say which one was slow.
 
@@ -44,10 +40,7 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **Effects cannot read audio.** The render path reaches footage audio, not the comp mix.
 - **Forge 3D draws only on the GPU.** Draw passes render to an `Rgba16Float` target that is created per frame and copied.
 - **Ember simulates from frame 0 on every render when a parameter has an expression**, because the history cannot be hashed. It reads the masks at the current time for every step.
-- **A Halo preset sets the look and resets the element controls.** It does not write absolute slider values.
 - **Custom Effect Controls rows cannot subscribe to app events or set timers.** They are called again on their own widget events, a new value or a new width. (`crates/plugin/src/panels.rs`)
-- **Curves keeps the selected channel per effect, not per instance of the effect**, unless the fix for Opus finding 7 landed (see the log).
-- **`polygon` on a canvas fills convex shapes only.**
 - **`plugin dev` was not run against a live app, and double-clicking a `.craftplugin` was not tried on a built app.**
 - **The 8/16 bpc quantise pass still runs after most CPU effects.** Gaussian Blur, Levels, Curves, Hue/Saturation and Glow quantise their own output (`QUANTIZES_OUTPUT` in `crates/effects`); every other built-in effect and every plugin effect is followed by a full-frame pass.
 - **An animated comp re-composites every cached layer on each frame.** Only a comp where nothing animates is served whole from the layer cache.

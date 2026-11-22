@@ -4,6 +4,7 @@ use craft_plugin::{Modifiers, UiEvent, UiEventKind, UiInput, Widget};
 use crate::control::{self, ControlState};
 use crate::curve::{Curves, Lut, Luts, Spline, identity};
 use crate::presets::{PRESETS, THUMB, thumbnail};
+use crate::{CurvesEffect, PARAM};
 
 const S_CURVE: &[[f64; 2]] = &[[0.0, 0.0], [0.3, 0.2], [0.7, 0.8], [1.0, 1.0]];
 
@@ -160,4 +161,23 @@ fn arrow_keys_move_the_chosen_point_within_its_neighbours_and_delete_removes_it(
     assert!(control::key(&mut state, &mut points, &press("Delete", false)));
     assert_eq!(points, vec![[0.0, 0.0], [0.7, 0.8], [1.0, 1.0]]);
     assert!(!control::key(&mut state, &mut points, &press("Left", false)));
+}
+
+fn shown_channel(effect: &CurvesEffect, instance: u64, events: Vec<UiEvent>) -> (u64, u32) {
+    let input = UiInput { events, size: [260.0, 200.0], ..Default::default() };
+    let mut ui = Ui::new(&input);
+    effect.controls(instance, PARAM, &mut Curves::default_text(), &mut ui);
+    let widgets = ui.finish();
+    let Widget::Row { children } = &widgets[0] else { panic!("row expected: {widgets:?}") };
+    let Widget::Popup { id, selected, .. } = &children[0] else { panic!("popup expected: {children:?}") };
+    (*id, *selected)
+}
+
+#[test]
+fn each_instance_of_the_effect_keeps_its_own_selected_channel() {
+    let effect = CurvesEffect::default();
+    let (popup, _) = shown_channel(&effect, 1, vec![]);
+    assert_eq!(shown_channel(&effect, 1, vec![UiEvent { id: popup, kind: UiEventKind::Number(2.0) }]).1, 2);
+    assert_eq!(shown_channel(&effect, 2, vec![]).1, 0);
+    assert_eq!(shown_channel(&effect, 1, vec![]).1, 2);
 }

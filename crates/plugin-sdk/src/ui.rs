@@ -141,8 +141,24 @@ impl<'a> Ui<'a> {
     pub fn number(&mut self, text: &str, value: &mut f64, speed: f64) -> bool {
         let id = self.id(text);
         let changed = self.number_event(id, value);
-        self.widgets.push(Widget::Number { id, text: text.into(), value: *value, speed });
+        self.widgets.push(Widget::Number { id, text: text.into(), value: *value, speed, range: None, decimals: None });
         changed
+    }
+
+    pub fn number_in(&mut self, text: &str, value: &mut f64, speed: f64, range: RangeInclusive<f64>, decimals: u8) -> bool {
+        let id = self.id(text);
+        let before = *value;
+        self.number_event(id, value);
+        *value = value.max(*range.start()).min(*range.end());
+        self.widgets.push(Widget::Number {
+            id,
+            text: text.into(),
+            value: *value,
+            speed,
+            range: Some([*range.start(), *range.end()]),
+            decimals: Some(decimals),
+        });
+        *value != before
     }
 
     pub fn text_edit(&mut self, key: &str, value: &mut String, hint: &str) -> bool {
@@ -349,7 +365,7 @@ mod tests {
 
     fn id_of(widget: &Widget) -> u64 {
         match widget {
-            Widget::Button { id, .. } | Widget::Slider { id, .. } | Widget::Checkbox { id, .. } => *id,
+            Widget::Button { id, .. } | Widget::Slider { id, .. } | Widget::Number { id, .. } | Widget::Checkbox { id, .. } => *id,
             other => panic!("no id on {other:?}"),
         }
     }
@@ -416,6 +432,27 @@ mod tests {
         assert!(changed);
         assert_eq!(speed, 7.5);
         assert!(matches!(widgets[0], Widget::Slider { value, .. } if value == 7.5));
+    }
+
+    #[test]
+    fn a_number_in_a_range_declares_it_and_keeps_an_event_inside_it() {
+        let id = id_of(
+            &frame(vec![], |ui| {
+                ui.number_in("Count", &mut 5.0, 1.0, 0.0..=100.0, 0);
+            })[0],
+        );
+        let mut count = 5.0;
+        let mut changed = false;
+        let widgets = frame(vec![UiEvent { id, kind: UiEventKind::Number(150.0) }], |ui| {
+            changed = ui.number_in("Count", &mut count, 1.0, 0.0..=100.0, 0);
+        });
+        assert!(changed);
+        assert_eq!(count, 100.0);
+        assert_eq!(widgets[0], Widget::Number { id, text: "Count".into(), value: 100.0, speed: 1.0, range: Some([0.0, 100.0]), decimals: Some(0) });
+        let plain = frame(vec![], |ui| {
+            ui.number("Count", &mut 5.0, 1.0);
+        });
+        assert_eq!(plain[0], Widget::Number { id, text: "Count".into(), value: 5.0, speed: 1.0, range: None, decimals: None });
     }
 
     #[test]

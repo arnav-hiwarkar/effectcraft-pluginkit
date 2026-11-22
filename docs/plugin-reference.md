@@ -94,6 +94,10 @@ set of values. Ids are the full parameter ids, including the group prefix. Value
 reads them in, except points: a point is a fraction of the layer, like a parameter's default. Ids
 the effect does not declare, and layer and mask parameters, are ignored.
 
+A preset writes the absolute value of every parameter it names, so the controls show them, and leaves the
+parameters it does not name as the user set them. A look that names `look` and the counts of its elements
+(`("Rays/count", Value::Number(14.0))`) therefore does not reset the element controls.
+
 The engine lists them with `effect.presets {layer?, effect}` → `{presets: [name]}` and applies one
 with `effect.applyPreset {layer?, effect, preset}`. Applying sets every value at the current layer
 time in one undo step: a keyframed parameter gets a keyframe, a static one changes its value.
@@ -103,8 +107,8 @@ Panels, commands, the CLI and automation all use these two commands.
 
 | Builder | Read in `render` with | Value |
 |---|---|---|
-| `Param::slider(id, name, default, min..=max)` | `cx.f(id)` | number |
-| `Param::percent(id, name, default)` | `cx.f(id)` | 0 to 100 |
+| `Param::slider(id, name, default, min..=max)` | `cx.f(id)` | number, always inside `min..=max` |
+| `Param::percent(id, name, default)` | `cx.f(id)` | a number shown with `%`, not limited |
 | `Param::angle(id, name, default)` | `cx.f(id)` | degrees |
 | `Param::checkbox(id, name, default)` | `cx.bool(id)` | |
 | `Param::popup(id, name, &["A", "B"], default)` | `cx.index(id)` | option index |
@@ -115,6 +119,20 @@ Panels, commands, the CLI and automation all use these two commands.
 | `Param::custom(id, name, default)` | `cx.text(id)` | text the plugin owns; `controls` draws its row |
 | `Param::layer(id, name)` | `cx.layer(id)` | another layer's pixels |
 | `Param::mask(id, name)` | `cx.index(id)` | index into `cx.masks()` |
+
+A slider has two ranges. `min..=max` is the hard range: what the user can type and what `cx.f` returns, even
+when an expression or a script pushes the value outside it. `.soft(low..=high)` is what the slider under the
+row shows, so a value up to 1000 can be typed while the slider covers 0.01 to 10. `.log()` spaces the slider
+by ratio, which suits gains and sizes; it needs a soft (or hard) minimum above 0 and is linear otherwise.
+`.range(min..=max)` gives a percent parameter a hard range and a slider (a percent without one has none).
+
+```rust
+Param::slider("gain", "Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log()
+Param::percent("mix", "Mix", 50.0).range(-100.0..=300.0)
+```
+
+A parameter declared without these behaves as before. `effect.list` reports `sliderMin`, `sliderMax`,
+`log` and `percent` for them.
 
 A new version of a plugin may add parameters. Effects already applied in a project gain them with their
 defaults when the project opens, or when the plugin starts while the project is open. The second is one undo step,
@@ -337,8 +355,10 @@ A reply of an older SDK is a bare widget list. The app redraws such a panel ever
 thread, and does not send it key or drop events.
 
 Widgets: `label`, `heading`, `weak`, `mono`, `error`, `button`, `button_enabled`, `checkbox`, `slider`, `number`,
-`text_edit`, `popup`, `color`, `separator`, `space`, and the containers `row`, `column` and `group`.
+`number_in`, `text_edit`, `popup`, `color`, `separator`, `space`, and the containers `row`, `column` and `group`.
 Value widgets take `&mut` state and return `true` on the frame the user changed it.
+`ui.number_in(text, &mut value, speed, min..=max, decimals)` is `number` with a range the value stays in and a
+fixed number of decimals.
 
 | Widget | Shows |
 |---|---|
@@ -353,7 +373,8 @@ Value widgets take `&mut` state and return `true` on the frame the user changed 
 `ui.keys()` is the text typed while the pointer is over the panel and no text field has the keyboard.
 
 `ui.canvas(key, [width, height], |c| …)` gives a drawing surface with `line`, `bezier`, `rect`, `circle`,
-`polygon` (convex, filled), `image` and `text`, in canvas-local pixels. A pointer event has a phase of
+`polygon` (filled; concave shapes fill correctly, up to 2048 points, and more points are filled as a convex
+shape), `image` and `text`, in canvas-local pixels. A pointer event has a phase of
 `Hover`, `Down`, `Drag` or `Up`, the `modifiers` held (`shift`, `alt`, `command`) and the `scroll` delta. A drag keeps reporting positions after the pointer leaves the
 canvas. Colours are theme tokens (`Paint::Text`, `Paint::Accent`, `Paint::Weak`, `Paint::Surface`, …)
 or `Paint::Rgba`.
@@ -434,7 +455,7 @@ All are in `craft_plugin::host`.
 | `command(id, params)` for a command that only reads | `document.read` |
 | `command(id, params)` for a command that edits the project | `document.write` |
 | `command(…)` that names a file, such as `file.saveCopy` | `files.read` and `files.write`, as well |
-| `read_file(Root::Bundle, path)`, `list_files(Root::Bundle, path)` | None |
+| `read_file(Root::Bundle, path)`, `list_files(Root::Bundle, path)`; `read_file` returns a `FileError { kind, message }` whose `kind` is `NotFound`, `PermissionDenied` or `Other`, and `?` turns it into an `Error` | None |
 | `read_file`, `write_file`, `list_files` with `Root::Data` | None |
 | `read_file(Root::User, path)`, `list_files(Root::User, path)` | `files.read` |
 | `write_file(Root::User, path, bytes)` | `files.write` |
@@ -491,6 +512,12 @@ reason has still landed.
 | `plugin.cancelTask` | `plugin`, `id` | Cancels a task |
 | `window.plugins` | | Opens the plugin manager |
 | `window.pluginPanel` | `plugin`, `panel` | Opens a plugin panel |
+
+`keys.info {keys?}` describes the selected keyframes, and plugins with `document.read` use it. Each key has
+its `index` among its property's keys and the property's `keyCount`. For a spatial property, `segmentLength`
+is the length in pixels of the path from this key to the next (`null` on the last key) and `pathLength` the
+length of the whole path. `dims` is the number of dimensions the layer shows (2 for scale on a 2D layer) and
+`easeDims` the number `keys.setEase` works on (3); `inEase` and `outEase` have `easeDims` entries.
 
 An automation agent confined to folders cannot run any of these except `plugin.list`.
 

@@ -64,7 +64,11 @@ pub(crate) fn draw_marks(t: &Tokens, painter: &egui::Painter, map: &ViewerMap, m
                 });
                 outline(around.collect(), *fill, *stroke)
             }
-            Shape::Polygon { points, fill } => outline(points.clone(), Some(*fill), None),
+            Shape::Polygon { points, fill } => {
+                if let Some(points) = path(points.clone()) {
+                    painter.add(crate::panels::plugin_view::filled_polygon(points, colour(t, *fill)));
+                }
+            }
             Shape::Text { pos, text, color, size } => {
                 if let Some(at) = to_screen(*pos) {
                     painter.text(at, egui::Align2::LEFT_TOP, text, Tokens::ui(size.clamp(6.0, 48.0)), colour(t, *color));

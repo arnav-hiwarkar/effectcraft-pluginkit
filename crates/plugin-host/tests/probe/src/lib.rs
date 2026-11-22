@@ -496,6 +496,17 @@ impl Effect for Report {
     }
 }
 
+struct Ranges;
+
+impl Effect for Ranges {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("ranges", "Ranges", "Probe")
+            .param(Param::slider("gain", "Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log())
+            .param(Param::percent("mix", "Mix", 50.0).range(-100.0..=300.0))
+            .param(Param::slider("plain", "Plain", 5.0, 0.0..=20.0))
+    }
+}
+
 struct SceneCamera;
 
 impl Effect for SceneCamera {
@@ -697,6 +708,7 @@ fn make() -> Plugin {
         .effect(Recurse)
         .effect(Memo)
         .effect(Report)
+        .effect(Ranges)
         .effect(GpuInvert)
         .effect(GpuSoften)
         .effect(HostKernels)
@@ -735,6 +747,17 @@ fn make() -> Plugin {
             let path = String::from_utf8(host::read_file(Root::Bundle, "user-target.txt")?).map_err(|e| e.to_string())?;
             let bytes = host::read_file(Root::User, path.trim())?;
             host::write_file(Root::Data, "read.txt", &bytes)
+        })
+        .command("read-kinds", "Read Kinds", || {
+            let reads = [(Root::Data, "absent.txt"), (Root::Data, "gone/deeper.txt"), (Root::Data, ".")];
+            let kinds: Vec<String> = reads
+                .iter()
+                .map(|(root, path)| match host::read_file(*root, path) {
+                    Ok(_) => "read".to_string(),
+                    Err(error) => format!("{:?}|{}", error.kind, error.message),
+                })
+                .collect();
+            host::write_file(Root::Data, "kinds.txt", kinds.join("\n").as_bytes())
         })
         .command("put-table", "Put A Lookup Table", || host::cache_put("table", &[4, 5, 6]))
         .command("approve-itself", "Approve Itself", || host::command("plugin.approve", json!({"id": "test.gate-self"})).map(|_| ()))

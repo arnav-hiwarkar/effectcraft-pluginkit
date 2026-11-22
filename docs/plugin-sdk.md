@@ -263,8 +263,24 @@ involved), do not reuse checkpoints between frames. `plugins/ember` does this.
 
 `.preset(name, values)` on the spec names a set of parameter values, for example a look popup that
 also sets the sliders. The app applies one with `effect.applyPreset {layer, effect, preset}` in one
-undo step and lists them with `effect.presets`. `plugins/halo` has a preset per look. See
-[Presets](plugin-reference.md#presets).
+undo step and lists them with `effect.presets`. A preset writes absolute values to the parameters it names
+and leaves the others alone. `plugins/halo` has a preset per look that sets the look and its element counts:
+
+```rust
+.preset("Sun", [("look", Value::Number(1.0)), ("Rays/count", Value::Number(14.0)), ("Ghosts/count", Value::Number(7.0))])
+```
+
+See [Presets](plugin-reference.md#presets).
+
+## Give a slider its own ranges
+
+A slider's hard range is what is allowed, and `cx.f` never returns a value outside it. The soft range is what the
+slider shows, and `.log()` spaces it by ratio:
+
+```rust
+Param::slider("gain", "Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log()
+Param::percent("mix", "Mix", 50.0).range(-100.0..=300.0)
+```
 
 ## Add a panel
 
@@ -600,6 +616,16 @@ if let Some(path) = picked {
 Panels and commands only. With `save: true` the path is also writable.
 
 ## Store files
+
+A missing file is not a failed read: `read_file` returns a `FileError` with a `kind`.
+
+```rust
+let saved = match host::read_file(Root::Data, "presets.json") {
+    Ok(bytes) => bytes,
+    Err(error) if error.kind == FileErrorKind::NotFound => Vec::new(),
+    Err(error) => return Err(error.into()),
+};
+```
 
 ```rust
 host::write_file(Root::Data, "presets.json", bytes)?;   // private to the plugin, always allowed

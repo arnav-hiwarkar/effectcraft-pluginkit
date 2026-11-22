@@ -33,6 +33,12 @@ impl From<&str> for Error {
     }
 }
 
+impl From<crate::wire::FileError> for Error {
+    fn from(error: crate::wire::FileError) -> Self {
+        Error(error.message)
+    }
+}
+
 impl From<serde_json::Error> for Error {
     fn from(error: serde_json::Error) -> Self {
         Error(error.to_string())

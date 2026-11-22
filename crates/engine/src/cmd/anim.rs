@@ -430,7 +430,7 @@ fn units(pr: &Property) -> &'static str {
     }
     match pr.ui {
         ParamUi::Angle => "degrees/sec",
-        ParamUi::Percent => "%/sec",
+        ParamUi::Percent | ParamUi::Scaled { percent: true, .. } => "%/sec",
         ParamUi::Slider { .. } if pr.match_id == "opacity" => "%/sec",
         _ if pr.match_id == "opacity" => "%/sec",
         ParamUi::Pixels => "pixels/sec",
@@ -467,9 +467,10 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         let k = &pr.keys[i];
         let spatial = pr.spatial && matches!(k.value, effectcraft_keyframe::Value::Vec2(_) | effectcraft_keyframe::Value::Vec3(_));
         let dims = if spatial { 1 } else { k.value.dims().max(1).min(if pr.shown_dims > 0 && !l.is_3d() { pr.shown_dims as usize } else { 4 }) };
+        let ease_dims = if spatial { 1 } else { k.value.dims().max(1) };
         let side = |out: bool| -> Value {
             json!(
-                (0..dims)
+                (0..ease_dims)
                     .map(|d| side_ease(&pr.keys, i, d, pr.spatial, out)
                         .map(|e| json!({"speed": e.speed, "influence": e.influence * 100.0}))
                         .unwrap_or(Value::Null))
@@ -496,8 +497,11 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         } else {
             json!("bezier")
         };
+        let segment_length = (spatial && i + 1 < pr.keys.len()).then(|| effectcraft_keyframe::spatial_segment_length(&pr.keys, i));
+        let path_length = spatial.then(|| (0..pr.keys.len().saturating_sub(1)).map(|j| effectcraft_keyframe::spatial_segment_length(&pr.keys, j)).sum::<f64>());
         out.push(json!({
-            "layer": l.id.0, "prop": pr.uid, "name": pr.name, "path": l.props.match_path_of(pr.uid),
+            "layer": l.id.0, "prop": pr.uid, "name": pr.name, "index": i, "keyCount": pr.keys.len(),
+            "segmentLength": segment_length, "pathLength": path_length, "easeDims": ease_dims, "path": l.props.match_path_of(pr.uid),
             "time": k.time.seconds(), "compTime": l.comp_time(k.time).seconds(), "value": k.value.to_json(),
             "in": interp_name(k.in_interp), "out": interp_name(k.out_interp), "temporal": temporal,
             "autoBezier": k.auto_bezier, "continuous": k.continuous, "roving": k.roving, "spatial": spatial_kind,

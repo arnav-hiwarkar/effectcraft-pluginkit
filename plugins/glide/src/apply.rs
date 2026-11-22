@@ -5,7 +5,6 @@ use crate::curve::{Curve, Ease};
 use crate::selection::{self, Pair, PropertyKeys, SelectedKey};
 
 pub const APPLY_LABEL: &str = "Glide: Apply Curve";
-const PATH_SAMPLES: usize = 128;
 const NOTHING_SELECTED: &str = "Select two or more neighbouring keyframes on a property.";
 const ONLY_SINGLE_KEYS: &str = "Each property has only one selected keyframe: select two or more neighbouring keyframes.";
 const NO_NEIGHBOURS: &str = "The selected keyframes are not neighbours: select keyframes that follow each other.";
@@ -36,20 +35,19 @@ fn selected(host: &dyn Host) -> Result<Vec<PropertyKeys>, String> {
     selection::parse(&host.command("keys.info", json!({}))?)
 }
 
-fn gather<'a>(host: &dyn Host, properties: &'a [PropertyKeys]) -> Result<Gathered<'a>, String> {
+fn gather(properties: &[PropertyKeys]) -> Result<Gathered<'_>, String> {
     let mut gathered = Gathered { segments: Vec::new(), single: 0, apart: 0 };
     for property in properties {
         if property.keys.len() < 2 {
             gathered.single += 1;
             continue;
         }
-        let times = selection::key_times(&host.command("prop.get", json!({"layer": property.layer, "prop": property.prop}))?)?;
-        let pairs = property.pairs(&times);
+        let pairs = property.pairs();
         if pairs.is_empty() {
             gathered.apart += 1;
         }
         for pair in pairs {
-            let deltas = deltas(host, &pair)?;
+            let deltas = deltas(&pair)?;
             gathered.segments.push(Segment { pair, deltas });
         }
     }
@@ -64,39 +62,12 @@ fn missing_pairs(gathered: &Gathered) -> &'static str {
     }
 }
 
-fn deltas(host: &dyn Host, pair: &Pair) -> Result<Vec<f64>, String> {
+fn deltas(pair: &Pair) -> Result<Vec<f64>, String> {
     if pair.property.spatial {
-        return Ok(vec![path_length(host, pair)?]);
+        let length = pair.start.segment_length.ok_or_else(|| format!("Could not measure the motion path of {}.", pair.property.name))?;
+        return Ok(vec![length.max(pair.chord())]);
     }
     Ok(pair.component_deltas().unwrap_or_else(|| vec![1.0]))
-}
-
-fn path_length(host: &dyn Host, pair: &Pair) -> Result<f64, String> {
-    let (from, to) = (pair.start.comp_time, pair.end.comp_time);
-    let steps: Vec<Value> = (0..=PATH_SAMPLES)
-        .map(|i| {
-            let time = from + (to - from) * i as f64 / PATH_SAMPLES as f64;
-            json!({"command": "prop.get", "params": {"layer": pair.property.layer, "prop": pair.property.prop, "time": time}})
-        })
-        .collect();
-    let reply = host.command("engine.batch", json!({"label": "Glide: Measure Path", "steps": steps}))?;
-    let points = reply
-        .get("results")
-        .and_then(Value::as_array)
-        .map(|results| results.iter().filter_map(|r| r.get("value").and_then(Value::as_array)).map(|v| v.iter().filter_map(Value::as_f64).collect()).collect::<Vec<Vec<f64>>>())
-        .filter(|points| points.len() == PATH_SAMPLES + 1)
-        .ok_or_else(|| format!("Could not measure the motion path of {}.", pair.property.name))?;
-    Ok(arc_length(&points).max(pair.chord()))
-}
-
-fn polyline(points: impl Iterator<Item = Vec<f64>> + Clone) -> f64 {
-    points.clone().zip(points.skip(1)).map(|(a, b)| a.iter().zip(&b).map(|(p, q)| (q - p) * (q - p)).sum::<f64>().sqrt()).sum()
-}
-
-pub fn arc_length(points: &[Vec<f64>]) -> f64 {
-    let fine = polyline(points.iter().cloned());
-    let coarse = polyline(points.iter().step_by(2).cloned());
-    (4.0 * fine - coarse) / 3.0
 }
 
 fn set_ease(property: &PropertyKeys, key: &SelectedKey, side: Side, dim: usize, ease: Ease) -> Value {
@@ -186,7 +157,7 @@ fn summary(gathered: &Gathered) -> String {
 
 pub fn apply(host: &dyn Host, curve: Curve, label: &str) -> Result<String, String> {
     let properties = selected(host)?;
-    let gathered = gather(host, &properties)?;
+    let gathered = gather(&properties)?;
     if gathered.segments.is_empty() {
         return Err(missing_pairs(&gathered).into());
     }
@@ -207,9 +178,8 @@ pub fn curve_of(segment: &Segment) -> Option<Curve> {
 pub fn read(host: &dyn Host) -> Result<(Curve, String), String> {
     let properties = selected(host)?;
     for property in properties.iter().filter(|p| p.keys.len() >= 2) {
-        let times = selection::key_times(&host.command("prop.get", json!({"layer": property.layer, "prop": property.prop}))?)?;
-        if let Some(pair) = property.pairs(&times).into_iter().next() {
-            let segment = Segment { deltas: deltas(host, &pair)?, pair };
+        if let Some(pair) = property.pairs().into_iter().next() {
+            let segment = Segment { deltas: deltas(&pair)?, pair };
             return curve_of(&segment).map(|curve| (curve, property.name.clone())).ok_or_else(|| NO_CURVE.to_string());
         }
     }

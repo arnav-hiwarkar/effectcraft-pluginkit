@@ -5,7 +5,7 @@ use serde::de::DeserializeOwned;
 
 use crate::abi::{Buffer, call_host};
 use crate::effect::{Image, image_of};
-use crate::wire::{AudioDesc, AudioRequest, FrameRequest, HostCall, LogLevel, Outcome, PickFile, Root, TaskState};
+use crate::wire::{AudioDesc, AudioRequest, FileError, FrameRequest, HostCall, LogLevel, Outcome, PickFile, Root, TaskState};
 use crate::{Error, Result};
 
 pub fn call<T: DeserializeOwned>(call: &HostCall, bulk: &[u8]) -> Result<(T, Buffer)> {
@@ -32,8 +32,8 @@ pub fn command(id: &str, params: impl Serialize) -> Result<serde_json::Value> {
     call(&HostCall::Command { id: id.into(), params }, &[]).map(|(value, _)| value)
 }
 
-pub fn read_file(root: Root, path: &str) -> Result<Vec<u8>> {
-    call::<serde_json::Value>(&HostCall::ReadFile { root, path: path.into() }, &[]).map(|(_, bulk)| bulk.bytes().to_vec())
+pub fn read_file(root: Root, path: &str) -> std::result::Result<Vec<u8>, FileError> {
+    call::<serde_json::Value>(&HostCall::ReadFile { root, path: path.into() }, &[]).map(|(_, bulk)| bulk.bytes().to_vec()).map_err(|error| FileError::from_reply(error.0))
 }
 
 pub fn write_file(root: Root, path: &str, bytes: &[u8]) -> Result<()> {

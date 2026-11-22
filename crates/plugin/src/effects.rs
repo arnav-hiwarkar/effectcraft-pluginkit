@@ -98,9 +98,15 @@ pub(crate) fn unregister(plugin: &str) {
 
 fn declare(param: &Param) -> DynamicParam {
     let (default, ui) = match &param.kind {
-        ParamKind::Slider { default, min, max } => {
-            let decimals = if max - min <= 10.0 { 2 } else { 1 };
-            let ui = ParamUi::Slider { min: *min, max: *max, slider_min: *min, slider_max: *max, decimals };
+        ParamKind::Slider { default, min, max, soft, log, percent } => {
+            let [slider_min, slider_max] = soft.map(|[low, high]| [low.max(*min), high.min(*max)]).filter(|[low, high]| low < high).unwrap_or([*min, *max]);
+            let decimals = if slider_max - slider_min <= 10.0 { 2 } else { 1 };
+            let log = *log && slider_min > 0.0;
+            let ui = if log || *percent {
+                ParamUi::Scaled { min: *min, max: *max, slider_min, slider_max, decimals, log, percent: *percent }
+            } else {
+                ParamUi::Slider { min: *min, max: *max, slider_min, slider_max, decimals }
+            };
             (Value::Scalar(*default), ui)
         }
         ParamKind::Percent { default } => (Value::Scalar(*default), ParamUi::Percent),
@@ -173,7 +179,8 @@ pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 
             }
         };
         match &param.kind {
-            ParamKind::Slider { .. } | ParamKind::Percent { .. } | ParamKind::Angle { .. } => Wire::Number(value.as_f64()),
+            ParamKind::Slider { min, max, .. } => Wire::Number(value.as_f64().max(*min).min(*max)),
+            ParamKind::Percent { .. } | ParamKind::Angle { .. } => Wire::Number(value.as_f64()),
             ParamKind::Checkbox { .. } => Wire::Bool(value.as_bool()),
             ParamKind::Popup { .. } | ParamKind::Mask => Wire::Number(f64::from(value.as_enum())),
             ParamKind::Point { .. } => Wire::List(to_px(grid, value.as_vec2()).to_vec()),

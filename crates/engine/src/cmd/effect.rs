@@ -1042,6 +1042,15 @@ fn list(_: &mut Session, p: &Value) -> Result<Value> {
                         out["sliderMax"] = json!(slider_max);
                         out["decimals"] = json!(decimals);
                     }
+                    effectcraft_project::ParamUi::Scaled { min, max, slider_min, slider_max, decimals, log, percent } => {
+                        out["min"] = json!(min);
+                        out["max"] = json!(max);
+                        out["sliderMin"] = json!(slider_min);
+                        out["sliderMax"] = json!(slider_max);
+                        out["decimals"] = json!(decimals);
+                        out["log"] = json!(log);
+                        out["percent"] = json!(percent);
+                    }
                     _ => {}
                 }
                 out

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use craft_plugin::{AppEvent, Paint, Panel, Pointer, PointerPhase, Shape, Ui, UiEvent, UiEventKind, UiInput, Widget};
 use serde_json::{Value, json};
 
-use crate::apply::{self, arc_length};
+use crate::apply;
 use crate::bridge::Host;
 use crate::curve::{Curve, Handle};
 use crate::panel::GlidePanel;
@@ -103,15 +103,11 @@ fn close(a: f64, b: f64) -> bool {
 
 fn opacity_selection() -> Value {
     json!([
-        {"layer": 4, "prop": 15, "name": "Opacity", "time": 0.0, "compTime": 0.0, "value": 0.0, "spatial": null,
+        {"layer": 4, "prop": 15, "name": "Opacity", "index": 0, "time": 0.0, "compTime": 0.0, "value": 0.0, "spatial": null,
          "inEase": [null], "outEase": [{"speed": 0.0, "influence": 42.0}]},
-        {"layer": 4, "prop": 15, "name": "Opacity", "time": 2.0, "compTime": 2.0, "value": 100.0, "spatial": null,
+        {"layer": 4, "prop": 15, "name": "Opacity", "index": 1, "time": 2.0, "compTime": 2.0, "value": 100.0, "spatial": null,
          "inEase": [{"speed": 0.0, "influence": 42.0}], "outEase": [null]}
     ])
-}
-
-fn two_key_property() -> Value {
-    json!({"keys": [{"time": 0.0}, {"time": 2.0}]})
 }
 
 fn ease_steps(batch: &Value) -> Vec<(String, u64, f64, f64)> {
@@ -189,7 +185,7 @@ fn applying_without_a_selection_says_what_to_select() {
 
 #[test]
 fn applying_with_one_selected_key_says_what_to_select() {
-    let one = json!([{"layer": 4, "prop": 15, "name": "Opacity", "time": 0.0, "compTime": 0.0, "value": 0.0}]);
+    let one = json!([{"layer": 4, "prop": 15, "name": "Opacity", "index": 0, "time": 0.0, "compTime": 0.0, "value": 0.0}]);
     let mut panel = GlidePanel::new(FakeHost::replying(&[("keys.info", one)]));
     let apply = button(&frame(&mut panel, vec![]), "Apply").unwrap_or_default();
     frame(&mut panel, click(apply));
@@ -198,7 +194,7 @@ fn applying_with_one_selected_key_says_what_to_select() {
 
 #[test]
 fn auto_apply_sends_the_clicked_preset_as_one_batch() {
-    let host = FakeHost::replying(&[("keys.info", opacity_selection()), ("prop.get", two_key_property()), ("engine.batch", json!({}))]);
+    let host = FakeHost::replying(&[("keys.info", opacity_selection()), ("engine.batch", json!({}))]);
     let mut panel = GlidePanel::new(host.clone());
     panel.auto_apply = true;
     let all = canvases(&frame(&mut panel, vec![]));
@@ -218,7 +214,7 @@ fn auto_apply_sends_the_clicked_preset_as_one_batch() {
 
 #[test]
 fn reading_the_selection_loads_the_curve_of_the_first_pair() {
-    let host = FakeHost::replying(&[("keys.info", opacity_selection()), ("prop.get", two_key_property())]);
+    let host = FakeHost::replying(&[("keys.info", opacity_selection())]);
     let mut panel = GlidePanel::new(host);
     let read = button(&frame(&mut panel, vec![]), "Read Selection").unwrap_or_default();
     panel.curve = Curve::new(0.1, 0.2, 0.3, 0.4);
@@ -265,10 +261,10 @@ fn saved_presets_are_written_and_load_in_a_new_panel() {
 #[test]
 fn scale_gets_one_ease_per_dimension_from_its_own_value_change() {
     let selection = json!([
-        {"layer": 4, "prop": 10, "name": "Scale", "time": 0.0, "compTime": 0.0, "value": [100.0, 50.0, 100.0], "spatial": null},
-        {"layer": 4, "prop": 10, "name": "Scale", "time": 4.0, "compTime": 4.0, "value": [160.0, 250.0, 100.0], "spatial": null}
+        {"layer": 4, "prop": 10, "name": "Scale", "index": 0, "time": 0.0, "compTime": 0.0, "value": [100.0, 50.0, 100.0], "spatial": null},
+        {"layer": 4, "prop": 10, "name": "Scale", "index": 1, "time": 4.0, "compTime": 4.0, "value": [160.0, 250.0, 100.0], "spatial": null}
     ]);
-    let host = FakeHost::replying(&[("keys.info", selection), ("prop.get", json!({"keys": [{"time": 0.0}, {"time": 4.0}]})), ("engine.batch", json!({}))]);
+    let host = FakeHost::replying(&[("keys.info", selection), ("engine.batch", json!({}))]);
     let curve = Curve::new(0.5, 0.25, 0.75, 1.0);
     assert_eq!(apply::apply(&host, curve, "Test"), Ok("Applied to 2 keys on 1 property".to_string()));
     let steps = ease_steps(&host.calls("engine.batch")[0]);
@@ -279,15 +275,17 @@ fn scale_gets_one_ease_per_dimension_from_its_own_value_change() {
 #[test]
 fn a_spatial_property_eases_along_its_measured_path_length() {
     let selection = json!([
-        {"layer": 4, "prop": 9, "name": "Position", "time": 0.0, "compTime": 0.0, "value": [0.0, 0.0, 0.0], "spatial": "autoBezier"},
-        {"layer": 4, "prop": 9, "name": "Position", "time": 2.0, "compTime": 2.0, "value": [300.0, 400.0, 0.0], "spatial": "autoBezier"}
+        {"layer": 4, "prop": 9, "name": "Position", "index": 0, "time": 0.0, "compTime": 0.0, "value": [0.0, 0.0, 0.0], "spatial": "autoBezier",
+         "segmentLength": 500.0, "pathLength": 500.0},
+        {"layer": 4, "prop": 9, "name": "Position", "index": 1, "time": 2.0, "compTime": 2.0, "value": [300.0, 400.0, 0.0], "spatial": "autoBezier",
+         "segmentLength": null, "pathLength": 500.0}
     ]);
-    let line: Vec<Value> = (0..=128).map(|i| json!({"value": [300.0 * f64::from(i) / 128.0, 400.0 * f64::from(i) / 128.0, 0.0]})).collect();
-    let host = FakeHost::replying(&[("keys.info", selection), ("prop.get", two_key_property()), ("engine.batch", json!({"results": line}))]);
+    let host = FakeHost::replying(&[("keys.info", selection), ("engine.batch", json!({}))]);
     apply::apply(&host, Curve::new(0.25, 0.5, 0.75, 1.0), "Test").unwrap_or_default();
     let batches = host.calls("engine.batch");
-    assert_eq!(batches[0]["steps"].as_array().map(Vec::len), Some(129));
-    let steps = ease_steps(&batches[1]);
+    assert_eq!(batches.len(), 1);
+    assert!(host.calls("prop.get").is_empty());
+    let steps = ease_steps(&batches[0]);
     assert_eq!(steps.len(), 2);
     assert!(close(steps[0].2, 500.0) && close(steps[0].3, 25.0));
 }
@@ -295,13 +293,12 @@ fn a_spatial_property_eases_along_its_measured_path_length() {
 #[test]
 fn an_auto_bezier_key_keeps_its_outer_side_and_continuous_keys_are_released() {
     let selection = json!([
-        {"layer": 4, "prop": 12, "name": "Rotation", "time": 1.0, "compTime": 1.0, "value": 40.0, "spatial": null, "autoBezier": true,
+        {"layer": 4, "prop": 12, "name": "Rotation", "index": 1, "time": 1.0, "compTime": 1.0, "value": 40.0, "spatial": null, "autoBezier": true,
          "inEase": [{"speed": 50.0, "influence": 16.666666666666664}], "outEase": [{"speed": 50.0, "influence": 16.666666666666664}]},
-        {"layer": 4, "prop": 12, "name": "Rotation", "time": 2.0, "compTime": 2.0, "value": 100.0, "spatial": null, "continuous": true,
+        {"layer": 4, "prop": 12, "name": "Rotation", "index": 2, "time": 2.0, "compTime": 2.0, "value": 100.0, "spatial": null, "continuous": true,
          "inEase": [{"speed": 60.0, "influence": 30.0}], "outEase": [{"speed": 60.0, "influence": 30.0}]}
     ]);
-    let property = json!({"keys": [{"time": 0.0}, {"time": 1.0}, {"time": 2.0}, {"time": 3.0}]});
-    let host = FakeHost::replying(&[("keys.info", selection), ("prop.get", property), ("engine.batch", json!({}))]);
+    let host = FakeHost::replying(&[("keys.info", selection), ("engine.batch", json!({}))]);
     apply::apply(&host, Curve::DEFAULT, "Test").unwrap_or_default();
     let batch = &host.calls("engine.batch")[0];
     assert_eq!(batch["steps"][0], json!({"command": "keys.interpolation", "params": {"continuous": false}}));
@@ -312,19 +309,8 @@ fn an_auto_bezier_key_keeps_its_outer_side_and_continuous_keys_are_released() {
 }
 
 #[test]
-fn a_quarter_circle_measures_its_arc_length() {
-    let points: Vec<Vec<f64>> = (0..=128)
-        .map(|i| {
-            let angle = std::f64::consts::FRAC_PI_2 * f64::from(i) / 128.0;
-            vec![100.0 * angle.cos(), 100.0 * angle.sin()]
-        })
-        .collect();
-    assert!((arc_length(&points) - 157.07963267948966).abs() < 1e-7);
-}
-
-#[test]
 fn auto_apply_runs_once_when_a_handle_drag_ends() {
-    let host = FakeHost::replying(&[("keys.info", opacity_selection()), ("prop.get", two_key_property()), ("engine.batch", json!({}))]);
+    let host = FakeHost::replying(&[("keys.info", opacity_selection()), ("engine.batch", json!({}))]);
     let mut panel = GlidePanel::new(host.clone());
     panel.auto_apply = true;
     let editor = canvases(&frame(&mut panel, vec![]))[0].0;
@@ -340,9 +326,9 @@ fn auto_apply_runs_once_when_a_handle_drag_ends() {
 fn the_result_names_properties_that_were_skipped() {
     let mut selection = opacity_selection();
     if let Some(keys) = selection.as_array_mut() {
-        keys.push(json!({"layer": 4, "prop": 12, "name": "Rotation", "time": 1.0, "compTime": 1.0, "value": 10.0}));
+        keys.push(json!({"layer": 4, "prop": 12, "name": "Rotation", "index": 1, "time": 1.0, "compTime": 1.0, "value": 10.0}));
     }
-    let host = FakeHost::replying(&[("keys.info", selection), ("prop.get", two_key_property()), ("engine.batch", json!({}))]);
+    let host = FakeHost::replying(&[("keys.info", selection), ("engine.batch", json!({}))]);
     assert_eq!(apply::apply(&host, Curve::DEFAULT, "Test"), Ok("Applied to 2 keys on 1 property; skipped 1 property with one selected key".to_string()));
 }
 
@@ -356,7 +342,7 @@ fn selection_changed(panel: &mut GlidePanel<FakeHost>, keyframes: u32) -> Vec<Wi
 
 #[test]
 fn the_panel_reads_the_curve_when_the_keyframe_selection_changes_and_goes_idle_when_it_empties() {
-    let host = FakeHost::replying(&[("keys.info", opacity_selection()), ("prop.get", two_key_property())]);
+    let host = FakeHost::replying(&[("keys.info", opacity_selection())]);
     let mut panel = GlidePanel::new(host.clone());
     frame(&mut panel, vec![]);
     assert!(host.calls("keys.info").is_empty());

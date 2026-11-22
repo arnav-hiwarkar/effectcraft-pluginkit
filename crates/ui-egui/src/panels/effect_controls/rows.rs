@@ -299,11 +299,11 @@ fn value_scalar(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value:
     };
     let PropCx { uid, cy, vx, prop, .. } = *cx;
     let (min, max, dec) = match &prop.ui {
-        ParamUi::Slider { min, max, decimals, .. } => (*min, *max, *decimals as usize),
+        ParamUi::Slider { min, max, decimals, .. } | ParamUi::Scaled { min, max, decimals, .. } => (*min, *max, *decimals as usize),
         _ => (-1e9, 1e9, 1),
     };
     let suffix = match prop.ui {
-        ParamUi::Percent => "%",
+        ParamUi::Percent | ParamUi::Scaled { percent: true, .. } => "%",
         _ => "",
     };
     let speed = widgets::slider_scrub_speed(&prop.ui);
@@ -321,7 +321,7 @@ fn value_scalar(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value:
         widgets::mark_step(actions.last_mut(), step);
     }
     // AE hides a slider param's slider until its twirl is opened (see `slider_row`).
-    if matches!(prop.ui, ParamUi::Slider { .. }) {
+    if matches!(prop.ui, ParamUi::Slider { .. } | ParamUi::Scaled { .. }) {
         cx.twirl_open(app, ui);
     }
 }
@@ -616,6 +616,14 @@ fn gradient_at(g: &effectcraft_engine::keyframe::Gradient, f: f64) -> Color32 {
     Color32::from_rgb((c[0].clamp(0.0, 1.0) * 255.0) as u8, (c[1].clamp(0.0, 1.0) * 255.0) as u8, (c[2].clamp(0.0, 1.0) * 255.0) as u8)
 }
 
+fn slider_fraction(value: f64, min: f64, max: f64, log: bool) -> f64 {
+    if log { (value / min).ln() / (max / min).ln() } else { (value - min) / (max - min) }
+}
+
+fn slider_value(fraction: f64, min: f64, max: f64, log: bool) -> f64 {
+    if log { min * (max / min).powf(fraction) } else { min + (max - min) * fraction }
+}
+
 /// The twirled-open slider under a slider param: track, knob and the slider range's ends.
 #[allow(clippy::too_many_arguments)]
 fn slider_row(
@@ -630,7 +638,11 @@ fn slider_row(
     actions: &mut Actions,
 ) {
     let t = app.tokens;
-    let ParamUi::Slider { slider_min, slider_max, decimals, .. } = prop.ui else { return };
+    let (slider_min, slider_max, decimals, log) = match prop.ui {
+        ParamUi::Slider { slider_min, slider_max, decimals, .. } => (slider_min, slider_max, decimals, false),
+        ParamUi::Scaled { slider_min, slider_max, decimals, log, .. } => (slider_min, slider_max, decimals, log && slider_min > 0.0),
+        _ => return,
+    };
     let Value::Scalar(v) = ectx.value(layer, prop) else { return };
     let uid = prop.uid;
     let tr = Rect::from_min_max(pos2(r.min.x + x0, r.min.y + 8.0), pos2(r.max.x - 16.0, r.min.y + 12.0));
@@ -638,7 +650,7 @@ fn slider_row(
         return;
     }
     p.rect_filled(tr, 2.0, t.field_bg);
-    let f = ((v - slider_min) / (slider_max - slider_min)).clamp(0.0, 1.0) as f32;
+    let f = slider_fraction(v, slider_min, slider_max, log).clamp(0.0, 1.0) as f32;
     p.rect_filled(Rect::from_min_max(tr.min, pos2(tr.min.x + tr.width() * f, tr.max.y)), 2.0, t.accent.gamma_multiply(0.7));
     p.circle_filled(pos2(tr.min.x + tr.width() * f, tr.center().y), 5.0, t.text);
     let dec = decimals as usize;
@@ -652,7 +664,7 @@ fn slider_row(
         let f = ((pt.x - tr.min.x) / tr.width()).clamp(0.0, 1.0) as f64;
         actions.push((
             "prop.set".into(),
-            json!({"layer": layer.id.0, "prop": uid, "value": slider_min + (slider_max - slider_min) * f, "merge": format!("ec-{uid}")}),
+            json!({"layer": layer.id.0, "prop": uid, "value": slider_value(f, slider_min, slider_max, log), "merge": format!("ec-{uid}")}),
         ));
     }
 }
@@ -840,7 +852,7 @@ pub(super) fn group_rows(
                         if sr.max.y >= rect.min.y && sr.min.y <= rect.max.y {
                             dial_row(app, ui, layer, pr, ectx, sr, indent + 22.0, actions);
                         }
-                    } else if matches!(pr.ui, ParamUi::Slider { .. }) {
+                    } else if matches!(pr.ui, ParamUi::Slider { .. } | ParamUi::Scaled { .. }) {
                         let sr = Rect::from_min_size(pos2(rect.min.x, *y), vec2(rect.width(), 34.0));
                         *y += 34.0;
                         if sr.max.y >= rect.min.y && sr.min.y <= rect.max.y {
