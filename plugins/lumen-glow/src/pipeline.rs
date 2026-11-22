@@ -18,6 +18,7 @@ mod tests {
             GpuImage::Source => None,
             GpuImage::Output => Some(0),
             GpuImage::Scratch(index) => Some(index as usize + 1),
+            GpuImage::Texture(_) => panic!("Lumen Glow reads no textures"),
         };
         for step in &plan.passes {
             let target = slot(step.out).expect("no pass writes the source");
