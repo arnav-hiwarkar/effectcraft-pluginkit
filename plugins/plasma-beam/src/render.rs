@@ -28,20 +28,19 @@ fn composite(frame: &mut Frame, core: Option<&Plane>, glow: Option<&Glow>, shadi
     let mut column = vec![[0.0; 3]; glow.map_or(0, |g| g.image.width)];
     let keeps_source = shading.composite.keeps_source();
     let x0 = frame.origin[0];
-    for (y, read, row) in frame.rows() {
+    for (y, row) in frame.rows_in_place() {
         if let Some(glow) = glow {
             let [(a, wa), (b, wb)] = taps(y + glow.guard[1], glow.image.height);
             lerp_row(&mut column, glow.image.row(a), glow.image.row(b), wa, wb);
         }
         let core_row = core.and_then(|plane| plane.row_at(y));
-        for (x, (pixel, &source)) in (x0..).zip(row.iter_mut().zip(read)) {
+        for (x, pixel) in (x0..).zip(row.iter_mut()) {
             let light = glow.map_or([0.0; 3], |g| sample_row(&column, x + g.guard[0]));
             let coverage = core_row.and_then(|(start, cells)| cells.get(x.checked_sub(start)?)).map_or(0.0, |cell| cell[0]);
-            *pixel = if keeps_source && coverage <= 0.0 && light[0] + light[1] + light[2] <= 0.0 {
-                source
-            } else {
-                shading.blend(source, shading.beam(light, coverage))
-            };
+            if keeps_source && coverage <= 0.0 && light[0] + light[1] + light[2] <= 0.0 {
+                continue;
+            }
+            *pixel = shading.blend(*pixel, shading.beam(light, coverage));
         }
     }
 }

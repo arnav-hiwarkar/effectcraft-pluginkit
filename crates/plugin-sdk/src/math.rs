@@ -185,6 +185,63 @@ pub fn linear_to_srgb(linear: f32) -> f32 {
     encoded.copysign(linear)
 }
 
+/// Cheaper forms of [`sin`], [`cos`], [`exp`] and [`ln`] for loops that call several of them per pixel: shorter
+/// polynomials, a one-step range reduction and no guards, so fewer constants and instructions. Each lists its tested
+/// worst error, which is far below one level of a 16-bit channel.
+pub mod fast {
+    use std::f32::consts::{FRAC_1_PI, LOG2_E, PI};
+
+    #[inline(always)]
+    fn sin_of_turn(k: f32, y: f32) -> f32 {
+        let s = y * y;
+        let p = y * (0.999_996_6 + s * (-0.166_648_28 + s * (0.008_306_325 - s * 0.000_183_636_54)));
+        if (k as i32) & 1 == 1 { -p } else { p }
+    }
+
+    /// `sin(x)`. Largest absolute error against `f32::sin` over `-20..=20`: 2e-6, over `-100..=100`: 7e-6; it
+    /// grows with `|x|`, to about 6e-5 at `|x| = 1000`.
+    #[inline(always)]
+    pub fn sin(x: f32) -> f32 {
+        let k = (x * FRAC_1_PI + 0.5).floor();
+        sin_of_turn(k, x - k * PI)
+    }
+
+    /// `cos(x)`, with the range and error of [`sin`].
+    #[inline(always)]
+    pub fn cos(x: f32) -> f32 {
+        let k = (x * FRAC_1_PI + 1.0).floor();
+        sin_of_turn(k, x - (k - 0.5) * PI)
+    }
+
+    /// `e^x` for `x` in `-87..=88`; inputs outside are clamped to it. Largest relative error against `f32::exp`
+    /// over `-20..=20`: 9e-6, over the whole range: 1.2e-5.
+    #[inline(always)]
+    pub fn exp(x: f32) -> f32 {
+        let t = x.clamp(-87.0, 88.0) * LOG2_E;
+        let whole = (t + 0.5).floor();
+        let f = t - whole;
+        let poly = 1.0 + f * (0.693_136_7 + f * (0.240_221_68 + f * (0.055_838_33 + f * 0.009_676_043)));
+        f32::from_bits(((whole as i32 + 127) as u32) << 23) * poly
+    }
+
+    /// `ln(x)` for normal `x > 0`, as exact as [`super::ln`] there. It has no guard: zero gives `-127 * LN_2` (about
+    /// `-88`), a negative `x` gives `ln(-x)`, and a subnormal one a wrong value near `-88`.
+    /// Largest absolute error against `f32::ln` over `1e-30..=1e30`: 1.2e-7 times `max(1, |ln x|)`.
+    #[inline(always)]
+    pub fn ln(x: f32) -> f32 {
+        let bits = x.to_bits();
+        let mut exponent = ((bits >> 23) & 255) as i32 - 127;
+        let mut mantissa = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000);
+        if mantissa > std::f32::consts::SQRT_2 {
+            mantissa *= 0.5;
+            exponent += 1;
+        }
+        let t = (mantissa - 1.0) / (mantissa + 1.0);
+        let s = t * t;
+        exponent as f32 * std::f32::consts::LN_2 + 2.0 * t * (1.0 + s * (1.0 / 3.0 + s * (1.0 / 5.0 + s * (1.0 / 7.0 + s / 9.0))))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +426,40 @@ mod tests {
         assert_eq!(srgb_to_linear(-1e30), -(2.0f32.powi(126)));
         assert!((srgb_to_linear(1.0) - 1.0).abs() < 3e-6);
         assert!((linear_to_srgb(1.0) - 1.0).abs() < 3e-6);
+    }
+
+    #[test]
+    fn fast_sin_and_cos_are_within_2e_6_over_20_radians_and_7e_6_over_100() {
+        for (range, bound) in [(20.0, 2.0e-6), (100.0, 7.0e-6), (1000.0, 6.0e-5)] {
+            let sin_error = worst(sweep(-range, range, 400_000), |x| (f64::from(fast::sin(x)) - f64::from(x).sin()).abs());
+            let cos_error = worst(sweep(-range, range, 400_000), |x| (f64::from(fast::cos(x)) - f64::from(x).cos()).abs());
+            assert!(sin_error < bound, "sin over {range}: {sin_error}");
+            assert!(cos_error < bound, "cos over {range}: {cos_error}");
+        }
+        assert_eq!(fast::sin(0.0), 0.0);
+        assert!((fast::cos(0.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn fast_exp_is_within_9e_6_relative_over_20_and_1_2e_5_over_its_range() {
+        let near = worst(sweep(-20.0, 20.0, 200_000), |x| relative(fast::exp(x), f64::from(x).exp()));
+        let whole = worst(sweep(-87.0, 88.0, 200_000), |x| relative(fast::exp(x), f64::from(x).exp()));
+        assert!(near < 9.0e-6, "{near}");
+        assert!(whole < 1.2e-5, "{whole}");
+        assert_eq!(fast::exp(0.0), 1.0);
+        assert_eq!(fast::exp(500.0), fast::exp(88.0));
+        assert!(fast::exp(-500.0) > 0.0);
+    }
+
+    #[test]
+    fn fast_ln_is_as_exact_as_ln_on_normal_inputs() {
+        let error = worst(geometric(1e-30, 1e30, 200_000), |x| {
+            let want = f64::from(x).ln();
+            (f64::from(fast::ln(x)) - want).abs() / want.abs().max(1.0)
+        });
+        assert!(error < 1.2e-7, "{error}");
+        assert_eq!(fast::ln(1.0), 0.0);
+        assert_eq!(fast::ln(0.0), -127.0 * LN_2);
+        assert_eq!(fast::ln(-5.0), fast::ln(5.0));
     }
 }

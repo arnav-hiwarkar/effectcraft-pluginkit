@@ -1,6 +1,7 @@
 use std::f32::consts::PI;
 
-use craft_plugin::math::{atan2, cos, exp, ln, sin, smoothstep};
+use craft_plugin::math::fast::{cos, exp, ln, sin};
+use craft_plugin::math::{atan2, smoothstep};
 
 pub const FLOATS: usize = 48;
 pub const UINTS: usize = 6;

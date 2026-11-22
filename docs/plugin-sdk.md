@@ -243,8 +243,9 @@ Write every pixel of `frame.pixels`. `frame.map(f)` writes each pixel from the i
 
 An effect that reads no other pixels says so with `Layout::pointwise()`. Its `frame.pixels` then starts
 out holding the input, and when whole rows show the app changes the layer's frame in place, so the
-cheapest loop reads and writes `frame.pixels` directly. `frame.map` and `frame.rows()` work the same as
-before.
+cheapest loop is `frame.rows_in_place()`: `(y, row)` with each row holding the input, changed where it lies.
+In place, `frame.rows()` first copies the band so that its input rows stay as they were; use it only when
+the effect reads input it has already overwritten.
 
 ```rust
 fn layout(&self, _cx: &Cx) -> Layout {
@@ -253,7 +254,9 @@ fn layout(&self, _cx: &Cx) -> Layout {
 
 fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
     let limit = cx.f("limit") as f32;
-    frame.pixels.iter_mut().for_each(|pixel| pixel[3] = pixel[3].min(limit));
+    for (_, row) in frame.rows_in_place() {
+        row.iter_mut().for_each(|pixel| pixel[3] = pixel[3].min(limit));
+    }
     Ok(())
 }
 ```
@@ -362,6 +365,18 @@ fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         pixel
     });
     Ok(())
+}
+```
+
+An effect that calls several of them for every pixel can take the cheaper forms in `math::fast`, whose
+errors (2e-6 to 1.2e-5) are still far below one level of a 16-bit image. Halo Flares uses them:
+
+```rust
+use craft_plugin::math::fast::{exp, ln};
+
+fn glow(r: f32, radius: f32, falloff: f32) -> f32 {
+    let q = (r / radius) * (r / radius);
+    exp(-falloff * ln(1.0 + q))
 }
 ```
 

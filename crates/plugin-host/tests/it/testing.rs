@@ -31,6 +31,14 @@ fn a_stored_frame_passes_and_a_changed_render_writes_the_actual_and_a_difference
 }
 
 #[test]
+fn a_pointwise_effect_that_changes_its_rows_in_place_renders_the_same_in_bands_as_whole() {
+    let (_bundle, plugin) = probe();
+    let picture = plugin.render("halve").on(Pattern::Checker).size(40, 257).run().unwrap();
+    let (half, dark) = ([0.5, 0.5, 0.5, 1.0], [0.0, 0.0, 0.0, 1.0]);
+    assert_eq!([(0, 200), (39, 200), (0, 230), (39, 230)].map(|(x, y)| picture.at(x, y)), [half, dark, dark, half]);
+}
+
+#[test]
 fn only_update_frames_set_to_1_updates_stored_frames() {
     let asked = [None, Some("0"), Some("false"), Some("yes"), Some(""), Some("1")];
     assert_eq!(asked.map(|value| updating_frames(value.map(std::ffi::OsStr::new))), [false, false, false, false, false, true]);

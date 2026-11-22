@@ -228,6 +228,16 @@ impl<'a> Frame<'a> {
         self.pixels.chunks_exact_mut(self.width.max(1)).enumerate().map(move |(y, row)| (first + y, row))
     }
 
+    pub fn rows_in_place(&mut self) -> impl Iterator<Item = (usize, &mut [Pixel])> {
+        let ([x0, _], width, input) = (self.origin, self.width, self.input);
+        self.rows_mut().map(move |(y, row)| {
+            if let Some(read) = input.row(y as isize).and_then(|read| read.get(x0..x0 + width)) {
+                row.copy_from_slice(read);
+            }
+            (y, row)
+        })
+    }
+
     pub fn rows(&mut self) -> impl Iterator<Item = (usize, &'a [Pixel], &mut [Pixel])> {
         if self.input.pixels.is_empty() {
             (self.input.pixels, self.pixels) = crate::abi::snapshot(std::mem::take(&mut self.pixels));
@@ -302,5 +312,17 @@ mod tests {
         let rows = Rows { width: 3, height: 10, first_row: 4, pixels: &pixels };
         let probes = [(0, 4), (2, 5), (1, 3), (3, 4), (-1, 4), (0, 6), (isize::MIN, 4), (0, isize::MIN), (0, isize::MAX)];
         assert_eq!(probes.map(|(x, y)| rows.at(x, y)[0]), [1.0, 6.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn rows_in_place_hold_the_input_whether_it_is_separate_or_already_in_the_rows() {
+        let input: Vec<Pixel> = (0..6).map(|i| [i as f32; 4]).collect();
+        let first = |frame: &mut Frame| frame.rows_in_place().map(|(y, row)| (y, row.iter().map(|p| p[0]).collect::<Vec<_>>())).collect::<Vec<_>>();
+        let mut written = vec![[9.0; 4]; 2];
+        let separate = Rows { width: 3, height: 2, first_row: 0, pixels: &input };
+        assert_eq!(first(&mut Frame { width: 2, height: 1, origin: [1, 1], pixels: &mut written, input: separate }), [(1, vec![4.0, 5.0])]);
+        let mut own = vec![[7.0; 4]; 2];
+        let in_place = Rows { width: 2, height: 4, first_row: 3, pixels: &[] };
+        assert_eq!(first(&mut Frame { width: 2, height: 1, origin: [0, 3], pixels: &mut own, input: in_place }), [(3, vec![7.0, 7.0])]);
     }
 }

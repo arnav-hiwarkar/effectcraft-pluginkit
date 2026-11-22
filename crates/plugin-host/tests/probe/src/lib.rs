@@ -27,14 +27,21 @@ struct FastMaths;
 
 impl Effect for FastMaths {
     fn spec(&self) -> EffectSpec {
-        EffectSpec::new("fast-maths", "Fast Maths", "Probe")
+        EffectSpec::new("fast-maths", "Fast Maths", "Probe").param(Param::checkbox("cheaper", "Cheaper", false))
     }
 
     fn layout(&self, _cx: &Cx) -> Layout {
         Layout::pointwise()
     }
 
-    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        if cx.bool("cheaper") {
+            frame.map(|pixel| {
+                let x = pixel[0];
+                [math::fast::exp(x), math::fast::sin(x), math::fast::cos(x), math::fast::ln(x.abs())]
+            });
+            return Ok(());
+        }
         frame.map(|pixel| {
             let x = pixel[0];
             [math::exp(x), math::sin(x), math::atan2(x, 2.0 - x), math::pow(x.abs(), 2.4)]
@@ -535,6 +542,25 @@ impl Effect for Checks {
     }
 }
 
+struct Halve;
+
+impl Effect for Halve {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("halve", "Halve", "Probe")
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise()
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        for (_, row) in frame.rows_in_place() {
+            row.iter_mut().for_each(|pixel| pixel[..3].iter_mut().for_each(|channel| *channel *= 0.5));
+        }
+        Ok(())
+    }
+}
+
 struct Tally;
 
 impl Effect for Tally {
@@ -856,6 +882,7 @@ fn make() -> Plugin {
         .effect(Lift)
         .effect(Tally)
         .effect(Checks)
+        .effect(Halve)
         .effect(Streak)
         .effect(Plain)
         .effect(ReadInputs)
