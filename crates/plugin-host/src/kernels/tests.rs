@@ -421,3 +421,14 @@ fn a_gaussian_too_small_to_matter_keeps_the_image() {
     let got = host(HostKernel::Blur { shape: BlurShape::Gaussian, radius: [1e-30, 0.0] }, &src, [1, 1], None, [1, 1]);
     assert_eq!(got, src);
 }
+
+#[test]
+fn a_warp_that_lands_outside_the_image_or_overflows_reads_clear() {
+    let src = [[0.5, 0.25, 0.125, 1.0]];
+    let warp = |displacement: Pixel| host(HostKernel::Warp { amount: [2.0, 0.0] }, &src, [1, 1], Some(&[displacement]), [1, 1])[0];
+    assert_eq!(warp([f32::MAX, 0.0, 0.0, 0.0]), [0.0; 4]);
+    assert_eq!(warp([-f32::MAX, 0.0, 0.0, 0.0]), [0.0; 4]);
+    assert_eq!(warp([f32::NAN, 0.0, 0.0, 0.0]), [0.0; 4]);
+    assert_eq!(warp([-0.5, 0.0, 0.0, 0.0]), [0.0; 4]);
+    assert_eq!(warp([0.25, 0.0, 0.0, 0.0]), [0.25, 0.125, 0.0625, 0.5]);
+}

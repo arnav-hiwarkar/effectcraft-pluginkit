@@ -246,6 +246,10 @@ fn resample(src: Image, filter: Filter, scale: [f32; 2], size: [u32; 2], out: &m
 }
 
 fn bilinear(src: Image, x: f32, y: f32) -> Pixel {
+    let [w, h] = src.size.map(|side| side as f32);
+    if !(x > -1.0 && y > -1.0 && x < w && y < h) {
+        return CLEAR;
+    }
     let (x0, y0) = (x.floor(), y.floor());
     let (fx, fy) = (x - x0, y - y0);
     let (x0, y0) = (x0 as isize, y0 as isize);
