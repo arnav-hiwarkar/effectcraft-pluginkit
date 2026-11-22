@@ -25,6 +25,44 @@ pub fn set_host(host: HostFn) {
     let _ = HOST.set(host);
 }
 
+#[cfg(not(target_family = "wasm"))]
+#[derive(Clone, Copy)]
+pub struct Exports {
+    pub abi: extern "C" fn() -> u32,
+    pub init: extern "C" fn(HostFn),
+    pub call: unsafe extern "C" fn(usize, *const u8, usize, *mut u8, usize, *mut [usize; 2]),
+    pub alloc: extern "C" fn(usize) -> *mut u8,
+    pub free: unsafe extern "C" fn(*mut u8, usize),
+}
+
+#[cfg(not(target_family = "wasm"))]
+static IN_PROCESS: std::sync::OnceLock<Plugin> = std::sync::OnceLock::new();
+
+#[cfg(not(target_family = "wasm"))]
+pub fn in_process(make: fn() -> Plugin) -> Exports {
+    IN_PROCESS.get_or_init(make);
+    extern "C" fn abi() -> u32 {
+        crate::ABI
+    }
+    unsafe extern "C" fn call(ctx: usize, request: *const u8, request_len: usize, pixels: *mut u8, pixels_len: usize, out: *mut [usize; 2]) {
+        // SAFETY: the host passes the same pointers it passes to a loaded native plugin's `craft_plugin_call`.
+        unsafe { entry(|| IN_PROCESS.get_or_init(Plugin::new), ctx, request, request_len, pixels, pixels_len, out) }
+    }
+    unsafe extern "C" fn free(ptr: *mut u8, len: usize) {
+        // SAFETY: the host frees only replies that `alloc_bytes` made, with their length.
+        unsafe { free_bytes(ptr, len) }
+    }
+    extern "C" fn alloc(len: usize) -> *mut u8 {
+        alloc_bytes(len)
+    }
+    Exports { abi, init: set_host_c, call, alloc, free }
+}
+
+#[cfg(not(target_family = "wasm"))]
+extern "C" fn set_host_c(host: HostFn) {
+    set_host(host);
+}
+
 thread_local! {
     static CTX: Cell<usize> = const { Cell::new(0) };
 }
@@ -139,10 +177,26 @@ pub(crate) fn spread(table: &mut [Pixel]) -> Option<(&[Pixel], &[Pixel], &mut [P
     }
 }
 
+thread_local! {
+    static PANIC: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 fn report_panics() {
     static HOOK: std::sync::Once = std::sync::Once::new();
     HOOK.call_once(|| {
-        std::panic::set_hook(Box::new(|info| crate::host::log(LogLevel::Error, format!("plugin panicked: {info}"))));
+        let outside = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if CTX.get() == 0 {
+                return outside(info);
+            }
+            let message = info.payload_as_str().unwrap_or("no message");
+            let report = match info.location() {
+                Some(at) => format!("the plugin panicked at {}:{}:{}: {message}", at.file(), at.line(), at.column()),
+                None => format!("the plugin panicked: {message}"),
+            };
+            crate::host::log(LogLevel::Error, &report);
+            PANIC.set(Some(report));
+        }));
     });
 }
 
@@ -168,8 +222,10 @@ pub unsafe fn entry<'p>(
         unsafe { std::slice::from_raw_parts_mut(pixels.cast::<Pixel>(), pixels_len / PIXEL_BYTES) }
     };
     let outer = CTX.replace(ctx);
-    let reply = catch_unwind(AssertUnwindSafe(|| plugin().dispatch(request, pixels)))
-        .unwrap_or_else(|_| serde_json::to_vec(&Outcome::<()>::Err("the plugin panicked".into())).unwrap_or_default());
+    let reply = catch_unwind(AssertUnwindSafe(|| plugin().dispatch(request, pixels))).unwrap_or_else(|_| {
+        let report = PANIC.take().unwrap_or_else(|| "the plugin panicked".into());
+        serde_json::to_vec(&Outcome::<()>::Err(report)).unwrap_or_default()
+    });
     CTX.set(outer);
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { *out = Buffer::copy_of(&reply).into_raw() };

@@ -23,47 +23,49 @@ pub struct Neon {
     pub frame: u32,
 }
 
+params! {
+    struct Settings {
+        "Edges" {
+            source: usize = popup("Detect On", &SOURCES, 0),
+            threshold: f32 = slider("Threshold", 0.12, 0.0..=1.0),
+            softness: f32 = slider("Softness", 0.06, 0.0..=0.5),
+            thickness: f32 = slider("Thickness", 2.0, 1.0..=12.0),
+        }
+        "Colour" {
+            core: [f32; 4] = color("Core", [1.0, 0.95, 1.0, 1.0]),
+            glow: [f32; 4] = color("Glow", [1.0, 0.1, 0.75, 1.0]),
+        }
+        "Bloom" {
+            intensity: f32 = slider("Intensity", 2.0, 0.0..=10.0),
+            radius: f32 = slider("Radius", 20.0, 1.0..=80.0),
+            falloff: f32 = percent("Falloff", 60.0),
+            flicker: f32 = percent("Flicker", 0.0),
+        }
+        lines_only: bool = checkbox("Lines Only", false),
+    }
+}
+
 pub fn spec() -> EffectSpec {
-    EffectSpec::new("neon", "Neon Outline", "Stylize")
-        .group(
-            "Edges",
-            [
-                Param::popup("source", "Detect On", &SOURCES, 0),
-                Param::slider("threshold", "Threshold", 0.12, 0.0..=1.0),
-                Param::slider("softness", "Softness", 0.06, 0.0..=0.5),
-                Param::slider("thickness", "Thickness", 2.0, 1.0..=12.0),
-            ],
-        )
-        .group("Colour", [Param::color("core", "Core", [1.0, 0.95, 1.0, 1.0]), Param::color("glow", "Glow", [1.0, 0.1, 0.75, 1.0])])
-        .group(
-            "Bloom",
-            [
-                Param::slider("intensity", "Intensity", 2.0, 0.0..=10.0),
-                Param::slider("radius", "Radius", 20.0, 1.0..=80.0),
-                Param::percent("falloff", "Falloff", 60.0),
-                Param::percent("flicker", "Flicker", 0.0),
-            ],
-        )
-        .param(Param::checkbox("lines_only", "Lines Only", false))
-        .time_dependent()
+    EffectSpec::new("neon", "Neon Outline", "Stylize").params(Settings::params()).time_dependent()
 }
 
 impl Neon {
     pub fn from_cx(cx: &Cx) -> Neon {
         let s = cx.scale as f32;
+        let settings = Settings::read(cx);
         Neon {
             size: cx.size,
-            alpha: cx.index("Edges/source") == 1,
-            threshold: cx.f("Edges/threshold") as f32,
-            softness: (cx.f("Edges/softness") as f32).max(1e-3),
-            step: ((cx.f("Edges/thickness") as f32 * s).round() as i32).max(1),
-            core: cx.color("Colour/core"),
-            glow: cx.color("Colour/glow"),
-            intensity: cx.f("Bloom/intensity") as f32,
-            sigma: (cx.f("Bloom/radius") as f32 * s).max(0.5),
-            falloff: cx.f("Bloom/falloff") as f32 / 100.0,
-            flicker: cx.f("Bloom/flicker") as f32 / 100.0,
-            lines_only: cx.bool("lines_only"),
+            alpha: settings.source == 1,
+            threshold: settings.threshold,
+            softness: settings.softness.max(1e-3),
+            step: ((settings.thickness * s).round() as i32).max(1),
+            core: settings.core,
+            glow: settings.glow,
+            intensity: settings.intensity,
+            sigma: (settings.radius * s).max(0.5),
+            falloff: settings.falloff / 100.0,
+            flicker: settings.flicker / 100.0,
+            lines_only: settings.lines_only,
             frame: (cx.time * cx.frame_rate.max(1.0)).round().max(0.0) as u32,
         }
     }

@@ -16,6 +16,10 @@ impl Engine {
         Err(PluginError::Load("plugins run in the desktop app only".into()))
     }
 
+    pub fn journal(&self) -> &crate::journal::Journal {
+        match *self {}
+    }
+
     pub fn cached(&self, _: &str) -> Option<Arc<[u8]>> {
         match *self {}
     }

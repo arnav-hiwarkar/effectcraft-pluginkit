@@ -250,14 +250,19 @@ fn key_info_gives_each_keys_index_the_ease_dimensions_and_the_motion_path_length
     s.execute("keys.interpolation", json!({"spatial": "linear"})).unwrap();
     let info = s.execute("keys.info", json!({})).unwrap();
     let micro = |v: &serde_json::Value| v.as_f64().map_or(json!(null), |x| json!((x * 1e6).round() / 1e6));
-    let rows: Vec<_> = info.as_array().unwrap().iter().map(|k| (k["index"].clone(), k["keyCount"].clone(), micro(&k["segmentLength"]), micro(&k["pathLength"]))).collect();
-    let expected = [(json!(0), json!(3), json!(300.0), json!(700.0)), (json!(1), json!(3), json!(400.0), json!(700.0)), (json!(2), json!(3), json!(null), json!(700.0))];
+    let rows: Vec<_> =
+        info.as_array().unwrap().iter().map(|k| (k["index"].clone(), k["keyCount"].clone(), micro(&k["segmentLength"]), micro(&k["pathLength"]))).collect();
+    let expected =
+        [(json!(0), json!(3), json!(300.0), json!(700.0)), (json!(1), json!(3), json!(400.0), json!(700.0)), (json!(2), json!(3), json!(null), json!(700.0))];
     assert_eq!(rows, expected);
 
     animate(&mut s, l, "transform/scale", &[(0.0, json!([100, 100])), (1.0, json!([200, 50]))]);
     select_prop_keys(&mut s, l, "transform/scale");
     let info = s.execute("keys.info", json!({})).unwrap();
-    assert_eq!((&info[0]["dims"], &info[0]["easeDims"], info[0]["inEase"].as_array().map(Vec::len), &info[0]["segmentLength"]), (&json!(2), &json!(3), Some(3), &json!(null)));
+    assert_eq!(
+        (&info[0]["dims"], &info[0]["easeDims"], info[0]["inEase"].as_array().map(Vec::len), &info[0]["segmentLength"]),
+        (&json!(2), &json!(3), Some(3), &json!(null))
+    );
     s.execute("keys.setEase", json!({"layer": l, "path": "transform/scale", "time": 1.0, "side": "in", "dim": 2, "speed": 5.0})).unwrap();
     assert_eq!(prop(&s, l, "transform/scale").keys[1].in_ease[2].speed, 5.0);
 }

@@ -26,7 +26,11 @@ pub trait Effect: Send + Sync + 'static {
     fn controls(&self, _instance: u64, _param: &str, _value: &mut String, _ui: &mut Ui) {}
 
     fn pass(&self, _cx: &Cx, pass: &Pass, _out: &mut Frame) -> Result<()> {
-        Err(format!("this effect has no CPU kernel `{}`", pass.kernel).into())
+        Err(format!(
+            "the plan names the kernel `{}` but this effect has no CPU code for it; handle it in Effect::pass or use a host kernel such as GpuPass::blur",
+            pass.kernel
+        )
+        .into())
     }
 
     fn overlay(&self, _cx: &Cx, _overlay: &mut Overlay) {}

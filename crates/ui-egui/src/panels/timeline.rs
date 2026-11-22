@@ -5917,7 +5917,9 @@ fn scalar_editor(app: &mut EffectcraftApp, ui: &mut egui::Ui, ve: &ValueEdit<'_>
     let vt = app.tokens.for_value(prop.has_expression());
     let (x, y) = (at.x, at.y - 9.0);
     let (min, max, dec, speed) = match &prop.ui {
-        ParamUi::Slider { min, max, decimals, .. } | ParamUi::Scaled { min, max, decimals, .. } => (*min, *max, *decimals as usize, widgets::slider_scrub_speed(&prop.ui)),
+        ParamUi::Slider { min, max, decimals, .. } | ParamUi::Scaled { min, max, decimals, .. } => {
+            (*min, *max, *decimals as usize, widgets::slider_scrub_speed(&prop.ui))
+        }
         ParamUi::Percent => (-1e6, 1e6, 1, 0.5),
         _ => (-1e9, 1e9, 1, 1.0),
     };
@@ -5931,7 +5933,8 @@ fn scalar_editor(app: &mut EffectcraftApp, ui: &mut egui::Ui, ve: &ValueEdit<'_>
         }
     } else {
         // A Range Selector's Start, End and Offset count characters with Units = Index (#1814).
-        let pct = (matches!(prop.ui, ParamUi::Percent | ParamUi::Scaled { percent: true, .. }) || prop.match_id == "opacity") && !effectcraft_engine::render::text::in_index_units(layer, uid);
+        let pct = (matches!(prop.ui, ParamUi::Percent | ParamUi::Scaled { percent: true, .. }) || prop.match_id == "opacity")
+            && !effectcraft_engine::render::text::in_index_units(layer, uid);
         let suffix = if pct { "%" } else { "" };
         let (r, nv, _, step) = widgets::hot_number_step_at(
             ui,

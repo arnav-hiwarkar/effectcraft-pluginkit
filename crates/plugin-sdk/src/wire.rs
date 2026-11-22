@@ -115,6 +115,11 @@ impl EffectSpec {
         self
     }
 
+    pub fn params(mut self, params: impl IntoIterator<Item = Param>) -> Self {
+        self.params.extend(params);
+        self
+    }
+
     pub fn group(mut self, group: &str, params: impl IntoIterator<Item = Param>) -> Self {
         self.params.extend(params.into_iter().map(|mut p| {
             p.id = format!("{group}/{}", p.id);
@@ -182,15 +187,34 @@ pub enum ParamKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         percent: bool,
     },
-    Percent { default: f64 },
-    Angle { default: f64 },
-    Checkbox { default: bool },
-    Popup { options: Vec<String>, default: u32 },
-    Point { default: [f64; 2] },
-    Point3 { default: [f64; 3] },
-    Color { default: [f64; 4] },
-    Text { default: String },
-    Custom { default: String },
+    Percent {
+        default: f64,
+    },
+    Angle {
+        default: f64,
+    },
+    Checkbox {
+        default: bool,
+    },
+    Popup {
+        options: Vec<String>,
+        default: u32,
+    },
+    Point {
+        default: [f64; 2],
+    },
+    Point3 {
+        default: [f64; 3],
+    },
+    Color {
+        default: [f64; 4],
+    },
+    Text {
+        default: String,
+    },
+    Custom {
+        default: String,
+    },
     Layer,
     Mask,
 }
@@ -1237,10 +1261,27 @@ pub enum PointerPhase {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "w", rename_all = "snake_case")]
 pub enum Widget {
-    Label { text: String, style: TextStyle },
-    Button { id: u64, text: String, enabled: bool },
-    Checkbox { id: u64, text: String, value: bool },
-    Slider { id: u64, text: String, value: f64, min: f64, max: f64 },
+    Label {
+        text: String,
+        style: TextStyle,
+    },
+    Button {
+        id: u64,
+        text: String,
+        enabled: bool,
+    },
+    Checkbox {
+        id: u64,
+        text: String,
+        value: bool,
+    },
+    Slider {
+        id: u64,
+        text: String,
+        value: f64,
+        min: f64,
+        max: f64,
+    },
     Number {
         id: u64,
         text: String,
@@ -1251,24 +1292,83 @@ pub enum Widget {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         decimals: Option<u8>,
     },
-    TextEdit { id: u64, value: String, hint: String },
-    Popup { id: u64, text: String, options: Vec<String>, selected: u32 },
-    Color { id: u64, text: String, value: [f32; 4] },
-    Row { children: Vec<Widget> },
-    Column { children: Vec<Widget> },
-    Group { title: String, children: Vec<Widget> },
+    TextEdit {
+        id: u64,
+        value: String,
+        hint: String,
+    },
+    Popup {
+        id: u64,
+        text: String,
+        options: Vec<String>,
+        selected: u32,
+    },
+    Color {
+        id: u64,
+        text: String,
+        value: [f32; 4],
+    },
+    Row {
+        children: Vec<Widget>,
+    },
+    Column {
+        children: Vec<Widget>,
+    },
+    Group {
+        title: String,
+        children: Vec<Widget>,
+    },
     Separator,
-    Space { size: f32 },
-    Canvas { id: u64, size: [f32; 2], shapes: Vec<Shape> },
-    Image { id: u64, key: String, size: [f32; 2] },
-    Scroll { id: u64, height: f32, children: Vec<Widget> },
-    Collapsing { id: u64, title: String, open: bool, children: Vec<Widget> },
-    Tabs { id: u64, options: Vec<String>, selected: u32 },
-    Progress { fraction: f32, text: String },
-    Tooltip { text: String },
-    Grid { id: u64, columns: u32, children: Vec<Widget> },
-    DropTarget { id: u64, children: Vec<Widget> },
-    DragSource { id: u64, drag: Drag, children: Vec<Widget> },
+    Space {
+        size: f32,
+    },
+    Canvas {
+        id: u64,
+        size: [f32; 2],
+        shapes: Vec<Shape>,
+    },
+    Image {
+        id: u64,
+        key: String,
+        size: [f32; 2],
+    },
+    Scroll {
+        id: u64,
+        height: f32,
+        children: Vec<Widget>,
+    },
+    Collapsing {
+        id: u64,
+        title: String,
+        open: bool,
+        children: Vec<Widget>,
+    },
+    Tabs {
+        id: u64,
+        options: Vec<String>,
+        selected: u32,
+    },
+    Progress {
+        fraction: f32,
+        text: String,
+    },
+    Tooltip {
+        text: String,
+    },
+    Grid {
+        id: u64,
+        columns: u32,
+        children: Vec<Widget>,
+    },
+    DropTarget {
+        id: u64,
+        children: Vec<Widget>,
+    },
+    DragSource {
+        id: u64,
+        drag: Drag,
+        children: Vec<Widget>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -1435,7 +1535,10 @@ mod tests {
         assert_eq!(slider, Param::slider("a", "A", 1.0, 0.0..=2.0));
         let percent: Param = serde_json::from_str(r#"{"id":"b","name":"B","kind":"percent","default":50.0}"#).unwrap();
         assert_eq!(percent, Param::percent("b", "B", 50.0));
-        assert_eq!(serde_json::to_string(&Param::slider("a", "A", 1.0, 0.0..=2.0)).unwrap(), r#"{"id":"a","name":"A","kind":"slider","default":1.0,"min":0.0,"max":2.0}"#);
+        assert_eq!(
+            serde_json::to_string(&Param::slider("a", "A", 1.0, 0.0..=2.0)).unwrap(),
+            r#"{"id":"a","name":"A","kind":"slider","default":1.0,"min":0.0,"max":2.0}"#
+        );
     }
 
     #[test]

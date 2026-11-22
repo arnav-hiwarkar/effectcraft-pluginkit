@@ -25,6 +25,7 @@ pub(crate) struct Identity {
     pub tasks: Tasks,
     pub picked: Mutex<Vec<Picked>>,
     pub images: Images,
+    pub journal: crate::journal::Journal,
 }
 
 pub(crate) struct Picked {
@@ -187,13 +188,14 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
     gate::check(&call, cx.host, cx.plugin, cx.origin)?;
     let plain = |value: Value| Ok((value, Bulk::None));
     match call {
-        HostCall::Log { level, message } => {
-            let level = match level {
+        HostCall::Log { level: asked, message } => {
+            let level = match asked {
                 LogLevel::Info => log::Level::Info,
                 LogLevel::Warn => log::Level::Warn,
                 LogLevel::Error => log::Level::Error,
             };
             log::log!(target: "plugin", level, "[{}] {message}", cx.plugin.id);
+            cx.plugin.journal.push(asked, message);
             plain(Value::Null)
         }
         HostCall::Notify { message } => {
@@ -259,7 +261,7 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             false => Err(format!("no task {id}")),
         },
         HostCall::Progress { fraction, message } => {
-            let task = cx.task.as_ref().ok_or("only a task reports progress")?;
+            let task = cx.task.as_ref().ok_or("only a task reports progress; run the work with host::start so it is a task")?;
             task.progress(fraction, message).map(|()| (Value::Null, Bulk::None))
         }
         HostCall::Frame { request } => image(Some(cx.host.frame(&request)?)),
@@ -292,7 +294,7 @@ fn image(pixels: Option<Pixels>) -> Result<(Value, Bulk), String> {
 
 fn user_path(plugin: &Identity, path: &Path) -> Result<PathBuf, String> {
     if !path.is_absolute() {
-        return Err("a user file needs an absolute path".into());
+        return Err("a user file needs an absolute path; for the plugin's own files use Root::Data or Root::Bundle".into());
     }
     if path.components().any(|c| c == Component::ParentDir) {
         return Err(format!("`{}` must not contain `..`", path.display()));
@@ -317,7 +319,7 @@ fn resolve(plugin: &Identity, root: Root, path: &str) -> Result<PathBuf, String>
     };
     let relative = Path::new(path);
     if !relative.components().all(|c| matches!(c, Component::Normal(_))) {
-        return Err(format!("`{path}` must be a plain relative path"));
+        return Err(format!("`{path}` must be a plain relative path inside the plugin's folder, such as `presets/look.json`"));
     }
     let base = base.canonicalize().map_err(|e| e.to_string())?;
     let joined = base.join(relative);
@@ -350,6 +352,7 @@ mod tests {
             tasks: Default::default(),
             picked: Mutex::new(Vec::new()),
             images: Images::new(IMAGE_BUDGET),
+            journal: Default::default(),
         }
     }
 

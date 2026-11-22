@@ -125,9 +125,15 @@ fn a_slider_shows_its_soft_range_in_log_scale_and_a_percent_takes_a_range() {
     let params = &listed[0]["params"];
     let param = |id: &str| params.as_array().unwrap().iter().find(|p| p["id"] == id).unwrap().clone();
     let gain = param("gain");
-    assert_eq!((&gain["min"], &gain["max"], &gain["sliderMin"], &gain["sliderMax"], &gain["log"]), (&json!(0.0), &json!(1000.0), &json!(0.01), &json!(10.0), &json!(true)));
+    assert_eq!(
+        (&gain["min"], &gain["max"], &gain["sliderMin"], &gain["sliderMax"], &gain["log"]),
+        (&json!(0.0), &json!(1000.0), &json!(0.01), &json!(10.0), &json!(true))
+    );
     let mix = param("mix");
-    assert_eq!((&mix["min"], &mix["max"], &mix["sliderMin"], &mix["sliderMax"], &mix["percent"]), (&json!(-100.0), &json!(300.0), &json!(-100.0), &json!(300.0), &json!(true)));
+    assert_eq!(
+        (&mix["min"], &mix["max"], &mix["sliderMin"], &mix["sliderMax"], &mix["percent"]),
+        (&json!(-100.0), &json!(300.0), &json!(-100.0), &json!(300.0), &json!(true))
+    );
     let plain = param("plain");
     assert_eq!((&plain["sliderMax"], plain.get("log"), plain.get("percent")), (&json!(20.0), None, None));
 }

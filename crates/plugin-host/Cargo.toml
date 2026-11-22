@@ -18,6 +18,10 @@ thiserror = { workspace = true }
 log = { workspace = true }
 rayon = { workspace = true }
 zip = { workspace = true }
+image = { workspace = true, optional = true }
+
+[features]
+testing = ["dep:image"]
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 libloading = { workspace = true }
@@ -30,6 +34,7 @@ getrandom = { workspace = true }
 rustix = { workspace = true }
 
 [dev-dependencies]
+craft-plugin-host = { path = ".", features = ["testing"] }
 tempfile = { workspace = true }
 image = { workspace = true }
 libloading = { workspace = true }

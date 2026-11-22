@@ -619,7 +619,7 @@ fn main() -> ExitCode {
             let rest: Vec<String> = std::env::args().skip(2).collect();
             version::run(&root(), &rest.iter().map(String::as_str).collect::<Vec<_>>())
         }
-        _ => Err("usage: cargo xtask <layers|assets|plugin <DIR [--native] [--out DIR]|new NAME [--panel] [--gpu]|dev DIR [--bridge PORT]>|pdf-deps|lock-patches|aep-corpus [--dir DIR]|wasm|web [--dev] [--serve PORT]|ico OUT.ico IN.png…|version [set X.Y.Z]|ci [--affected [--base REV] [--dry-run]]|audio-backend|bench [--bin CLI] [--quick] [--project F --comp C] [--compare OLD.jsonl] (--help)>".into()),
+        _ => Err("usage: cargo xtask <layers|assets|plugin <DIR [--native] [--out DIR]|new NAME [--kind KIND]|dev DIR|render DIR|bench DIR|check DIR> (cargo xtask plugin help)|pdf-deps|lock-patches|aep-corpus [--dir DIR]|wasm|web [--dev] [--serve PORT]|ico OUT.ico IN.png…|version [set X.Y.Z]|ci [--affected [--base REV] [--dry-run]]|audio-backend|bench [--bin CLI] [--quick] [--project F --comp C] [--compare OLD.jsonl] (--help)>".into()),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,

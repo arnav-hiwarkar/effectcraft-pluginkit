@@ -497,6 +497,10 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
             let task = params.get("id").and_then(Value::as_u64).ok_or_else(|| failed("`plugin.cancelTask` needs an `id` number".into()))?;
             cancel_task(text("plugin")?, task).map(|()| Value::Null).map_err(failed)
         }
+        "plugin.log" => {
+            let after = params.get("after").and_then(Value::as_u64).unwrap_or(0);
+            running(text("id")?).map(|loaded| json!(loaded.plugin.logs(after))).map_err(failed)
+        }
         "plugin.tasks" => {
             let waited = params.get("wait").and_then(Value::as_bool) == Some(true);
             let finished = !waited || wait_for_tasks(session, params.get("timeout").and_then(Value::as_f64).unwrap_or(DEFAULT_WAIT));

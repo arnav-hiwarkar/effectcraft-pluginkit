@@ -9,7 +9,7 @@ workflow, read [Write a plugin](plugin-sdk.md).
 |---|---|
 | `id` | Reverse-domain, lower case, at least two segments. Effect ids become `<id>.<effect>`. |
 | `name`, `version` | Shown in the plugin manager. Required. |
-| `author`, `description` | Optional. |
+| `author`, `description`, `license` | Optional; `cargo xtask plugin check` warns when the description or the licence is missing. |
 | `entry` | `{"wasm": "plugin.wasm"}`, `{"native": {"macos-aarch64": "libx.dylib", "linux-x86_64": "libx.so", "windows-x86_64": "x.dll"}}`, or both keys together. File names only; they live in the plugin folder. A plugin with `wasm` runs sandboxed unless the user chooses Run Unsandboxed and the plugin has a native build for this machine. |
 | `permissions` | Any of `document.read`, `document.write`, `files.read`, `files.write`, `clipboard`. |
 
@@ -73,6 +73,7 @@ pooled instance, so values stored outside `cx` are not shared between calls.
 | Method | Meaning |
 |---|---|
 | `.param(Param)` | Adds a parameter. |
+| `.params([Param, …])` | Adds parameters, such as the list `params!` makes. |
 | `.group(name, [Param, …])` | Adds parameters under a twirl-down. Their ids become `name/<id>`. |
 | `.time_dependent()` | The output changes with `cx.time` when no parameter is animated. |
 | `.reads_other_frames()` | The effect calls `cx.source_at` or `cx.layer_at`. |
@@ -133,6 +134,24 @@ Param::percent("mix", "Mix", 50.0).range(-100.0..=300.0)
 
 A parameter declared without these behaves as before. `effect.list` reports `sliderMin`, `sliderMax`,
 `log` and `percent` for them.
+
+#### Typed parameters
+
+`params! { struct Name { field: Type = builder(name, …), "Group" { field: Type = builder(…), … }, … } }`
+makes a struct with one field per parameter and two functions: `Name::params()`, the `Vec<Param>` for
+`EffectSpec::params`, and `Name::read(cx)`, the struct filled from `cx`. The builder is any `Param` builder
+above without its first argument; the id is the field name, or `Group/field` inside a group. `Name::IDS`
+lists the ids. A field type implements `FromParam`:
+
+| Type | Read with | For |
+|---|---|---|
+| `f64`, `f32` | `cx.f` | slider, percent, angle |
+| `bool` | `cx.bool` | checkbox |
+| `usize`, `u32` | `cx.index` | popup, mask |
+| `[f64; 2]`, `[f64; 3]` | `cx.point`, `cx.point3` | point, point3 |
+| `[f32; 4]` | `cx.color` | color |
+| `String` | `cx.text` | text, custom |
+| `LayerParam` | `{ id, connected }`; `.image(cx)` and `.image_at(cx, comp_time)` read the layer | layer |
 
 A new version of a plugin may add parameters. Effects already applied in a project gain them with their
 defaults when the project opens, or when the plugin starts while the project is open. The second is one undo step,
@@ -472,6 +491,9 @@ All are in `craft_plugin::host`.
 | `clipboard()`: the text on the system clipboard | `clipboard` |
 | `set_clipboard(text)`: replaces the text on the system clipboard | `clipboard` |
 
+`craft_plugin::log!(level, "format {args}")` calls `host::log` with the file and line in front of the
+message; `level` is `info` (the default when left out), `warn` or `error`.
+
 A plugin may run the document commands (`layer.*`, `comp.*`, `prop.*`, `keys.*`, `effect.*`, `mask.*`,
 `text.*`, `shape.*`, and the other families in `DOCUMENT_FAMILIES` in `crates/plugin/src/gate.rs`) and the
 commands that name a file. Every other command is refused for every plugin: scripts, settings, windows,
@@ -489,7 +511,9 @@ help, render jobs, and plugin management. A refused or denied call returns an `E
 | Memory of one sandboxed instance | 3 GiB |
 | Padding | 4096 pixels |
 
-A sandboxed plugin that passes a limit or panics is stopped. The next call starts a new instance, and
+A sandboxed plugin that passes a limit or panics is stopped. A panic is reported as `the plugin panicked at
+<file>:<line>:<column>: <message>`: a native plugin returns it as the call's error, and every plugin writes it
+to its log before it stops. The next call starts a new instance, and
 panel state is lost. A host call is not interrupted: a file call on a stalled disk, or a slow app command, runs to
 its end, and the plugin is stopped when it returns past the limit. A write the plugin is told failed for that
 reason has still landed.
@@ -510,6 +534,7 @@ reason has still landed.
 | `plugin.startTask` | `plugin`, `task`, `args` | Starts a plugin task, returns its id |
 | `plugin.tasks` | `wait`, `timeout` (600 s) | Every plugin task with status, progress, message, result and error. With `wait`, answers the tasks' app calls until none runs. |
 | `plugin.cancelTask` | `plugin`, `id` | Cancels a task |
+| `plugin.log` | `id`, `after` (0) | The plugin's last 512 log lines, panics and failed calls after sequence number `after`, as `[{seq, level, message}]`. A failed call reads `render of effect `glow` failed: …`. The numbers start again when the plugin is loaded again. |
 | `window.plugins` | | Opens the plugin manager |
 | `window.pluginPanel` | `plugin`, `panel` | Opens a plugin panel |
 
@@ -523,3 +548,37 @@ An automation agent confined to folders cannot run any of these except `plugin.l
 
 Installed plugins live in `Plugins/` in the settings folder. `Plugins/state.json` records each approval.
 `Plugins/.data/<id>/` is a plugin's private data folder.
+
+## Testing
+
+`craft-plugin-host = { path = "…/crates/plugin-host", features = ["testing"] }` as a dev-dependency gives
+`craft_plugin_host::testing`. It runs the plugin compiled into the test binary through the same host code
+the app uses, with the permissions `plugin.json` asks for. Commands the plugin runs are recorded, not run.
+
+| Call | Does |
+|---|---|
+| `TestPlugin::of(plugin)` | Runs the plugin that the function `plugin` (the one given to `export!`) makes, with the `plugin.json` of the crate under test. One test binary runs one plugin. |
+| `assert_frame!(plugin, "effect", { "id": value, … }, "name")`, `assert_frame!(render, "name")` | Renders and compares with `tests/frames/<name>.png`, within 1/255 per channel by default. A missing frame is stored (except when `CI` is set); a different one fails, writes `<name>.actual.png` and `<name>.diff.png` beside it and prints their paths. `UPDATE_FRAMES=1` stores every rendered frame. |
+| `plugin.render(effect)` | A `Render` builder: `.set(id, value)`, `.with(json)`, `.on(Pattern)`, `.input(Picture)`, `.size(w, h)` (320x180 by default), `.layer(param, Picture)`, `.mask(points, closed)`, `.time(s)`, `.scale(f)`, `.float()`, `.tolerance(levels)`. |
+| `render.run()`, `render.timed(rounds)` | The output `Picture` (padded by the layout's padding), and the best time. When the layout has a reach, the render in bands is also compared with a whole render, and a difference is an error naming the first pixel. |
+| `render.layout()`, `render.overlay()`, `render.source()` | The effect's `Layout`, its `Overlay` (in layer pixels), and the input picture. |
+| `plugin.panel(id)` | A `PanelTest`: `.click(label)`, `.send(label, UiEventKind)`, `.app_event(AppEvent)`, `.timer(name)`, `.redraw()`, `.texts()`, `.widgets()`. |
+| `plugin.command(id)`, `plugin.task(id, args)`, `plugin.tool(id, event)` | Runs a command; runs a task to its end (60 s at most) and returns its result; sends a `ToolEvent` (`testing::pointer(kind, comp)` makes one) and returns the overlay. |
+| `plugin.commands()`, `plugin.answer(command, json)`, `plugin.notes()`, `plugin.logs()` | The commands run so far with their parameters; what a command returns (null by default); the `notify` messages; the log. |
+| `Pattern` | `Photo`, `Gradient`, `Checker`, `Shapes`, `Text`, `Empty`; `.picture(w, h)`. |
+| `Picture` | `{ width, height, pixels }` in premultiplied RGBA f32; `open(path)`, `save(path)`, `at(x, y)`, `rgba8()`. |
+
+`host::frame` in a test returns the photo pattern at 320x180 times the requested scale; layer parameters
+are connected only when the render gives them a picture; `cx.scene()` is a centred camera; `cx.at` returns
+the same parameters at every time.
+
+## Developer commands
+
+| Command | Does |
+|---|---|
+| `cargo xtask plugin new <name> [--kind effect\|gpu-effect\|panel\|tool\|task]` | Writes `plugins/<name>` from a template that builds and passes its tests |
+| `cargo xtask plugin <dir> [--native] [--out DIR]` | Builds the bundle and the `.craftplugin` package |
+| `cargo xtask plugin dev <dir> [--bridge PORT]` | Rebuilds on every save, loads the bundle into the app on the control port (9877) with `plugin.load`, and prints compile errors and the plugin's log as they happen |
+| `cargo xtask plugin render <dir> …` | Renders one effect to a PNG; see [Write a plugin](plugin-sdk.md#check-render-and-benchmark) |
+| `cargo xtask plugin bench <dir> [--rounds N]` | Sandboxed and native times per effect at 1080p and 4K, the ratio and the load average |
+| `cargo xtask plugin check <dir>` | Reports problems with the fix for each; exits non-zero on errors |

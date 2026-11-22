@@ -58,7 +58,7 @@ pub(crate) struct NativeGuest {
     call: CallFn,
     alloc: AllocFn,
     free: FreeFn,
-    _library: Library,
+    _library: Option<Library>,
 }
 
 struct NativeCall<'a, 'b> {
@@ -84,8 +84,17 @@ impl NativeGuest {
             let alloc = *library.get::<AllocFn>(b"craft_plugin_alloc\0").map_err(failed)?;
             let free = *library.get::<FreeFn>(b"craft_plugin_free\0").map_err(failed)?;
             init(host_call);
-            Ok(NativeGuest { call, alloc, free, _library: library })
+            Ok(NativeGuest { call, alloc, free, _library: Some(library) })
         }
+    }
+
+    pub fn in_process(exports: craft_plugin::abi::Exports) -> Result<NativeGuest, PluginError> {
+        let found = (exports.abi)();
+        if found != ABI {
+            return Err(PluginError::Load(format!("plugin speaks ABI {found}, this app speaks ABI {ABI}")));
+        }
+        (exports.init)(host_call);
+        Ok(NativeGuest { call: exports.call, alloc: exports.alloc, free: exports.free, _library: None })
     }
 
     pub fn call(&self, request: &[u8], pixels: Option<&mut [Pixel]>, cx: &mut HostCx) -> Vec<u8> {

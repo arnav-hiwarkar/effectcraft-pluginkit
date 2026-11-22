@@ -10,6 +10,8 @@ workspace = true
 
 [dependencies]
 serde_json = { workspace = true }
+craft-plugin = { workspace = true }
+craft-plugin-host = { workspace = true, features = ["testing"] }
 
 chrono = { workspace = true }
 sha2 = "0.10"

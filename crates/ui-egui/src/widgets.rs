@@ -188,7 +188,9 @@ pub fn proportional_scrub(m: egui::Modifiers) -> bool {
 /// only allows typing big values, it must not make dragging coarse (#2097).
 pub fn slider_scrub_speed(ui: &ParamUi) -> f64 {
     match ui {
-        ParamUi::Slider { slider_min, slider_max, .. } | ParamUi::Scaled { slider_min, slider_max, .. } => ((slider_max - slider_min) / 300.0).clamp(0.001, 50.0),
+        ParamUi::Slider { slider_min, slider_max, .. } | ParamUi::Scaled { slider_min, slider_max, .. } => {
+            ((slider_max - slider_min) / 300.0).clamp(0.001, 50.0)
+        }
         _ => 0.5,
     }
 }

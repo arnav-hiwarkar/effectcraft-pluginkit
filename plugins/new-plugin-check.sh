@@ -3,18 +3,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target/new-plugin-check}"
-names=(check-effect check-panel check-gpu check-both)
-flags=("" "--panel" "--gpu" "--panel --gpu")
+jobs="${JOBS:-4}"
+kinds=(effect gpu-effect panel tool task)
 cleanup() {
-    for name in "${names[@]}"; do rm -rf "$ROOT/plugins/$name"; done
+    for kind in "${kinds[@]}"; do rm -rf "${ROOT:?}/plugins/check-$kind"; done
 }
 trap cleanup EXIT
 cleanup
-for i in "${!names[@]}"; do
-    name="${names[$i]}"
-    # shellcheck disable=SC2086
-    cargo run --quiet --package xtask -- plugin new "$name" ${flags[$i]} > /dev/null
-    cargo test --quiet --manifest-path "plugins/$name/Cargo.toml"
-    cargo build --quiet --release --target wasm32-unknown-unknown --manifest-path "plugins/$name/Cargo.toml"
-    echo "PASS $name ${flags[$i]}"
+for kind in "${kinds[@]}"; do
+    name="check-$kind"
+    cargo run --quiet --package xtask -- plugin new "$name" --kind "$kind" > /dev/null
+    cargo test -j "$jobs" --quiet --manifest-path "plugins/$name/Cargo.toml"
+    cargo build -j "$jobs" --quiet --release --target wasm32-unknown-unknown --manifest-path "plugins/$name/Cargo.toml"
+    echo "PASS $kind"
 done
+cargo test -j "$jobs" --quiet --manifest-path plugins/cookbook/Cargo.toml
+echo "PASS cookbook"

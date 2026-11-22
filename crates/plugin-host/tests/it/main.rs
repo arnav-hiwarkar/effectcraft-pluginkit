@@ -12,6 +12,7 @@ use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginErro
 use serde_json::{Value, json};
 
 mod package;
+mod testing;
 
 fn probe_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/probe")

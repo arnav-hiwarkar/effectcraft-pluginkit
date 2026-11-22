@@ -42,6 +42,11 @@ pub fn specs() -> Vec<CommandSpec> {
             "{wait?: bool, timeout?: seconds (600)} — every plug-in task with status, progress, message, result and error; `wait` answers the tasks' app calls until none runs"
         ),
         plugin!("plugin.cancelTask", "Cancel Plug-in Task", "{plugin, id}"),
+        plugin!(
+            "plugin.log",
+            "Read Plug-in Log",
+            "{id, after?: number} — the plug-in's log lines, panics and failed calls with a sequence number each; pass the last one seen as `after`"
+        ),
         window!("window.plugins", "Manage Plug-ins...", "{}"),
         window!("window.pluginPanel", "Show Plug-in Panel", "{plugin, panel}"),
     ]

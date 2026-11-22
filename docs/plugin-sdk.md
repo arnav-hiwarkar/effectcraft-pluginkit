@@ -8,29 +8,27 @@ You need Rust and the WebAssembly target: `rustup target add wasm32-unknown-unkn
 
 ## Make an effect in five minutes
 
-Start the app with its control channel on, then make a plugin and run it.
+The [quickstart](plugin-quickstart.md) walks through it step by step. In short:
 
 ```sh
-cargo run -p effectcraft -- --control 9877     # in one terminal
-cargo xtask plugin new tint                    # in another: writes plugins/tint
-cargo xtask plugin dev plugins/tint            # builds it and loads it into the running app
+cargo xtask plugin new tint                    # writes plugins/tint from the effect template
+cargo test --manifest-path plugins/tint/Cargo.toml
+cargo xtask plugin render plugins/tint         # a PNG of the effect, without the app
+cargo run -p effectcraft -- --control 9877     # in another terminal
+cargo xtask plugin dev plugins/tint            # rebuilds and reloads into the running app on every save
 ```
 
-`dev` prints one line each time it loads the plugin:
+`--kind effect|gpu-effect|panel|tool|task` picks the template; each one builds, passes its own tests and
+does something you can see. In the app, apply **Tint** from Effects & Presets, Color Correction. `dev`
+prints one line per reload, and the plugin's `log!` lines, panics and failed calls with their file and line:
 
 ```
-reloaded com.example.tint: built in 7.9 s
+reloaded com.example.tint: built in <seconds> s
+[error] the plugin panicked at src/lib.rs:27:17: index out of bounds: the len is 4 but the index is 4
+[error] render of effect `tint` failed: the plugin stopped: …
 ```
 
-In the app, apply **Tint** from Effects & Presets, Color Correction. Now open `plugins/tint/src/lib.rs`
-and change `render`: for example, replace `*channel *= gain;` with `*channel = 1.0 - *channel * gain;`.
-Save. A few seconds later `dev` prints a new line and the frame in the app changes. `dev` checks your files
-once a second and stops when you press Ctrl-C.
-
-`cargo xtask plugin new` takes two options. `--panel` adds a panel, and `--gpu` adds a GPU kernel to the
-effect. The new plugin has its own test: `cargo test --manifest-path plugins/tint/Cargo.toml`.
-
-You need Rust and the WebAssembly target: `rustup target add wasm32-unknown-unknown`.
+The [cookbook](plugin-cookbook.md) has short recipes for the common jobs.
 
 ### What is in the folder
 
@@ -39,6 +37,7 @@ tint/
   Cargo.toml
   plugin.json
   src/lib.rs
+  tests/frames/full.png     (written by the first test run)
 ```
 
 `plugin.json` names the plugin and what it asks for:
@@ -49,44 +48,98 @@ tint/
   "name": "Tint",
   "version": "0.1.0",
   "author": "",
-  "description": "Tint, made with cargo xtask plugin new.",
+  "description": "Tint: tints the layer.",
+  "license": "MIT OR Apache-2.0",
   "entry": { "wasm": "plugin.wasm" },
   "permissions": []
 }
 ```
 
-`src/lib.rs` is the effect:
+`src/lib.rs` declares the parameters with `params!`, the effect with `Effect`, and the plugin with
+`export!`. The effect appears in Effects & Presets under Color Correction, and Effect Controls shows its
+rows with a stopwatch each.
+
+## Typed parameters
+
+`params!` declares each parameter once and gives two things: the list for the spec and a struct read in one
+call. The field name is the parameter id; a quoted name opens a group, whose ids become `Group/field`.
 
 ```rust
-use craft_plugin::prelude::*;
-
-struct TintEffect;
-
-impl Effect for TintEffect {
-    fn spec(&self) -> EffectSpec {
-        EffectSpec::new("tint", "Tint", "Color Correction").param(Param::percent("amount", "Amount", 100.0))
-    }
-
-    fn layout(&self, _cx: &Cx) -> Layout {
-        Layout::pointwise()
-    }
-
-    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let gain = (cx.f("amount") / 100.0) as f32;
-        frame.map(|[r, g, b, a]| [r * gain, g * gain, b * gain, a]);
-        Ok(())
+params! {
+    struct Settings {
+        radius: f64 = slider("Radius", 20.0, 0.0..=200.0),
+        "Colour" {
+            tint: [f32; 4] = color("Tint", [1.0, 0.5, 0.25, 1.0]),
+            mode: usize = popup("Mode", &["Add", "Screen"], 1),
+        }
+        matte: LayerParam = layer("Matte"),
     }
 }
 
-fn plugin() -> Plugin {
-    Plugin::new().effect(TintEffect)
+fn spec(&self) -> EffectSpec {
+    EffectSpec::new("glow", "Glow", "Stylize").params(Settings::params())
 }
 
-craft_plugin::export!(plugin);
+fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+    let Settings { radius, tint, mode, matte } = Settings::read(cx);
+    let radius = radius * cx.scale;
+    …
+}
 ```
 
-The effect appears in Effects & Presets under Color Correction, and Effect Controls shows the Amount row
-with a stopwatch.
+The builder after `=` is any `Param` builder without its id. A misspelt field is a compile error, where
+`cx.f("radus")` silently reads 0. `cargo xtask plugin check` reports fields that no code reads. The string
+API stays for ids built at run time.
+
+## Test your plugin
+
+Add `craft-plugin-host` with the `testing` feature as a dev-dependency (the templates do). A test renders an
+effect in the test process through the same host code the app uses (bands, padding, passes and host
+kernels), on a built-in test image, and compares it with a stored PNG:
+
+```rust
+use craft_plugin_host::assert_frame;
+use craft_plugin_host::testing::{Pattern, TestPlugin};
+
+#[test]
+fn half_amount_matches_the_stored_frame() {
+    assert_frame!(TestPlugin::of(super::plugin), "tint", { "amount": 50 }, "half");
+}
+
+#[test]
+fn zero_amount_changes_nothing() {
+    let plugin = TestPlugin::of(super::plugin);
+    let render = plugin.render("tint").set("amount", 0.0).on(Pattern::Checker).size(64, 32);
+    assert_eq!(render.run().unwrap(), render.source());
+}
+```
+
+The first run stores `tests/frames/half.png`. A later run that differs fails, writes `half.actual.png` and
+`half.diff.png` beside it and prints their paths; `UPDATE_FRAMES=1 cargo test` stores the new frames. A
+render in bands that differs from a whole render fails with the first pixel that changed, which catches a
+`Layout::neighbourhood` reach that is too small. Panels, commands, tasks and tools are tested the same way:
+see [Testing](plugin-reference.md#testing).
+
+## Log, errors and panics
+
+`log!(warn, "radius {radius} is larger than the layer")` writes a line with its file and line to the
+plugin's log (`info` when the level is left out). A returned `Err`, a panic (with its file and line) and
+each line of the log reach `cargo xtask plugin dev`, `effectcraft-cli exec plugin.log '{"id": "…"}'` and,
+in tests, `plugin.logs()`:
+
+```
+[warn] src/lib.rs:31: radius 900 is larger than the layer
+[error] the plugin panicked at src/lib.rs:44:21: attempt to divide by zero
+[error] render of effect `glow` failed: the plugin stopped: …
+```
+
+## Check, render and benchmark
+
+| Command | Does |
+|---|---|
+| `cargo xtask plugin check <dir>` | Builds the plugin and reports, each with its fix: unknown or unneeded permissions, parameters read by an id no effect declares, `params!` fields never read, clashing ids, a module built without the standard flags, a package over 32 MiB, a missing licence or description. Exits non-zero on errors. |
+| `cargo xtask plugin render <dir> [--effect id] [--set id=value]… [--pattern photo\|gradient\|checker\|shapes\|text\|empty] [--in a.png] [--size WxH] [--time s] [--scale f] [--rounds n] [--native] [--out b.png]` | Builds and renders one effect to a PNG and prints the time. `--set` takes a number, `true`/`false`, a list such as `1,0.5,0,1`, or text. A folder without `Cargo.toml` is taken as a built bundle. |
+| `cargo xtask plugin bench <dir> [--rounds n]` | Builds the sandboxed and the native module and prints, for every effect at 1080p and 4K, the best sandboxed and native time and their ratio, with the machine's load average before and after. |
 
 ## Package and install a plugin
 
@@ -670,7 +723,9 @@ effectcraft-cli exec plugin.approve '{"id": "com.example.tint"}'
 ## Check your work
 
 - `effectcraft-cli exec plugin.list` shows each plugin's state and, when a plugin fails to load, the error.
-- `cargo run --release -p craft-plugin-host --example render -- <bundle> <effect> out.png` renders an effect
-  on a test pattern without the app and prints the render time. Run it with no arguments for the options.
+- `effectcraft-cli exec plugin.log '{"id": "com.example.tint"}'` lists the plugin's log lines, panics and
+  failed calls; pass the last `seq` seen as `after` to get only newer ones.
+- `cargo xtask plugin render plugins/tint` renders an effect on a test pattern without the app and prints the
+  render time.
 - A render error shows as a warning mark on the effect in Effect Controls. The frame passes through
   unchanged.
