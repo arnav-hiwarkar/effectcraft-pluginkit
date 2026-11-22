@@ -2360,16 +2360,6 @@ impl<'g> Enc<'g> {
         self.last_submit.clone()
     }
 
-    /// Drop the work recorded since the last submission.
-    pub(crate) fn discard(&mut self) {
-        if let Some((_, id)) = self.enc.take()
-            && let Ok(mut p) = self.g.pool.lock()
-        {
-            p.close(id);
-        }
-        self.pending = 0;
-    }
-
     /// Submit recorded work.
     pub fn submit(&mut self) {
         if let Some((enc, id)) = self.enc.take() {

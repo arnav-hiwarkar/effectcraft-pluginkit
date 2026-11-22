@@ -14,33 +14,26 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
     let (Some(wgsl), Some(plan)) = (effect.shader.as_deref(), effect.gpu.as_ref()) else { return None };
     let (id, revision) = (registered.spec.id, effect.revision);
     let g = e.g;
-    if let Err(why) = g.plugin_pipelines(id, revision, wgsl, &[]) {
-        g.plugin_declined(id, &why);
-        return None;
-    }
     let program = plan(ctx, Grid { width: b.img.width, height: b.img.height, offset: b.offset, scale: b.scale })?;
-    let [left, top, right, bottom] = program.padding.map(f64::from);
-    let (width, height) = (b.img.width, b.img.height);
-    let budgeted = effectcraft_effects::grow_sides([-left, -top], [f64::from(width) + right, f64::from(height) + bottom], width, height).unwrap_or_default();
-    if budgeted != program.padding || b.pad_sides(e, program.padding).is_none() {
-        g.plugin_declined(id, "the frame could not be padded as far as the plan asks");
-        return None;
-    }
-    let frame = [b.img.width, b.img.height];
-    let pipelines = match check(&program, |w, h| g.fits(w, h)).and_then(|()| compute_pipelines(g, id, revision, wgsl, &program)) {
-        Ok(pipelines) => pipelines,
+    let mut stage = Stage::new(id, revision, wgsl, &program);
+    let prepared = padded_frame(&b, program.padding)
+        .and_then(|frame| check(&program, frame, |w, h| g.fits(w, h)).map(|()| frame))
+        .and_then(|frame| Ok((frame, compute_pipelines(g, id, revision, wgsl, &program)?)))
+        .and_then(|prepared| stage.prepare(g).map(|()| prepared));
+    let (frame, pipelines) = match prepared {
+        Ok(prepared) => prepared,
         Err(why) => {
             g.plugin_declined(id, &why);
             return None;
         }
     };
+    b.pad_sides(e, program.padding)?;
     let sizes: Vec<[u32; 2]> = [frame, frame]
         .into_iter()
         .chain(program.images.iter().copied())
         .chain(program.textures.iter().map(|texture| texture.size))
         .chain(program.layers.iter().map(|_| frame))
         .collect();
-    let mut stage = Stage::new(id, revision, wgsl, &program);
     let mut images: Vec<Option<GpuImage>> = vec![None; sizes.len()];
     *images.get_mut(SOURCE)? = Some(b.img.clone());
     for texture in 0..program.textures.len() {
@@ -49,18 +42,24 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
     for (layer, param) in program.layers.iter().enumerate() {
         *images.get_mut(index(GpuSlot::Layer(layer), &program)?)? = Some(layer_image(e, ctx, &b, param)?);
     }
-    if let Err(why) = stage.prepare(g) {
-        g.plugin_declined(id, &why);
-        return None;
-    }
     if let Err(why) = record(e, &program, &pipelines, &mut stage, &mut images, &sizes) {
-        e.discard();
         g.plugin_declined(id, &why);
         return None;
     }
     b.img = images.get_mut(OUTPUT)?.take()?;
     log::debug!("gpu {}: plugin effect {id} ran {} passes at {}x{}", g.name, program.passes.len(), frame[0], frame[1]);
     Some(b)
+}
+
+fn padded_frame(b: &GBuf, padding: [u32; 4]) -> Result<[u32; 2], String> {
+    let [left, top, right, bottom] = padding.map(f64::from);
+    let (width, height) = (b.img.width, b.img.height);
+    let budgeted = effectcraft_effects::grow_sides([-left, -top], [f64::from(width) + right, f64::from(height) + bottom], width, height).unwrap_or_default();
+    let grown = |side: u32, a: u32, b: u32| side.checked_add(a)?.checked_add(b);
+    match (grown(width, padding[0], padding[2]), grown(height, padding[1], padding[3])) {
+        (Some(w), Some(h)) if budgeted == padding => Ok([w, h]),
+        _ => Err("the frame could not be padded as far as the plan asks".into()),
+    }
 }
 
 fn record(
@@ -156,12 +155,19 @@ fn params(pass: &GpuPass) -> Params {
     p
 }
 
-fn check(program: &GpuProgram, fits: impl Fn(u32, u32) -> bool) -> Result<(), String> {
-    if let Some((i, &[w, h])) = program.images.iter().enumerate().find(|&(_, &[w, h])| !fits(w, h)) {
-        return Err(format!("scratch image {i} is {w}x{h}, larger than this GPU holds"));
+fn check(program: &GpuProgram, frame: [u32; 2], fits: impl Fn(u32, u32) -> bool) -> Result<(), String> {
+    if let Some((i, &[w, h])) = std::iter::once(&frame).chain(&program.images).enumerate().find(|&(_, &[w, h])| !fits(w, h)) {
+        return Err(format!("image {i} of the plan is {w}x{h}, larger than this GPU holds"));
     }
     check_data(program, &fits)?;
+    let mut written: Vec<usize> =
+        std::iter::once(SOURCE).chain(2 + program.images.len()..2 + program.images.len() + program.textures.len() + program.layers.len()).collect();
     for (n, pass) in program.passes.iter().enumerate() {
+        let read_before_written = |slot: GpuSlot| index(slot, program).is_none_or(|at| !written.contains(&at));
+        if read_before_written(pass.src) || pass.aux.is_some_and(read_before_written) {
+            return Err(format!("pass {n} reads an image the plan does not have or has not written yet"));
+        }
+        written.push(index(pass.out, program).ok_or_else(|| format!("pass {n} writes an image the plan does not have"))?);
         if let Some(draw) = &pass.draw {
             check_draw(n, draw, program, true)?;
         }

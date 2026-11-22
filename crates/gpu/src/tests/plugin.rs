@@ -196,7 +196,7 @@ fn a_kernel_may_store_each_pixel_anywhere_in_the_output() {
 }
 
 #[test]
-fn a_plan_that_fails_part_way_leaves_no_recorded_work_behind() {
+fn a_plan_that_fails_leaves_no_work_of_its_own_and_keeps_the_work_before_it() {
     let Some(g) = gpu() else { return };
     let broken = pass("tint", GpuSlot::Scratch(3), GpuSlot::Output);
     register(
@@ -204,13 +204,25 @@ fn a_plan_that_fails_part_way_leaves_no_recorded_work_behind() {
         TINT_WGSL,
         GpuProgram { images: vec![[53, 37]], passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Scratch(0)), broken], ..Default::default() },
     );
-    let registered = dynamic::get("test.gpu.part-way").expect("registered");
-    let mut e = crate::context::Enc::new(&g.ctx);
-    let frame = crate::effects::GBuf { img: g.ctx.upload_image(&pattern(5, 53, 37)).expect("uploads"), offset: [0.0, 0.0], scale: 1.0 };
+    register(
+        "test.gpu.padded-missing-entry",
+        TINT_WGSL,
+        GpuProgram { padding: [3; 4], passes: vec![pass("absent", GpuSlot::Source, GpuSlot::Output)], ..Default::default() },
+    );
+    register("test.gpu.earlier", TINT_WGSL, GpuProgram { passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Output)], ..Default::default() });
     let params = Params::default();
     let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [53.0, 37.0], seed: 1, adjustment: false, env: Default::default() };
-    assert!(crate::fx_plugin::apply(&mut e, &registered, &ctx, frame).is_none(), "a pass reading an image the plan lacks declines");
-    assert_eq!(e.recorded(), 0, "the first pass's dispatch is not left for the CPU fallback to submit");
+    let frame = || crate::effects::GBuf { img: g.ctx.upload_image(&pattern(5, 53, 37)).expect("uploads"), offset: [0.0, 0.0], scale: 1.0 };
+    let apply = |e: &mut crate::context::Enc, id: &str, b| crate::fx_plugin::apply(e, &dynamic::get(id).expect("registered"), &ctx, b);
+    let mut e = crate::context::Enc::new(&g.ctx);
+    assert!(apply(&mut e, "test.gpu.padded-missing-entry", frame()).is_none(), "a plan naming a kernel its shader lacks declines");
+    e.submit();
+    assert!(e.last_submission().is_none(), "the padding copy is not recorded before the plan is known to run");
+    let mut e = crate::context::Enc::new(&g.ctx);
+    let tinted = apply(&mut e, "test.gpu.earlier", frame()).expect("the earlier effect runs");
+    let earlier = e.recorded();
+    assert!(apply(&mut e, "test.gpu.part-way", tinted).is_none(), "a pass reading an image the plan lacks declines");
+    assert_eq!((earlier > 0, e.recorded()), (true, earlier), "the earlier effect's work stays and the failed plan's first pass is not recorded");
 }
 
 #[test]
