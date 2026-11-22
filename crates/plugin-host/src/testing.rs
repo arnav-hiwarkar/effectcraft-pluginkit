@@ -284,7 +284,7 @@ pub fn value_of_json(value: &serde_json::Value) -> Option<Value> {
 pub fn default_value(kind: &ParamKind, layer_size: [f64; 2]) -> Option<Value> {
     let [w, h] = layer_size;
     Some(match kind {
-        ParamKind::Slider { default, .. } | ParamKind::Percent { default } | ParamKind::Angle { default } => Value::Number(*default),
+        ParamKind::Slider { default, .. } | ParamKind::Percent { default, .. } | ParamKind::Angle { default } => Value::Number(*default),
         ParamKind::Checkbox { default } => Value::Bool(*default),
         ParamKind::Popup { default, .. } => Value::Number(f64::from(*default)),
         ParamKind::Point { default } => Value::List(vec![default[0] * w, default[1] * h]),

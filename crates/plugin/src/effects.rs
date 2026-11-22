@@ -123,7 +123,7 @@ fn declare(param: &Param) -> DynamicParam {
             };
             (Value::Scalar(*default), ui)
         }
-        ParamKind::Percent { default } => (Value::Scalar(*default), ParamUi::Percent),
+        ParamKind::Percent { default, .. } => (Value::Scalar(*default), ParamUi::Percent),
         ParamKind::Angle { default } => (Value::Scalar(*default), ParamUi::Angle),
         ParamKind::Checkbox { default } => (Value::Bool(*default), ParamUi::Checkbox),
         ParamKind::Popup { options, default } => (Value::Enum(*default), ParamUi::Popup { options: options.clone() }),

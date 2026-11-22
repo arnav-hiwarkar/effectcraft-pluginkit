@@ -283,7 +283,7 @@ mod tests {
                     Some((
                         p.id,
                         match p.kind {
-                            K::Slider { default, .. } | K::Percent { default } | K::Angle { default } => V::Number(default),
+                            K::Slider { default, .. } | K::Percent { default, .. } | K::Angle { default } => V::Number(default),
                             K::Checkbox { default } => V::Bool(default),
                             K::Popup { default, .. } => V::Number(f64::from(default)),
                             K::Point3 { default } => V::List(vec![default[0] * 320.0, default[1] * 180.0, default[2]]),

@@ -114,7 +114,7 @@ impl Loaded<'_> {
         let defaults = spec.params.iter().filter_map(|p| {
             use craft_plugin_host::ParamKind as K;
             let value = match &p.kind {
-                K::Slider { default, .. } | K::Percent { default } | K::Angle { default } => Value::Number(*default),
+                K::Slider { default, .. } | K::Percent { default, .. } | K::Angle { default } => Value::Number(*default),
                 K::Checkbox { default } => Value::Bool(*default),
                 K::Popup { default, .. } => Value::Number(f64::from(*default)),
                 K::Point3 { default } => Value::List(vec![default[0] * f64::from(w), default[1] * f64::from(h), default[2]]),

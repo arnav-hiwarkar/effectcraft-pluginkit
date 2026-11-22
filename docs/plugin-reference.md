@@ -129,6 +129,8 @@ when an expression or a script pushes the value outside it. `.soft(low..=high)` 
 row shows, so a value up to 1000 can be typed while the slider covers 0.01 to 10. `.log()` spaces the slider
 by ratio, which suits gains and sizes; it needs a soft (or hard) minimum above 0 and is linear otherwise.
 `.range(min..=max)` gives a percent parameter a hard range and a slider (a percent without one has none).
+The modifiers work in any order: `percent(...).soft(...).log().range(...)` keeps the soft range and the log
+scale.
 A hard range with its larger end first (`10.0..=1.0`) stops the plugin from loading with
 `effect `glow`: parameter `gain` has the range 10..=1; give the smaller end first`.
 `param.fit(value)` is the check the app applies to every value it delivers and the test kit applies to every

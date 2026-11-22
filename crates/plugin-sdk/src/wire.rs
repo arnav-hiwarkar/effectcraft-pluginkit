@@ -189,6 +189,10 @@ pub enum ParamKind {
     },
     Percent {
         default: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        soft: Option<[f64; 2]>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        log: bool,
     },
     Angle {
         default: f64,
@@ -229,13 +233,13 @@ impl Param {
     }
 
     pub fn percent(id: &str, name: &str, default: f64) -> Self {
-        Param::new(id, name, ParamKind::Percent { default })
+        Param::new(id, name, ParamKind::Percent { default, soft: None, log: false })
     }
 
     pub fn range(mut self, range: RangeInclusive<f64>) -> Self {
         let (min, max) = (*range.start(), *range.end());
         self.kind = match self.kind {
-            ParamKind::Percent { default } => ParamKind::Slider { default, min, max, soft: None, log: false, percent: true },
+            ParamKind::Percent { default, soft, log } => ParamKind::Slider { default, min, max, soft, log, percent: true },
             ParamKind::Slider { default, soft, log, percent, .. } => ParamKind::Slider { default, min, max, soft, log, percent },
             other => other,
         };
@@ -243,14 +247,14 @@ impl Param {
     }
 
     pub fn soft(mut self, range: RangeInclusive<f64>) -> Self {
-        if let ParamKind::Slider { soft, .. } = &mut self.kind {
+        if let ParamKind::Slider { soft, .. } | ParamKind::Percent { soft, .. } = &mut self.kind {
             *soft = Some([*range.start(), *range.end()]);
         }
         self
     }
 
     pub fn log(mut self) -> Self {
-        if let ParamKind::Slider { log, .. } = &mut self.kind {
+        if let ParamKind::Slider { log, .. } | ParamKind::Percent { log, .. } = &mut self.kind {
             *log = true;
         }
         self
@@ -1625,5 +1629,13 @@ mod tests {
         assert_eq!(mix.kind, ParamKind::Slider { default: 50.0, min: -100.0, max: 300.0, soft: None, log: false, percent: true });
         let sent: Param = serde_json::from_str(&serde_json::to_string(&gain).unwrap()).unwrap();
         assert_eq!(sent, gain);
+    }
+
+    #[test]
+    fn a_percent_keeps_its_soft_range_and_log_scale_whichever_order_the_modifiers_come_in() {
+        let expected = ParamKind::Slider { default: 50.0, min: -100.0, max: 300.0, soft: Some([1.0, 200.0]), log: true, percent: true };
+        assert_eq!(Param::percent("m", "Mix", 50.0).soft(1.0..=200.0).log().range(-100.0..=300.0).kind, expected);
+        assert_eq!(Param::percent("m", "Mix", 50.0).range(-100.0..=300.0).log().soft(1.0..=200.0).kind, expected);
+        assert_eq!(serde_json::to_string(&Param::percent("b", "B", 50.0)).unwrap(), r#"{"id":"b","name":"B","kind":"percent","default":50.0}"#);
     }
 }

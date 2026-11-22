@@ -13,7 +13,7 @@ fn defaults(overrides: &[(&str, f64)]) -> BTreeMap<String, Value> {
         .into_iter()
         .filter_map(|p| {
             let value = match p.kind {
-                ParamKind::Slider { default, .. } | ParamKind::Percent { default } | ParamKind::Angle { default } => Value::Number(default),
+                ParamKind::Slider { default, .. } | ParamKind::Percent { default, .. } | ParamKind::Angle { default } => Value::Number(default),
                 ParamKind::Checkbox { default } => Value::Bool(default),
                 ParamKind::Popup { default, .. } => Value::Number(f64::from(default)),
                 ParamKind::Point { default } => Value::List(vec![default[0] * SIZE[0] as f64, default[1] * SIZE[1] as f64]),
