@@ -100,7 +100,8 @@ dropped if it saves the project. Save, Save As, Save a Copy and Increment and Sa
 file's format (`.ecprojx` stays XML). Next to `savedBy` the file records the active comp and the
 open comp tabs (`activeComp`, `openComps`), which opening restores; they are editor state, not
 part of `Project`, so older files (and ids that no longer name a comp) open on the first comp and
-older versions ignore them.
+older versions ignore them. An empty `openComps` means every tab was closed. An auto-save also
+records `autosaveOf`, the path of the project it was made from.
 
 `schema` changes when a saved value changes meaning; a project from an older schema is converted
 when it is opened (`effectcraft_engine::upgrade_effects`, which also refreshes effect instances
