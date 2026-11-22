@@ -141,3 +141,23 @@ fn a_thumbnail_is_opaque_and_draws_the_curve_in_white_where_the_curve_passes() {
     assert_eq!(at(THUMB / 2, THUMB / 2), [240, 240, 240]);
     assert_eq!(at(THUMB / 2 + 10, THUMB / 2 - 10)[0], 32);
 }
+
+#[test]
+fn arrow_keys_move_the_chosen_point_within_its_neighbours_and_delete_removes_it() {
+    let mut points = S_CURVE.to_vec();
+    let mut state = ControlState::default();
+    let side = 100.0;
+    control::edit(&mut state, &mut points, Pointer::new([30.0, 80.0], PointerPhase::Down), side);
+    control::edit(&mut state, &mut points, Pointer::new([30.0, 80.0], PointerPhase::Up), side);
+    let press = |name: &str, shift: bool| Key { name: name.into(), modifiers: Modifiers { shift, alt: false, command: false } };
+    assert!(control::key(&mut state, &mut points, &press("Up", true)));
+    assert!(control::key(&mut state, &mut points, &press("Right", false)));
+    assert!((points[1][0] - 0.31).abs() < 1e-9 && (points[1][1] - 0.3).abs() < 1e-9, "{:?}", points[1]);
+    for _ in 0..100 {
+        control::key(&mut state, &mut points, &press("Right", true));
+    }
+    assert!((points[1][0] - 0.699).abs() < 1e-9, "{:?}", points[1]);
+    assert!(control::key(&mut state, &mut points, &press("Delete", false)));
+    assert_eq!(points, vec![[0.0, 0.0], [0.7, 0.8], [1.0, 1.0]]);
+    assert!(!control::key(&mut state, &mut points, &press("Left", false)));
+}
