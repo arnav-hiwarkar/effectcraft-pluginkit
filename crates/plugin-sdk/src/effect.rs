@@ -129,6 +129,10 @@ impl Cx {
 
 fn image(call: &HostCall) -> Option<Image> {
     let (desc, buffer) = host::call::<ImageDesc>(call, &[]).ok()?;
+    image_of(desc, buffer)
+}
+
+pub(crate) fn image_of(desc: ImageDesc, buffer: crate::abi::Buffer) -> Option<Image> {
     let (width, height) = (desc.width as usize, desc.height as usize);
     (width * height > 0 && buffer.pixels().len() == width * height).then_some(Image { width, height, buffer })
 }

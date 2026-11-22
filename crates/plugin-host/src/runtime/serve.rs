@@ -1,13 +1,14 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use craft_plugin::{HostCall, ImageDesc, LogLevel, Outcome, Permission, Pixel, Root};
+use craft_plugin::{AudioDesc, HostCall, ImageDesc, LogLevel, Outcome, Permission, Pixel, Root};
 use serde_json::{Value, json};
 
-use super::gate;
+use super::tasks::{Slot, Tasks};
+use super::{Engine, gate};
 use crate::cache::Cache;
-use crate::host::{Host, Pixels};
+use crate::host::{Host, Origin, Pixels};
 
 pub(crate) struct Identity {
     pub id: String,
@@ -15,11 +16,24 @@ pub(crate) struct Identity {
     pub data_dir: PathBuf,
     pub grants: BTreeSet<Permission>,
     pub cache: Arc<Cache>,
+    pub tasks: Tasks,
+    pub picked: Mutex<Vec<(PathBuf, bool)>>,
+}
+
+impl Identity {
+    pub fn picked(&self, path: &str, write: bool) -> bool {
+        let path = Path::new(path);
+        self.picked.lock().is_ok_and(|picked| picked.iter().any(|(chosen, writable)| chosen == path && (*writable || !write)))
+    }
 }
 
 pub(crate) struct HostCx<'a> {
     pub host: &'a mut dyn Host,
     pub plugin: &'a Identity,
+    pub engine: &'a Arc<Engine>,
+    pub origin: Origin,
+    pub task: Option<Arc<Slot>>,
+    pub on_task_thread: bool,
 }
 
 pub(crate) enum Bulk {
@@ -27,6 +41,7 @@ pub(crate) enum Bulk {
     Bytes(Vec<u8>),
     Shared(Arc<[u8]>),
     Pixels(Vec<Pixel>),
+    Floats(Vec<f32>),
 }
 
 impl Bulk {
@@ -36,12 +51,30 @@ impl Bulk {
             Bulk::Bytes(bytes) => bytes,
             Bulk::Shared(bytes) => bytes,
             Bulk::Pixels(pixels) => bytemuck::cast_slice(pixels),
+            Bulk::Floats(samples) => bytemuck::cast_slice(samples),
         }
     }
 }
 
+fn needs_the_app(call: &HostCall) -> bool {
+    matches!(call, HostCall::Command { .. } | HostCall::Notify { .. } | HostCall::Frame { .. } | HostCall::Audio { .. })
+}
+
 pub(crate) fn serve(cx: &mut HostCx, request: &[u8], bulk: &[u8]) -> (Vec<u8>, Bulk) {
-    let answered = serde_json::from_slice::<HostCall>(request).map_err(|e| format!("malformed host call: {e}")).and_then(|call| answer(cx, call, bulk));
+    let call = match serde_json::from_slice::<HostCall>(request) {
+        Ok(call) => call,
+        Err(e) => return reply(Err(format!("malformed host call: {e}"))),
+    };
+    if cx.on_task_thread
+        && needs_the_app(&call)
+        && let Some(task) = cx.task.clone()
+    {
+        return cx.plugin.tasks.forward(&task, request, bulk).unwrap_or_else(|e| reply(Err(e)));
+    }
+    reply(answer(cx, call, bulk))
+}
+
+fn reply(answered: Result<(Value, Bulk), String>) -> (Vec<u8>, Bulk) {
     let (outcome, bulk) = match answered {
         Ok((value, bulk)) => (Outcome::Ok(value), bulk),
         Err(message) => (Outcome::Err(message), Bulk::None),
@@ -50,7 +83,7 @@ pub(crate) fn serve(cx: &mut HostCx, request: &[u8], bulk: &[u8]) -> (Vec<u8>, B
 }
 
 fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk), String> {
-    gate::check(&call, cx.host, &cx.plugin.grants)?;
+    gate::check(&call, cx.host, cx.plugin, cx.origin)?;
     let plain = |value: Value| Ok((value, Bulk::None));
     match call {
         HostCall::Log { level, message } => {
@@ -88,6 +121,28 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
         HostCall::CacheRemove { key } => {
             cx.plugin.cache.remove(&key);
             plain(Value::Null)
+        }
+        HostCall::Start { task, args } => cx.engine.start(&task, args).map(|id| (json!(id), Bulk::None)),
+        HostCall::Task { id } => cx.plugin.tasks.get(id).map(|slot| (json!(slot.state()), Bulk::None)).ok_or(format!("no task {id}")),
+        HostCall::Cancel { id } => match cx.plugin.tasks.cancel(id) {
+            true => plain(Value::Null),
+            false => Err(format!("no task {id}")),
+        },
+        HostCall::Progress { fraction, message } => {
+            let task = cx.task.as_ref().ok_or("only a task reports progress")?;
+            task.progress(fraction, message).map(|()| (Value::Null, Bulk::None))
+        }
+        HostCall::Frame { request } => image(Some(cx.host.frame(&request)?)),
+        HostCall::Audio { request } => {
+            let audio = cx.host.audio(&request)?;
+            Ok((json!(AudioDesc { channels: audio.channels, rate: audio.rate }), Bulk::Floats(audio.samples)))
+        }
+        HostCall::PickFile { request } => {
+            let chosen = cx.host.pick_file(&request)?;
+            if let (Some(path), Ok(mut picked)) = (&chosen, cx.plugin.picked.lock()) {
+                picked.push((path.clone(), request.save));
+            }
+            plain(json!(chosen.map(|path| path.to_string_lossy().into_owned())))
         }
         HostCall::ListFiles { root, path } => {
             let dir = resolve(cx.plugin, root, &path)?;

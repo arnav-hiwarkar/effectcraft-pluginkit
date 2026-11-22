@@ -16,6 +16,7 @@ pub enum Call {
     Render { effect: String, cx: RenderCx, frame: FrameDesc },
     Panel { panel: String, input: UiInput },
     Command { command: String },
+    Task { task: String, args: serde_json::Value },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -51,6 +52,8 @@ pub struct Contributions {
     pub panels: Vec<PanelSpec>,
     #[serde(default)]
     pub commands: Vec<CommandSpec>,
+    #[serde(default)]
+    pub tasks: Vec<TaskSpec>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -452,6 +455,70 @@ pub struct CommandSpec {
     pub title: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct TaskSpec {
+    pub id: String,
+    pub title: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    #[default]
+    Running,
+    Done,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct TaskState {
+    pub id: u64,
+    pub task: String,
+    pub status: TaskStatus,
+    pub progress: f64,
+    pub message: String,
+    #[serde(default)]
+    pub result: Option<serde_json::Value>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct FrameRequest {
+    #[serde(default)]
+    pub comp: Option<String>,
+    #[serde(default)]
+    pub layer: Option<String>,
+    pub time: f64,
+    pub scale: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct AudioRequest {
+    #[serde(default)]
+    pub layer: Option<String>,
+    pub start: f64,
+    pub duration: f64,
+    pub rate: u32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct AudioDesc {
+    pub channels: u32,
+    pub rate: u32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct PickFile {
+    #[serde(default)]
+    pub save: bool,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub extensions: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "call", rename_all = "snake_case")]
 pub enum HostCall {
@@ -468,6 +535,13 @@ pub enum HostCall {
     CacheGet { key: String },
     CachePut { key: String },
     CacheRemove { key: String },
+    Start { task: String, args: serde_json::Value },
+    Task { id: u64 },
+    Cancel { id: u64 },
+    Progress { fraction: f64, message: String },
+    Frame { request: FrameRequest },
+    Audio { request: AudioRequest },
+    PickFile { request: PickFile },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

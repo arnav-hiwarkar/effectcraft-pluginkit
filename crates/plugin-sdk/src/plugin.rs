@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::effect::{Cx, Effect, Frame};
 use crate::ui::{Panel, Ui};
-use crate::wire::{Call, CommandSpec, Contributions, EffectSpec, Outcome, PanelSpec, Pixel};
+use crate::wire::{Call, CommandSpec, Contributions, EffectSpec, HostCall, Outcome, PanelSpec, Pixel, TaskSpec};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error(pub String);
@@ -39,12 +39,29 @@ impl From<serde_json::Error> for Error {
 }
 
 type CommandFn = Box<dyn Fn() -> Result<()> + Send + Sync>;
+type TaskFn = Box<dyn Fn(&Task) -> Result<serde_json::Value> + Send + Sync>;
+
+pub struct Task {
+    args: serde_json::Value,
+}
+
+impl Task {
+    pub fn args(&self) -> &serde_json::Value {
+        &self.args
+    }
+
+    pub fn progress(&self, fraction: f64, message: &str) -> Result<()> {
+        let call = HostCall::Progress { fraction, message: message.into() };
+        crate::host::call::<serde_json::Value>(&call, &[]).map(|_| ())
+    }
+}
 
 #[derive(Default)]
 pub struct Plugin {
     effects: Vec<(EffectSpec, Box<dyn Effect>)>,
     panels: Vec<(PanelSpec, Mutex<Box<dyn Panel>>)>,
     commands: Vec<(CommandSpec, CommandFn)>,
+    tasks: Vec<(TaskSpec, TaskFn)>,
 }
 
 impl Plugin {
@@ -68,11 +85,17 @@ impl Plugin {
         self
     }
 
+    pub fn task(mut self, id: &str, title: &str, run: impl Fn(&Task) -> Result<serde_json::Value> + Send + Sync + 'static) -> Self {
+        self.tasks.push((TaskSpec { id: id.into(), title: title.into() }, Box::new(run)));
+        self
+    }
+
     pub fn contributions(&self) -> Contributions {
         Contributions {
             effects: self.effects.iter().map(|(spec, _)| spec.clone()).collect(),
             panels: self.panels.iter().map(|(spec, _)| spec.clone()).collect(),
             commands: self.commands.iter().map(|(spec, _)| spec.clone()).collect(),
+            tasks: self.tasks.iter().map(|(spec, _)| spec.clone()).collect(),
         }
     }
 
@@ -106,6 +129,10 @@ impl Plugin {
                 let (_, run) = self.commands.iter().find(|(spec, _)| spec.id == command).ok_or_else(|| Error(format!("no command `{command}`")))?;
                 run()?;
                 Ok(serde_json::Value::Null)
+            }
+            Call::Task { task, args } => {
+                let (_, run) = self.tasks.iter().find(|(spec, _)| spec.id == task).ok_or_else(|| Error(format!("no task `{task}`")))?;
+                run(&Task { args })
             }
         }
     }

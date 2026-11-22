@@ -303,6 +303,30 @@ fn make() -> Plugin {
             host::command(command, request["params"].clone()).map(|_| ())
         })
         .command("run-script", "Run Script", || host::command("script.run", json!({"code": "1"})).map(|_| ()))
+        .command("start-count", "Start Counting", || {
+            let id = host::start("count", json!({"steps": 3}))?;
+            host::write_file(Root::Data, "task-id.txt", id.to_string().as_bytes())
+        })
+        .task("count", "Count", |task: &Task| {
+            let steps = task.args()["steps"].as_u64().ok_or("count needs `steps`")?;
+            for step in 0..steps {
+                task.progress(step as f64 / steps as f64, &format!("step {step}"))?;
+            }
+            Ok(json!({"counted": steps}))
+        })
+        .task("forever", "Forever", |_task: &Task| {
+            let mut n = 0u64;
+            loop {
+                n = std::hint::black_box(n.wrapping_add(1));
+            }
+        })
+        .task("patient", "Patient", |task: &Task| {
+            loop {
+                task.progress(0.5, "waiting")?;
+                std::hint::black_box(0);
+            }
+        })
+        .task("edit", "Edit From A Task", |_task: &Task| host::command("layer.newNull", json!({"name": "From Task"})))
 }
 
 craft_plugin::export!(make);

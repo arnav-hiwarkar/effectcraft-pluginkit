@@ -16,7 +16,7 @@ type CallFn = unsafe extern "C" fn(usize, *const u8, usize, *mut u8, usize, *mut
 type HostFn = unsafe extern "C" fn(usize, *const u8, usize, *const u8, usize, *mut [usize; 4]);
 type InitFn = unsafe extern "C" fn(HostFn);
 
-fn guarded(cx: &mut HostCx, request: &[u8], bulk: &[u8]) -> (Vec<u8>, Bulk) {
+pub(crate) fn guarded(cx: &mut HostCx, request: &[u8], bulk: &[u8]) -> (Vec<u8>, Bulk) {
     catch_unwind(AssertUnwindSafe(|| serve(cx, request, bulk))).unwrap_or_else(|_| refusal("the app failed to answer"))
 }
 
