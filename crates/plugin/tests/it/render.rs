@@ -205,3 +205,15 @@ fn without_a_camera_layer_the_scene_camera_is_the_comp_default_view() {
     assert_eq!(position.to_vec(), eye);
     assert!((zoom - default_zoom).abs() < 1e-3, "zoom {zoom} against the view's {default_zoom}");
 }
+
+#[test]
+fn a_layer_parameter_reads_a_layer_whose_video_is_off_as_its_pixels() {
+    let mut app = app("test.render-hidden-input", &[]);
+    let session = &mut app.session;
+    let matte = session.execute("layer.newSolid", json!({"name": "Matte", "color": "#ff8000", "width": 64, "height": 36})).unwrap()["layer"].as_u64();
+    session.execute("layer.setSwitch", json!({"layers": [matte], "switch": "video", "value": false})).unwrap();
+    let plate = session.execute("layer.newSolid", json!({"name": "Plate", "color": "#0000ff", "width": 64, "height": 36})).unwrap()["layer"].as_u64();
+    session.execute("effect.apply", json!({"layer": plate, "effect": format!("{}.gpu-matte", app.id)})).unwrap();
+    session.execute_checked("prop.set", json!({"layer": plate, "path": "effects/#1/matte", "value": matte})).unwrap();
+    assert!(close(centre_pixel(&app), [1.0, 0.502, 0.0, 1.0]), "the plate shows the hidden matte: {:?}", centre_pixel(&app));
+}

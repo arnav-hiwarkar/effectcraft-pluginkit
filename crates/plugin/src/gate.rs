@@ -101,7 +101,9 @@ fn only_layer(project: &Project, comp: ItemId, layer: LayerId, video: bool) -> R
         let keep = other.id == layer;
         if !video {
             other.switches.audio &= keep;
-        } else if !keep && !other.is_light() && !other.is_camera() {
+        } else if keep {
+            other.switches.video = true;
+        } else if !other.is_light() && !other.is_camera() {
             other.switches.video = false;
         }
     }

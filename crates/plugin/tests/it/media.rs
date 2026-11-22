@@ -110,3 +110,13 @@ fn a_frame_of_one_3d_layer_is_lit_by_the_comp_lights() {
     let quarter = 64.0f32 / 255.0;
     assert_eq!(lit["center"], json!([quarter, quarter, quarter, 1.0]));
 }
+
+#[test]
+fn a_frame_of_one_layer_whose_video_is_off_shows_its_pixels() {
+    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut app = app("test.media-solo-hidden", &["document.read"]);
+    let hidden = solid(&mut app, "Hidden", "#00ff00", 64);
+    app.session.execute("layer.setSwitch", json!({"layers": [hidden], "switch": "video", "value": false})).unwrap();
+    assert_eq!(finished(&mut app, "frame", json!({"time": 0.0, "scale": 1.0}))["center"], json!([0.0, 0.0, 0.0, 0.0]));
+    assert_eq!(finished(&mut app, "frame", json!({"time": 0.0, "scale": 1.0, "layer": "Hidden"}))["center"], json!([0.0, 1.0, 0.0, 1.0]));
+}

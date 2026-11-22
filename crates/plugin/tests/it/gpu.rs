@@ -195,3 +195,31 @@ fn a_layer_input_stays_on_the_gpu_after_the_first_frame() {
         assert!(worst <= 1.0 / 255.0, "frame {frame}: the GPU and CPU renders differ by {worst}");
     }
 }
+
+#[test]
+fn a_gpu_pass_reads_a_layer_whose_video_is_off_as_its_pixels() {
+    let mut app = app("test.gpu-hidden-matte", &[]);
+    let Some(gpu) = gpu() else { return };
+    let session = &mut app.session;
+    let matte =
+        session.execute("layer.newSolid", serde_json::json!({"name": "Matte", "color": "#ff8000", "width": 64, "height": 36})).unwrap()["layer"].as_u64();
+    session.execute("layer.setSwitch", serde_json::json!({"layers": [matte], "switch": "video", "value": false})).unwrap();
+    let plate =
+        session.execute("layer.newSolid", serde_json::json!({"name": "Plate", "color": "#0000ff", "width": 64, "height": 36})).unwrap()["layer"].as_u64();
+    session.execute("effect.apply", serde_json::json!({"layer": plate, "effect": format!("{}.gpu-matte", app.id)})).unwrap();
+    session.execute_checked("prop.set", serde_json::json!({"layer": plate, "path": "effects/#1/matte", "value": matte})).unwrap();
+    let comp = session.active_comp_id().unwrap();
+    let render = |backend| {
+        let renderer = effectcraft_engine::render::Renderer::new(
+            &session.project,
+            session.footage.as_ref(),
+            effectcraft_engine::render::RenderOpts { backend, ..Default::default() },
+        );
+        renderer.with_accel(Some(gpu)).comp_frame(comp, effectcraft_engine::time::Tick::from_seconds_f64(0.0))
+    };
+    for backend in [effectcraft_engine::render::Backend::Gpu, effectcraft_engine::render::Backend::Cpu] {
+        let image = render(backend);
+        let centre = image.data[(18 * image.width + 32) as usize];
+        assert!((centre[0] - 1.0).abs() < 0.02 && (centre[1] - 0.502).abs() < 0.02 && centre[2] < 0.02, "{backend:?}: {centre:?}");
+    }
+}
