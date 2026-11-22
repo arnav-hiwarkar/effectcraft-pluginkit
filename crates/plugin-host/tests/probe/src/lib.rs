@@ -452,6 +452,29 @@ impl Effect for Lift {
     }
 }
 
+struct Swap;
+
+const SWAP: [[f32; 4]; 4] = [[0.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+
+impl Effect for Swap {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("swap", "Swap", "Probe").param(Param::checkbox("planned", "Planned", false))
+    }
+
+    fn layout(&self, cx: &Cx) -> Layout {
+        if cx.bool("planned") {
+            Layout::pointwise().passes(GpuPlan::new().pass(GpuPass::matrix(GpuImage::Source, GpuImage::Output, SWAP)))
+        } else {
+            Layout::pointwise()
+        }
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        frame.map(|[r, g, b, a]| [b, g, r, a]);
+        Ok(())
+    }
+}
+
 struct Streak;
 
 impl Effect for Streak {
@@ -811,6 +834,7 @@ fn make() -> Plugin {
         .effect(GpuInvert)
         .effect(GpuSoften)
         .effect(HostKernels)
+        .effect(Swap)
         .effect(Passes)
         .effect(GpuFill)
         .effect(GpuMatte)

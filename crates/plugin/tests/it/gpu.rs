@@ -109,6 +109,27 @@ fn a_draw_that_keeps_its_target_draws_over_what_the_passes_before_it_wrote() {
 }
 
 #[test]
+fn an_effect_without_wgsl_reaches_the_gpu_at_the_settings_its_plan_allows() {
+    let app = app("test.gpu-swap", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.swap", app.id)).expect("the probe registered its swap effect");
+    let with = |planned: bool| {
+        let mut values = params(spec, &[]);
+        values.values.insert("planned".into(), Value::Bool(planned));
+        values
+    };
+    let (planned, plain) = (with(true), with(false));
+    let first = [0.0, 0.45, 0.5, 0.5];
+    assert_eq!(effects::apply(spec, &ctx(&plain), picture()).img.data[0], [0.5, 0.45, 0.0, 0.5]);
+    assert_eq!(effects::apply(spec, &ctx(&planned), picture()).img.data[0], [0.5, 0.45, 0.0, 0.5]);
+    assert_eq!(picture().img.data[0], first);
+    assert!(spec.gpu && gpu.supports_effect(spec.id), "a frame rendered with a host kernel plan offers the effect to the GPU");
+    let out = gpu.effects(&[FxStep { spec, ctx: ctx(&planned) }], &picture(), None).expect("the plan of host kernels runs on the GPU");
+    assert_eq!(out.img.data[0], [0.5, 0.45, 0.0, 0.5]);
+    assert!(gpu.effects(&[FxStep { spec, ctx: ctx(&plain) }], &picture(), None).is_none(), "without a plan the GPU declines the frame");
+}
+
+#[test]
 fn a_gpu_pass_reads_the_layer_a_layer_parameter_names() {
     let mut app = app("test.gpu-matte", &[]);
     let Some(gpu) = gpu() else { return };

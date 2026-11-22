@@ -268,9 +268,11 @@ Rules shared by all of them:
 `plan.validate` checks each kernel's fields and names the pass and the field it refuses:
 `pass 2 (blur): `radius` is [600.0, 2.0]; each axis must be 0 to 512`.
 
-An effect with no WGSL runs its plans on the GPU too when its layout at the default settings gives a plan
-made only of host kernels; the app asks for that layout when the plugin loads. An effect whose plans name
-its own kernels gives WGSL with `.shader(..)`.
+An effect with no WGSL runs a plan on the GPU too when that plan is made only of host kernels. The app
+decides per frame: at settings where the layout gives no plan, or a plan naming the effect's own kernels,
+the frame renders on the CPU. Once the effect has given such a plan (at the default settings when the
+plugin loads, or at any later frame), the app offers it to the GPU; until then it renders on the CPU, so
+when the defaults give no such plan, the first frame at settings that do renders on the CPU. An effect whose plans name its own kernels gives WGSL with `.shader(..)`.
 
 Lumen Glow (`plugins/lumen-glow`) is made only of host kernels and has no WGSL and no `pass` method:
 `to_linear` and a `brightness_curve` soft knee, `resample` passes down a pyramid, a separable `convolve`,
