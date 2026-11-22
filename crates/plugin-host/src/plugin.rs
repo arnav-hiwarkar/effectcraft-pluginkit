@@ -126,8 +126,12 @@ impl Plugin {
         if pixels.is_empty() {
             return Ok(());
         }
-        let band_rows = height.div_ceil((height / MIN_BAND_ROWS).clamp(1, rayon::current_num_threads()));
-        let banded = reach.filter(|reach| self.engine.copies_pixels() && band_rows < height && (*reach as usize) < band_rows);
+        let even_rows = height.div_ceil((height / MIN_BAND_ROWS).clamp(1, rayon::current_num_threads()));
+        let band_rows = reach.map_or(even_rows, |reach| even_rows.max(reach as usize + 1));
+        let banded = reach.filter(|reach| {
+            let reach = *reach as usize;
+            (reach == 0 || self.engine.copies_pixels()) && band_rows + 2 * reach < height
+        });
         let Some(reach) = banded else {
             let frame = FrameDesc { width: cx.size[0], height: cx.size[1], origin: [0, 0] };
             let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };

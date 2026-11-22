@@ -166,6 +166,10 @@ fn rendering_in_parallel_bands_gives_the_same_picture_as_one_pass() {
         loaded.plugin.render("shift-down", &cx, Some(1), &mut banded, Recorder::default).unwrap();
         assert!(banded == expected, "{kind:?} banded render differs from the shifted source");
 
+        let mut tall = source.clone();
+        loaded.plugin.render("shift-down", &cx, Some(150), &mut tall, Recorder::default).unwrap();
+        assert!(tall == expected, "{kind:?} render with a reach taller than an even band differs from the shifted source");
+
         let mut whole = source.clone();
         loaded.plugin.render("shift-down", &cx, None, &mut whole, Recorder::default).unwrap();
         assert!(whole == expected, "{kind:?} whole-frame render differs from the shifted source");
