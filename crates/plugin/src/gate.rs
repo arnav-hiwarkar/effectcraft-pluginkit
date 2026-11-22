@@ -359,6 +359,14 @@ impl Host for SessionHost<'_> {
         Some(self.session.project_closed.clone())
     }
 
+    fn clipboard(&mut self) -> Result<String, String> {
+        crate::panels::clipboard()?.text()
+    }
+
+    fn set_clipboard(&mut self, text: &str) -> Result<(), String> {
+        crate::panels::clipboard()?.set_text(text)
+    }
+
     fn pick_file(&mut self, request: &PickFile) -> Result<Option<PathBuf>, String> {
         let picker = FILE_PICKER.get().ok_or("a file dialog cannot open in a headless run")?;
         Ok(picker(request))

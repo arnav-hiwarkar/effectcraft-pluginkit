@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use effectcraft_engine::PluginItem;
-use effectcraft_plugin::ui::{Modifiers, Paint, Pointer, PointerPhase, Shape, TextStyle, UiEvent, UiEventKind, UiInput, Widget};
+use effectcraft_plugin::Surface;
+use effectcraft_plugin::ui::{Drag, Dropped, Key, Modifiers, Paint, Pointer, PointerPhase, Shape, TextStyle, UiEvent, UiEventKind, Widget};
 use egui::epaint::CubicBezierShape;
 use egui::{Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind, UiBuilder, vec2};
 use serde_json::json;
@@ -18,12 +20,33 @@ const MAX_LINE_POINTS: usize = 65_536;
 
 #[derive(Default)]
 pub(crate) struct PluginUi {
-    pub events: HashMap<u32, Vec<UiEvent>>,
+    pub panels: effectcraft_plugin::Panels,
     pub manager_open: bool,
     pub listed: Option<(std::time::Instant, Result<Vec<super::plugin_manager::Listed>, String>)>,
     pub images: Images,
-    pub control_events: HashMap<u64, Vec<UiEvent>>,
     pub control_heights: HashMap<u64, f32>,
+}
+
+pub(crate) fn tick(app: &mut EffectcraftApp, ctx: &egui::Context) {
+    let panels = &mut app.plugin_ui.panels;
+    if !panels.has_waker() {
+        let waker = ctx.clone();
+        panels.set_waker(move || waker.request_repaint());
+    }
+    if let Some(due) = panels.frame(&mut app.session, now(ctx)) {
+        ctx.request_repaint_after(due);
+    }
+}
+
+fn now(ctx: &egui::Context) -> Duration {
+    Duration::from_secs_f64(ctx.input(|i| i.time).max(0.0))
+}
+
+pub(crate) fn submit(app: &mut EffectcraftApp, ui: &egui::Ui, key: &str, events: Vec<UiEvent>, keys: &str) {
+    if !events.is_empty() || !keys.is_empty() {
+        app.plugin_ui.panels.submit(key, events, keys);
+        ui.ctx().request_repaint();
+    }
 }
 
 #[derive(Default)]
@@ -75,26 +98,26 @@ pub fn panel(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pane
     let PanelKind::Plugin(key) = kind else { return };
     let scope = format!("plugin.{}.{}", item.plugin, item.id);
     app.auto.add(&scope, rect, &item.title);
-    let events = app.plugin_ui.events.remove(&key).unwrap_or_default();
-    let input = UiInput { events, size: [rect.width(), rect.height()], keys: typed(ui, rect) };
     let tokens = app.tokens;
     let mut body = ui.new_child(UiBuilder::new().max_rect(rect.shrink(8.0)));
-    match effectcraft_plugin::panel_ui(&mut app.session, &item.plugin, &item.id, input) {
-        Ok(widgets) => {
-            let scroll = egui::ScrollArea::both().id_salt(("plugin-panel", key)).auto_shrink([false, false]);
-            app.plugin_ui.images.prune();
-            let source = Source { plugin: &item.plugin, images: &mut app.plugin_ui.images };
-            let events = scroll.show(&mut body, |ui| draw(ui, &widgets, &tokens, &mut app.auto, &scope, source)).inner;
-            if !events.is_empty() {
-                app.plugin_ui.events.insert(key, events);
-                ui.ctx().request_repaint();
+    let surface = Surface::Panel { plugin: &item.plugin, panel: &item.id };
+    app.plugin_ui.images.prune();
+    let events = match app.plugin_ui.panels.show(&mut app.session, &scope, surface, [rect.width(), rect.height()]) {
+        Ok(shown) => {
+            if let Some(error) = shown.error {
+                body.label(RichText::new(tr_args("The plug-in panel failed: {}", &[&error])).color(tokens.danger));
             }
+            let scroll = egui::ScrollArea::both().id_salt(("plugin-panel", key)).auto_shrink([false, false]);
+            let source = Source { plugin: shown.plugin, images: &mut app.plugin_ui.images };
+            scroll.show(&mut body, |ui| draw(ui, shown.widgets, &tokens, &mut app.auto, &scope, source)).inner
         }
         Err(error) => {
             body.label(RichText::new(tr_args("The plug-in panel failed: {}", &[&error])).color(tokens.danger));
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+            Vec::new()
         }
-    }
+    };
+    let keys = typed(ui, rect);
+    submit(app, ui, &scope, events, &keys);
 }
 
 fn typed(ui: &egui::Ui, rect: Rect) -> String {
@@ -227,8 +250,12 @@ impl Renderer<'_> {
 
     fn widget(&mut self, ui: &mut egui::Ui, widget: &Widget) {
         match widget {
-            Widget::Label { text, style } => {
-                self.last = Some(ui.label(self.text(text, *style)));
+            Widget::Label { id, text, style } => {
+                let response = ui.label(self.text(text, *style));
+                if *id != 0 {
+                    self.auto.add_response(&format!("{}.{id}", self.scope), &response, text);
+                }
+                self.last = Some(response);
             }
             Widget::Button { id, text, enabled } => {
                 let response = ui.add_enabled(*enabled, egui::Button::new(text));
@@ -321,7 +348,56 @@ impl Renderer<'_> {
                 }
             }
             Widget::Grid { id, columns, children } => self.grid(ui, *id, (*columns).max(1) as usize, children),
+            Widget::DropTarget { id, children } => self.drop_target(ui, *id, children),
+            Widget::DragSource { id, drag, children } => self.drag_source(ui, *id, drag, children),
         }
+    }
+
+    fn drop_target(&mut self, ui: &mut egui::Ui, id: u64, children: &[Widget]) {
+        let dragging = egui::DragAndDrop::has_any_payload(ui.ctx());
+        let frame = egui::Frame::new().inner_margin(6.0).corner_radius(4.0).stroke(Stroke::new(1.0, self.tokens.field_border));
+        let inner = frame.show(ui, |ui| self.all(ui, children));
+        let rect = inner.response.rect;
+        let response = ui.interact(rect, egui::Id::unique(("plugin-drop", self.scope, id)), Sense::hover());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Group, true, tr("Drop target")));
+        let hovered = ui.rect_contains_pointer(rect);
+        if hovered && (dragging || ui.input(|i| !i.raw.hovered_files.is_empty())) {
+            ui.painter().rect_stroke(rect, 4.0, Stroke::new(2.0, self.tokens.accent), StrokeKind::Inside);
+        }
+        self.register(id, &response, "Drop target");
+        if !hovered {
+            return;
+        }
+        let files: Vec<String> = ui.input(|i| i.raw.dropped_files.iter().map(|file| file.path().to_string_lossy().into_owned()).filter(|path| !path.is_empty()).collect());
+        if !files.is_empty() {
+            self.emit(id, UiEventKind::Drop(Dropped::Files { paths: files }));
+        }
+        if !ui.input(|i| i.pointer.any_released()) {
+            return;
+        }
+        let dropped = egui::DragAndDrop::payload::<super::DragPayload>(ui.ctx()).and_then(|payload| match payload.as_ref() {
+            super::DragPayload::Files(paths) => Some(Dropped::Files { paths: paths.clone() }),
+            super::DragPayload::Item(item) => Some(Dropped::Items { ids: vec![*item] }),
+            super::DragPayload::Plugin { plugin, data } => Some(Dropped::Data { plugin: plugin.clone(), data: data.clone() }),
+            _ => None,
+        });
+        if let Some(dropped) = dropped {
+            egui::DragAndDrop::clear_payload(ui.ctx());
+            self.emit(id, UiEventKind::Drop(dropped));
+        }
+    }
+
+    fn drag_source(&mut self, ui: &mut egui::Ui, id: u64, drag: &Drag, children: &[Widget]) {
+        let payload = match drag {
+            Drag::File { root, path } => match effectcraft_plugin::drag_path(self.source.plugin, *root, path) {
+                Some(path) => super::DragPayload::Files(vec![path]),
+                None => return self.all(ui, children),
+            },
+            Drag::Data { data } => super::DragPayload::Plugin { plugin: self.source.plugin.to_string(), data: data.clone() },
+        };
+        let source = egui::Id::unique(("plugin-drag", self.scope, id));
+        let response = ui.dnd_drag_source(source, payload, |ui| self.all(ui, children)).response;
+        self.register(id, &response, "Drag source");
     }
 
     fn image(&mut self, ui: &mut egui::Ui, id: u64, key: &str, size: [f32; 2]) {
@@ -391,10 +467,21 @@ impl Renderer<'_> {
         for shape in shapes {
             self.shape(&painter, rect.min, shape);
         }
-        self.last = Some(response.clone());
-        if let Some(pointer) = pointer(ui, &response, rect.min) {
+        for pointer in pointers(ui, &response, rect) {
             self.emit(id, UiEventKind::Pointer(pointer));
         }
+        if response.clicked() || response.drag_started() {
+            response.request_focus();
+        }
+        if response.has_focus() {
+            let arrows = egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, tab: false, escape: false };
+            ui.memory_mut(|memory| memory.set_focus_lock_filter(response.id, arrows));
+            painter.rect_stroke(rect, 2.0, Stroke::new(2.0, self.tokens.accent), StrokeKind::Inside);
+            for key in keys(ui) {
+                self.emit(id, UiEventKind::Key(key));
+            }
+        }
+        self.last = Some(response);
     }
 
     fn shape(&mut self, painter: &egui::Painter, origin: egui::Pos2, shape: &Shape) -> Option<()> {
@@ -444,42 +531,60 @@ fn drawable(coordinate: f32) -> Option<f32> {
     coordinate.is_finite().then(|| coordinate.clamp(-MAX_EXTENT, MAX_EXTENT))
 }
 
-fn pointer(ui: &egui::Ui, response: &egui::Response, origin: egui::Pos2) -> Option<Pointer> {
-    let owed_release = response.id.with("owed-release");
-    let (pressed, released, moving, at, held, scroll) = ui.input(|i| {
-        let held = Modifiers { shift: i.modifiers.shift, alt: i.modifiers.alt, command: i.modifiers.command };
-        let scroll = if response.hovered() { i.smooth_scroll_delta } else { egui::Vec2::ZERO };
-        (
-            i.pointer.primary_pressed(),
-            i.pointer.primary_released(),
-            i.pointer.delta() != egui::Vec2::ZERO || i.pointer.is_moving(),
-            i.pointer.interact_pos(),
-            held,
-            scroll,
-        )
+fn modifiers(held: egui::Modifiers) -> Modifiers {
+    Modifiers { shift: held.shift, alt: held.alt, command: held.command }
+}
+
+fn keys(ui: &egui::Ui) -> Vec<Key> {
+    ui.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|event| match event {
+                egui::Event::Key { key, pressed: true, modifiers: held, .. } if *key != egui::Key::Tab => {
+                    Some(Key { name: key.name().to_string(), modifiers: modifiers(*held) })
+                }
+                _ => None,
+            })
+            .collect()
+    })
+}
+
+fn pointers(ui: &egui::Ui, response: &egui::Response, rect: Rect) -> Vec<Pointer> {
+    let held_id = response.id.with("held");
+    let mut held = ui.data(|data| data.get_temp::<bool>(held_id)).unwrap_or(false);
+    let visible = rect.intersect(ui.clip_rect());
+    let over = response.contains_pointer();
+    let mut out = Vec::new();
+    ui.input(|i| {
+        let make = |pos: egui::Pos2, phase, scroll: egui::Vec2| Pointer {
+            pos: [pos.x - rect.min.x, pos.y - rect.min.y],
+            phase,
+            modifiers: modifiers(i.modifiers),
+            scroll: [scroll.x, scroll.y],
+        };
+        for event in &i.events {
+            match event {
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, .. } if over && visible.contains(*pos) => {
+                    held = true;
+                    out.push(make(*pos, PointerPhase::Down, egui::Vec2::ZERO));
+                }
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, .. } if held => {
+                    held = false;
+                    out.push(make(*pos, PointerPhase::Up, egui::Vec2::ZERO));
+                }
+                egui::Event::PointerMoved(pos) if held => out.push(make(*pos, PointerPhase::Drag, egui::Vec2::ZERO)),
+                egui::Event::PointerMoved(pos) if over && visible.contains(*pos) => out.push(make(*pos, PointerPhase::Hover, egui::Vec2::ZERO)),
+                _ => {}
+            }
+        }
+        if over && i.smooth_scroll_delta != egui::Vec2::ZERO
+            && let Some(pos) = i.pointer.latest_pos()
+        {
+            out.push(make(pos, PointerPhase::Hover, i.smooth_scroll_delta));
+        }
     });
-    let make = |pos: [f32; 2], phase: PointerPhase| Pointer { pos, phase, modifiers: held, scroll: [scroll.x, scroll.y] };
-    if let Some(pos) = ui.data_mut(|data| data.remove_temp::<[f32; 2]>(owed_release)) {
-        return Some(make(pos, PointerPhase::Up));
-    }
-    if pressed && released && response.contains_pointer() {
-        let local = at? - origin;
-        ui.data_mut(|data| data.insert_temp(owed_release, [local.x, local.y]));
-        ui.ctx().request_repaint();
-    }
-    let phase = if pressed && response.contains_pointer() {
-        PointerPhase::Down
-    } else if response.clicked() || response.drag_stopped() {
-        PointerPhase::Up
-    } else if moving && response.is_pointer_button_down_on() {
-        PointerPhase::Drag
-    } else if (moving || scroll != egui::Vec2::ZERO) && response.hovered() {
-        PointerPhase::Hover
-    } else {
-        return None;
-    };
-    let local = at? - origin;
-    Some(make([local.x, local.y], phase))
+    ui.data_mut(|data| data.insert_temp(held_id, held));
+    out
 }
 
 #[cfg(test)]
@@ -516,7 +621,7 @@ mod tests {
         harness.get_by_label("More").click();
         harness.run();
         assert!(harness.query_by_label("Inside").is_some());
-        harness.state_mut().insert(0, Widget::Label { text: "Name taken".into(), style: TextStyle::Error });
+        harness.state_mut().insert(0, Widget::Label { id: 0, text: "Name taken".into(), style: TextStyle::Error });
         harness.run();
         assert!(harness.query_by_label("Name taken").is_some());
         assert!(harness.query_by_label("Inside").is_some());

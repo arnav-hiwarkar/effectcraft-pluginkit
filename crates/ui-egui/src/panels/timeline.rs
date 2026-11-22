@@ -5226,7 +5226,10 @@ fn drop_insert_layers(app: &mut EffectcraftApp, g: &mut Rw, payload: &std::sync:
             crate::panels::DragPayload::Files(paths) => {
                 actions.push(("mediaBrowser.import".into(), json!({"paths": paths, "addToComp": true, "index": index, "time": time})))
             }
-            crate::panels::DragPayload::Effect(_) | crate::panels::DragPayload::Preset { .. } | crate::panels::DragPayload::Property { .. } => {}
+            crate::panels::DragPayload::Effect(_)
+            | crate::panels::DragPayload::Preset { .. }
+            | crate::panels::DragPayload::Property { .. }
+            | crate::panels::DragPayload::Plugin { .. } => {}
         }
     }
 }

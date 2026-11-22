@@ -27,8 +27,8 @@ pub use registry::{Bundle, BundleError, Consent, Registry};
 
 pub mod ui {
     pub use craft_plugin::{
-        AppEvent, ControlsReply, Drag, Dropped, Key, Modifiers, Paint, PanelReply, Pointer, PointerPhase, Shape, TextStyle, Topic, UiEvent, UiEventKind, UiInput,
-        Widget,
+        AppEvent, ControlsReply, Drag, Dropped, Key, Modifiers, Paint, PanelReply, Pointer, PointerPhase, Root, Shape, TextStyle, Topic, UiEvent, UiEventKind,
+        UiInput, Widget,
     };
 }
 
