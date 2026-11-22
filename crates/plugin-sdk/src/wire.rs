@@ -441,17 +441,17 @@ impl GpuPlan {
         match image {
             GpuImage::Source | GpuImage::Output => Some(frame),
             GpuImage::Scratch(index) => self.images.get(index as usize).copied(),
-            GpuImage::Texture(_) => None,
+            GpuImage::Texture(_) | GpuImage::Layer(_) => None,
         }
     }
 
     pub fn runs_on_cpu(&self) -> bool {
-        self.buffers.is_empty() && self.textures.is_empty() && self.passes.iter().all(|pass| pass.draw.is_none())
+        self.buffers.is_empty() && self.textures.is_empty() && self.layers.is_empty() && self.passes.iter().all(|pass| pass.draw.is_none())
     }
 
     pub fn check(&self, frame: [u32; 2]) -> Result<(), String> {
         if !self.runs_on_cpu() {
-            return Err("a plan with draw passes, buffers or textures runs only on the GPU".into());
+            return Err("a plan with draw passes, buffers, textures or layers runs only on the GPU".into());
         }
         let passes = self.passes.len();
         if !(1..=MAX_PASSES).contains(&passes) {

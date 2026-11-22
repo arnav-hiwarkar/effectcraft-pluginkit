@@ -4,7 +4,10 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use craft_plugin::{Call, GpuImage, GpuPass, GpuPlan, MaskPath, ParamsAt, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Widget, native_target};
+use craft_plugin::{
+    Call, GpuImage, GpuPass, GpuPlan, MaskPath, ParamsAt, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Widget,
+    native_target,
+};
 use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Registry};
 use serde_json::{Value, json};
 

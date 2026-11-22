@@ -204,7 +204,7 @@ impl Plugin {
             GpuImage::Source => None,
             GpuImage::Output => Some(0),
             GpuImage::Scratch(index) => Some(index as usize + 1),
-            GpuImage::Texture(_) => None,
+            GpuImage::Texture(_) | GpuImage::Layer(_) => None,
         };
         for pass in &plan.passes {
             let Some(target) = slot(pass.out) else { continue };

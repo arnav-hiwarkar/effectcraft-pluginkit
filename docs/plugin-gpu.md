@@ -3,8 +3,8 @@
 An effect that needs the whole frame (a wide glow, a pyramid blur, anything with several steps) describes
 its work as a plan: scratch images plus a short list of passes, each naming a kernel, the images it reads
 and the image it writes. The app owns the images and runs the passes in order. A GPU pass can
-also draw triangles, with a depth buffer, see [Draw passes](#draw-passes); a plan with draw passes, buffers
-or textures runs only on the GPU.
+also draw triangles, with a depth buffer, see [Draw passes](#draw-passes); a plan with draw passes, buffers,
+textures or layers runs only on the GPU.
 
 - On the GPU the kernels are WGSL compute shaders. The app compiles them once, runs the passes on its own
   textures, and never copies the frame into the plugin's sandbox.
