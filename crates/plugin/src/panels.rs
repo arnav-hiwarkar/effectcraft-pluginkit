@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -532,22 +533,24 @@ impl Panels {
     }
 
     fn send(&mut self, request: Request) {
-        let plugin = request.bound.plugin().to_string();
-        if !self.workers.get(&plugin).is_some_and(|worker| Arc::ptr_eq(&worker.loaded, &request.bound.loaded)) {
-            match worker(&request.bound.loaded, self.done.0.clone(), self.waker()) {
-                Ok(started) => {
-                    self.workers.insert(plugin.clone(), started);
-                }
-                Err(error) => {
-                    let _ = self.done.0.send(Done { request, reply: Err(error.to_string()) });
-                    return;
-                }
-            }
+        let (done, wake) = (self.done.0.clone(), self.waker());
+        let fail = |request, error: String| {
+            let _ = done.send(Done { request, reply: Err(error) });
+        };
+        if let Err(error) = request.bound.check() {
+            return fail(request, error);
         }
-        if let Some(worker) = self.workers.get(&plugin)
-            && let Err(unsent) = worker.requests.send(request)
-        {
-            let _ = self.done.0.send(Done { request: unsent.0, reply: Err("the plugin's worker stopped".into()) });
+        let plugin = request.bound.plugin().to_string();
+        let worker = match self.workers.entry(plugin.clone()) {
+            Entry::Occupied(found) if Arc::ptr_eq(&found.get().loaded, &request.bound.loaded) => found.into_mut(),
+            entry => match worker(&request.bound.loaded, done.clone(), wake) {
+                Ok(started) => entry.insert_entry(started).into_mut(),
+                Err(error) => return fail(request, error.to_string()),
+            },
+        };
+        if let Err(unsent) = worker.requests.send(request) {
+            self.workers.remove(&plugin);
+            fail(unsent.0, "the plugin's worker stopped".into());
         }
     }
 
@@ -752,4 +755,55 @@ pub fn drag_path(plugin: &str, root: craft_plugin_host::ui::Root, path: &str) ->
         _ => return None,
     };
     full.is_file().then(|| full.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn legacy(session: &mut Session, id: &str) -> (tempfile::TempDir, Arc<Loaded>) {
+        static CONFIG: OnceLock<tempfile::TempDir> = OnceLock::new();
+        let config = CONFIG.get_or_init(|| tempfile::tempdir().expect("temp dir"));
+        let plugins = crate::manage::install(session, Some(config.path()));
+        let bundle = tempfile::tempdir().expect("temp dir");
+        std::fs::copy(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/legacy/legacy.wasm"), bundle.path().join("legacy.wasm")).unwrap();
+        let manifest = json!({"id": id, "name": "Legacy", "version": "1.0.0", "entry": {"wasm": "legacy.wasm"}, "permissions": []});
+        std::fs::write(bundle.path().join("plugin.json"), manifest.to_string()).unwrap();
+        plugins.load_for_session(bundle.path()).unwrap();
+        let loaded = plugins.get(id).unwrap();
+        (bundle, loaded)
+    }
+
+    fn request(panels: &Panels, session: &Session, key: Key, loaded: &Arc<Loaded>, call: Call) -> Request {
+        Request { key, bound: Bound::of(loaded.clone(), session, panels.surface()), call, edit: None, gesture: None }
+    }
+
+    fn idle(panels: &mut Panels, session: &mut Session) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !panels.idle() {
+            assert!(Instant::now() < deadline, "the plugin did not answer within 20 s");
+            panels.frame(session, Duration::ZERO);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn a_request_queued_for_a_plugin_that_was_reloaded_is_dropped_and_the_new_loads_worker_stays() {
+        const RELOADED: &str = "test.queue-reloaded";
+        let mut session = effectcraft_host::session();
+        let (bundle, first) = legacy(&mut session, RELOADED);
+        let mut panels = Panels::default();
+        let command = || Call::Command { command: "none".into() };
+        let old = Key::Effect(RELOADED.into(), 1);
+        for _ in 0..2 {
+            let queued = request(&panels, &session, old.clone(), &first, command());
+            panels.post(queued);
+        }
+        plugins().unwrap().load_for_session(bundle.path()).unwrap();
+        let second = plugins().unwrap().get(RELOADED).unwrap();
+        let new = request(&panels, &session, Key::Effect(RELOADED.into(), 2), &second, command());
+        panels.post(new);
+        idle(&mut panels, &mut session);
+        assert!(Arc::ptr_eq(&panels.workers[RELOADED].loaded, &second));
+    }
 }
