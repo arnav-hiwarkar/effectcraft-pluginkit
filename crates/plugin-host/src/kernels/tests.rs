@@ -1,6 +1,6 @@
-use craft_plugin::{BlendMode, BlurShape, Filter, HostKernel, Pixel, Taps};
+use craft_plugin::{BlendMode, BlurShape, Filter, GpuImage, GpuPass, GpuPlan, HostKernel, Measure, Pixel, Taps};
 
-use super::{Image, blur_taps, run};
+use super::{Image, Ref, Step, blur_taps, run, run_fused, steps};
 
 const SIZE: [u32; 2] = [37, 23];
 
@@ -215,4 +215,175 @@ fn matrix_mixes_channels_per_pixel() {
     let got = host(HostKernel::Matrix { rows }, &src, SIZE, None, SIZE);
     let expected: Vec<Pixel> = src.iter().map(|p| [p[2], 0.5 * p[0] + 0.5 * p[1], p[0] + 0.2 * p[3], p[3]]).collect();
     assert_close(&got, &expected, 1e-6, "matrix");
+}
+
+fn exact_to_linear(x: f64) -> f64 {
+    let a = x.abs();
+    (if a <= 0.04045 { a / 12.92 } else { ((a + 0.055) / 1.055).powf(2.4) }).copysign(x)
+}
+
+fn exact_to_srgb(x: f64) -> f64 {
+    let a = x.abs();
+    (if a <= 0.003_130_8 { a * 12.92 } else { 1.055 * a.powf(1.0 / 2.4) - 0.055 }).copysign(x)
+}
+
+#[test]
+fn srgb_transfers_follow_the_standard_curve_and_keep_alpha() {
+    let values: Vec<f32> = (-400..=4000).map(|i| i as f32 / 200.0).chain([0.0, 1e-6, 1.0 / 16384.0, 15.999, 16.0, 300.0]).collect();
+    let pixels: Vec<Pixel> = values.iter().map(|v| [*v, *v * 0.5, *v * 0.25, 0.7]).collect();
+    let size = [pixels.len() as u32, 1];
+    for (kernel, exact) in [(HostKernel::ToLinear, exact_to_linear as fn(f64) -> f64), (HostKernel::ToSrgb, exact_to_srgb)] {
+        let got = host(kernel.clone(), &pixels, size, None, size);
+        for (p, g) in pixels.iter().zip(&got) {
+            for c in 0..3 {
+                let want = exact(f64::from(p[c]));
+                assert!((f64::from(g[c]) - want).abs() <= 1e-5 * want.abs().max(0.01), "{kernel:?} of {}: {} against {want}", p[c], g[c]);
+            }
+            assert_eq!(g[3], 0.7, "{kernel:?} keeps alpha");
+        }
+    }
+}
+
+#[test]
+fn brightness_curve_scales_colour_by_the_curve_of_its_measure() {
+    let curve = vec![0.0, 0.0, 0.5, 2.0];
+    let range = 3.0;
+    let lookup = |m: f32| {
+        let t = m / range * 3.0;
+        let i = (t as usize).min(2);
+        curve[i] + (curve[i + 1] - curve[i]) * (t - i as f32)
+    };
+    let src = picture(SIZE);
+    for measure in [Measure::MaxChannel, Measure::Luma] {
+        let got = host(HostKernel::BrightnessCurve { measure, curve: curve.clone(), range }, &src, SIZE, None, SIZE);
+        let expected: Vec<Pixel> = src
+            .iter()
+            .map(|p| {
+                let m = match measure {
+                    Measure::MaxChannel => p[0].max(p[1]).max(p[2]),
+                    Measure::Luma => 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2],
+                };
+                let gain = if m > 0.0 { lookup(m) / m } else { 0.0 };
+                [p[0] * gain, p[1] * gain, p[2] * gain, p[3]]
+            })
+            .collect();
+        assert_close(&got, &expected, 1e-5, &format!("{measure:?}"));
+    }
+    let far =
+        host(HostKernel::BrightnessCurve { measure: Measure::MaxChannel, curve, range }, &[[4.0, 2.0, 0.0, 1.0], [0.0, 0.0, 0.0, 0.4]], [2, 1], None, [2, 1]);
+    assert_close(&far, &[[3.5, 1.75, 0.0, 1.0], [0.0, 0.0, 0.0, 0.4]], 1e-6, "past the range the last segment continues; black stays black");
+}
+
+#[test]
+fn dither_adds_at_most_one_level_of_seeded_noise_and_leaves_black_and_white() {
+    let src: Vec<Pixel> = (0..64 * 64).map(|i| [0.5, if i % 2 == 0 { 0.0 } else { 1.0 }, 0.25, 1.0]).collect();
+    let size = [64, 64];
+    let got = host(HostKernel::Dither { seed: 7, origin: [3, -5] }, &src, size, None, size);
+    let again = host(HostKernel::Dither { seed: 7, origin: [3, -5] }, &src, size, None, size);
+    let other = host(HostKernel::Dither { seed: 8, origin: [3, -5] }, &src, size, None, size);
+    assert_eq!(got, again, "the same seed gives the same noise");
+    assert_ne!(got, other, "another seed gives other noise");
+    let moved: Vec<f32> = got.iter().zip(&src).map(|(g, s)| g[0] - s[0]).collect();
+    assert!(moved.iter().all(|d| d.abs() < 1.0 / 255.0), "within one level");
+    let mean = moved.iter().sum::<f32>() / moved.len() as f32;
+    assert!(mean.abs() < 0.02 / 255.0 && moved.iter().filter(|d| **d != 0.0).count() > 4000, "centred noise on every pixel: mean {mean}");
+    assert!(got.iter().zip(&src).all(|(g, s)| g[1] == s[1] && g[3] == s[3]), "black, white and alpha are left exact");
+    let shifted = host(HostKernel::Dither { seed: 7, origin: [4, -5] }, &src, size, None, size);
+    assert_eq!(shifted[1][0], got[0][0], "the pattern is anchored at the origin");
+}
+
+#[test]
+fn light_alpha_raises_alpha_to_the_brightest_channel() {
+    let got = host(HostKernel::LightAlpha, &[[0.3, 0.6, 0.1, 0.2], [2.0, 0.0, 0.0, 0.5], [0.1, 0.1, 0.1, 0.9], [-1.0, -2.0, -3.0, 0.0]], [4, 1], None, [4, 1]);
+    assert_eq!(got, [[0.3, 0.6, 0.1, 0.6], [2.0, 0.0, 0.0, 1.0], [0.1, 0.1, 0.1, 0.9], [-1.0, -2.0, -3.0, 0.0]]);
+}
+
+fn sequential(plan: &GpuPlan, source: &[Pixel]) -> Vec<Pixel> {
+    let mut images: Vec<Vec<Pixel>> = vec![Vec::new(); plan.images.len() + 1];
+    let index = |image: GpuImage| match image {
+        GpuImage::Output => 0,
+        GpuImage::Scratch(i) => i as usize + 1,
+        _ => usize::MAX,
+    };
+    for pass in &plan.passes {
+        let read = |image: GpuImage| Image { size: SIZE, pixels: if image == GpuImage::Source { source } else { &images[index(image)] } };
+        let mut out = vec![[0.0; 4]; source.len()];
+        run(pass.host.as_ref().expect("a host kernel"), read(pass.src), pass.aux.map(read), SIZE, &mut out);
+        images[index(pass.out)] = out;
+    }
+    std::mem::take(&mut images[0])
+}
+
+fn fused(plan: &GpuPlan, source: &[Pixel]) -> Vec<Pixel> {
+    let mut images: Vec<Vec<Pixel>> = vec![vec![[0.0; 4]; source.len()]; plan.images.len() + 1];
+    let index = |image: GpuImage| match image {
+        GpuImage::Output => 0,
+        GpuImage::Scratch(i) => i as usize + 1,
+        _ => usize::MAX,
+    };
+    for step in steps(plan, SIZE) {
+        let Step::Fused(group) = step else { panic!("only pointwise kernels in this plan") };
+        let inputs: Vec<Image> =
+            group.inputs.iter().map(|image| Image { size: SIZE, pixels: if *image == GpuImage::Source { source } else { &images[index(*image)] } }).collect();
+        let mut out = vec![[0.0; 4]; source.len()];
+        run_fused(&group, &inputs, SIZE[0] as usize, &mut out);
+        images[index(group.out)] = out;
+    }
+    std::mem::take(&mut images[0])
+}
+
+#[test]
+fn fused_pointwise_passes_give_exactly_what_they_give_one_by_one() {
+    let source = picture(SIZE);
+    let mut plan = GpuPlan::new();
+    let [a, b, c] = [plan.scratch(SIZE), plan.scratch(SIZE), plan.scratch(SIZE)];
+    let rows = [[0.5, 0.2, 0.0, 0.0], [0.0, 1.0, 0.3, 0.0], [0.1, 0.0, 0.7, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    let plan = plan
+        .pass(GpuPass::to_linear(GpuImage::Source, a))
+        .pass(GpuPass::matrix(a, b, rows))
+        .pass(GpuPass::brightness_curve(a, a, Measure::Luma, vec![0.0, 0.2, 1.5], 1.0))
+        .pass(GpuPass::blend_images(b, a, c, BlendMode::Screen, 0.8))
+        .pass(GpuPass::blend_images(c, GpuImage::Source, c, BlendMode::Lighten, 1.0))
+        .pass(GpuPass::to_srgb(c, c))
+        .pass(GpuPass::dither(c, c, 9, [2, 2]))
+        .pass(GpuPass::light_alpha(c, b))
+        .pass(GpuPass::curves(b, GpuImage::Output, &[[0.0; 4], [1.0, 0.5, 1.0, 1.0]]));
+    assert_eq!(plan.validate(SIZE), Ok(()), "pointwise host kernels may write the image they read");
+    let groups: Vec<usize> = steps(&plan, SIZE).iter().map(|step| if let Step::Fused(group) = step { group.ops.len() } else { 0 }).collect();
+    assert_eq!(groups, [9], "the whole chain is one loop");
+    assert_eq!(fused(&plan, &source), sequential(&plan, &source));
+}
+
+#[test]
+fn a_fused_loop_ends_where_a_value_is_read_later_or_a_third_image_is_needed() {
+    let mut plan = GpuPlan::new();
+    let [a, b, c, d] = [plan.scratch(SIZE), plan.scratch(SIZE), plan.scratch(SIZE), plan.scratch(SIZE)];
+    let half = plan.scratch([19, 12]);
+    let plan = plan
+        .pass(GpuPass::to_linear(GpuImage::Source, a))
+        .pass(GpuPass::to_srgb(a, b))
+        .pass(GpuPass::resample(a, half, Filter::Bilinear))
+        .pass(GpuPass::blend_images(b, GpuImage::Source, c, BlendMode::Add, 1.0))
+        .pass(GpuPass::blend_images(c, a, d, BlendMode::Add, 1.0))
+        .pass(GpuPass::resample(half, b, Filter::Bilinear))
+        .pass(GpuPass::blend_images(d, b, GpuImage::Output, BlendMode::Add, 1.0));
+    let shape: Vec<(Vec<usize>, Vec<Ref>)> = steps(&plan, SIZE)
+        .into_iter()
+        .map(|step| match step {
+            Step::Single(index) => (vec![index], Vec::new()),
+            Step::Fused(group) => (group.passes.collect(), group.ops.iter().map(|op| op.src).collect()),
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            (vec![0], vec![Ref::Input(0)]),
+            (vec![1], vec![Ref::Input(0)]),
+            (vec![2], vec![]),
+            (vec![3], vec![Ref::Input(0)]),
+            (vec![4], vec![Ref::Input(0)]),
+            (vec![5], vec![]),
+            (vec![6], vec![Ref::Input(0)]),
+        ]
+    );
 }

@@ -70,16 +70,6 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **Timeout checks cost 8 to 35 % of sandboxed compute** (Plasma Beam 4.44 → 3.23 ms with them off, Halo
   25 → 17.5 ms). They are needed to stop a plugin that hangs; the options are in the study.
 
-## Found by the host kernel work, not fixed
-
-- **Sandboxed Lumen Glow stays about 1.7x native on the CPU.** Its blur, resample, colour mix and level
-  sums are host kernels now, but its threshold (`lumen_emit`) and composite (`lumen_composite`) passes read
-  the whole padded frame in plugin code, and before the change they were about 80 % of its native time.
-  Measured with one rayon thread and `/usr/bin/time -l`: 2,567 M against 1,512 M instructions per 1080p
-  frame (2,960 M against 1,420 M before). The same split costs native Lumen 7 % more instructions than its
-  old fused level pass, because each level is now four host passes. A kernel for a brightness knee and a
-  transfer curve on premultiplied colour would move the rest out of the sandbox.
-
 ## Seen in the third build
 
 - **One UI test fails now and then under load.** `app::viewer_frames::tests::the_viewers_show_a_still_reloaded_at_the_same_size`

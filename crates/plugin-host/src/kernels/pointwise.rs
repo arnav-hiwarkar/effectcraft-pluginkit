@@ -4,8 +4,9 @@ use craft_plugin::math::{linear_to_srgb, srgb_to_linear};
 use craft_plugin::{BlendMode, HostKernel, Measure, Pixel};
 
 const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
-const TABLE_STEPS: usize = 4096;
-const TABLE_BRIGHT_END: f32 = 17.0;
+const SEGMENT_SHIFT: u32 = 15;
+const FIRST_SEGMENT: u32 = (1.0f32 / 16384.0).to_bits() >> SEGMENT_SHIFT;
+const SEGMENTS: u32 = (16.0f32.to_bits() >> SEGMENT_SHIFT) - FIRST_SEGMENT;
 const DITHER_LEVELS: f32 = 255.0;
 const NOISE_SCALE: f32 = 1.0 / 65536.0 / DITHER_LEVELS;
 
@@ -15,14 +16,8 @@ pub(crate) fn row(kernel: &HostKernel, src: &[Pixel], top: &[Pixel], y: usize, o
         HostKernel::Blend { mode, amount } => pairs.zip(top).for_each(|((o, b), t)| *o = blend(*mode, *amount, *b, *t)),
         HostKernel::Curves { table } => pairs.for_each(|(o, p)| *o = curves(table, *p)),
         HostKernel::Matrix { rows } => pairs.for_each(|(o, p)| *o = rows.map(|row| row[0] * p[0] + row[1] * p[1] + row[2] * p[2] + row[3] * p[3])),
-        HostKernel::ToLinear => {
-            let curve = &transfers().decode;
-            pairs.for_each(|(o, p)| *o = [curve.eval(p[0]), curve.eval(p[1]), curve.eval(p[2]), p[3]]);
-        }
-        HostKernel::ToSrgb => {
-            let curve = &transfers().encode;
-            pairs.for_each(|(o, p)| *o = [curve.eval(p[0]), curve.eval(p[1]), curve.eval(p[2]), p[3]]);
-        }
+        HostKernel::ToLinear => transfers().decode.row(src, out),
+        HostKernel::ToSrgb => transfers().encode.row(src, out),
         HostKernel::BrightnessCurve { measure, curve, range } => {
             let steps_per_unit = (curve.len() - 1) as f32 / range;
             pairs.for_each(|(o, p)| *o = brightness_curve(*measure, curve, steps_per_unit, *p));
@@ -112,53 +107,33 @@ fn room(v: f32) -> f32 {
 
 fn dither(p: Pixel, x: u32, y: u32, seed: u32) -> Pixel {
     let room = [room(p[0]), room(p[1]), room(p[2])];
-    if room == [0.0; 3] {
-        return p;
-    }
     let h = hash(x, y, seed);
     let n = ((h & 0xffff) as f32 - (h >> 16) as f32) * NOISE_SCALE;
     [p[0] + n * room[0], p[1] + n * room[1], p[2] + n * room[2], p[3]]
 }
 
-struct Table {
-    start: f32,
-    steps_per_unit: f32,
-    values: Vec<f32>,
-}
-
-impl Table {
-    fn sampled(exact: fn(f32) -> f32, start: f32, end: f32) -> Table {
-        let steps_per_unit = TABLE_STEPS as f32 / (end - start);
-        Table { start, steps_per_unit, values: (0..=TABLE_STEPS).map(|i| exact(start + i as f32 / steps_per_unit)).collect() }
-    }
-
-    fn lookup(&self, x: f32) -> f32 {
-        let t = (x - self.start) * self.steps_per_unit;
-        let i = (t as usize).min(TABLE_STEPS - 1);
-        let (a, b) = (self.values[i], self.values[i + 1]);
-        a + (b - a) * (t - i as f32)
-    }
-}
-
 struct Transfer {
     exact: fn(f32) -> f32,
-    unit: Table,
-    bright: Table,
+    segments: Vec<[f32; 2]>,
 }
 
 impl Transfer {
     fn new(exact: fn(f32) -> f32) -> Transfer {
-        Transfer { exact, unit: Table::sampled(exact, 0.0, 1.0), bright: Table::sampled(exact, 1.0, TABLE_BRIGHT_END) }
+        let start = |i: u32| f32::from_bits((FIRST_SEGMENT + i) << SEGMENT_SHIFT);
+        let segments = (0..SEGMENTS).map(|i| [exact(start(i)), (exact(start(i + 1)) - exact(start(i))) / (start(i + 1) - start(i))]).collect();
+        Transfer { exact, segments }
     }
 
-    fn eval(&self, x: f32) -> f32 {
-        if (0.0..1.0).contains(&x) {
-            self.unit.lookup(x)
-        } else if (1.0..TABLE_BRIGHT_END).contains(&x) {
-            self.bright.lookup(x)
-        } else {
-            (self.exact)(x)
-        }
+    fn row(&self, src: &[Pixel], out: &mut [Pixel]) {
+        let (segments, exact) = (&self.segments[..], self.exact);
+        let eval = |x: f32| {
+            let i = (x.to_bits() >> SEGMENT_SHIFT).saturating_sub(FIRST_SEGMENT);
+            match segments.get(i as usize) {
+                Some([value, slope]) => value + slope * (x - f32::from_bits((FIRST_SEGMENT + i) << SEGMENT_SHIFT)),
+                None => exact(x),
+            }
+        };
+        out.iter_mut().zip(src).for_each(|(o, p)| *o = [eval(p[0]), eval(p[1]), eval(p[2]), p[3]]);
     }
 }
 

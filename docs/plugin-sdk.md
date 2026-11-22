@@ -237,7 +237,8 @@ assert_eq!(plan.validate([1920, 1080]), Ok(()));
 
 ## Host kernels
 
-Blurs, resampling, blends, curves, convolutions, warps and colour matrices need no code of your own.
+Blurs, resampling, blends, curves, convolutions, warps, colour matrices, sRGB transfers, brightness
+curves, dither and light alpha need no code of your own.
 Name them as passes of a plan and the app runs them natively on the CPU and with its own WGSL on the
 GPU, with the same result on both. In a sandboxed plugin they run at native speed with no frame copied
 into the sandbox. A glow:
@@ -259,9 +260,25 @@ fn layout(&self, cx: &Cx) -> Layout {
 }
 ```
 
-Give the effect `.shader("")` so the GPU runs the plan too. A wrong field fails `plan.validate` with the
-pass and the field it refuses. Mix host kernels with your own passes in one plan when a step is your
-own. [Passes](plugin-gpu.md#host-kernels) lists every kernel and its rules.
+The effect needs no WGSL and no `pass` method: the GPU runs a plan of host kernels too. A wrong field
+fails `plan.validate` with the pass and the field it refuses. Mix host kernels with your own passes in
+one plan when a step is your own. [Passes](plugin-gpu.md#host-kernels) lists every kernel and its rules.
+
+Pointwise kernels may write the image they read, and consecutive ones run as one loop, so a grade costs
+one pass over the frame however many steps it has. Keep only the highlights, tint them, and put them back
+in sRGB with dither:
+
+```rust
+let mut plan = GpuPlan::new();
+let work = plan.scratch(cx.size);
+let (curve, range) = (vec![0.0, 0.0, 0.0, 1.0, 2.0], 2.0);
+let plan = plan
+    .pass(GpuPass::to_linear(GpuImage::Source, work))
+    .pass(GpuPass::brightness_curve(work, work, Measure::MaxChannel, curve, range))
+    .pass(GpuPass::matrix(work, work, [[1.0, 0.0, 0.0, 0.0], [0.0, 0.8, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 1.0]]))
+    .pass(GpuPass::to_srgb(work, work))
+    .pass(GpuPass::dither(work, GpuImage::Output, cx.instance as u32, [0, 0]));
+```
 
 ## Fast maths
 

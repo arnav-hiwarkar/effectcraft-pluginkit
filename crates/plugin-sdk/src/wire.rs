@@ -1466,8 +1466,8 @@ mod tests {
         let drawing_blur = plan(vec![], vec![GpuPass { draw: Some(Draw::default()), ..GpuPass::blur(source, output, [1.0; 2]) }]);
         let separable = |x: usize, y: usize| Taps::Separable { x: vec![0.5; x], y: vec![0.5; y] };
         let cases = [
-            ("no passes", plan(vec![], vec![]), "1 to 64 passes"),
-            ("65 passes", plan(vec![], vec![finish(); 65]), "1 to 64 passes"),
+            ("no passes", plan(vec![], vec![]), "1 to 128 passes"),
+            ("129 passes", plan(vec![], vec![finish(); 129]), "1 to 128 passes"),
             ("33 images", plan(vec![[8, 8]; 33], vec![finish()]), "at most 32 scratch images"),
             ("empty image", plan(vec![[0, 8]], vec![finish()]), "scratch image 0 is 0x8"),
             ("huge image", plan(vec![[2 * 53 + 1, 8]], vec![finish()]), "scratch image 0 is 107x8"),
@@ -1502,6 +1502,12 @@ mod tests {
             ("far warp", plan(vec![], vec![GpuPass::warp(source, source, output, [5000.0, 0.0])]), "`amount` is [5000.0, 0.0]"),
             ("zero scale", host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some([0.0, 1.0]) }), "`scale` is [0.0, 1.0]"),
             ("drawing blur", drawing_blur, "pass 0 (blur): a host kernel pass cannot also draw"),
+            (
+                "flat brightness range",
+                plan(vec![], vec![GpuPass::brightness_curve(source, output, Measure::Luma, vec![0.0, 1.0], 0.0)]),
+                "pass 0 (brightness_curve): `range` is 0; it must be a finite number above 0",
+            ),
+            ("one point brightness curve", plan(vec![], vec![GpuPass::brightness_curve(source, output, Measure::MaxChannel, vec![1.0], 1.0)]), "`curve` has 1 entries"),
         ];
         for (name, plan, expected) in cases {
             let why = plan.validate(FRAME).expect_err(name);
