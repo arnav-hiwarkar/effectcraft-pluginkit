@@ -60,7 +60,7 @@ fn log_parts(x: f32) -> (f32, f32) {
 }
 
 /// `log2(x)` for finite `x > 0`. Zero, negative and subnormal inputs give `-126`.
-/// Largest absolute error against `f32::log2` over `1e-30..=1e30`: 2e-7 times `max(1, |log2 x|)`.
+/// Largest absolute error against `f32::log2` over `1e-30..=1e30`: 1.1e-7 times `max(1, |log2 x|)`.
 #[inline(always)]
 pub fn log2(x: f32) -> f32 {
     let (exponent, series) = log_parts(x);
@@ -68,7 +68,7 @@ pub fn log2(x: f32) -> f32 {
 }
 
 /// `ln(x)` for finite `x > 0`. Zero, negative and subnormal inputs give `-87.3`.
-/// Largest absolute error against `f32::ln` over `1e-30..=1e30`: 3e-7 times `max(1, |ln x|)`.
+/// Largest absolute error against `f32::ln` over `1e-30..=1e30`: 1.2e-7 times `max(1, |ln x|)`.
 #[inline(always)]
 pub fn ln(x: f32) -> f32 {
     let (exponent, series) = log_parts(x);
@@ -182,7 +182,13 @@ mod tests {
     use super::*;
 
     fn worst(inputs: impl Iterator<Item = f32>, error: impl Fn(f32) -> f64) -> f64 {
-        inputs.map(error).fold(0.0, f64::max)
+        inputs
+            .map(|x| {
+                let e = error(x);
+                assert!(e.is_finite(), "the error at {x:e} is {e}");
+                e
+            })
+            .fold(0.0, f64::max)
     }
 
     fn sweep(from: f32, to: f32, steps: u32) -> impl Iterator<Item = f32> {
@@ -190,8 +196,9 @@ mod tests {
     }
 
     fn geometric(from: f32, to: f32, steps: u32) -> impl Iterator<Item = f32> {
+        let (from, to) = (f64::from(from), f64::from(to));
         let ratio = (to / from).ln();
-        (0..=steps).map(move |i| from * (ratio * i as f32 / steps as f32).exp())
+        (0..=steps).map(move |i| (from * (ratio * f64::from(i) / f64::from(steps)).exp()) as f32)
     }
 
     fn relative(got: f32, want: f64) -> f64 {
@@ -220,12 +227,12 @@ mod tests {
     }
 
     #[test]
-    fn log2_is_within_2e_7_of_the_exact_value() {
+    fn log2_is_within_1_1e_7_of_the_exact_value() {
         let error = worst(geometric(1e-30, 1e30, 200_000), |x| {
             let want = f64::from(x).log2();
             (f64::from(log2(x)) - want).abs() / want.abs().max(1.0)
         });
-        assert!(error < 2.0e-7, "{error}");
+        assert!(error < 1.1e-7, "{error}");
         assert_eq!(log2(1.0), 0.0);
         assert_eq!(log2(8.0), 3.0);
         assert_eq!(log2(0.25), -2.0);
@@ -234,12 +241,12 @@ mod tests {
     }
 
     #[test]
-    fn ln_is_within_3e_7_of_the_exact_value() {
+    fn ln_is_within_1_2e_7_of_the_exact_value() {
         let error = worst(geometric(1e-30, 1e30, 200_000), |x| {
             let want = f64::from(x).ln();
             (f64::from(ln(x)) - want).abs() / want.abs().max(1.0)
         });
-        assert!(error < 3.0e-7, "{error}");
+        assert!(error < 1.2e-7, "{error}");
         assert_eq!(ln(1.0), 0.0);
         assert!((ln(std::f32::consts::E) - 1.0).abs() < 3e-7);
     }
