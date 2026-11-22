@@ -6,7 +6,7 @@ use crate::effects::GBuf;
 use crate::plugin_draw::{Stage, Target, check_data, check_draw};
 
 const MAX_PASSES: usize = 64;
-const MAX_IMAGES: usize = 16;
+const MAX_IMAGES: usize = 32;
 const MAX_SCRATCH_FRAMES: u64 = 8;
 const FLOATS: usize = 96;
 const UINTS: usize = 16;

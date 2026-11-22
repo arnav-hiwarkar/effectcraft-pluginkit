@@ -165,6 +165,33 @@ impl Effect for GpuMatte {
     }
 }
 
+type Taps = fn(&dyn Fn(isize, isize) -> Pixel, isize, isize) -> Vec<(Pixel, f32)>;
+
+struct Passes;
+
+impl Effect for Passes {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("passes", "Passes", "Probe")
+    }
+
+    fn pass(&self, _cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {
+        let src = pass.src;
+        let sum = |pixels: &[(Pixel, f32)]| -> Pixel { std::array::from_fn(|c| pixels.iter().map(|(pixel, weight)| pixel[c] * weight).sum()) };
+        let kernel: Taps = match pass.kernel {
+            "probe_down" => |at, x, y| [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(dx, dy)| (at(2 * x + dx, 2 * y + dy), 0.25)).to_vec(),
+            "probe_up" => |at, x, y| [0, 1].map(|dy| (at(x / 2, y / 2 + dy), 0.5)).to_vec(),
+            "probe_tall" => |at, x, y| (-3..=3).map(|dy| (at(x, y + dy), (dy + 4) as f32)).collect(),
+            other => return Err(format!("no probe kernel `{other}`").into()),
+        };
+        for (y, row) in out.rows_mut() {
+            for (x, pixel) in row.iter_mut().enumerate() {
+                *pixel = sum(&kernel(&|x, y| src.at(x, y), x as isize, y as isize));
+            }
+        }
+        Ok(())
+    }
+}
+
 const SOFTEN_PADDING: u32 = 4;
 
 struct GpuSoften;
@@ -379,6 +406,7 @@ fn make() -> Plugin {
         .effect(Report)
         .effect(GpuInvert)
         .effect(GpuSoften)
+        .effect(Passes)
         .effect(GpuFill)
         .effect(GpuMatte)
         .panel("counter", "Counter", Counter::default())

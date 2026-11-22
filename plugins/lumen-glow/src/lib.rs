@@ -1,8 +1,8 @@
 mod dither;
 mod gpu;
-mod image;
 mod knee;
 mod passes;
+#[cfg(test)]
 mod pipeline;
 mod pixel;
 mod plan;
@@ -27,14 +27,20 @@ impl Effect for LumenGlow {
         let padding = settings.frame_padding(cx.size);
         let layout = Layout::whole_frame().padded(padding);
         match gpu::plan(&settings, cx.size, padding) {
-            Some(plan) => layout.gpu(plan),
+            Some(plan) => layout.passes(plan),
             None => layout,
         }
     }
 
-    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        pipeline::render(&Settings::from_cx(cx), frame.pixels, frame.width);
-        Ok(())
+    fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {
+        passes::run(&Settings::from_cx(cx), pass, out)
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        if frame.pixels.is_empty() {
+            return Ok(());
+        }
+        Err("Lumen Glow renders through its passes".into())
     }
 }
 

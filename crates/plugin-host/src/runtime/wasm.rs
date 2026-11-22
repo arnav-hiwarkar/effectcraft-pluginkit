@@ -124,15 +124,22 @@ impl WasmGuest {
     }
 
     fn exchange(&mut self, request: &[u8], io: Io) -> wasmtime::Result<Vec<u8>> {
-        let input: &[Pixel] = match &io {
-            Io::None => &[],
-            Io::InPlace(pixels) => pixels,
-            Io::Region { input, .. } => input,
+        let (inputs, blank): ([&[Pixel]; 2], usize) = match &io {
+            Io::None => ([&[], &[]], 0),
+            Io::InPlace(pixels) => ([pixels, &[]], 0),
+            Io::Region { input, .. } => ([input, &[]], 0),
+            Io::Pass { src, aux, out } => ([src, aux], size_of_val::<[Pixel]>(&**out)),
         };
-        let pixel_bytes: &[u8] = bytemuck::cast_slice(input);
-        let pixels = self.pixel_buffer(pixel_bytes.len())?;
-        let place = self.memory.data_mut(&mut self.store).get_mut(pixels as usize..).and_then(|tail| tail.get_mut(..pixel_bytes.len()));
-        copy(place.ok_or_else(|| wasmtime::format_err!("the frame does not fit in plugin memory"))?, pixel_bytes);
+        let [first, second] = inputs.map(bytemuck::cast_slice::<Pixel, u8>);
+        let pixel_bytes = first.len() + second.len() + blank;
+        let pixels = self.pixel_buffer(pixel_bytes)?;
+        let place = self.memory.data_mut(&mut self.store).get_mut(pixels as usize..).and_then(|tail| tail.get_mut(..pixel_bytes));
+        let place = place.ok_or_else(|| wasmtime::format_err!("the frame does not fit in plugin memory"))?;
+        let (first_place, rest) = place.split_at_mut(first.len());
+        let (second_place, blank_place) = rest.split_at_mut(second.len());
+        copy(first_place, first);
+        copy(second_place, second);
+        blank_place.fill(0);
 
         let request_at = self.alloc.call(&mut self.store, len(request)?)?;
         if request_at == 0 {
@@ -140,7 +147,7 @@ impl WasmGuest {
         }
         self.memory.write(&mut self.store, request_at as usize, request)?;
         self.memory.write(&mut self.store, self.out as usize, &[0; 8])?;
-        let args = (0, request_at, len(request)?, pixels, len(pixel_bytes)?, self.out);
+        let args = (0, request_at, len(request)?, pixels, u32::try_from(pixel_bytes)?, self.out);
         self.call.call(&mut self.store, args)?;
         self.free.call(&mut self.store, (request_at, len(request)?))?;
 
@@ -161,6 +168,7 @@ impl WasmGuest {
             Io::None => return Ok(reply),
             Io::InPlace(output) => (output, 0),
             Io::Region { output, skip, .. } => (output, skip),
+            Io::Pass { src, aux, out } => (out, src.len() + aux.len()),
         };
         let output: &mut [u8] = bytemuck::cast_slice_mut(output);
         let from = pixels as usize + skip * size_of::<Pixel>();

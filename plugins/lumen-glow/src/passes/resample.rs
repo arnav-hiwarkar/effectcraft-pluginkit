@@ -1,6 +1,5 @@
-use craft_plugin::Pixel;
+use craft_plugin::{Frame, Pixel, Rows};
 
-use crate::image::Image;
 use crate::pixel::{CLEAR, add, mul_add, scale};
 
 pub const DOWN_TAPS: [f32; 4] = [0.125, 0.375, 0.375, 0.125];
@@ -19,48 +18,36 @@ pub fn decimate_row(src: &[Pixel], out: &mut [Pixel]) {
         } else {
             DOWN_TAPS.iter().enumerate().fold(CLEAR, |acc, (k, w)| {
                 let x = first + k as isize;
-                if x >= 0 && (x as usize) < n {
-                    mul_add(acc, src[x as usize], *w)
-                } else {
-                    acc
-                }
+                if x >= 0 && (x as usize) < n { mul_add(acc, src[x as usize], *w) } else { acc }
             })
         };
     }
 }
 
-pub fn downsample(src: &Image, out: &mut Image, halve: [bool; 2], column: &mut [Pixel]) {
-    let column = &mut column[..src.width];
-    for j in 0..out.height {
+pub fn downsample(src: &Rows, out: &mut Frame, halve: [bool; 2]) {
+    let mut column = vec![CLEAR; src.width];
+    for (j, dst) in out.rows_mut() {
+        column.fill(CLEAR);
         if halve[1] {
-            column.fill(CLEAR);
             for (k, w) in DOWN_TAPS.iter().enumerate() {
-                if let Some(row) = src.row_at(2 * j as isize + k as isize - 1) {
-                    column
-                        .iter_mut()
-                        .zip(row)
-                        .for_each(|(c, p)| *c = mul_add(*c, *p, *w));
+                if let Some(row) = src.row(2 * j as isize + k as isize - 1) {
+                    column.iter_mut().zip(row).for_each(|(c, p)| *c = mul_add(*c, *p, *w));
                 }
             }
-        } else {
-            column.copy_from_slice(src.row(j));
+        } else if let Some(row) = src.row(j as isize) {
+            column.copy_from_slice(row);
         }
-        let dst = out.row_mut(j);
         if halve[0] {
-            decimate_row(column, dst);
+            decimate_row(&column, dst);
         } else {
-            dst.copy_from_slice(column);
+            dst.iter_mut().zip(&column).for_each(|(d, c)| *d = *c);
         }
     }
 }
 
 fn neighbour(index: usize) -> isize {
     let half = (index / 2) as isize;
-    if index.is_multiple_of(2) {
-        half - 1
-    } else {
-        half + 1
-    }
+    if index.is_multiple_of(2) { half - 1 } else { half + 1 }
 }
 
 pub fn expand_row(src: &[Pixel], out: &mut [Pixel]) {
@@ -79,33 +66,25 @@ fn write_pair(pair: &mut [Pixel], left: Pixel, centre: Pixel, right: Pixel) {
     }
 }
 
-pub fn upsample_row(
-    coarse: &Image,
-    halve: [bool; 2],
-    y: usize,
-    out: &mut [Pixel],
-    column: &mut [Pixel],
-) {
+pub fn upsample_row(coarse: &Rows, halve: [bool; 2], y: usize, out: &mut [Pixel], column: &mut [Pixel]) {
     let column = &mut column[..coarse.width];
+    let near = coarse.row(if halve[1] { y / 2 } else { y } as isize);
+    let Some(near) = near else {
+        out.fill(CLEAR);
+        return;
+    };
     if halve[1] {
-        let near = coarse.row(y / 2);
-        match coarse.row_at(neighbour(y)) {
-            Some(far) => column
-                .iter_mut()
-                .zip(near.iter().zip(far))
-                .for_each(|(c, (n, f))| *c = mul_add(scale(*n, NEAR), *f, FAR)),
-            None => column
-                .iter_mut()
-                .zip(near)
-                .for_each(|(c, n)| *c = scale(*n, NEAR)),
+        match coarse.row(neighbour(y)) {
+            Some(far) => column.iter_mut().zip(near.iter().zip(far)).for_each(|(c, (n, f))| *c = mul_add(scale(*n, NEAR), *f, FAR)),
+            None => column.iter_mut().zip(near).for_each(|(c, n)| *c = scale(*n, NEAR)),
         }
     } else {
-        column.copy_from_slice(coarse.row(y));
+        column.copy_from_slice(near);
     }
     if halve[0] {
         expand_row(column, out);
     } else {
-        out.copy_from_slice(column);
+        out.iter_mut().zip(column.iter()).for_each(|(o, c)| *o = *c);
     }
 }
 
@@ -113,43 +92,33 @@ pub fn upsample_row(
 mod tests {
     use super::*;
 
-    fn flat(size: [usize; 2], value: f32) -> Image {
-        let mut image = Image::new(size);
-        image.pixels.fill([value; 4]);
-        image
+    fn halved(src: &[Pixel]) -> Vec<Pixel> {
+        let src = Rows { width: 32, height: 32, first_row: 0, pixels: src };
+        let mut half = vec![CLEAR; 16 * 16];
+        let mut out = Frame { width: 16, height: 16, origin: [0, 0], pixels: &mut half };
+        downsample(&src, &mut out, [true, true]);
+        half
     }
 
     #[test]
     fn flat_field_survives_downsample_then_upsample_away_from_the_border() {
-        let src = flat([32, 32], 0.6);
-        let mut half = Image::new([16, 16]);
-        downsample(&src, &mut half, [true, true], &mut vec![CLEAR; 32]);
+        let half = halved(&[[0.6; 4]; 32 * 32]);
+        let half = Rows { width: 16, height: 16, first_row: 0, pixels: &half };
         let mut row = vec![CLEAR; 32];
         let mut column = vec![CLEAR; 32];
         for y in 4..28 {
             upsample_row(&half, [true, true], y, &mut row, &mut column);
-            assert!(
-                row[4..28].iter().all(|p| (p[0] - 0.6).abs() < 1e-6),
-                "row {y}: {:?}",
-                &row[4..28]
-            );
+            assert!(row[4..28].iter().all(|p| (p[0] - 0.6).abs() < 1e-6), "row {y}: {:?}", &row[4..28]);
         }
     }
 
     #[test]
     fn downsample_conserves_energy_and_centre_of_a_point() {
-        let mut src = Image::new([32, 32]);
-        src.pixels[16 * 32 + 16] = [8.0; 4];
-        let mut half = Image::new([16, 16]);
-        downsample(&src, &mut half, [true, true], &mut vec![CLEAR; 32]);
-        let energy: f32 = half.pixels.iter().map(|p| p[0] * 4.0).sum();
-        let centre_x: f32 = half
-            .pixels
-            .iter()
-            .enumerate()
-            .map(|(i, p)| p[0] * 4.0 * ((i % 16) as f32 + 0.5) * 2.0)
-            .sum::<f32>()
-            / energy;
+        let mut src = vec![CLEAR; 32 * 32];
+        src[16 * 32 + 16] = [8.0; 4];
+        let half = halved(&src);
+        let energy: f32 = half.iter().map(|p| p[0] * 4.0).sum();
+        let centre_x: f32 = half.iter().enumerate().map(|(i, p)| p[0] * 4.0 * ((i % 16) as f32 + 0.5) * 2.0).sum::<f32>() / energy;
         assert_eq!(energy, 8.0);
         assert_eq!(centre_x, 16.5);
     }

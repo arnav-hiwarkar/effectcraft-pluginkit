@@ -18,6 +18,39 @@ pub trait Effect: Send + Sync + 'static {
     }
 
     fn controls(&self, _param: &str, _value: &mut String, _ui: &mut Ui) {}
+
+    fn pass(&self, _cx: &Cx, pass: &Pass, _out: &mut Frame) -> Result<()> {
+        Err(format!("this effect has no CPU kernel `{}`", pass.kernel).into())
+    }
+}
+
+pub struct Pass<'a> {
+    pub kernel: &'a str,
+    pub f: &'a [f32],
+    pub u: &'a [u32],
+    pub src: Rows<'a>,
+    pub aux: Option<Rows<'a>>,
+    pub out_size: [usize; 2],
+}
+
+#[derive(Clone, Copy)]
+pub struct Rows<'a> {
+    pub width: usize,
+    pub height: usize,
+    pub first_row: usize,
+    pub pixels: &'a [Pixel],
+}
+
+impl<'a> Rows<'a> {
+    pub fn row(&self, y: isize) -> Option<&'a [Pixel]> {
+        let held = usize::try_from(y).ok()?.checked_sub(self.first_row)?;
+        self.pixels.chunks_exact(self.width.max(1)).nth(held)
+    }
+
+    pub fn at(&self, x: isize, y: isize) -> Pixel {
+        let pixel = usize::try_from(x).ok().and_then(|x| self.row(y)?.get(x));
+        pixel.copied().unwrap_or([0.0; 4])
+    }
 }
 
 pub struct Cx(RenderCx);

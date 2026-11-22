@@ -1,25 +1,32 @@
-# GPU effects
+# Passes: one pipeline for the GPU and the CPU
 
-A plugin effect can run on the GPU. The plugin ships WGSL compute kernels and, for each frame, returns
-a plan: a short list of passes, each naming a kernel, the images it reads and the image it writes. A pass
-can also draw triangles, with a depth buffer, see [Draw passes](#draw-passes). The
-app compiles the WGSL once, runs the passes on its own textures, and never copies the frame into the
-plugin's sandbox.
+An effect that needs the whole frame (a wide glow, a pyramid blur, anything with several steps) describes
+its work as a plan: scratch images plus a short list of passes, each naming a kernel, the images it reads
+and the image it writes. The app owns the images and runs the passes in order. A GPU pass can
+also draw triangles, with a depth buffer, see [Draw passes](#draw-passes); a plan with draw passes, buffers,
+textures or layers runs only on the GPU.
 
-The GPU path runs when GPU Acceleration is on (`--gpu` on the command line). Otherwise, and whenever
-the GPU declines, the app calls the effect's CPU `render`. Keep `render` and the kernels computing the
-same result: the same frame can render either way, for example the viewer on the GPU and an export on
-the CPU.
+- On the GPU the kernels are WGSL compute shaders. The app compiles them once, runs the passes on its own
+  textures, and never copies the frame into the plugin's sandbox.
+- On the CPU the kernels are the effect's `pass` method. The app splits each pass into horizontal bands,
+  runs them on all cores, and gives each sandboxed instance only the source rows its band reads.
+
+The GPU runs the plan when GPU Acceleration is on (`--gpu` on the command line). Otherwise, and whenever
+the GPU declines, the app runs the plan on the CPU if the layout says it can (`Layout::passes`), and calls
+the effect's `render` if not (`Layout::gpu`). Keep the WGSL kernels and the CPU code computing the same
+result: the same frame can render either way, for example the viewer on the GPU and an export on the CPU.
 
 ## The Rust side
 
-Two things turn on the GPU path:
+Three things make up a pass pipeline:
 
-1. `EffectSpec::shader(wgsl)` hands the app the kernels' WGSL source.
-2. `layout()` returns `Layout::...gpu(plan)` with the plan for this frame.
+1. `layout()` returns the plan for this frame: `Layout::...passes(plan)` for a plan that runs on the GPU
+   or the CPU, `Layout::...gpu(plan)` for a plan only the GPU runs.
+2. `EffectSpec::shader(wgsl)` hands the app the kernels' WGSL source for the GPU.
+3. `Effect::pass` computes one band of one pass on the CPU. See [Passes on the CPU](#passes-on-the-cpu).
 
 `layout()` runs for every frame, so a plan can depend on parameters and frame size. Return a layout
-without `.gpu(..)` to render this frame on the CPU.
+without a plan to render this frame with `render`.
 
 ```rust
 let mut plan = GpuPlan::new();
@@ -51,10 +58,11 @@ value `i` with `pass_f(i)` or `pass_u(i)`; values the pass did not give read as 
 
 ### Limits
 
-The app checks every plan before running it and renders the frame on the CPU when one fails:
+The app checks every plan before running it. A plan that fails does not run on the GPU. The CPU applies
+the same limits to the passes it runs (`GpuPlan::check`), and there the render fails with the reason:
 
 - 1 to 64 passes;
-- at most 16 scratch images, each at least 1×1 and at most twice the padded frame in each axis, and
+- at most 32 scratch images, each at least 1×1 and at most twice the padded frame in each axis, and
   together at most 8 times the padded frame's area;
 - a pass reads only `Source` or an image an earlier pass wrote, never the image it writes;
 - no pass writes `Source` or a texture, and some pass writes `Output`;
@@ -152,6 +160,48 @@ The app checks draw passes with the rest of the plan:
 
 When a plan with draw passes is declined, the app calls `render`. An effect that cannot draw the same
 picture on the CPU should leave the frame as it is.
+
+## Passes on the CPU
+
+`Layout::...passes(plan)` marks the plan as one the CPU can run. Give each pass a reach and implement
+`Effect::pass`:
+
+```rust
+fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {
+    match pass.kernel {
+        "down" => {
+            for (y, row) in out.rows_mut() {
+                for (x, pixel) in row.iter_mut().enumerate() {
+                    let (x, y) = (2 * x as isize, 2 * y as isize);
+                    let block = [pass.src.at(x, y), pass.src.at(x + 1, y), pass.src.at(x, y + 1), pass.src.at(x + 1, y + 1)];
+                    *pixel = std::array::from_fn(|c| block.iter().map(|p| p[c]).sum::<f32>() * 0.25);
+                }
+            }
+            Ok(())
+        }
+        other => Err(format!("no kernel `{other}`").into()),
+    }
+}
+```
+
+| In `pass` | Meaning |
+|---|---|
+| `pass.kernel`, `pass.f`, `pass.u` | The pass's kernel name and numbers, as given in the plan. |
+| `pass.src`, `pass.aux` | The images the pass reads (`Rows`). `width` and `height` are the whole image; `at(x, y)` and `row(y)` take whole-image coordinates. A pixel outside the image, or in a row this call was not given, reads as transparent. |
+| `out` | The band to fill. `out.rows_mut()` yields `(y, row)` with `y` in the whole output image; `out.origin[1]` is the band's first row. |
+| `pass.out_size` | The whole output image's width and height. |
+
+`GpuPass::reach(n)` says how many source rows above and below the matching source row an output row
+reads. `reach(0)` is pointwise. The source and the output of a pass may differ in size: the matching
+source row of output row `y` is `y * src_height / out_height`, rounded down, and the same reach applies
+to `aux` with its own height. A band gets the source rows matching its first and last output rows, widened
+by the reach. Rows outside that read as transparent, so a reach that is too small shows as dark lines at
+band edges; when sizes are odd the matching row can be one less than `2 * y` or `y / 2` suggests, so
+allow one row more. A pass without a reach needs its whole source and runs as one call on one core.
+
+A pass never reads the image it writes: the plan is refused. A pass that returns an error fails the
+render. A native plugin runs the same bands directly on the app's images with no copies. The default
+`pass` returns an error naming the kernel, so an effect with `Layout::gpu` plans needs none.
 
 ## The WGSL side
 

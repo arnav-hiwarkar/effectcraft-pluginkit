@@ -133,8 +133,11 @@ native, 3.6 ms sandboxed, 1.2 ms for the same loop in the app. The 2.5 ms gap is
 
 A sandboxed instance is single-threaded. To use every core, an effect tells the app how far each output
 row reads from its input row. The app then splits the frame into bands and renders them on separate
-instances. An effect that needs the whole frame at once, such as a wide glow, does its heavy work at
-reduced resolution or on the GPU.
+instances. An effect that needs the whole frame at once, such as a wide glow, describes its work as
+passes ([Passes](plugin-gpu.md)): the app owns the images and runs each pass on the GPU, or on the CPU in
+bands on all cores, copying into each instance only the source rows its band reads. Lumen Glow at its
+default settings on a 1920×1080 layer (the padded frame is larger), sandboxed, on a shared ten-core
+machine, fastest of 15: 85 ms as one whole-frame call, 29 ms as banded passes; native 49 ms and 13 ms.
 
 Effects are stateless. The app keeps a pool of instances and may run any frame on any of them, in any
 order. A panel or a command runs on one long-lived instance, so panel state persists between frames.

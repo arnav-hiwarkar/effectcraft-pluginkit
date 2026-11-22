@@ -118,6 +118,27 @@ pub(crate) fn call_host(request: &[u8], bulk: &[u8]) -> (Buffer, Buffer) {
     (buffer(out[0], out[1]), buffer(out[2], out[3]))
 }
 
+pub(crate) fn spread(table: &mut [Pixel]) -> Option<(&[Pixel], &[Pixel], &mut [Pixel])> {
+    if table.len() != 3 {
+        return None;
+    }
+    // SAFETY: the table holds 48 initialised bytes, read as six unaligned words.
+    let [src, src_len, aux, aux_len, out, out_len] = unsafe { table.as_ptr().cast::<[u64; 6]>().read_unaligned() };
+    if src == 0 || aux == 0 || out == 0 {
+        return None;
+    }
+    // SAFETY: the app sets `spread` only for a native plugin and fills the table with the addresses and pixel
+    // counts of three live, f32-aligned pixel slices that it keeps borrowed for the whole call, the last one
+    // exclusively and apart from the other two.
+    unsafe {
+        Some((
+            std::slice::from_raw_parts(src as *const Pixel, src_len as usize),
+            std::slice::from_raw_parts(aux as *const Pixel, aux_len as usize),
+            std::slice::from_raw_parts_mut(out as *mut Pixel, out_len as usize),
+        ))
+    }
+}
+
 fn report_panics() {
     static HOOK: std::sync::Once = std::sync::Once::new();
     HOOK.call_once(|| {

@@ -6,7 +6,7 @@ mod plugin;
 mod ui;
 mod wire;
 
-pub use effect::{Cx, Effect, Frame, Image};
+pub use effect::{Cx, Effect, Frame, Image, Pass, Rows};
 pub use manifest::{Entry, MANIFEST_FILE, Manifest, ManifestError, Permission, RunMode, native_target};
 pub use plugin::{Error, Plugin, Result, Task};
 pub use ui::{Canvas, Panel, Ui};
@@ -16,7 +16,8 @@ pub mod prelude {
     pub use crate::host;
     pub use crate::{
         AudioRequest, Blend, Camera, Canvas, Cull, Cx, Effect, EffectSpec, Error, Frame, FrameRequest, GpuData, GpuImage, GpuPass, GpuPlan, Image, Layout,
-        Light, LightKind, MaskPath, Paint, Panel, Param, PickFile, Pixel, Plugin, Pointer, PointerPhase, Result, Root, Scene, Task, TaskState, TaskStatus, Ui,
+        Light, LightKind, MaskPath, Paint, Panel, Param, Pass, PickFile, Pixel, Plugin, Pointer, PointerPhase, Result, Root, Rows, Scene, Task, TaskState,
+        TaskStatus, Ui,
     };
 }
 

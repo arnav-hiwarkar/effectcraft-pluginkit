@@ -3,9 +3,9 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
-use crate::effect::{Cx, Effect, Frame};
+use crate::effect::{Cx, Effect, Frame, Pass, Rows};
 use crate::ui::{Panel, Ui};
-use crate::wire::{Call, CommandSpec, Contributions, ControlsReply, EffectSpec, HostCall, Outcome, PanelSpec, Pixel, TaskSpec};
+use crate::wire::{Call, CommandSpec, Contributions, ControlsReply, EffectSpec, HostCall, Outcome, PanelSpec, Pixel, TaskSpec, Window};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error(pub String);
@@ -117,6 +117,36 @@ impl Plugin {
                 let origin = [frame.origin[0] as usize, frame.origin[1] as usize];
                 let mut frame = Frame { width, height, origin, pixels };
                 self.find_effect(&effect)?.render(&Cx::new(cx), &mut frame)?;
+                Ok(serde_json::Value::Null)
+            }
+            Call::Pass { effect, cx, kernel, f, u, src, aux, out, spread } => {
+                let (src_len, aux_len) = (src.pixels(), aux.map_or(0, |aux| aux.pixels()));
+                let parts = if spread {
+                    crate::abi::spread(pixels)
+                } else {
+                    pixels.split_at_mut_checked(src_len + aux_len).and_then(|(read, band)| {
+                        let (src, aux) = read.split_at_checked(src_len)?;
+                        Some((src, aux, band))
+                    })
+                };
+                let fits = |(src, aux, band): &(&[Pixel], &[Pixel], &mut [Pixel])| src.len() == src_len && aux.len() == aux_len && band.len() == out.pixels();
+                let (src_pixels, aux_pixels, band) = parts.filter(fits).ok_or("the pass images do not match the pixels passed")?;
+                let rows = |window: Window, pixels| Rows {
+                    width: window.size[0] as usize,
+                    height: window.size[1] as usize,
+                    first_row: window.first_row as usize,
+                    pixels,
+                };
+                let pass = Pass {
+                    kernel: &kernel,
+                    f: &f,
+                    u: &u,
+                    src: rows(src, src_pixels),
+                    aux: aux.map(|aux| rows(aux, aux_pixels)),
+                    out_size: out.size.map(|side| side as usize),
+                };
+                let mut frame = Frame { width: out.size[0] as usize, height: out.rows as usize, origin: [0, out.first_row as usize], pixels: band };
+                self.find_effect(&effect)?.pass(&Cx::new(cx), &pass, &mut frame)?;
                 Ok(serde_json::Value::Null)
             }
             Call::Panel { panel, input } => {

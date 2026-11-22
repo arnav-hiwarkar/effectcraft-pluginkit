@@ -14,6 +14,7 @@ pub enum Call {
     Describe,
     Layout { effect: String, cx: RenderCx },
     Render { effect: String, cx: RenderCx, frame: FrameDesc },
+    Pass { effect: String, cx: RenderCx, kernel: String, f: Vec<f32>, u: Vec<u32>, src: Window, aux: Option<Window>, out: Window, spread: bool },
     Panel { panel: String, input: UiInput },
     Command { command: String },
     Task { task: String, args: serde_json::Value },
@@ -261,6 +262,19 @@ pub struct FrameDesc {
     pub origin: [u32; 2],
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Window {
+    pub size: [u32; 2],
+    pub first_row: u32,
+    pub rows: u32,
+}
+
+impl Window {
+    pub fn pixels(&self) -> usize {
+        self.size[0] as usize * self.rows as usize
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Layout {
     #[serde(default)]
@@ -269,6 +283,8 @@ pub struct Layout {
     pub reach: Option<u32>,
     #[serde(default)]
     pub gpu: Option<GpuPlan>,
+    #[serde(default)]
+    pub cpu: bool,
 }
 
 impl Layout {
@@ -293,7 +309,19 @@ impl Layout {
         self.gpu = Some(plan);
         self
     }
+
+    pub fn passes(mut self, plan: GpuPlan) -> Self {
+        self.gpu = Some(plan);
+        self.cpu = true;
+        self
+    }
 }
+
+pub const MAX_PASSES: usize = 64;
+pub const MAX_SCRATCH_IMAGES: usize = 32;
+pub const MAX_SCRATCH_FRAMES: u64 = 8;
+pub const MAX_PASS_FLOATS: usize = 48;
+pub const MAX_PASS_UINTS: usize = 16;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct GpuPlan {
@@ -335,6 +363,8 @@ pub struct GpuPass {
     pub u: Vec<u32>,
     #[serde(default)]
     pub draw: Option<Draw>,
+    #[serde(default)]
+    pub reach: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -406,11 +436,76 @@ impl GpuPlan {
         self.passes.push(pass);
         self
     }
+
+    pub fn size_of(&self, image: GpuImage, frame: [u32; 2]) -> Option<[u32; 2]> {
+        match image {
+            GpuImage::Source | GpuImage::Output => Some(frame),
+            GpuImage::Scratch(index) => self.images.get(index as usize).copied(),
+            GpuImage::Texture(_) | GpuImage::Layer(_) => None,
+        }
+    }
+
+    pub fn runs_on_cpu(&self) -> bool {
+        self.buffers.is_empty() && self.textures.is_empty() && self.layers.is_empty() && self.passes.iter().all(|pass| pass.draw.is_none())
+    }
+
+    pub fn check(&self, frame: [u32; 2]) -> Result<(), String> {
+        if !self.runs_on_cpu() {
+            return Err("a plan with draw passes, buffers, textures or layers runs only on the GPU".into());
+        }
+        let passes = self.passes.len();
+        if !(1..=MAX_PASSES).contains(&passes) {
+            return Err(format!("a plan has 1 to {MAX_PASSES} passes, this one has {passes}"));
+        }
+        if self.images.len() > MAX_SCRATCH_IMAGES {
+            return Err(format!("a plan has at most {MAX_SCRATCH_IMAGES} scratch images, this one has {}", self.images.len()));
+        }
+        let [fw, fh] = frame;
+        for (i, &[w, h]) in self.images.iter().enumerate() {
+            if w == 0 || h == 0 || w > fw.saturating_mul(2) || h > fh.saturating_mul(2) {
+                return Err(format!("scratch image {i} is {w}x{h}; it must be non-empty and at most twice the {fw}x{fh} padded frame"));
+            }
+        }
+        let area = |w: u32, h: u32| u64::from(w) * u64::from(h);
+        let scratch_area: u64 = self.images.iter().map(|&[w, h]| area(w, h)).sum();
+        if scratch_area > MAX_SCRATCH_FRAMES * area(fw, fh) {
+            return Err(format!("the scratch images together exceed {MAX_SCRATCH_FRAMES} times the {fw}x{fh} padded frame"));
+        }
+        let mut written = vec![GpuImage::Source];
+        for (n, pass) in self.passes.iter().enumerate() {
+            if pass.f.len() > MAX_PASS_FLOATS || pass.u.len() > MAX_PASS_UINTS {
+                let (floats, uints) = (pass.f.len(), pass.u.len());
+                return Err(format!("pass {n} has {floats} floats and {uints} uints; the limits are {MAX_PASS_FLOATS} and {MAX_PASS_UINTS}"));
+            }
+            if pass.out == GpuImage::Source {
+                return Err(format!("pass {n} writes the source image"));
+            }
+            for image in std::iter::once(pass.src).chain(pass.aux) {
+                if self.size_of(image, frame).is_none() {
+                    return Err(format!("pass {n} reads {image:?}, which the plan does not declare"));
+                }
+                if !written.contains(&image) {
+                    return Err(format!("pass {n} reads {image:?} before a pass writes it"));
+                }
+                if image == pass.out {
+                    return Err(format!("pass {n} reads the image it writes"));
+                }
+            }
+            if self.size_of(pass.out, frame).is_none() {
+                return Err(format!("pass {n} writes {:?}, which the plan does not declare", pass.out));
+            }
+            written.push(pass.out);
+        }
+        if !written.contains(&GpuImage::Output) {
+            return Err("no pass writes the output image".into());
+        }
+        Ok(())
+    }
 }
 
 impl GpuPass {
     pub fn new(kernel: &str, src: GpuImage, out: GpuImage) -> Self {
-        GpuPass { kernel: kernel.to_string(), src, aux: None, out, f: Vec::new(), u: Vec::new(), draw: None }
+        GpuPass { kernel: kernel.to_string(), src, aux: None, out, f: Vec::new(), u: Vec::new(), draw: None, reach: None }
     }
 
     pub fn draw(kernel: &str, out: GpuImage) -> Self {
@@ -472,6 +567,11 @@ impl GpuPass {
 
     pub fn clear(self) -> Self {
         self.drawing(|draw| draw.clear = true)
+    }
+
+    pub fn reach(mut self, rows: u32) -> Self {
+        self.reach = Some(rows);
+        self
     }
 }
 
