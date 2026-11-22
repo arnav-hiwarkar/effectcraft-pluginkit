@@ -95,3 +95,45 @@ fn a_draw_pass_fills_the_frame_and_a_plan_with_an_index_past_its_vertices_is_dec
     let cpu = effects::apply(spec, &ctx(&invalid), picture());
     assert_eq!(cpu.img.data[0], [0.25, 0.5, 0.75, 1.0]);
 }
+
+#[test]
+fn a_gpu_pass_reads_the_layer_a_layer_parameter_names() {
+    let mut app = app("test.gpu-matte", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.gpu-matte", app.id)).expect("the probe registered its matte effect");
+    let unset = params(spec, &[]);
+    let missing = gpu.effects(&[FxStep { spec, ctx: ctx(&unset) }], &picture(), None).expect("the GPU ran a plan that reads a layer");
+    assert!(missing.img.data.iter().all(|pixel| *pixel == [0.0; 4]), "with no layer the texture is transparent, the first pixel is {:?}", missing.img.data[0]);
+
+    let session = &mut app.session;
+    session.execute("file.projectSettings", serde_json::json!({"bitDepth": 32})).expect("32 bit");
+    let matte = session.execute("layer.newSolid", serde_json::json!({"name": "Matte", "color": "#ff8000", "width": 20, "height": 10})).expect("layer.newSolid")
+        ["layer"]
+        .as_u64();
+    session.execute("prop.set", serde_json::json!({"layer": matte, "path": "transform/opacity", "value": 0})).expect("prop.set");
+    let plate = session.execute("layer.newSolid", serde_json::json!({"name": "Plate", "color": "#0000ff", "width": 64, "height": 36})).expect("layer.newSolid")
+        ["layer"]
+        .as_u64();
+    session.execute("effect.apply", serde_json::json!({"layer": plate, "effect": spec.id})).expect("effect.apply");
+    let matte_id = session.active_comp().and_then(|comp| comp.layers.iter().find(|layer| layer.name == "Matte")).expect("the matte layer").id.0;
+    session.execute_checked("prop.set", serde_json::json!({"layer": plate, "path": "effects/#1/matte", "value": matte_id})).expect("prop.set");
+    let comp = session.active_comp_id().expect("an active comp");
+    let render = |backend| {
+        let renderer = effectcraft_engine::render::Renderer::new(
+            &session.project,
+            session.footage.as_ref(),
+            effectcraft_engine::render::RenderOpts { backend, ..Default::default() },
+        );
+        renderer.with_accel(Some(gpu)).comp_frame(comp, effectcraft_engine::time::Tick::from_seconds_f64(0.0))
+    };
+    let on_gpu = render(effectcraft_engine::render::Backend::Gpu);
+    let at = |x: u32, y: u32| on_gpu.data[(y * on_gpu.width + x) as usize];
+    assert_eq!(at(32, 18)[3], 1.0, "the matte is centred on the layer: {:?}", at(32, 18));
+    assert!(at(32, 18)[0] > 0.9 && at(32, 18)[2] < 0.01, "inside the matte it is orange: {:?}", at(32, 18));
+    assert_eq!(at(21, 18), [0.0; 4], "left of the 20 pixel wide matte it is transparent");
+    let covered = on_gpu.data.iter().filter(|pixel| pixel[3] > 0.5).count();
+    assert_eq!(covered, 20 * 10, "the matte, made invisible in the comp, is drawn only by the effect");
+    let on_cpu = render(effectcraft_engine::render::Backend::Cpu);
+    let worst = worst_difference(&on_gpu, &on_cpu);
+    assert!(worst < 1e-3, "the GPU and CPU renders differ by {worst}");
+}

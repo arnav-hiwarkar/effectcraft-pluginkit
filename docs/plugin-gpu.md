@@ -38,6 +38,7 @@ A pass reads `src` and, optionally, `aux`, and writes `out`. Each names one of:
 | `GpuImage::Output` | The effect's result, the size of the frame. The last pass to write it gives the result. |
 | `plan.scratch([w, h])` | A working image of that size, declared on the plan. |
 | `plan.texture(key, [w, h])` | A picture the plugin stored with `host::cache_put(key, bytes)`: RGBA, four little-endian `f32` for each pixel, row 0 at the top. Read only. |
+| `plan.layer(param)` | The layer chosen in layer parameter `param`, resampled onto the padded frame: the same pixels `cx.layer(param)` gives `render`. The size of the frame. Transparent when no layer is chosen or it has nothing to show. Read only. |
 
 `layout` runs before the frame is padded, so there `cx.size`, `cx.offset` and point parameters describe
 the frame without padding. The passes run on the padded frame. Build the plan from `cx.padded(padding)`,

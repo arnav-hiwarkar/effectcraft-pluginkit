@@ -107,6 +107,36 @@ impl Effect for GpuFill {
     }
 }
 
+const MATTE_SHADER: &str = r#"
+@compute @workgroup_size(16, 16)
+fn probe_matte(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    store(id.xy, texel(aux, vec2<i32>(id.xy)));
+}
+"#;
+
+struct GpuMatte;
+
+impl Effect for GpuMatte {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("gpu-matte", "GPU Matte", "Probe").param(Param::layer("matte", "Matte")).shader(MATTE_SHADER)
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        let mut plan = GpuPlan::new();
+        let matte = plan.layer("matte");
+        Layout::pointwise().gpu(plan.pass(GpuPass::new("probe_matte", GpuImage::Source, GpuImage::Output).aux(matte)))
+    }
+
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        match cx.layer("matte") {
+            Some(matte) => frame.pixels.copy_from_slice(matte.pixels()),
+            None => frame.pixels.fill([0.0; 4]),
+        }
+        Ok(())
+    }
+}
+
 const SOFTEN_PADDING: u32 = 4;
 
 struct GpuSoften;
@@ -299,6 +329,7 @@ fn make() -> Plugin {
         .effect(GpuInvert)
         .effect(GpuSoften)
         .effect(GpuFill)
+        .effect(GpuMatte)
         .panel("counter", "Counter", Counter::default())
         .command("edit", "Edit Document", || {
             let reply = host::command("layer.newNull", json!({"name": "From Plugin"}))?;
