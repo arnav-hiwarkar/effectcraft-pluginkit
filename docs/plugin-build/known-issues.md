@@ -29,28 +29,25 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **CLI: `bench` does not load plugins**, so plugin effects are missing from its timings. (`bench_cmd` in `apps/effectcraft-cli/src/main.rs`)
 - **SDK: sliders have one range.** No logarithmic mode and no separate soft range. `ui.number` has no range or decimals.
 - **SDK: padding is one number for all four sides.** A horizontal streak pays for vertical padding too.
-- **SDK: pointer events carry no modifier keys**, and only the last pointer event per frame reaches a canvas.
 - **SDK: `read_file` cannot tell a missing file from a failed read.**
 - **GPU: on WebGPU a bad plugin shader is not contained, and plugin GPU work has no time limit there**, because the browser build cannot wait for a submission (`Clock` in `crates/gpu/src/fx_plugin.rs`).
 - **GPU: a runaway plugin kernel stalls the GPU once per load.** A wgpu dispatch cannot be cancelled, so the 2 s budget is checked when a frame's plan has finished. The first frame that passes it stops the effect, which then renders on the CPU until the plugin is reloaded; that one frame still runs to its end (or until the OS GPU watchdog or the 10 s readback limit), and every other GPU effect waits for it. The error lists the plan's passes but cannot say which one was slow.
-- **UI: plugin labels have no automation id**, so the control channel cannot read a panel's text. A click made just before a tab is hidden is delivered when it reopens.
 
 ## From the Opus review, not fixed
 
 - **Background jobs** (`camera.analyze`, `layer.sceneEditDetection`) apply their result later, outside the plugin's batch and its undo step. Plugins can start them but cannot wait for them.
-- **Panel events are dropped when the panel call fails**, so the click that crashed a plugin is lost.
 - **Glide: `keys.interpolation` runs on the whole selection**, so keys on properties Glide reports as skipped still lose their continuous and roving flags. (`plugins/glide/src/apply.rs`)
-- **A plugin render error keeps Effect Controls repainting every 500 ms** until the error clears.
 
 ## From the second build and its reviews, not fixed
 
 - **A process of the same user that reads the cache key can still sign a compiled module.** Compiled cache entries carry an HMAC-SHA-256 under `Plugins/.compiled/key` (mode 0600, made from OS randomness), so a planted entry without the key is compiled again (`cached` in `crates/plugin-host/src/runtime/wasm.rs`). The key file is readable by every process of the same user; only the helper process with an OS sandbox would close this.
 - **A native task that ignores cancel keeps its thread.** Only a sandboxed task can be interrupted.
 - **Effects cannot read audio.** The render path reaches footage audio, not the comp mix.
-- **Plugin panels and custom controls cannot be fully used from the keyboard.** A canvas cannot take focus and custom controls get no key events. House rule 21 asks for this. (`crates/ui-egui/src/panels/plugin_view.rs`, Opus finding 8)
 - **Forge 3D draws only on the GPU.** Draw passes render to an `Rgba16Float` target that is created per frame and copied.
 - **Ember simulates from frame 0 on every render when a parameter has an expression**, because the history cannot be hashed. It reads the masks at the current time for every step.
 - **A Halo preset sets the look and resets the element controls.** It does not write absolute slider values.
+- **A file dropped on a plugin panel is not readable without `files.read`.** A picked file is; a dropped one only gives the plugin its path. (`crates/plugin/src/panels.rs`, `crates/plugin-host/src/runtime/serve.rs` `picked`)
+- **Custom Effect Controls rows cannot subscribe to app events or set timers.** They are called again on their own widget events, a new value or a new width. (`crates/plugin/src/panels.rs`)
 - **Curves keeps the selected channel per effect, not per instance of the effect**, unless the fix for Opus finding 7 landed (see the log).
 - **`polygon` on a canvas fills convex shapes only.**
 - **`plugin dev` was not run against a live app, and double-clicking a `.craftplugin` was not tried on a built app.**

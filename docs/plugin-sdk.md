@@ -229,7 +229,11 @@ undo step and lists them with `effect.presets`. `plugins/halo` has a preset per 
 
 ## Add a panel
 
-A panel keeps its own state. The app calls `ui` every frame the tab is visible.
+A panel keeps its own state. The app calls `ui` once to draw the panel and keeps what it returned: it
+draws that tree every frame without calling the plugin. It calls `ui` again, off the UI thread, when the
+user uses one of the panel's widgets, when an app event the panel subscribed to happens, when a timer of
+the panel fires, or when the panel changes size. Until the new tree arrives the old one stays on screen,
+so a slow panel never stalls the app.
 
 ```rust
 #[derive(Default)]
@@ -256,6 +260,92 @@ The panel appears in **Window ▸ Plug-ins**. Its tab docks like the app's own p
 A widget is known by its label and how many times that label came before it, and a click arrives on the
 next call. Draw each item of a list that can change inside `ui.keyed(item_id, |ui| …)`, so a click on
 one item's "Delete" still reaches that item when another item is added above it.
+
+### React to the app
+
+`ui.on(topic)` subscribes the panel to an app event and returns it on the call it arrived in. Ask for it
+in every call; a panel that stops asking stops getting it. Each kind arrives at most once per UI frame,
+with its latest contents.
+
+```rust
+impl Panel for Follow {
+    fn ui(&mut self, ui: &mut Ui) {
+        if let Some(AppEvent::Selection { layers, keyframes, .. }) = ui.on(Topic::Selection) {
+            self.status = format!("{} layers and {keyframes} keyframes selected", layers.len());
+        }
+        if let Some(AppEvent::Time { time, .. }) = ui.on(Topic::Time) {
+            self.time = *time;
+        }
+        ui.label(&self.status);
+    }
+}
+```
+
+`plugins/glide` reads the curve of the selected keyframes this way.
+
+### Timers
+
+`ui.every(name, ms)` redraws the panel every `ms` milliseconds while the panel asks for it, and returns
+`true` on the call the timer fired in. `ui.after(name, ms)` fires once, `ms` after the call that first
+asked for it. Timers run at most every 16 ms and wait while the panel's tab is hidden.
+
+```rust
+if self.task.is_some() && ui.every("progress", 100) {
+    self.poll_task();
+}
+```
+
+### Keyboard
+
+Every widget can be reached with Tab and used with the keyboard. A canvas takes the keyboard focus when it
+is clicked or reached with Tab, keeps the arrow keys while it has it, and gets each key press with the
+modifiers held:
+
+```rust
+ui.canvas("graph", [200.0, 200.0], |c| {
+    for key in &c.keys {
+        match key.name.as_str() {
+            "Left" => self.nudge(if key.modifiers.shift { -0.1 } else { -0.01 }),
+            "Delete" => self.remove_point(),
+            _ => {}
+        }
+    }
+    for pointer in &c.pointers {      // every pointer event of the call, in order
+        self.drag(pointer);
+    }
+});
+```
+
+The canvas of a custom control in Effect Controls gets keys the same way. `plugins/curves` moves the chosen
+point with the arrow keys.
+
+### Clipboard
+
+With the `clipboard` permission, a panel, command or task reads and replaces the text on the system
+clipboard:
+
+```rust
+let text = host::clipboard()?;
+host::set_clipboard(&format!("{text} (copied by my plugin)"))?;
+```
+
+### Drag and drop
+
+`ui.drop_target` returns what the user dropped on it: files from the desktop or the Media Browser, project
+items, or data another plugin dragged. `ui.drag_source` lets the user drag a file from the plugin's folders
+(into the Project panel or a timeline, which import it) or plain data to another plugin's drop target.
+
+```rust
+match ui.drop_target("bin", |ui| ui.weak("Drop footage here")) {
+    Some(Dropped::Files { paths }) => self.queue.extend(paths.iter().cloned()),
+    Some(Dropped::Items { ids }) => self.items.extend(ids),
+    Some(Dropped::Data { plugin, data }) => self.note = format!("{plugin} sent {data}"),
+    None => {}
+}
+ui.drag_source("export", Drag::File { root: Root::Data, path: "out/look.cube".into() }, |ui| ui.label("look.cube"));
+```
+
+Reading a dropped file outside the plugin's own folders needs `files.read`.
 
 ### Show images
 
@@ -421,11 +511,13 @@ Plugin::new().task("analyse", "Analyse Audio", |task: &Task| {
 })
 ```
 
-Start it from a panel or a command, then ask for its state each frame:
+Start it from a panel or a command, then ask for its state on a timer while it runs:
 
 ```rust
 let id = host::start("analyse", serde_json::json!({ "layer": "Music" }))?;
-let state = host::task(id)?;      // status, progress, message, result, error
+if ui.every("progress", 100) {
+    let state = host::task(id)?;  // status, progress, message, result, error
+}
 host::cancel(id)?;
 ```
 
