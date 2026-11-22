@@ -1179,9 +1179,24 @@ fn a_failing_pass_fails_the_render() {
 fn a_panic_in_a_sandboxed_plugin_logs_its_file_and_line_before_the_trap() {
     let loaded = load(Kind::Wasm, &[]);
     let error = command(&loaded, "panic", &mut Recorder::default()).unwrap_err().to_string();
-    assert!(error.contains("unreachable"), "{error}");
+    assert!(error.starts_with("the plugin stopped: the plugin panicked at src/lib.rs:") && error.ends_with(": oops"), "{error}");
     let logs: Vec<String> = loaded.plugin.logs(0).into_iter().map(|line| line.message).collect();
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/probe/src/lib.rs")).unwrap();
     let (line, column) = source.lines().enumerate().find_map(|(n, text)| Some((n + 1, text.find("panic!(\"oops\")")? + 1))).unwrap();
     assert_eq!(logs.first().cloned(), Some(format!("the plugin panicked at src/lib.rs:{line}:{column}: oops")), "{logs:?}");
+}
+
+#[test]
+fn a_trapped_sandboxed_render_is_reported_in_one_short_line_with_the_effect_and_the_panic_location() {
+    let loaded = load(Kind::Wasm, &[]);
+    let mut pixels = vec![[0.0; 4]; 2];
+    let error = loaded.plugin.render("explode", &cx(2, 1), &Layout::neighbourhood(0), None, &mut pixels, Recorder::default).unwrap_err().to_string();
+    let journal = loaded.plugin.logs(0).into_iter().map(|line| line.message).next_back().unwrap();
+    for text in [&error, &journal] {
+        assert!(!text.contains('\n') && !text.contains("\\n"), "{text}");
+        assert!(text.chars().count() < 300, "{} characters: {text}", text.chars().count());
+        assert!(text.contains("the plugin panicked at src/lib.rs:"), "{text}");
+        assert!(text.contains("index out of bounds"), "{text}");
+    }
+    assert!(journal.starts_with("render of effect `explode` failed: "), "{journal}");
 }

@@ -396,7 +396,18 @@ impl Plugin {
     }
 
     fn exchange<R: DeserializeOwned>(&self, call: &Call, io: Io, host: &mut dyn Host) -> Result<R, PluginError> {
-        let answered = self.answer(call, io, host);
+        let seen = self.engine.journal().latest();
+        let answered = self.answer(call, io, host).map_err(|error| match error {
+            PluginError::Trap(_) => self
+                .engine
+                .journal()
+                .page(seen, None)
+                .lines
+                .into_iter()
+                .find(|line| line.message.starts_with("the plugin panicked"))
+                .map_or(error, |line| PluginError::Trap(line.message)),
+            other => other,
+        });
         if let Err(error) = &answered {
             self.engine.journal().push(LogLevel::Error, format!("{} failed: {error}", what(call)));
         }

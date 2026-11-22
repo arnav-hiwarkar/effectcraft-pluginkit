@@ -584,6 +584,20 @@ impl Effect for Recurse {
     }
 }
 
+struct Explode;
+
+impl Effect for Explode {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("explode", "Explode", "Probe")
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let missing: usize = frame.pixels.len() + 3;
+        frame.pixels[missing] = [1.0; 4];
+        Ok(())
+    }
+}
+
 struct Memo;
 
 impl Effect for Memo {
@@ -865,6 +879,7 @@ fn make() -> Plugin {
         .effect(MarkBand)
         .effect(Recurse)
         .effect(Memo)
+        .effect(Explode)
         .effect(Report)
         .effect(Ranges)
         .effect(GpuInvert)

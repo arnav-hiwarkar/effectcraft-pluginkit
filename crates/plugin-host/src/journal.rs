@@ -78,6 +78,10 @@ impl Journal {
         }
     }
 
+    pub fn latest(&self) -> u64 {
+        self.held.lock().map_or(0, |held| held.next)
+    }
+
     pub fn page(&self, after: u64, load: Option<u64>) -> LogPage {
         let after = if load.is_none_or(|load| load == self.load) { after } else { 0 };
         let Ok(held) = self.held.lock() else { return LogPage { load: self.load, missed: 0, lines: Vec::new() } };
