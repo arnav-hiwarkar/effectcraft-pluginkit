@@ -700,12 +700,57 @@ impl<'a> Renderer<'a> {
             Some((_, _, rw, rh)) => (rw, rh),
             None => (w, h),
         };
-        let mut canvas = Image::new(w, h);
+        let canvas = Image::new(w, h);
         if self.depth > 16 {
             return canvas;
         }
         let ctx = self.ctx(comp_id, comp, t);
-        self.draw_comp(&ctx, &mut canvas, true);
+        let key = self.static_frame_key(&ctx);
+        if let (Some(c), Some(k)) = (self.cache, key)
+            && let Some((frame, files)) = c.get_in_memory(k)
+        {
+            if let Some(log) = self.reads {
+                log.note_all(&files);
+            }
+            return frame.img.clone();
+        }
+        let t0 = web_time::Instant::now();
+        let (canvas, files) = self.recorded(key, |r| r.finish_frame(&r.with_reads(&ctx), canvas));
+        if let (Some(c), Some(k)) = (self.cache_to_keep(), key) {
+            c.insert_in_memory(k, Arc::new(Buf { img: canvas.clone(), offset: [0.0; 2], scale: s }), files, t0.elapsed());
+        }
+        canvas
+    }
+
+    fn static_frame_key(&self, ctx: &EvalCtx<'a>) -> Option<u64> {
+        let top = self.depth == 0 && self.top && self.outer.is_none() && self.inherited.is_none() && self.collapse3d.is_none();
+        if self.cache.is_none() || !top || self.whole_raster || self.opacity_mul != 1.0 || self.through.iter().any(Option::is_some) {
+            return None;
+        }
+        let mut contents = Vec::new();
+        for layer in ctx.comp.layers.iter() {
+            if layer.is_3d() || !cache::timeless(layer) {
+                return None;
+            }
+            if let LayerSource::Footage { item } = &layer.source {
+                let it = self.project.item(ctx.media_item(layer, *item))?;
+                if it.proxy.is_some() || !matches!(&it.kind, ItemKind::Footage(f) if f.kind == effectcraft_project::FootageKind::Still) {
+                    return None;
+                }
+            }
+            if self.reads_footage_rows(ctx, layer) {
+                return None;
+            }
+            if layer.source.is_av() {
+                contents.push(self.content_cache_key(ctx, layer)?);
+            }
+        }
+        let visible: Vec<_> = self.visible_layers(ctx).iter().map(|l| l.id).collect();
+        Some(cache::frame_key(ctx, &contents, &visible, &self.opts))
+    }
+
+    fn finish_frame(&self, ctx: &EvalCtx<'a>, mut canvas: Image) -> Image {
+        self.draw_comp(ctx, &mut canvas, true);
         // The canvas is already quantised after every layer; only re-encoding changes it.
         if let Some(c) = self.pipe.from_blend() {
             color::convert(&mut canvas, &c);
@@ -1525,6 +1570,11 @@ impl<'a> Renderer<'a> {
         self.content_buf_timed(ctx, layer, None).map(|(b, _, _)| b)
     }
 
+    fn content_cache_key(&self, ctx: &EvalCtx, layer: &Layer) -> Option<u64> {
+        let key = self.cache.and_then(|_| cache::layer_key(ctx, layer, self.raster_scale(ctx, layer), self.opts.draft, self.mb_on(ctx, layer)));
+        self.content_key(ctx, layer, self.clipped_key(ctx, layer, key))
+    }
+
     /// [`Self::content_buf`], its cache key and the source files it was made of.
     pub(crate) fn content_buf_timed(
         &self,
@@ -1532,8 +1582,7 @@ impl<'a> Renderer<'a> {
         layer: &Layer,
         mut timing: Option<&mut LayerTiming>,
     ) -> Option<(Arc<Buf>, Option<u64>, Arc<ReadFiles>)> {
-        let key = self.cache.and_then(|_| cache::layer_key(ctx, layer, self.raster_scale(ctx, layer), self.opts.draft, self.mb_on(ctx, layer)));
-        let key = self.content_key(ctx, layer, self.clipped_key(ctx, layer, key));
+        let key = self.content_cache_key(ctx, layer);
         if let Some((b, files)) = self.cached(key) {
             if let Some(t) = timing.as_deref_mut() {
                 t.cached = true;

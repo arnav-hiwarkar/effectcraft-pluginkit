@@ -14,6 +14,7 @@ mod color;
 mod drop_shadow_cover;
 mod footage_size;
 mod frame_blend;
+mod frame_cache;
 mod guides;
 mod mask_blur;
 mod mask_expansion;

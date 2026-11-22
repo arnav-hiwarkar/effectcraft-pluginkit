@@ -319,6 +319,16 @@ impl LayerCache {
         self.insert_mem(key, buf, files, started.map(|t| t.elapsed()))
     }
 
+    pub(crate) fn get_in_memory(&self, key: u64) -> Option<(Arc<Buf>, Arc<ReadFiles>)> {
+        self.kept(key, true)
+    }
+
+    pub(crate) fn insert_in_memory(&self, key: u64, buf: Arc<Buf>, files: Arc<ReadFiles>, took: std::time::Duration) {
+        if !self.gated() {
+            self.insert_mem(key, buf, files, Some(took));
+        }
+    }
+
     /// The buffer kept in memory under `key` with its files, if it is not made of a file dropped
     /// since its reads began (one that is, is forgotten). `hit`: count it as a hit and as just
     /// used. (A render that started before a drop may publish its buffer after the drop's
@@ -821,12 +831,6 @@ fn cached_footage(ctx: &EvalCtx, item: effectcraft_project::ItemId) -> bool {
 /// Motion Blur On, or Same As Layer with the layer blurred)?
 fn mask_motion_blur(ctx: &EvalCtx, layer: &Layer, blur: bool) -> bool {
     use effectcraft_project::{GroupKind, MaskMotionBlur};
-    fn animated(g: &PropGroup) -> bool {
-        g.children.iter().any(|c| match c {
-            Node::Prop(p) => !p.keys.is_empty() || p.has_expression(),
-            Node::Group(sub) => animated(sub),
-        })
-    }
     ctx.comp.enable_motion_blur
         && layer.masks().is_some_and(|m| {
             m.groups().any(|g| match g.kind {
@@ -836,6 +840,28 @@ fn mask_motion_blur(ctx: &EvalCtx, layer: &Layer, blur: bool) -> bool {
                 _ => false,
             })
         })
+}
+
+fn animated(g: &PropGroup) -> bool {
+    g.children.iter().any(|c| match c {
+        Node::Prop(p) => !p.keys.is_empty() || p.has_expression(),
+        Node::Group(sub) => animated(sub),
+    })
+}
+
+pub(crate) fn timeless(layer: &Layer) -> bool {
+    !animated(&layer.props) && !time_dependent(layer, true)
+}
+
+pub(crate) fn frame_key(ctx: &EvalCtx, contents: &[u64], visible: &[effectcraft_project::LayerId], opts: &crate::RenderOpts) -> u64 {
+    let mut h = KeyHasher(0x6a09_e667_f3bc_c908);
+    hash_debug(&mut h, &ctx.project.settings);
+    ctx.comp_id.hash(&mut h);
+    hash_debug(&mut h, ctx.comp);
+    hash_debug(&mut h, opts);
+    contents.hash(&mut h);
+    visible.hash(&mut h);
+    h.finish()
 }
 
 fn has_expression(g: &PropGroup) -> bool {
