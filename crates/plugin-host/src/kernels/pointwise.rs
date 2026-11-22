@@ -20,7 +20,10 @@ pub(crate) fn row(kernel: &HostKernel, src: &[Pixel], top: &[Pixel], y: usize, o
         HostKernel::ToSrgb => transfers().encode.row(src, out, Negatives::Mirror),
         HostKernel::Transfer { to: Encoding::Linear, negatives } => transfers().decode.row(src, out, *negatives),
         HostKernel::Transfer { to: Encoding::Srgb, negatives } => transfers().encode.row(src, out, *negatives),
-        HostKernel::BrightnessCurve { measure, curve, range } => pairs.for_each(|(o, p)| *o = brightness_curve(*measure, curve, *range, *p)),
+        HostKernel::BrightnessCurve { measure, curve, range } => {
+            let per_unit = (curve.len() - 1) as f32 / range;
+            pairs.for_each(|(o, p)| *o = brightness_curve(*measure, curve, *range, per_unit, *p));
+        }
         HostKernel::Dither { seed, origin } => {
             let row_y = (y as i64).wrapping_sub(origin[1]) as u32;
             pairs.enumerate().for_each(|(x, (o, p))| *o = dither(*p, (x as i64).wrapping_sub(origin[0]) as u32, row_y, *seed));
@@ -76,24 +79,24 @@ pub(crate) fn measure(measure: Measure, p: Pixel) -> f32 {
     }
 }
 
-fn lookup(curve: &[f32], range: f32, m: f32) -> f32 {
+fn lookup(curve: &[f32], range: f32, per_unit: f32, m: f32) -> f32 {
     let last = curve.len() - 1;
+    let t = if per_unit.is_finite() { m * per_unit } else { m / range * last as f32 };
     if m > range {
         let (a, b) = (curve[last - 1], curve[last]);
-        return if a == b { b } else { b + (b - a) * ((m - range) / range * last as f32) };
+        return if a == b { b } else { b + (b - a) * (t - last as f32) };
     }
-    let t = m / range * last as f32;
     let i = (t as usize).min(last - 1);
     let (a, b) = (curve[i], curve[i + 1]);
     a + (b - a) * (t - i as f32)
 }
 
-fn brightness_curve(kind: Measure, curve: &[f32], range: f32, p: Pixel) -> Pixel {
+fn brightness_curve(kind: Measure, curve: &[f32], range: f32, per_unit: f32, p: Pixel) -> Pixel {
     let m = measure(kind, p);
     if m <= 0.0 {
         return [0.0, 0.0, 0.0, p[3]];
     }
-    let gain = lookup(curve, range, m) / m;
+    let gain = lookup(curve, range, per_unit, m) / m;
     [p[0] * gain, p[1] * gain, p[2] * gain, p[3]]
 }
 
@@ -133,13 +136,14 @@ impl Transfer {
     fn row(&self, src: &[Pixel], out: &mut [Pixel], negatives: Negatives) {
         let (segments, exact, slope) = (&self.segments[..], self.exact, self.slope_at_zero);
         let linear_below_zero = negatives == Negatives::Linear;
+        let first = f32::from_bits(FIRST_SEGMENT << SEGMENT_SHIFT);
         let eval = |x: f32| {
-            if linear_below_zero && x < 0.0 {
-                return x * slope;
+            if x < first {
+                return if x >= 0.0 || linear_below_zero { x * slope } else { exact(x) };
             }
-            let i = (x.to_bits() >> SEGMENT_SHIFT).checked_sub(FIRST_SEGMENT);
-            match i.and_then(|i| Some((i, segments.get(i as usize)?))) {
-                Some((i, [value, slope])) => value + slope * (x - f32::from_bits((FIRST_SEGMENT + i) << SEGMENT_SHIFT)),
+            let i = (x.to_bits() >> SEGMENT_SHIFT) - FIRST_SEGMENT;
+            match segments.get(i as usize) {
+                Some([value, slope]) => value + slope * (x - f32::from_bits((FIRST_SEGMENT + i) << SEGMENT_SHIFT)),
                 None => exact(x),
             }
         };
