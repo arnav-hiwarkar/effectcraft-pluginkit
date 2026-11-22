@@ -559,9 +559,9 @@ impl Panel for Meter {
 Add `craft-plugin-host` with the `testing` feature as a dev-dependency (the templates do). `assert_frame!`
 renders the effect in the test process through the same host code the app uses, on a built-in test image,
 and compares it with `tests/frames/<name>.png`. The first run stores the frame; look at it and commit it.
-When a frame differs the test fails, writes `<name>.actual.png` and `<name>.diff.png` beside the stored
-one (red marks the pixels that differ) and prints their paths. Run with `UPDATE_FRAMES=1` to accept the
-new frames.
+When a frame differs the test fails, writes `<name>.actual.png` and `<name>.diff.png` under the plugin's
+`target/frames/` (red marks the pixels that differ) and prints their paths. Run with `UPDATE_FRAMES=1` to
+accept the new frames.
 
 `plugins/cookbook/src/tests.rs#tint_matches_its_stored_frame`:
 

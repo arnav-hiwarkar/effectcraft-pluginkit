@@ -812,15 +812,32 @@ pub fn assert_frame(name: &str, render: Render) {
     }
 }
 
+pub fn updating_frames(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|value| value == "1")
+}
+
+fn plain_file(path: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(found) if found.file_type().is_symlink() => Err(format!("{} is a link; stored frames must be plain files", path.display())),
+        _ => Ok(()),
+    }
+}
+
 pub fn check_frame(dir: &Path, name: &str, render: &Render) -> Result<(), String> {
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(format!("frame name `{name}` must be a plain name of letters, digits, `-` and `_`, such as `full`"));
+    }
     let folder = dir.join("tests/frames");
     let expected_path = folder.join(format!("{name}.png"));
-    let actual_path = folder.join(format!("{name}.actual.png"));
-    let diff_path = folder.join(format!("{name}.diff.png"));
+    let failures = dir.join("target/frames");
+    let actual_path = failures.join(format!("{name}.actual.png"));
+    let diff_path = failures.join(format!("{name}.diff.png"));
+    for path in [&dir.join("tests"), &folder, &expected_path] {
+        plain_file(path)?;
+    }
     let actual = render.run().map_err(|e| format!("frame `{name}`: {e}"))?;
-    let update = std::env::var_os("UPDATE_FRAMES").is_some_and(|v| v != "0");
     let missing = !expected_path.is_file();
-    if update || (missing && std::env::var_os("CI").is_none()) {
+    if updating_frames(std::env::var_os("UPDATE_FRAMES").as_deref()) || (missing && std::env::var_os("CI").is_none()) {
         actual.save(&expected_path)?;
         let _ = std::fs::remove_file(&actual_path);
         let _ = std::fs::remove_file(&diff_path);
@@ -835,20 +852,20 @@ pub fn check_frame(dir: &Path, name: &str, render: &Render) -> Result<(), String
             actual_path.display()
         ));
     }
-    let expected = Picture::open(&expected_path)?;
-    if [expected.width, expected.height] != [actual.width, actual.height] {
+    let expected = image::open(&expected_path).map_err(|e| format!("{}: {e}", expected_path.display()))?.to_rgba8();
+    if [expected.width(), expected.height()] != [actual.width, actual.height] {
         actual.save(&actual_path)?;
         return Err(format!(
             "frame `{name}` is {}x{} but {} is {}x{}; the new frame is at {}. If the new size is right, run with UPDATE_FRAMES=1",
             actual.width,
             actual.height,
             expected_path.display(),
-            expected.width,
-            expected.height,
+            expected.width(),
+            expected.height(),
             actual_path.display()
         ));
     }
-    let found = difference(&image::open(&expected_path).map_err(|e| e.to_string())?.to_rgba8(), &actual.rgba8(), actual.width, render.tolerance);
+    let found = difference(&expected, &actual.rgba8(), actual.width, render.tolerance);
     if found.differing == 0 {
         let _ = std::fs::remove_file(&actual_path);
         let _ = std::fs::remove_file(&diff_path);

@@ -116,7 +116,7 @@ fn zero_amount_changes_nothing() {
 ```
 
 The first run stores `tests/frames/half.png`. A later run that differs fails, writes `half.actual.png` and
-`half.diff.png` beside it and prints their paths; `UPDATE_FRAMES=1 cargo test` stores the new frames. A
+`half.diff.png` under `target/frames/` and prints their paths; `UPDATE_FRAMES=1 cargo test` stores the new frames. A
 render in bands that differs from a whole render fails with the first pixel that changed, which catches a
 `Layout::neighbourhood` reach that is too small. Panels, commands, tasks and tools are tested the same way:
 see [Testing](plugin-reference.md#testing).
