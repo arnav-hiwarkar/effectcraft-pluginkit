@@ -1,4 +1,6 @@
 mod crt;
+#[cfg(test)]
+mod golden;
 mod grid;
 mod math;
 mod neon;
