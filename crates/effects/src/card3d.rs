@@ -348,28 +348,30 @@ pub struct CompScene {
     pub lights: Vec<SceneLight>,
 }
 
-/// The comp camera in the effect's layer pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CompCamera {
-    /// Layer pixels → camera space (x right, y down, z away from the viewer), rows.
-    pub view: [[f64; 4]; 4],
+    pub layer_to_camera_rows: [[f64; 4]; 4],
     pub eye: [f64; 3],
     pub zoom: f64,
 }
 
-/// One comp light in the effect's layer pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SceneLightKind {
+    Parallel,
+    #[default]
+    Point,
+    Ambient,
+    Spot,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SceneLight {
-    /// 0 parallel, 1 point, 2 ambient, 3 spot.
-    pub kind: u8,
+    pub kind: SceneLightKind,
     pub pos: [f64; 3],
-    /// Unit direction the light travels.
-    pub dir: [f64; 3],
+    pub travel_direction: [f64; 3],
     pub color: [f32; 3],
     pub intensity: f32,
-    /// Full cone angle in degrees.
-    pub cone_angle: f32,
-    /// 0..1.
+    pub cone_degrees: f32,
     pub feather: f32,
 }
 
@@ -393,7 +395,7 @@ impl CompScene {
             l.pos[1] -= origin[1];
         }
         if let Some(c) = &mut self.view {
-            for row in c.view.iter_mut() {
+            for row in c.layer_to_camera_rows.iter_mut() {
                 row[3] += row[0] * origin[0] + row[1] * origin[1];
             }
             c.eye[0] -= origin[0];

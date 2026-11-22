@@ -69,11 +69,11 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
                 );
                 Some(out)
             }
-            Some(draw) => {
+            Some(_) => {
                 let stays_open = program.passes.get(n + 1).is_some_and(|next| next.out == pass.out && next.draw.as_ref().is_some_and(|draw| !draw.clear));
                 let below = images.get(target).cloned().flatten();
                 let target = Target { index: target, size: [w, h], below: below.as_ref(), stays_open };
-                match stage.draw(e, pass, draw, &params(pass), &src, aux.as_ref(), target) {
+                match stage.draw(e, pass, &params(pass), &src, aux.as_ref(), target) {
                     Ok(out) => out,
                     Err(why) => {
                         g.plugin_declined(id, &why);

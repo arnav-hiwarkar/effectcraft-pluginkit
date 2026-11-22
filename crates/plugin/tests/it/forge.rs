@@ -5,7 +5,9 @@ use std::sync::OnceLock;
 use effectcraft_engine::effects::{self, Buf, EffectCtx, EffectSpec, Params};
 use effectcraft_engine::keyframe::Value;
 use effectcraft_engine::raster::Image;
-use effectcraft_engine::render::{Accelerator, FxStep};
+use effectcraft_engine::render::{Accelerator, Backend, FxStep, RenderOpts, Renderer};
+use effectcraft_engine::time::Tick;
+use serde_json::json;
 
 use crate::gpu::gpu;
 
@@ -167,4 +169,25 @@ fn a_ring_of_models_draws_over_the_layer_at_1080p() {
     let rgba: Vec<u8> = image.data.iter().flat_map(|p| [encode(p[0]), encode(p[1]), encode(p[2]), 255]).collect();
     let png = effectcraft_automation::encode_png(FRAME[0], FRAME[1], rgba, 0).expect("PNG encodes");
     std::fs::write(&path, png).expect("the PNG is written");
+}
+
+#[test]
+fn a_comp_light_replaces_the_key_light_in_a_rendered_composition() {
+    let Some(gpu) = gpu() else { return };
+    spec();
+    let mut session = effectcraft_host::session();
+    session.execute("comp.new", json!({"name": "Lit", "width": 160, "height": 96, "frameRate": 24, "duration": 2})).expect("comp.new");
+    session.execute("layer.newSolid", json!({"name": "Black", "color": "#000000", "width": 160, "height": 96})).expect("layer.newSolid");
+    session.execute("effect.apply", json!({"effect": EFFECT})).expect("effect.apply");
+    let comp = session.active_comp_id().expect("an active comp");
+    let frame = |session: &effectcraft_engine::Session| {
+        let renderer = Renderer::new(&session.project, session.footage.as_ref(), RenderOpts { backend: Backend::Gpu, ..Default::default() });
+        renderer.with_accel(Some(gpu)).comp_frame(comp, Tick::from_seconds_f64(0.0))
+    };
+    let key_lit = frame(&session);
+    let (brightest, lit) = key_lit.data.iter().enumerate().max_by(|a, b| a.1[0].total_cmp(&b.1[0])).expect("a frame");
+    assert!(lit[0] > 0.5 && lit[0] > lit[2] * 2.0, "under the key light the orange model shows on the black solid: {lit:?}");
+    session.execute("layer.newLight", json!({"kind": "Ambient", "name": "Blue", "color": "#0000ff", "intensity": 100.0})).expect("layer.newLight");
+    let comp_lit = frame(&session).data[brightest];
+    assert!(comp_lit[2] > comp_lit[0] && comp_lit[2] > 0.1, "under a blue ambient comp light the same spot is blue: {comp_lit:?}");
 }

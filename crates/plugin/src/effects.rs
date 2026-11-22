@@ -8,7 +8,7 @@ use craft_plugin_host::{
 use effectcraft_engine::effects::dynamic::{
     self, DynamicEffect, DynamicParam, GpuBlend, GpuBytes, GpuCull, GpuDraw, GpuPass, GpuPicture, GpuProgram, GpuSlot, Grid,
 };
-use effectcraft_engine::effects::{Buf, EffectCtx, Image, LayerPixels, MaskShape, util};
+use effectcraft_engine::effects::{Buf, EffectCtx, Image, LayerPixels, MaskShape, SceneLightKind, util};
 use effectcraft_engine::keyframe::Value;
 use effectcraft_engine::project::ParamUi;
 
@@ -176,19 +176,19 @@ impl Host for RenderHost<'_, '_> {
 
     fn scene(&mut self) -> Option<Scene> {
         let scene = self.ctx.env.host?.comp_scene()?;
-        let camera = scene.view.map(|camera| Camera { view: camera.view, position: camera.eye, zoom: camera.zoom });
+        let camera = scene.view.map(|camera| Camera { view: camera.layer_to_camera_rows, position: camera.eye, zoom: camera.zoom });
         let light = |light: &effectcraft_engine::effects::SceneLight| Light {
             kind: match light.kind {
-                0 => LightKind::Parallel,
-                2 => LightKind::Ambient,
-                3 => LightKind::Spot,
-                _ => LightKind::Point,
+                SceneLightKind::Parallel => LightKind::Parallel,
+                SceneLightKind::Ambient => LightKind::Ambient,
+                SceneLightKind::Spot => LightKind::Spot,
+                SceneLightKind::Point => LightKind::Point,
             },
             position: light.pos,
-            direction: light.dir,
+            direction: light.travel_direction,
             colour: light.color,
             intensity: light.intensity,
-            cone_angle: light.cone_angle,
+            cone_angle: light.cone_degrees,
             feather: light.feather,
         };
         Some(Scene { projection: scene.camera, camera_layer: scene.camera_layer, camera, lights: scene.lights.iter().map(light).collect() })

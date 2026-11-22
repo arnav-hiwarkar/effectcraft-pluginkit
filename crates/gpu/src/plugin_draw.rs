@@ -135,7 +135,7 @@ pub(crate) fn check_data(program: &GpuProgram, fits: impl Fn(u32, u32) -> bool) 
     if program.buffers.len() > MAX_BUFFERS || program.textures.len() > MAX_TEXTURES {
         return Err(format!("a GPU plan has at most {MAX_BUFFERS} buffers and {MAX_TEXTURES} textures"));
     }
-    if let Some(odd) = program.buffers.iter().find(|buffer| buffer.bytes.len() % 4 != 0) {
+    if let Some(odd) = program.buffers.iter().find(|buffer| !buffer.bytes.len().is_multiple_of(4)) {
         return Err(format!("buffer {:?} is {} bytes, not a whole number of 4-byte values", odd.name, odd.bytes.len()));
     }
     let bytes: usize = program.buffers.iter().map(|buffer| buffer.bytes.len()).sum();
@@ -172,7 +172,7 @@ pub(crate) fn check_draw(n: usize, draw: &GpuDraw, program: &GpuProgram, scan_in
         program.buffers.get(index).map(|buffer| &*buffer.bytes).ok_or_else(|| format!("pass {n} names {what} buffer {index}, which the plan does not declare"))
     };
     let whole = |bytes: &[u8], stride: usize, what: &str| match bytes.len() / stride {
-        count if count > 0 && bytes.len() % stride == 0 => u32::try_from(count).map_err(|_| format!("pass {n}: too many {what}")),
+        count if count > 0 && bytes.len().is_multiple_of(stride) => u32::try_from(count).map_err(|_| format!("pass {n}: too many {what}")),
         _ => Err(format!("pass {n}: the {what} buffer is {} bytes, not one or more whole {stride}-byte {what}", bytes.len())),
     };
     let vertices = whole(buffer(draw.vertices, "vertex")?, stride(&draw.layout)?, "vertices")?;
@@ -357,13 +357,13 @@ impl<'a> Stage<'a> {
         &mut self,
         e: &mut Enc,
         pass: &GpuPass,
-        draw: &GpuDraw,
         params: &Params,
         src: &GpuImage,
         aux: Option<&GpuImage>,
         target: Target,
     ) -> Result<Option<GpuImage>, String> {
         let g = e.g;
+        let draw = pass.draw.as_ref().ok_or("not a draw pass")?;
         let counts = check_draw(0, draw, self.program, false)?;
         let key = DrawKey {
             kernel: pass.kernel.clone(),

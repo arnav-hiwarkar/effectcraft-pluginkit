@@ -23,7 +23,6 @@ pub struct LightState {
     pub dir: Vec3,
     /// Linear colour × intensity (1.0 = 100%).
     pub color: [f32; 3],
-    /// 1.0 = 100%.
     pub intensity: f64,
     /// Spot cone half-angle (radians) and feather (0..1).
     pub cone_half: f64,
