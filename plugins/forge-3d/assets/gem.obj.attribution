@@ -1,0 +1,7 @@
+asset:        gem.obj
+title:        Forge 3D bundled model: a faceted gem
+author:       EffectCraft contributors
+source:       original work
+license:      MIT OR Apache-2.0
+added:        2026-11-22 by EffectCraft agent (Forge 3D)
+notes:        Generated, not hand-written: a short script (not kept in the repository) wrote the 12 vertices of a unit icosahedron, one raised point above the centre of each of its 20 faces, and the 60 triangles joining them. Not derived from any third-party model.
