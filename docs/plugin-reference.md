@@ -116,7 +116,8 @@ Panels, commands, the CLI and automation all use these two commands.
 | `Param::mask(id, name)` | `cx.index(id)` | index into `cx.masks()` |
 
 A new version of a plugin may add parameters. Effects already applied in a project gain them with their
-defaults when the project opens, or when the plugin starts while the project is open.
+defaults when the project opens, or when the plugin starts while the project is open. The second is one undo step,
+`Update Plug-in Effects`, and marks the project changed.
 
 ### Cx
 
