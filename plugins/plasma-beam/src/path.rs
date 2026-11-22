@@ -1,3 +1,4 @@
+use craft_plugin::math::hypot;
 pub type Point = [f32; 2];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,7 +30,7 @@ impl Span {
 }
 
 fn distance(a: Point, b: Point) -> f32 {
-    (b[0] - a[0]).hypot(b[1] - a[1])
+    hypot(b[0] - a[0], b[1] - a[1])
 }
 
 fn lerp(a: Point, b: Point, t: f32) -> Point {
@@ -119,7 +120,7 @@ fn with_normals(points: &[(Point, f32)], loops: bool) -> Vec<Sample> {
         .map(|i| {
             let (prev, next) = (neighbour(i, true), neighbour(i, false));
             let tangent = [next[0] - prev[0], next[1] - prev[1]];
-            let len = tangent[0].hypot(tangent[1]);
+            let len = hypot(tangent[0], tangent[1]);
             let normal = if len > 1e-6 { [-tangent[1] / len, tangent[0] / len] } else { [0.0, 0.0] };
             Sample { at: points[i].0, normal, distance: points[i].1 }
         })

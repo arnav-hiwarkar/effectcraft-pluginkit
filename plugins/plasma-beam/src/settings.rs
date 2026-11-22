@@ -1,3 +1,4 @@
+use craft_plugin::math::{exp2, ln};
 use std::f32::consts::LOG2_E;
 
 use craft_plugin::Cx;
@@ -109,7 +110,7 @@ impl Settings {
 
 fn visible_radius(band: &GlowBand) -> f32 {
     let peak = band.energy[0] + band.energy[1];
-    band.sigma * (2.0 * (peak / VISIBLE_ENERGY).max(1.0).ln()).sqrt()
+    band.sigma * (2.0 * ln((peak / VISIBLE_ENERGY).max(1.0))).sqrt()
 }
 
 fn bands(look: &Look, read: &Reader, scale: f32) -> [GlowBand; 5] {
@@ -120,7 +121,7 @@ fn bands(look: &Look, read: &Reader, scale: f32) -> [GlowBand; 5] {
     std::array::from_fn(|i| {
         let layer = look.glow[i];
         let tightness = 1.0 - 2.0 * i as f32 / last;
-        let energy = layer.weight * intensity * (bias * tightness).exp2();
+        let energy = layer.weight * intensity * exp2(bias * tightness);
         GlowBand { sigma: layer.radius * spread, energy: [energy * layer.heat, energy * (1.0 - layer.heat)] }
     })
 }

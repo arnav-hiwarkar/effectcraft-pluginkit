@@ -75,12 +75,13 @@ pub fn ln(x: f32) -> f32 {
     exponent * LN_2 + series
 }
 
-/// `x^y` for finite `x >= 0` and any `y` whose result lies in `1e-37..=1e37`. `x <= 0` is treated as the smallest
-/// normal number, so `pow(0.0, y)` is `0` for any `y > 0` up to rounding at `1e-38`.
+/// `x^y` for finite `x >= 0` and any `y` whose result lies in `1e-37..=1e37`. `pow(0.0, y)` is exactly `0` for
+/// `y > 0`; a negative `x` is treated like `0`.
 /// Largest relative error against `f64::powf` for `x` in `1e-3..=1e3`, `y` in `-8..=8`: 2e-5.
 #[inline(always)]
 pub fn pow(x: f32, y: f32) -> f32 {
-    exp2(y * log2(x))
+    let power = exp2(y * log2(x));
+    if x <= 0.0 && y > 0.0 { 0.0 } else { power }
 }
 
 #[inline(always)]
@@ -255,7 +256,9 @@ mod tests {
         assert!(error < 2.0e-5, "{error}");
         assert_eq!(pow(2.0, 10.0), 1024.0);
         assert_eq!(pow(5.0, 0.0), 1.0);
-        assert!(pow(0.0, 2.0) < 1e-30);
+        assert_eq!(pow(0.0, 2.0), 0.0);
+        assert_eq!(pow(-3.0, 0.5), 0.0);
+        assert_eq!(pow(0.0, 0.0), 1.0);
     }
 
     #[test]
