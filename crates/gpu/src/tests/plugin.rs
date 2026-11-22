@@ -239,3 +239,16 @@ fn a_plugin_texture_cached_under_one_size_is_uploaded_again_under_another() {
         .collect();
     assert_eq!(sizes, [[16, 4], [8, 8]]);
 }
+
+#[test]
+fn the_sixty_fifth_host_module_evicts_only_the_least_recently_used() {
+    gpu();
+    let Some(g) = crate::Gpu::headless() else { return };
+    let source = |i: usize| format!("@compute @workgroup_size(16, 16)\nfn craft_probe_{i}(@builtin(global_invocation_id) id: vec3<u32>) {{}}\n");
+    let build = |i: usize| g.ctx.host_pipeline(&source(i), &format!("craft_probe_{i}")).expect("the module builds");
+    (0..64).for_each(|i| drop(build(i)));
+    drop(build(0));
+    drop(build(64));
+    let kept: Vec<bool> = [0, 1, 2, 64].iter().map(|i| g.ctx.host_module_kept(&source(*i))).collect();
+    assert_eq!(kept, [true, false, true, true], "module 1 was used least recently");
+}

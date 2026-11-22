@@ -373,6 +373,22 @@ fn fused_pointwise_passes_give_exactly_what_they_give_one_by_one() {
 }
 
 #[test]
+fn a_fused_loop_reads_an_overwritten_image_and_one_read_twice_as_written_at_that_point() {
+    let source = vec![[0.25, 0.5, 0.75, 1.0]; (SIZE[0] * SIZE[1]) as usize];
+    let mut plan = GpuPlan::new();
+    let [a, b] = [plan.scratch(SIZE), plan.scratch(SIZE)];
+    let double = [[2.0, 0.0, 0.0, 0.0], [0.0, 2.0, 0.0, 0.0], [0.0, 0.0, 2.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    let plan = plan
+        .pass(GpuPass::matrix(GpuImage::Source, a, double))
+        .pass(GpuPass::blend_images(a, GpuImage::Source, b, BlendMode::Add, 1.0))
+        .pass(GpuPass::matrix(a, a, [[0.5, 0.0, 0.0, 0.0], [0.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 0.5]]))
+        .pass(GpuPass::blend_images(b, a, GpuImage::Output, BlendMode::Subtract, 1.0));
+    assert_eq!(steps(&plan, SIZE).len(), 1, "one loop");
+    let out = fused(&plan, &source);
+    assert!(out.iter().all(|p| *p == [0.5, 1.0, 1.5, 1.5]), "{:?}", out[0]);
+}
+
+#[test]
 fn a_fused_loop_ends_where_a_value_is_read_later_or_a_third_image_is_needed() {
     let mut plan = GpuPlan::new();
     let [a, b, c, d] = [plan.scratch(SIZE), plan.scratch(SIZE), plan.scratch(SIZE), plan.scratch(SIZE)];

@@ -124,17 +124,19 @@ struct PluginShader {
 struct HostModule {
     module: Result<wgpu::ShaderModule, String>,
     pipelines: HashMap<String, Result<wgpu::ComputePipeline, String>>,
+    used: u64,
 }
 
 struct PluginShaders {
     shaders: HashMap<String, PluginShader>,
     host: HashMap<String, HostModule>,
+    host_clock: u64,
     generation: u64,
 }
 
 impl Default for PluginShaders {
     fn default() -> Self {
-        PluginShaders { shaders: HashMap::new(), host: HashMap::new(), generation: u64::MAX }
+        PluginShaders { shaders: HashMap::new(), host: HashMap::new(), host_clock: 0, generation: u64::MAX }
     }
 }
 
@@ -1651,19 +1653,29 @@ impl GpuContext {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn host_module_kept(&self, wgsl: &str) -> bool {
+        self.plugin_shaders.lock().is_ok_and(|plugins| plugins.host.contains_key(wgsl))
+    }
+
     pub(crate) fn host_pipeline(&self, wgsl: &str, entry: &str) -> Result<wgpu::ComputePipeline, String> {
         let mut plugins = self.plugin_shaders.lock().map_err(|_| "the plugin shader cache is poisoned".to_string())?;
+        plugins.host_clock += 1;
+        let clock = plugins.host_clock;
         if !plugins.host.contains_key(wgsl) {
-            if plugins.host.len() >= MAX_HOST_MODULES {
-                plugins.host.clear();
+            if plugins.host.len() >= MAX_HOST_MODULES
+                && let Some(oldest) = plugins.host.iter().min_by_key(|(_, kept)| kept.used).map(|(key, _)| key.clone())
+            {
+                plugins.host.remove(&oldest);
             }
             let source: String = PLUGIN_PRELUDE.iter().copied().chain([HOST_KERNELS, wgsl]).collect();
             let module = init_resource(&self.device, "host kernels", || {
                 self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("host kernels"), source: wgpu::ShaderSource::Wgsl(source.into()) })
             });
-            plugins.host.insert(wgsl.to_string(), HostModule { module, pipelines: HashMap::new() });
+            plugins.host.insert(wgsl.to_string(), HostModule { module, pipelines: HashMap::new(), used: clock });
         }
         let host = plugins.host.get_mut(wgsl).ok_or("the host kernel module was not kept")?;
+        host.used = clock;
         let module = host.module.clone()?;
         if let Some(built) = host.pipelines.get(entry) {
             return built.clone();

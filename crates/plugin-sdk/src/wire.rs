@@ -755,7 +755,8 @@ impl GpuPass {
     }
 
     pub fn host(kernel: HostKernel, src: GpuImage, out: GpuImage) -> Self {
-        GpuPass { host: Some(kernel.clone()), ..GpuPass::new(kernel.name(), src, out) }
+        let name = kernel.name();
+        GpuPass { host: Some(kernel), ..GpuPass::new(name, src, out) }
     }
 
     pub fn blur(src: GpuImage, out: GpuImage, radius: [f32; 2]) -> Self {
