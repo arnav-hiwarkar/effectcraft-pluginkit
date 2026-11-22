@@ -190,6 +190,10 @@ fn plugin() -> Plugin {
 
 The panel appears in **Window ▸ Plug-ins**. Its tab docks like the app's own panels.
 
+A widget is known by its label and how many times that label came before it, and a click arrives on the
+next call. Draw each item of a list that can change inside `ui.keyed(item_id, |ui| …)`, so a click on
+one item's "Delete" still reaches that item when another item is added above it.
+
 ### Show images
 
 Upload RGBA pixels once under a key, then show them by key. Uploading again under the same key replaces
