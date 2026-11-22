@@ -1,7 +1,8 @@
 # GPU effects
 
 A plugin effect can run on the GPU. The plugin ships WGSL compute kernels and, for each frame, returns
-a plan: a short list of passes, each naming a kernel, the images it reads and the image it writes. The
+a plan: a short list of passes, each naming a kernel, the images it reads and the image it writes. A pass
+can also draw triangles, with a depth buffer, see [Draw passes](#draw-passes). The
 app compiles the WGSL once, runs the passes on its own textures, and never copies the frame into the
 plugin's sandbox.
 
@@ -36,13 +37,14 @@ A pass reads `src` and, optionally, `aux`, and writes `out`. Each names one of:
 | `GpuImage::Source` | The effect's input. Read only. |
 | `GpuImage::Output` | The effect's result, the size of the frame. The last pass to write it gives the result. |
 | `plan.scratch([w, h])` | A working image of that size, declared on the plan. |
+| `plan.texture(key, [w, h])` | A picture the plugin stored with `host::cache_put(key, bytes)`: RGBA, four little-endian `f32` for each pixel, row 0 at the top. Read only. |
 
 `layout` runs before the frame is padded, so there `cx.size`, `cx.offset` and point parameters describe
 the frame without padding. The passes run on the padded frame. Build the plan from `cx.padded(padding)`,
 which is the context `render` gets: its `size` includes the padding and its `offset` and points are
 moved by it. Read sizes in the kernel with `out_size()` and `src_size()` instead of assuming them.
 
-Values reach a pass through `.floats(&[..])` (up to 48) and `.uints(&[..])` (up to 16). A kernel reads
+Values reach a pass through `.floats(&[..])` (up to 96) and `.uints(&[..])` (up to 16). A kernel reads
 value `i` with `pass_f(i)` or `pass_u(i)`; values the pass did not give read as 0. Scale distances by
 `cx.scale` as the CPU render does.
 
@@ -54,8 +56,101 @@ The app checks every plan before running it and renders the frame on the CPU whe
 - at most 16 scratch images, each at least 1×1 and at most twice the padded frame in each axis, and
   together at most 8 times the padded frame's area;
 - a pass reads only `Source` or an image an earlier pass wrote, never the image it writes;
-- no pass writes `Source`, and some pass writes `Output`;
-- at most 48 floats and 16 uints per pass.
+- no pass writes `Source` or a texture, and some pass writes `Output`;
+- at most 96 floats and 16 uints per pass;
+- at most 16 textures, each as many bytes as its size needs, together at most 16 777 216 pixels;
+- the limits on draw passes below.
+
+## Draw passes
+
+A draw pass rasterises triangles into its `out` image instead of running a compute kernel.
+
+```rust
+let mut plan = GpuPlan::new();
+let mesh = plan.buffer(GpuData::Cache("my-mesh/vertices".into()));
+let triangles = plan.buffer(GpuData::Cache("my-mesh/indices".into()));
+let copies = plan.buffer(GpuData::Floats(instance_matrices));
+let draw = GpuPass::draw("mesh", GpuImage::Output)
+    .vertices(mesh, &[3, 3, 2])
+    .indices(triangles)
+    .instances(copies, &[4, 4, 4, 4])
+    .depth()
+    .clear()
+    .blend(Blend::Over)
+    .floats(&view_projection);
+```
+
+A buffer is one of:
+
+| Data | What it is |
+|---|---|
+| `GpuData::Cache(key)` | Bytes the plugin stored with `host::cache_put(key, bytes)`: little-endian `f32` for vertices and instances, `u32` for indices. Store a mesh once and name it in every frame's plan; the app uploads it to the GPU again only when the bytes change. |
+| `GpuData::Floats(values)` | Values sent with the plan. Right for a few hundred numbers that change each frame. |
+| `GpuData::Indices(values)` | Indices sent with the plan. |
+
+| Call | Meaning |
+|---|---|
+| `.vertices(buffer, &[3, 3, 2])` | The vertex buffer and how many floats each attribute has. The attributes arrive at `@location(0)`, `@location(1)` and so on. |
+| `.indices(buffer)` | Draw indexed triangles. Without it, every three vertices are a triangle. |
+| `.instances(buffer, &[4, 4, 4, 4])` | Draw one copy for each entry of this buffer. Its attributes take the locations after the vertex attributes. |
+| `.count(n)` | Draw only the first `n` indices, or vertices when there are no indices. |
+| `.depth()` | Test and write the plan's depth buffer. A fragment is kept when its depth is greater than or equal to what is there, so nearer means larger: 1 at the near plane and 0 far away. `Scene::view_projection` gives this depth. |
+| `.blend(Blend::Over)` | How a fragment meets what is there: `Replace` (the default), `Over` or `Add`. Colours are premultiplied. |
+| `.cull(Cull::Back)` | Skip triangles facing away. Counter-clockwise triangles in clip space face front. The default draws both sides. |
+| `.clear()` | Start from a transparent image. Without it the pass draws over what `out` holds. |
+| `.src(image)`, `.aux(image)` | Images the shaders can read, as in a compute pass. `src` is `Source` unless you set it. |
+
+A draw pass with the kernel name `mesh` runs the entry points `vs_mesh` and `fs_mesh` of the effect's WGSL.
+They read `P`, `src` and `aux` through the same prelude functions as a compute kernel (`pass_f`, `pass_u`,
+`texel`, `sample_uv`, `src_size`, `aux_size`). They cannot use `out`, `out_size`, `inside_out`, `out_uv` or
+`store`; a fragment shader returns its colour at `@location(0)`.
+
+```wgsl
+struct MeshVertex {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) normal: vec3<f32>,
+}
+
+@vertex
+fn vs_mesh(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>,
+           @location(3) m0: vec4<f32>, @location(4) m1: vec4<f32>, @location(5) m2: vec4<f32>, @location(6) m3: vec4<f32>) -> MeshVertex {
+    let model = mat4x4<f32>(m0, m1, m2, m3);
+    let camera = mat4x4<f32>(
+        vec4<f32>(pass_f(0u), pass_f(1u), pass_f(2u), pass_f(3u)), vec4<f32>(pass_f(4u), pass_f(5u), pass_f(6u), pass_f(7u)),
+        vec4<f32>(pass_f(8u), pass_f(9u), pass_f(10u), pass_f(11u)), vec4<f32>(pass_f(12u), pass_f(13u), pass_f(14u), pass_f(15u)));
+    var v: MeshVertex;
+    v.clip = camera * model * vec4<f32>(position, 1.0);
+    v.normal = (model * vec4<f32>(normal, 0.0)).xyz;
+    return v;
+}
+
+@fragment
+fn fs_mesh(v: MeshVertex) -> @location(0) vec4<f32> {
+    let lit = max(dot(normalize(v.normal), vec3<f32>(0.0, 0.0, -1.0)), 0.0);
+    return vec4<f32>(vec3<f32>(lit), 1.0);
+}
+```
+
+A shader may leave out an attribute the layout declares, as this one leaves out the texture coordinate at
+location 2.
+
+The plan has one depth buffer. The first pass with `.depth()` clears it, and every pass that uses it must
+draw into images of one size. Draw passes render in 16-bit float and the result is copied into the working
+image, so a colour above 65504 is clipped. Passes that follow each other into the same image, without
+`.clear()`, share one render target with no copy in between.
+
+To match the comp's 3D layers, declare `.reads_scene()` and pass `cx.scene()?.view_projection(cx)` to the
+vertex shader. Model positions are then layer pixels, see [Scene](plugin-reference.md#scene).
+
+The app checks draw passes with the rest of the plan:
+
+- at most 64 buffers, each a whole number of 4-byte values, together at most 256 MiB;
+- a buffer has 1 to 8 attributes of 1 to 4 floats, and holds one or more whole vertices or instances;
+- every index a pass draws is below its vertex count, and `count` is within the buffer;
+- every buffer and texture a pass names is declared, and its cache key holds bytes.
+
+When a plan with draw passes is declined, the app calls `render`. An effect that cannot draw the same
+picture on the CPU should leave the frame as it is.
 
 ## The WGSL side
 
@@ -84,7 +179,7 @@ These prelude functions are stable:
 |---|---|
 | `out_size()`, `src_size()`, `aux_size()` | The image's size in pixels, `vec2<u32>`. |
 | `inside_out(p)` | Whether pixel `p` lies inside `out`. |
-| `pass_f(i)`, `pass_u(i)` | Value `i` of the pass's floats or uints. |
+| `pass_f(i)`, `pass_u(i)` | Value `i` of the pass's floats (0 to 95) or uints (0 to 15). |
 | `texel(t, p)` | Pixel `p: vec2<i32>` of `src` or `aux`; transparent outside the image. |
 | `out_uv(p)` | The centre of output pixel `p` in 0..1 coordinates. |
 | `sample_uv(t, uv)` | `t` sampled bilinearly at 0..1 coordinates, edge pixels repeated. |
@@ -223,4 +318,6 @@ impl Effect for Soften {
 `cx.size[0]`.
 
 The probe plugin in `crates/plugin-host/tests/probe` carries both effects with CPU renders that match
-their kernels, and `crates/plugin/tests/it/gpu.rs` checks that the two paths agree.
+their kernels, and `crates/plugin/tests/it/gpu.rs` checks that the two paths agree. `plugins/forge-3d` is a
+whole effect built on draw passes: indexed meshes from the cache, instancing, depth, and the comp's camera
+and lights.

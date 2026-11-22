@@ -26,7 +26,7 @@ fn inside_out(p: vec2<u32>) -> bool {
 
 // Value `i` of the pass's `floats` / `uints`; 0 past the values the pass gave.
 fn pass_f(i: u32) -> f32 {
-    return select(0.0, P.f[min(i, 47u) / 4u][i % 4u], i < 48u);
+    return select(0.0, P.f[min(i, 95u) / 4u][i % 4u], i < 96u);
 }
 
 fn pass_u(i: u32) -> u32 {
@@ -51,4 +51,20 @@ fn sample_uv(t: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
 
 fn store(p: vec2<u32>, c: vec4<f32>) {
     textureStore(out, vec2<i32>(p), c);
+}
+
+@compute @workgroup_size(16, 16)
+fn craft_resolve(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    store(id.xy, texel(src, vec2<i32>(id.xy)));
+}
+
+@vertex
+fn vs_craft_blit(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    return vec4<f32>(f32(i32(i & 1u) * 4 - 1), f32(i32(i >> 1u) * 4 - 1), 0.0, 1.0);
+}
+
+@fragment
+fn fs_craft_blit(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+    return texel(src, vec2<i32>(p.xy));
 }

@@ -85,6 +85,7 @@ mod inpaint;
 mod memcap;
 mod ops;
 mod particles;
+mod plugin_draw;
 mod readback;
 mod upload;
 mod walk;

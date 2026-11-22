@@ -262,7 +262,25 @@ impl Layout {
 pub struct GpuPlan {
     #[serde(default)]
     pub images: Vec<[u32; 2]>,
+    #[serde(default)]
+    pub buffers: Vec<GpuData>,
+    #[serde(default)]
+    pub textures: Vec<GpuTexture>,
     pub passes: Vec<GpuPass>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuData {
+    Cache(String),
+    Floats(Vec<f32>),
+    Indices(Vec<u32>),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct GpuTexture {
+    pub key: String,
+    pub size: [u32; 2],
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -276,6 +294,48 @@ pub struct GpuPass {
     pub f: Vec<f32>,
     #[serde(default)]
     pub u: Vec<u32>,
+    #[serde(default)]
+    pub draw: Option<Draw>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct Draw {
+    pub vertices: u32,
+    pub layout: Vec<u32>,
+    #[serde(default)]
+    pub indices: Option<u32>,
+    #[serde(default)]
+    pub instances: Option<u32>,
+    #[serde(default)]
+    pub instance_layout: Vec<u32>,
+    #[serde(default)]
+    pub count: Option<u32>,
+    #[serde(default)]
+    pub depth: bool,
+    #[serde(default)]
+    pub blend: Blend,
+    #[serde(default)]
+    pub cull: Cull,
+    #[serde(default)]
+    pub clear: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Blend {
+    #[default]
+    Replace,
+    Over,
+    Add,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Cull {
+    #[default]
+    None,
+    Back,
+    Front,
 }
 
 impl GpuPlan {
@@ -288,6 +348,16 @@ impl GpuPlan {
         GpuImage::Scratch(self.images.len().saturating_sub(1) as u32)
     }
 
+    pub fn buffer(&mut self, data: GpuData) -> u32 {
+        self.buffers.push(data);
+        self.buffers.len().saturating_sub(1) as u32
+    }
+
+    pub fn texture(&mut self, key: &str, size: [u32; 2]) -> GpuImage {
+        self.textures.push(GpuTexture { key: key.to_string(), size });
+        GpuImage::Texture(self.textures.len().saturating_sub(1) as u32)
+    }
+
     pub fn pass(mut self, pass: GpuPass) -> Self {
         self.passes.push(pass);
         self
@@ -296,7 +366,16 @@ impl GpuPlan {
 
 impl GpuPass {
     pub fn new(kernel: &str, src: GpuImage, out: GpuImage) -> Self {
-        GpuPass { kernel: kernel.to_string(), src, aux: None, out, f: Vec::new(), u: Vec::new() }
+        GpuPass { kernel: kernel.to_string(), src, aux: None, out, f: Vec::new(), u: Vec::new(), draw: None }
+    }
+
+    pub fn draw(kernel: &str, out: GpuImage) -> Self {
+        GpuPass { draw: Some(Draw::default()), ..GpuPass::new(kernel, GpuImage::Source, out) }
+    }
+
+    pub fn src(mut self, image: GpuImage) -> Self {
+        self.src = image;
+        self
     }
 
     pub fn aux(mut self, image: GpuImage) -> Self {
@@ -313,6 +392,43 @@ impl GpuPass {
         self.u = values.to_vec();
         self
     }
+
+    fn drawing(mut self, set: impl FnOnce(&mut Draw)) -> Self {
+        set(self.draw.get_or_insert_with(Draw::default));
+        self
+    }
+
+    pub fn vertices(self, buffer: u32, layout: &[u32]) -> Self {
+        self.drawing(|draw| (draw.vertices, draw.layout) = (buffer, layout.to_vec()))
+    }
+
+    pub fn indices(self, buffer: u32) -> Self {
+        self.drawing(|draw| draw.indices = Some(buffer))
+    }
+
+    pub fn instances(self, buffer: u32, layout: &[u32]) -> Self {
+        self.drawing(|draw| (draw.instances, draw.instance_layout) = (Some(buffer), layout.to_vec()))
+    }
+
+    pub fn count(self, count: u32) -> Self {
+        self.drawing(|draw| draw.count = Some(count))
+    }
+
+    pub fn depth(self) -> Self {
+        self.drawing(|draw| draw.depth = true)
+    }
+
+    pub fn blend(self, blend: Blend) -> Self {
+        self.drawing(|draw| draw.blend = blend)
+    }
+
+    pub fn cull(self, cull: Cull) -> Self {
+        self.drawing(|draw| draw.cull = cull)
+    }
+
+    pub fn clear(self) -> Self {
+        self.drawing(|draw| draw.clear = true)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -321,6 +437,7 @@ pub enum GpuImage {
     Source,
     Output,
     Scratch(u32),
+    Texture(u32),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -389,14 +506,74 @@ pub struct Scene {
     pub projection: Option<[[f64; 4]; 3]>,
     #[serde(default)]
     pub camera_layer: bool,
+    #[serde(default)]
+    pub camera: Option<Camera>,
+    #[serde(default)]
+    pub lights: Vec<Light>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Camera {
+    pub view: [[f64; 4]; 4],
+    pub position: [f64; 3],
+    pub zoom: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Light {
+    pub kind: LightKind,
+    pub position: [f64; 3],
+    pub direction: [f64; 3],
+    pub colour: [f32; 3],
+    pub intensity: f32,
+    pub cone_angle: f32,
+    pub feather: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LightKind {
+    Ambient,
+    #[default]
+    Point,
+    Spot,
+    Parallel,
 }
 
 impl Scene {
+    pub const NEAR: f64 = 1.0;
+
+    pub fn centred(layer_size: [f64; 2]) -> Scene {
+        let zoom = (layer_size[0] * 50.0 / 36.0).max(1.0);
+        let centre = [layer_size[0] / 2.0, layer_size[1] / 2.0];
+        let projection = [[1.0, 0.0, centre[0] / zoom, 0.0], [0.0, 1.0, centre[1] / zoom, 0.0], [0.0, 0.0, 1.0 / zoom, 1.0]];
+        let view = [[1.0, 0.0, 0.0, -centre[0]], [0.0, 1.0, 0.0, -centre[1]], [0.0, 0.0, 1.0, zoom], [0.0, 0.0, 0.0, 1.0]];
+        let camera = Camera { view, position: [centre[0], centre[1], -zoom], zoom };
+        Scene { projection: Some(projection), camera_layer: false, camera: Some(camera), lights: Vec::new() }
+    }
+
     pub fn project(&self, point: [f64; 3]) -> Option<[f64; 2]> {
         let m = self.projection?;
         let row = |r: [f64; 4]| r[0] * point[0] + r[1] * point[1] + r[2] * point[2] + r[3];
         let w = row(m[2]);
         (w > 1e-9).then(|| [row(m[0]) / w, row(m[1]) / w])
+    }
+
+    pub fn view_projection(&self, cx: &RenderCx) -> Option<[f32; 16]> {
+        let [x, y, w] = self.projection?;
+        let [width, height] = [f64::from(cx.size[0].max(1)), f64::from(cx.size[1].max(1))];
+        let steepness = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt();
+        let depth = match self.camera {
+            Some(camera) if steepness <= w[3].abs() * 1e-12 => std::array::from_fn(|i| w[3] * (if i == 3 { 0.5 } else { 0.0 } - camera.view[2][i] * 1e-6)),
+            _ => [0.0, 0.0, 0.0, Self::NEAR * steepness],
+        };
+        let rows: [[f64; 4]; 4] = [
+            std::array::from_fn(|i| 2.0 * (x[i] * cx.scale + cx.offset[0] * w[i]) / width - w[i]),
+            std::array::from_fn(|i| w[i] - 2.0 * (y[i] * cx.scale + cx.offset[1] * w[i]) / height),
+            depth,
+            w,
+        ];
+        Some(std::array::from_fn(|i| rows[i % 4][i / 4] as f32))
     }
 }
 

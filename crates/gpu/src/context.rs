@@ -113,6 +113,7 @@ struct PluginShader {
     revision: u64,
     module: Result<wgpu::ShaderModule, String>,
     pipelines: HashMap<String, Result<wgpu::ComputePipeline, String>>,
+    draws: HashMap<crate::plugin_draw::DrawKey, Result<wgpu::RenderPipeline, String>>,
     reported: BTreeSet<String>,
 }
 
@@ -645,12 +646,12 @@ impl Pool {
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Params {
     pub u: [[u32; 4]; 4],
-    pub f: [[f32; 4]; 12],
+    pub f: [[f32; 4]; 24],
 }
 
 impl Params {
-    fn bytes(&self) -> Vec<u8> {
-        let mut v = Vec::with_capacity(256);
+    pub(crate) fn bytes(&self) -> Vec<u8> {
+        let mut v = Vec::with_capacity(448);
         for r in &self.u {
             for x in r {
                 v.extend_from_slice(&x.to_le_bytes());
@@ -699,12 +700,13 @@ pub struct GpuContext {
     /// leaves its effects to the CPU.
     effect_pipelines: EffectPipelines,
     plugin_shaders: Mutex<HashMap<String, PluginShader>>,
+    pub(crate) plugin_draw: crate::plugin_draw::Store,
     display_bgl: wgpu::BindGroupLayout,
     display: wgpu::ComputePipeline,
     /// The display texture's next mip level from the one above (`display.wgsl` `mip`).
     display_mip: wgpu::ComputePipeline,
     dummy: wgpu::Texture,
-    dummy_tex: wgpu::TextureView,
+    pub(crate) dummy_tex: wgpu::TextureView,
     dummy_buf: wgpu::Buffer,
     uploads: Mutex<Uploads>,
     /// Uploaded footage pictures, shared by the layers that show them (see [`crate::upload`]).
@@ -1029,6 +1031,7 @@ impl GpuContext {
             unavailable,
             effect_pipelines,
             plugin_shaders: Default::default(),
+            plugin_draw: Default::default(),
             display_bgl,
             display,
             display_mip,
@@ -1524,29 +1527,58 @@ impl GpuContext {
         built.as_ref().ok()
     }
 
-    pub(crate) fn plugin_pipelines(&self, effect: &str, revision: u64, wgsl: &str, kernels: &[&str]) -> Result<Vec<wgpu::ComputePipeline>, String> {
+    fn plugin_shader<T>(
+        &self,
+        effect: &str,
+        revision: u64,
+        wgsl: &str,
+        with: impl FnOnce(&mut PluginShader, &wgpu::ShaderModule) -> Result<T, String>,
+    ) -> Result<T, String> {
         let mut shaders = self.plugin_shaders.lock().map_err(|_| "the plugin shader cache is poisoned".to_string())?;
         let compile = || {
             let source: String = PLUGIN_PRELUDE.iter().copied().chain([wgsl]).collect();
             let module = init_resource(&self.device, effect, || {
                 self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(effect), source: wgpu::ShaderSource::Wgsl(source.into()) })
             });
-            PluginShader { revision, module, pipelines: HashMap::new(), reported: BTreeSet::new() }
+            PluginShader { revision, module, pipelines: HashMap::new(), draws: HashMap::new(), reported: BTreeSet::new() }
         };
         let shader = shaders.entry(effect.to_string()).or_insert_with(compile);
         if shader.revision != revision {
             *shader = compile();
         }
         let module = shader.module.clone()?;
-        let mut built = Vec::with_capacity(kernels.len());
-        for kernel in kernels {
-            if !shader.pipelines.contains_key(*kernel) && shader.pipelines.len() >= MAX_PLUGIN_KERNELS {
-                return Err(format!("more than {MAX_PLUGIN_KERNELS} kernel names"));
+        with(shader, &module)
+    }
+
+    pub(crate) fn plugin_pipelines(&self, effect: &str, revision: u64, wgsl: &str, kernels: &[&str]) -> Result<Vec<wgpu::ComputePipeline>, String> {
+        self.plugin_shader(effect, revision, wgsl, |shader, module| {
+            let mut built = Vec::with_capacity(kernels.len());
+            for kernel in kernels {
+                if !shader.pipelines.contains_key(*kernel) && shader.pipelines.len() >= MAX_PLUGIN_KERNELS {
+                    return Err(format!("more than {MAX_PLUGIN_KERNELS} kernel names"));
+                }
+                let pipeline =
+                    shader.pipelines.entry(kernel.to_string()).or_insert_with(|| build_pipeline(&self.device, module, &self.layout, kernel)).clone()?;
+                built.push(pipeline);
             }
-            let pipeline = shader.pipelines.entry(kernel.to_string()).or_insert_with(|| build_pipeline(&self.device, &module, &self.layout, kernel)).clone()?;
-            built.push(pipeline);
-        }
-        Ok(built)
+            Ok(built)
+        })
+    }
+
+    pub(crate) fn plugin_draw_pipeline(
+        &self,
+        effect: &str,
+        revision: u64,
+        wgsl: &str,
+        key: &crate::plugin_draw::DrawKey,
+    ) -> Result<wgpu::RenderPipeline, String> {
+        self.plugin_shader(effect, revision, wgsl, |shader, module| {
+            if !shader.draws.contains_key(key) && shader.draws.len() >= MAX_PLUGIN_KERNELS {
+                return Err(format!("more than {MAX_PLUGIN_KERNELS} kinds of draw pass"));
+            }
+            let build = || init_resource(&self.device, &key.kernel, || crate::plugin_draw::pipeline(self, module, key));
+            shader.draws.entry(key.clone()).or_insert_with(build).clone()
+        })
     }
 
     pub(crate) fn plugin_declined(&self, effect: &str, why: &str) {
@@ -1633,6 +1665,7 @@ impl GpuContext {
             unavailable,
             effect_pipelines,
             plugin_shaders: Default::default(),
+            plugin_draw: Default::default(),
             display_bgl: self.display_bgl.clone(),
             display: self.display.clone(),
             display_mip: self.display_mip.clone(),

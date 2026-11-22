@@ -8,7 +8,7 @@
 
 struct Params {
     u: array<vec4<u32>, 4>,
-    f: array<vec4<f32>, 12>,
+    f: array<vec4<f32>, 24>,
 }
 
 @group(0) @binding(0) var<uniform> P: Params;

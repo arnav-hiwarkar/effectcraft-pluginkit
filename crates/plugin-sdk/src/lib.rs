@@ -15,8 +15,8 @@ pub use wire::*;
 pub mod prelude {
     pub use crate::host;
     pub use crate::{
-        Canvas, Cx, Effect, EffectSpec, Error, Frame, GpuImage, GpuPass, GpuPlan, Image, Layout, MaskPath, Paint, Panel, Param, Pixel, Plugin, PointerPhase,
-        Result, Root, Ui,
+        Blend, Camera, Canvas, Cull, Cx, Effect, EffectSpec, Error, Frame, GpuData, GpuImage, GpuPass, GpuPlan, Image, Layout, Light, LightKind, MaskPath,
+        Paint, Panel, Param, Pixel, Plugin, PointerPhase, Result, Root, Scene, Ui,
     };
 }
 

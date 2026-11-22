@@ -93,12 +93,32 @@ The render cache uses the three declarations. An effect that omits one shows sta
 | `cx.layer_at("matte", comp_time)` | The same at another time. |
 | `cx.source_at(layer_time)` | This effect's input at another time. Declare `.reads_other_frames()`. |
 | `cx.masks()` | The layer's masks as polylines in frame pixels. |
-| `cx.scene()` | The comp camera as a projection matrix. Declare `.reads_scene()`. |
+| `cx.scene()` | The comp's camera and lights, see [Scene](#scene). Declare `.reads_scene()`. |
 
 These calls also work in `layout`, for example to size the padding from the masks.
 
 `cx.layer`, `cx.layer_at`, and `cx.source_at` return `Option<Image>`. `Image` has `width`, `height`,
 `pixels()`, `at(x, y)`, and bilinear `sample(x, y)`.
+
+### Scene
+
+`cx.scene()` returns `None` when the app cannot tell, for example in a render with no comp. Every
+position and direction is in the layer's own pixels: x to the right, y down, z away from the viewer,
+with the layer on the plane z = 0. They do not change with `cx.scale` or padding.
+
+| Field or call | Meaning |
+|---|---|
+| `scene.projection` | Rows X, Y and W of the camera: a layer point `[x, y, z, 1]` shows at layer pixel `X / W`, `Y / W`. |
+| `scene.project(point)` | That layer pixel, or `None` behind the camera. |
+| `scene.view_projection(cx)` | The same camera as a column-major 4x4 clip matrix for a draw pass on a frame of `cx.size`. It lands a point on the pixel `project` gives, times `cx.scale`, plus `cx.offset`. Depth is 1 at `Scene::NEAR` (one layer pixel from the camera) and falls towards 0 with distance, which is what the depth buffer expects. |
+| `scene.camera_layer` | The camera is a camera layer, not the comp's default view. |
+| `scene.camera` | `view` (rows of the layer-to-camera matrix; camera space has z along the view), `position`, and `zoom` (the distance in pixels at which one unit covers one pixel). The app has no near or far distance. |
+| `scene.lights` | Every light layer that is switched on. |
+| `Scene::centred(cx.layer_size)` | A camera facing the middle of the layer that leaves the plane z = 0 where it is. Use it when `cx.scene()` is `None`. |
+
+A `Light` has `kind` (`Ambient`, `Point`, `Spot`, `Parallel`), `position`, `direction` (the way the
+light travels, unit length), `colour`, `intensity` (1 is 100 %), `cone_angle` (the full angle in
+degrees) and `feather` (0 to 1). Light a surface with `colour` times `intensity`.
 
 ### Frame
 
