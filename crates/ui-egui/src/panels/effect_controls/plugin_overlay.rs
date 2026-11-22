@@ -153,14 +153,16 @@ pub(super) fn effect_overlay(
             resp.request_focus();
             ui.data_mut(|d| d.insert_temp(id, Grab { shown: shown.clone(), from, pass }));
         }
-        let grab = ui.data(|d| d.get_temp::<Grab>(id)).filter(|grab| resp.dragged() && grab.pass + 1 >= pass && shown.continues(&grab.shown, index));
+        let grab = ui
+            .data(|d| d.get_temp::<Grab>(id))
+            .filter(|grab| (resp.dragged() || resp.drag_stopped()) && grab.pass + 1 >= pass && shown.continues(&grab.shown, index));
         match grab {
             Some(grab) => {
                 ui.data_mut(|d| d.insert_temp(id, Grab { pass, ..grab.clone() }));
                 if let Some(now) = resp.interact_pointer_pos().and_then(pointer_in_layer) {
                     let key = gesture_key(ui, id, resp.drag_started());
                     let delta = [now[0] - grab.from[0], now[1] - grab.from[1]];
-                    let commands = app.plugin_ui.panels.drag(&app.session, &grab.shown, index, delta, g, &key);
+                    let commands = app.plugin_ui.panels.drag(&grab.shown, index, delta, g, &key);
                     push(app, actions, commands);
                 }
             }
@@ -189,7 +191,7 @@ pub(super) fn effect_overlay(
             });
             for nudge in nudges {
                 let key = gesture_key(ui, id.with("nudge"), true);
-                let commands = app.plugin_ui.panels.drag(&app.session, &shown, index, nudge, g, &key);
+                let commands = app.plugin_ui.panels.drag(&shown, index, nudge, g, &key);
                 push(app, actions, commands);
             }
         }

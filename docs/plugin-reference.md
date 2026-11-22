@@ -446,8 +446,10 @@ Handles are in layer pixels. Each is bound to what a drag changes:
 
 `named(text)` names the last handle for its tooltip and screen readers; the default is the parameter's
 name. Every drag of one handle is one undo step; on a keyframed parameter it sets the key at the time the
-drag was made. A `custom` handle's `drag` runs on the worker; the value it returns is set when it
-arrives, and a drag of a reloaded plugin stops. The focused handle moves 1 pixel per arrow key, 10 with Shift, each press one undo step. A point
+drag was made. A `custom` handle's `drag` runs on the worker; the value it leaves is set when it
+arrives, also when it is the value the drag started from, and a drag of a reloaded plugin stops. The
+release sends the pointer's last position, and drags waiting behind a slow call merge only within one
+handle and one gesture. The focused handle moves 1 pixel per arrow key, 10 with Shift, each press one undo step. A point
 parameter bound by no handle keeps the built-in crosshair.
 
 ## Viewer tools

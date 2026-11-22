@@ -39,13 +39,17 @@ fn shown(app: &mut App, panels: &mut Panels) -> Arc<Shown> {
     try_shown(app, panels).expect("the effect draws an overlay")
 }
 
-fn drag(app: &mut App, panels: &mut Panels, shown: &Shown, handle: usize, delta: [f64; 2], merge: &str) {
+fn post_drag(app: &mut App, panels: &mut Panels, shown: &Shown, handle: usize, delta: [f64; 2], merge: &str) {
     let project = app.session.project.clone();
     let layer = project.comp(app.session.active_comp_id().unwrap()).unwrap().layers.iter().find(|layer| layer.name == "Aim").unwrap();
-    let commands = panels.drag(&app.session, shown, handle, delta, layer.effects().unwrap().groups().next().unwrap(), merge).unwrap();
+    let commands = panels.drag(shown, handle, delta, layer.effects().unwrap().groups().next().unwrap(), merge).unwrap();
     for (id, params) in commands {
         app.session.execute_checked(&id, params).unwrap();
     }
+}
+
+fn drag(app: &mut App, panels: &mut Panels, shown: &Shown, handle: usize, delta: [f64; 2], merge: &str) {
+    post_drag(app, panels, shown, handle, delta, merge);
     settle(app, panels);
 }
 
@@ -245,4 +249,75 @@ fn a_plugin_built_before_viewer_controls_loads_renders_and_keeps_the_built_in_cr
     let shown = shown(&mut app, &mut Panels::default());
     assert!(shown.overlay.handles.is_empty() && shown.overlay.marks.is_empty(), "it draws no overlay of its own");
     assert!(!shown.binds("spot"), "so the viewer keeps the built-in crosshair for its point");
+}
+
+fn hold_the_worker(app: &mut App, panels: &mut Panels) {
+    crate::panels::relay(app, panels, &mut 0, json!({"command": "comp.info", "params": {}}), true);
+}
+
+#[test]
+fn a_tool_event_queued_behind_a_slow_call_is_dropped_when_its_project_closes() {
+    let mut app = app("test.viewer-tool-closed", &["document.read", "document.write"]);
+    let mut panels = Panels::default();
+    hold_the_worker(&mut app, &mut panels);
+    panels.tool(&app.session, &app.id, "stamp", event(ToolEventKind::Key, [6.0, 7.0])).unwrap();
+    app.session.execute("file.newProject", json!({})).unwrap();
+    app.session.execute("comp.new", json!({"name": "Next", "width": 64, "height": 36, "frameRate": 24, "duration": 2})).unwrap();
+    crate::panels::release(&app);
+    settle(&mut app, &mut panels);
+    assert_eq!(gesture(&mut app, &mut panels, &[(ToolEventKind::Key, [8.0, 9.0])]), ["Key 8.0 9.0"]);
+}
+
+#[test]
+fn a_tool_event_of_an_earlier_activation_is_dropped_when_the_tool_is_picked_again() {
+    let mut app = app("test.viewer-tool-again", &["document.read", "document.write"]);
+    let mut panels = Panels::default();
+    hold_the_worker(&mut app, &mut panels);
+    panels.tool(&app.session, &app.id, "stamp", event(ToolEventKind::Key, [2.0, 2.0])).unwrap();
+    panels.put_tool_away();
+    panels.tool(&app.session, &app.id, "stamp", event(ToolEventKind::Key, [3.0, 3.0])).unwrap();
+    crate::panels::release(&app);
+    settle(&mut app, &mut panels);
+    assert_eq!(gesture(&mut app, &mut panels, &[]), ["Key 3.0 3.0"]);
+}
+
+#[test]
+fn an_overlay_and_its_grab_do_not_carry_over_to_a_reopened_project_with_the_same_ids_and_values() {
+    let mut app = app("test.viewer-reopened", &[]);
+    let mut panels = Panels::default();
+    aim_layer(&mut app);
+    let first = shown(&mut app, &mut panels);
+    app.session.execute("file.newProject", json!({})).unwrap();
+    app.session.execute("comp.new", json!({"name": "Test", "width": 64, "height": 36, "frameRate": 24, "duration": 2})).unwrap();
+    aim_layer(&mut app);
+    let second = shown(&mut app, &mut panels);
+    assert_eq!((Arc::ptr_eq(&first, &second), second.continues(&first, 0)), (false, false));
+}
+
+#[test]
+fn a_custom_handle_dragged_back_to_where_its_value_started_sets_that_value() {
+    let mut app = app("test.viewer-back", &[]);
+    let mut panels = Panels::default();
+    aim_layer(&mut app);
+    let start = shown(&mut app, &mut panels);
+    drag(&mut app, &mut panels, &start, 6, [4.0, 5.0], "back");
+    drag(&mut app, &mut panels, &start, 6, [-1.0, -2.0], "back");
+    assert_eq!(value(&mut app, "pin"), json!("0,0"));
+}
+
+#[test]
+fn drags_of_three_gestures_queued_behind_a_slow_call_keep_three_undo_steps() {
+    let mut app = app("test.viewer-gestures", &["document.read"]);
+    let mut panels = Panels::default();
+    aim_layer(&mut app);
+    let start = shown(&mut app, &mut panels);
+    hold_the_worker(&mut app, &mut panels);
+    for (delta, gesture) in [([4.0, 5.0], "one"), ([6.0, 7.0], "two"), ([8.0, 9.0], "three")] {
+        post_drag(&mut app, &mut panels, &start, 6, delta, gesture);
+    }
+    crate::panels::release(&app);
+    settle(&mut app, &mut panels);
+    let last = value(&mut app, "pin");
+    app.session.execute_checked("edit.undo", json!({})).unwrap();
+    assert_eq!((last, value(&mut app, "pin")), (json!("9,11"), json!("7,9")));
 }

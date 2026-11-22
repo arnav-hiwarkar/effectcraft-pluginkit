@@ -15,7 +15,7 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **Viewer tools from automation.** A plugin tool is picked only with its toolbar button. `ui.set` and the `tool.*` commands do not name plugin tools (`crates/ui-egui/src/panels/plugin_tools.rs`).
 - **Viewer tools get no pen pressure.** egui reports no pressure for a pen, so `ToolEvent::pressure` is 1 while the button is down and 0 otherwise.
 - **Built-in point crosshairs on an adjustment layer are drawn in layer space.** The effect works on the comp below, so a moved adjustment layer shows them off the point the effect uses. Plugin handles use comp space there (`crates/ui-egui/src/panels/effect_controls/viewer.rs`, `from_effect_space`).
-- **One slow interactive call delays the plugin's other surfaces.** Panels, custom controls, overlays and tools of one plugin share its worker queue, so a panel call that runs for a second holds back that plugin's overlay for that second (`crates/plugin/src/panels.rs`).
+- **One slow interactive call delays the plugin's other surfaces.** Panels, custom controls, overlays, tools and menu commands of one plugin share its worker queue, so a panel call that runs for a second holds back that plugin's overlay for that second (`crates/plugin/src/panels.rs`).
 - **Task host requests are answered by whichever session pumps first.** `effectcraft_plugin::pump` serves every task of a plugin; panel requests are routed by their project token, task requests only check that their project is still open (`crates/plugin/src/manage.rs`).
 - **Two copies of the theme colour mapping.** `colour` in `crates/ui-egui/src/panels/effect_controls/plugin_overlay.rs` repeats `paint` in `panels/plugin_view.rs` (owned by the panels work in the same wave). Share one after both merge.
 
@@ -85,6 +85,8 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
   full-size images written and read.
 
 ## Seen in the third build
+
+- **A native plugin call that never returns keeps its worker thread.** The app never waits for it: its later panel calls, overlays and menu commands queue behind it, and a host request it is waiting on is released with an error when its panel, overlay or tool closes or the plugin is unloaded. A call stuck inside the plugin's own code cannot be stopped in one process; that needs the helper process (`docs/plugin-helper.md`). A sandboxed call stops at its time limit. A synchronous `plugin.run` (CLI, scripts, `engine.execute`) waits for the plugin like any other command.
 
 ## Found by the region work, not fixed
 

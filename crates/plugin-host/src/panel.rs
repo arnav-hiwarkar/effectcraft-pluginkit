@@ -3,6 +3,7 @@ use std::time::Duration;
 use craft_plugin::{AppEvent, MIN_TIMER_MS, PanelReply, Pointer, PointerPhase, Topic, UiEvent, UiEventKind, UiInput, Widget};
 
 const LEGACY_TIMER: &str = "";
+pub const MAX_BACKLOG: usize = 64;
 
 #[derive(Debug, Clone, PartialEq)]
 struct Armed {
@@ -43,6 +44,14 @@ fn merged(pending: &UiEventKind, next: &UiEventKind) -> Option<UiEventKind> {
         }
         _ => None,
     }
+}
+
+fn motion(kind: &UiEventKind) -> bool {
+    matches!(kind, UiEventKind::Pointer(pointer) if matches!(pointer.phase, PointerPhase::Hover | PointerPhase::Drag))
+}
+
+fn discrete(kind: &UiEventKind) -> bool {
+    !motion(kind) && !matches!(kind, UiEventKind::Number(_) | UiEventKind::Text(_) | UiEventKind::Color(_))
 }
 
 fn one_call(events: &mut Vec<UiEvent>) -> Vec<UiEvent> {
@@ -93,11 +102,16 @@ impl Retained {
     pub fn push(&mut self, events: Vec<UiEvent>, keys: &str) {
         let in_flight = self.in_flight;
         for event in events {
-            let last = self.events.iter_mut().rev().find(|pending| pending.id == event.id);
+            let last = self.events.iter_mut().rev().find(|pending| pending.id == event.id || discrete(&pending.kind)).filter(|pending| pending.id == event.id);
             match last.filter(|_| in_flight).and_then(|last| merged(&last.kind, &event.kind).map(|kind| (last, kind))) {
                 Some((last, kind)) => last.kind = kind,
                 None => self.events.push(event),
             }
+        }
+        while self.events.len() > MAX_BACKLOG
+            && let Some(oldest) = self.events.iter().position(|event| motion(&event.kind))
+        {
+            self.events.remove(oldest);
         }
         self.keys.push_str(keys);
     }
@@ -382,5 +396,30 @@ mod tests {
         assert_eq!((input.events, input.timers), (vec![click(3)], vec![]));
         panel.finish(Ok(PanelReply { legacy: true, ..Default::default() }), ms(16));
         assert!(panel.start(SIZE, ms(32)).is_some());
+    }
+
+    #[test]
+    fn a_value_made_after_another_click_on_the_same_button_stays_with_that_click() {
+        let mut panel = drawn(vec![], vec![]);
+        slow_call(&mut panel);
+        let number = |value| UiEvent { id: 9, kind: UiEventKind::Number(value) };
+        for events in [vec![click(7)], vec![number(2.0)], vec![click(7)], vec![number(3.0)]] {
+            panel.push(events, "");
+        }
+        panel.finish(reply(vec![], vec![]), ms(40));
+        assert_eq!(events(&mut panel, 48), Some(vec![click(7), number(2.0)]));
+        assert_eq!(events(&mut panel, 64), Some(vec![click(7), number(3.0)]));
+    }
+
+    #[test]
+    fn a_backlog_past_its_bound_drops_its_oldest_pointer_motion_and_keeps_every_click() {
+        let mut panel = drawn(vec![], vec![]);
+        slow_call(&mut panel);
+        for x in 0..50 {
+            panel.push(vec![pointer(3, x as f32, PointerPhase::Drag), click(100 + x)], "");
+        }
+        panel.finish(reply(vec![], vec![]), ms(40));
+        let kept: Vec<UiEvent> = (0..50).flat_map(|x| [(x >= 36).then(|| pointer(3, x as f32, PointerPhase::Drag)), Some(click(100 + x))]).flatten().collect();
+        assert_eq!(events(&mut panel, 48), Some(kept));
     }
 }

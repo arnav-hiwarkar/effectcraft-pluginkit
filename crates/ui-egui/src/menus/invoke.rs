@@ -195,6 +195,10 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
     if matches!(id, "effects.copyPresetsFolderPath" | "mediaBrowser.copySourcePath") {
         return frontend(app, ctx, id, params);
     }
+    if id == "plugin.run" {
+        let text = |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default();
+        return app.plugin_ui.panels.command(&app.session, text("plugin"), text("command")).map(|()| Value::Null);
+    }
     // Layer ▸ New ▸ Text (menu, shortcut, context menus) puts an insertion point in the centre of
     // the comp, as After Effects does, so typing goes into Source Text rather than running
     // shortcuts (#866). `engine.execute` keeps the headless default.
