@@ -311,6 +311,20 @@ impl Effect for Recurse {
     }
 }
 
+struct Memo;
+
+impl Effect for Memo {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("memo", "Memo", "Probe")
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        host::cache_put("memo", &[1, 2, 3])?;
+        frame.pixels[0][0] = 1.0;
+        Ok(())
+    }
+}
+
 struct Report;
 
 impl Effect for Report {
@@ -403,6 +417,7 @@ fn make() -> Plugin {
         .effect(Spin)
         .effect(HalfDone)
         .effect(Recurse)
+        .effect(Memo)
         .effect(Report)
         .effect(GpuInvert)
         .effect(GpuSoften)
@@ -434,6 +449,7 @@ fn make() -> Plugin {
             let bytes = host::read_file(Root::User, path.trim())?;
             host::write_file(Root::Data, "read.txt", &bytes)
         })
+        .command("put-table", "Put A Lookup Table", || host::cache_put("table", &[4, 5, 6]))
         .command("approve-itself", "Approve Itself", || host::command("plugin.approve", json!({"id": "test.gate-self"})).map(|_| ()))
         .command("read-inside-edit", "Read Inside An Edit", || {
             let steps = json!([{"command": "comp.info", "params": {}}, {"command": "layer.newNull", "params": {}}]);

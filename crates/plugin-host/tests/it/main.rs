@@ -489,6 +489,21 @@ fn time_spent_in_a_file_dialog_does_not_count_against_the_call_limit() {
     assert_eq!(std::fs::read_to_string(&chosen).unwrap(), "overwritten");
 }
 
+#[test]
+fn a_cache_put_outside_a_render_changes_the_cache_generation_and_one_inside_does_not() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let start = loaded.plugin.cache_generation();
+        let mut pixels: Vec<Pixel> = vec![[0.0; 4]];
+        loaded.plugin.render("memo", &cx(1, 1), None, &mut pixels, Recorder::default).unwrap();
+        assert_eq!(loaded.plugin.cached("memo").as_deref(), Some(&[1u8, 2, 3][..]), "{kind:?}");
+        assert_eq!(loaded.plugin.cache_generation(), start, "{kind:?}");
+        command(&loaded, "put-table", &mut Recorder::default()).unwrap();
+        assert_eq!(loaded.plugin.cached("table").as_deref(), Some(&[4u8, 5, 6][..]), "{kind:?}");
+        assert!(loaded.plugin.cache_generation() > start, "{kind:?}");
+    });
+}
+
 fn settle(loaded: &Loaded, id: u64, host: &mut Recorder) -> TaskState {
     let until = std::time::Instant::now() + Duration::from_secs(10);
     loop {

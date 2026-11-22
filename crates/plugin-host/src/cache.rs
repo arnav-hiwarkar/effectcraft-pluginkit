@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub(crate) const BUDGET: usize = 1 << 30;
@@ -24,11 +25,20 @@ struct Inner {
 pub(crate) struct Cache {
     budget: usize,
     inner: Mutex<Inner>,
+    generation: AtomicU64,
 }
 
 impl Cache {
     pub fn new(budget: usize) -> Self {
-        Cache { budget, inner: Mutex::default() }
+        Cache { budget, inner: Mutex::default(), generation: AtomicU64::new(0) }
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    pub fn changed_outside_a_render(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
     }
 
     pub fn get(&self, key: &str) -> Option<Arc<[u8]>> {

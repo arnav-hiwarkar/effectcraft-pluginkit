@@ -98,6 +98,10 @@ impl Plugin {
         self.engine.image(key)
     }
 
+    pub fn cache_generation(&self) -> u64 {
+        self.engine.cache_generation()
+    }
+
     pub fn uncache(&self, key: &str) {
         self.engine.uncache(key);
     }

@@ -73,6 +73,11 @@ impl Engine {
 
     pub fn uncache(&self, key: &str) {
         self.identity.cache.remove(key);
+        self.identity.cache.changed_outside_a_render();
+    }
+
+    pub fn cache_generation(&self) -> u64 {
+        self.identity.cache.generation()
     }
 
     pub fn copies_pixels(&self) -> bool {

@@ -122,10 +122,19 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             Some(bytes) => (Value::Bool(true), Bulk::Shared(bytes)),
             None => (Value::Bool(false), Bulk::None),
         }),
-        HostCall::CachePut { key } => cx.plugin.cache.put(key, bulk).map(|()| (Value::Null, Bulk::None)),
+        HostCall::CachePut { key } => {
+            cx.plugin.cache.put(key, bulk)?;
+            if cx.origin != Origin::Render {
+                cx.plugin.cache.changed_outside_a_render();
+            }
+            plain(Value::Null)
+        }
         HostCall::CacheHas { key } => plain(Value::Bool(cx.plugin.cache.get(&key).is_some())),
         HostCall::CacheRemove { key } => {
             cx.plugin.cache.remove(&key);
+            if cx.origin != Origin::Render {
+                cx.plugin.cache.changed_outside_a_render();
+            }
             plain(Value::Null)
         }
         HostCall::Start { task, args } => cx.engine.start(&task, args).map(|id| (json!(id), Bulk::None)),

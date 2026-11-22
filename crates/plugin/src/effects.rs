@@ -46,23 +46,29 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
             reads_param_history: spec.reads_param_history,
             presets: spec.presets.iter().map(|preset| (preset.name.clone(), preset_values(spec, &preset.values))).collect(),
             revision: loaded.revision,
-            files: Some(folders_stamp(vec![loaded.bundle.dir.clone(), loaded.data_dir.clone()])),
+            files: Some(revision_stamp(loaded.clone())),
         });
     }
 }
 
-fn folders_stamp(folders: Vec<std::path::PathBuf>) -> dynamic::StampDyn {
+fn revision_stamp(loaded: Arc<Loaded>) -> dynamic::StampDyn {
+    let folders = vec![loaded.bundle.dir.clone(), loaded.data_dir.clone()];
     let recent: std::sync::Mutex<Option<(std::time::Instant, u64)>> = std::sync::Mutex::new(None);
     Box::new(move || {
-        let mut recent = recent.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some((at, stamp)) = *recent
-            && at.elapsed() < STAMP_LIFETIME
-        {
-            return stamp;
-        }
-        let stamp = stamp_folders(&folders);
-        *recent = Some((std::time::Instant::now(), stamp));
-        stamp
+        let files = {
+            let mut recent = recent.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            match *recent {
+                Some((at, stamp)) if at.elapsed() < STAMP_LIFETIME => stamp,
+                _ => {
+                    let stamp = stamp_folders(&folders);
+                    *recent = Some((std::time::Instant::now(), stamp));
+                    stamp
+                }
+            }
+        };
+        let mut hasher = std::hash::DefaultHasher::new();
+        (files, loaded.plugin.cache_generation()).hash(&mut hasher);
+        hasher.finish()
     })
 }
 
