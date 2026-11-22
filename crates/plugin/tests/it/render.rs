@@ -327,3 +327,21 @@ fn a_failed_render_is_in_the_plugin_log_with_the_effect_and_a_sequence_number_to
     let newer = app.session.execute("plugin.log", json!({"id": "test.render-log", "after": last, "load": page["load"]})).unwrap();
     assert_eq!((&newer["lines"], &newer["missed"]), (&json!([]), &json!(0)));
 }
+
+#[test]
+fn a_shown_part_of_a_layer_minified_with_a_fractional_offset_equals_that_part_of_the_whole_layer() {
+    let mut app = app("test.render-minified", &[]);
+    app.session.execute("layer.newSolid", json!({"name": "Checks", "color": "#808080", "width": 512, "height": 256})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "test.render-minified.checks"})).unwrap();
+    app.session.execute("prop.set", json!({"path": "transform/scale", "value": [25, 25]})).unwrap();
+    app.session.execute("prop.set", json!({"path": "transform/position", "value": [20.25, 13.75]})).unwrap();
+    let whole = frame(&app, Some([-200.0, -200.0, 464.0, 436.0]));
+    let shown = frame(&app, None);
+    assert_eq!((shown.width, shown.height), (64, 36));
+    for y in 0..36 {
+        for x in 0..64 {
+            let (cropped, full) = (shown.data[(y * 64 + x) as usize], whole.data[((y + 200) * whole.width + x + 200) as usize]);
+            assert!(cropped.iter().zip(full).all(|(a, b)| (a - b).abs() <= 1e-5), "pixel ({x}, {y}): {cropped:?} shown, {full:?} whole");
+        }
+    }
+}

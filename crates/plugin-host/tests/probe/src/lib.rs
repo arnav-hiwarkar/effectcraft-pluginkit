@@ -513,6 +513,28 @@ impl Effect for Plain {
     }
 }
 
+struct Checks;
+
+impl Effect for Checks {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("checks", "Checks", "Probe")
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise()
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let x0 = frame.origin[0];
+        for (y, row) in frame.rows_mut() {
+            for (x, pixel) in (x0..).zip(row) {
+                *pixel = if (x / 2 + y / 2) % 2 == 0 { [1.0; 4] } else { [0.0, 0.0, 0.0, 1.0] };
+            }
+        }
+        Ok(())
+    }
+}
+
 struct Tally;
 
 impl Effect for Tally {
@@ -833,6 +855,7 @@ fn make() -> Plugin {
         .effect(ShiftDown)
         .effect(Lift)
         .effect(Tally)
+        .effect(Checks)
         .effect(Streak)
         .effect(Plain)
         .effect(ReadInputs)

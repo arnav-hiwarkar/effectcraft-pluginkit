@@ -9,6 +9,7 @@ use super::{
     ItemId, ItemKind, Layer, LayerCache, LayerSource, Params, Project, Quality, Region, Renderer, Tick, cache, color, masks, shapes, styles, text, three_d,
     vec2,
 };
+use effectcraft_effects::Shown;
 use effectcraft_keyframe::Value;
 use effectcraft_project::LayerId;
 
@@ -18,7 +19,7 @@ pub(crate) struct EffectStack {
     pub adjustment: bool,
     pub limit: usize,
     pub origin: [f64; 2],
-    pub shown: Option<[f64; 4]>,
+    pub shown: Option<Shown>,
 }
 
 /// A footage layer's source as the decoded picture itself (see [`Renderer::footage_picture`]):
@@ -1598,8 +1599,9 @@ impl<'a> Renderer<'a> {
         let key = key.filter(|_| !self.reads_footage_rows(ctx, layer));
         let shown = self.shown_part(ctx, layer);
         let key = match shown {
-            Some(part) => {
-                let key = key.map(|key| part.iter().fold(cache::derive(key, 0x5_0e0), |key, side| cache::derive(key, side.to_bits())));
+            Some(shown) => {
+                let key =
+                    key.map(|key| shown.part.iter().fold(cache::derive(key, 0x5_0e0 + u64::from(shown.grid)), |key, side| cache::derive(key, side.to_bits())));
                 if let Some((b, files)) = self.cached(key) {
                     return Some((b, key, files));
                 }
@@ -1650,7 +1652,7 @@ impl<'a> Renderer<'a> {
 }
 
 impl Renderer<'_> {
-    fn shown_part(&self, ctx: &EvalCtx, layer: &Layer) -> Option<[f64; 4]> {
+    fn shown_part(&self, ctx: &EvalCtx, layer: &Layer) -> Option<Shown> {
         let plugin_effect = layer
             .effects()
             .into_iter()
@@ -1672,7 +1674,8 @@ impl Renderer<'_> {
             return None;
         }
         let view = self.opts.roi.unwrap_or([0.0, 0.0, f64::from(ctx.comp.width), f64::from(ctx.comp.height)]);
-        let to_effect = ctx.effect_to_comp(layer).inverse()?;
+        let to_comp = ctx.effect_to_comp(layer);
+        let to_effect = to_comp.inverse()?;
         let corners = [[view[0], view[1]], [view[0] + view[2], view[1]], [view[0], view[1] + view[3]], [view[0] + view[2], view[1] + view[3]]]
             .map(|[x, y]| to_effect.apply(vec2(x, y)));
         let (lo, hi) = corners
@@ -1684,7 +1687,12 @@ impl Renderer<'_> {
         let part = [lo[0] - margin, lo[1] - margin, hi[0] + margin, hi[1] + margin];
         let size = ctx.effect_bounds(layer).0;
         let covers = part[0] <= 0.0 && part[1] <= 0.0 && part[2] >= size[0] && part[3] >= size[1];
-        (part.iter().all(|side| side.is_finite()) && !covers).then_some(part)
+        let mut shrink = s * to_comp.mean_scale() / self.raster_scale(ctx, layer);
+        let mut grid = 1u32;
+        while shrink < 0.5 + 1e-9 && grid < 1 << 16 {
+            (shrink, grid) = (shrink * 2.0, grid * 2);
+        }
+        (part.iter().all(|side| side.is_finite()) && !covers).then_some(Shown { part, grid })
     }
 
     fn shown_after(
@@ -1692,14 +1700,14 @@ impl Renderer<'_> {
         ctx: &EvalCtx,
         layer: &Layer,
         stack: &[(usize, &effectcraft_project::PropGroup, &'static effectcraft_effects::EffectSpec)],
-        shown: Option<[f64; 4]>,
-    ) -> Vec<Option<[f64; 4]>> {
+        shown: Option<Shown>,
+    ) -> Vec<Option<Shown>> {
         let mut parts = vec![None; stack.len()];
         let mut part = shown;
         for (slot, (_, g, spec)) in parts.iter_mut().zip(stack).rev() {
             *slot = part;
             let margin = part.and_then(|_| effectcraft_effects::pixel_margin(spec.id, &self.effect_params(ctx, layer, g)));
-            part = part.zip(margin).map(|(p, m)| [p[0] - m, p[1] - m, p[2] + m, p[3] + m]);
+            part = part.zip(margin).map(|(Shown { part: p, grid }, m)| Shown { part: [p[0] - m, p[1] - m, p[2] + m, p[3] + m], grid });
         }
         parts
     }
