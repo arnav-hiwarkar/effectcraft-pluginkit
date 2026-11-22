@@ -195,3 +195,16 @@ fn a_layer_input_stays_on_the_gpu_after_the_first_frame() {
         assert!(worst <= 1.0 / 255.0, "frame {frame}: the GPU and CPU renders differ by {worst}");
     }
 }
+
+#[test]
+fn a_gpu_plan_past_its_budget_shows_why_in_the_effect_error() {
+    let app = app("test.gpu-budget", &[]);
+    let Ok(gpu) = Gpu::try_headless() else { return };
+    let spec = effects::find(&format!("{}.gpu-invert", app.id)).expect("the probe registered its GPU effects");
+    let values = params(spec, &[("amount", 0.8)]);
+    gpu.context().set_plugin_gpu_budget(std::time::Duration::ZERO);
+    assert!(gpu.effects(&[FxStep { spec, ctx: ctx(&values) }], &picture(), None).is_none(), "the plan is stopped");
+    let why = app.plugins.render_error(spec.id).expect("Effect Controls shows why the effect left the GPU");
+    assert!(why.contains(spec.id) && why.contains("past the 0 ms budget") && why.contains("until the plugin is reloaded"), "{why}");
+    assert!(!gpu.supports_effect(spec.id), "the next frame renders on the CPU");
+}

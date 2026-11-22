@@ -74,13 +74,14 @@ device and the stored bytes (image sizes the GPU holds, buffer and texture byte 
 
 ### Time
 
-The app runs a plan's compute passes in pieces of about 10 ms of GPU work, each a band of output rows,
-and learns from the first frames how long each kernel takes. A plan whose GPU work passes 2 seconds in
-one frame is stopped: the app logs which pass and kernel it reached, and the effect renders on the CPU
-until the plugin is reloaded. A kernel must therefore return early when `inside_out(id.xy)` is false: it
-is also false for pixels outside the band being run, and `store` ignores them. A kernel that skips the
-check computes the whole image once for every band. In the browser the app cannot wait for the GPU, so
-there the pieces run without the time limit.
+The app first waits for the GPU work queued before the effect, so that time is not counted. It then
+submits each pass of the plan on its own and waits for it. When one frame of the effect has taken more
+than 2 seconds of GPU time, the effect is stopped: Effect Controls shows an error that names the effect,
+the pass and the budget, and the effect renders on the CPU until the plugin is reloaded.
+
+A GPU dispatch cannot be cancelled. A runaway kernel therefore stalls the GPU once per load of the
+plugin, for as long as that one pass takes, and every other effect waits for it. In the browser the app
+cannot wait for the GPU, so there plugin GPU work has no time limit.
 
 ## Draw passes
 
@@ -225,7 +226,7 @@ The app compiles your WGSL after a prelude that declares the bindings every kern
 | `aux` | `texture_2d<f32>` | The pass's `aux` image; a 1×1 transparent image when the pass has none. |
 | `out` | `texture_storage_2d<rgba32float, write>` | The pass's output image. |
 | `P` | uniform | The pass's values; read them with `pass_f` / `pass_u`. |
-| `data` | storage buffer | Reserved: the app passes the rows of the band being run. |
+| `data` | storage buffer | Reserved for the app. |
 
 Do not declare these again, and declare no other bindings: the shader then fails to compile.
 
@@ -241,7 +242,7 @@ These prelude functions are stable:
 | Function | Returns |
 |---|---|
 | `out_size()`, `src_size()`, `aux_size()` | The image's size in pixels, `vec2<u32>`. |
-| `inside_out(p)` | Whether pixel `p` lies inside `out` and in the band of rows being run. |
+| `inside_out(p)` | Whether pixel `p` lies inside `out`. |
 | `pass_f(i)`, `pass_u(i)` | Value `i` of the pass's floats (0 to 95) or uints (0 to 15). |
 | `texel(t, p)` | Pixel `p: vec2<i32>` of `src` or `aux`; transparent outside the image. |
 | `out_uv(p)` | The centre of output pixel `p` in 0..1 coordinates. |
