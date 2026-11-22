@@ -1,5 +1,5 @@
 use craft_plugin::Pixel;
-use craft_plugin::math::{exp2, sin_cos};
+use craft_plugin::math::{fast, sin_cos};
 
 pub type Rgb = [f32; 3];
 
@@ -35,7 +35,7 @@ pub fn one_minus_exp2_neg(v: f32) -> f32 {
         let x = v * std::f32::consts::LN_2;
         x * (1.0 - 0.5 * x)
     } else {
-        1.0 - exp2(-v)
+        1.0 - fast::exp2(-v)
     }
 }
 

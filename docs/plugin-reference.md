@@ -354,6 +354,7 @@ one level of a 16-bit channel.
 |---|---|---|
 | `fast::sin(x)`, `fast::cos(x)` | any; the error grows with `abs(x)` | 2e-6 absolute within 20 radians, 7e-6 within 100, 6e-5 within 1000 |
 | `fast::exp(x)` | `-87..=88`, clamped | 9e-6 relative within `-20..=20`, 1.2e-5 over the range |
+| `fast::exp2(x)` | `-126..=126`, clamped | 3.3e-6 relative |
 | `fast::ln(x)` | normal `x > 0`; zero gives `-127 * LN_2`, a negative `x` gives `ln(-x)`, a subnormal one a wrong value near `-88` | 1.2e-7 times `max(1, abs(result))` |
 
 ## Panel
