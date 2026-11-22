@@ -1104,7 +1104,7 @@ fn a_recovered_project_whose_original_is_gone_enters_open_recent_only_once_saved
     assert_eq!(fresh.path.as_deref(), Some(original.as_str()));
     assert!(fresh.prefs.recent_projects.is_empty(), "{:?}", fresh.prefs.recent_projects);
     fresh.execute("file.save", json!({})).unwrap();
-    assert_eq!(fresh.prefs.recent_projects, [original.clone()]);
+    assert_eq!(fresh.prefs.recent_projects, std::slice::from_ref(&original));
 
     let again = recovered_from(&snapshot, &original);
     assert_eq!(again.prefs.recent_projects, [original], "the original exists again");
