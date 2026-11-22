@@ -49,7 +49,10 @@ The same plugin source builds two ways.
 **Sandboxed** plugins are WebAssembly modules that run in Wasmtime inside the app process. A module
 imports exactly one function, `host_call`. It has no file, network, clock, or process access of its own.
 Each call has a time limit and each instance has a memory limit. A plugin that panics or exceeds a limit
-is stopped, and the next call starts a fresh instance.
+is stopped, and the next call starts a fresh instance. The time limit counts the time the app spends
+serving the plugin's host calls. The app cannot interrupt its own work, so a host call that is still
+running at the limit, such as a read from a stalled disk, finishes first, and the plugin call then fails
+as soon as that host call returns.
 
 **Native** plugins are shared libraries loaded into the app. Their calls to the app go through the same
 permission checks, but the code itself can do anything the app can. The manager shows a warning, and the
@@ -83,10 +86,20 @@ app sees it. For an app command, EffectCraft decides what the command needs in
 3. **Does the command name a file?** It then needs both `files.read` and `files.write`. Commands such as
    Save and Import read and write more files than the one they name, so one permission alone would not
    describe what they do.
+4. **Does the command reach outside the document?** `text.fonts` lists the user's installed fonts and
+   needs `files.read`. `layer.setText` with a `font` saves the recent-fonts list to the settings file and
+   needs `files.write`.
+
+`census.tsv` next to `crates/plugin/src/gate.rs` records the decision for every command in the allowed
+families, and a test fails when a new command appears there or a decision changes. Each new entry needs a
+look at what the command touches besides the project.
 
 Without both file permissions, a plugin also cannot write a text-valued property, because some effects
-read such a property as a file path. In a batch, it cannot write an effect property on a layer the batch
-creates, because that property cannot be checked before the batch runs.
+read such a property as a file path. The check looks the property up before the command runs, so in a
+batch it cannot know what a later step will name. A batch therefore cannot write an effect property on a
+layer the batch creates, or after any earlier step that changes the project other than a property write:
+a step that adds, removes, duplicates or reorders effects or layers, or changes the selection, can change
+which property `effects/#1/x` names. Such writes need both file permissions.
 
 An `engine.batch` needs everything its steps need. After the permissions pass, the command is checked
 by the automation confinement (`crates/automation/src/confine.rs`), the same rules that hold an AI agent
@@ -118,6 +131,21 @@ reduced resolution or on the GPU.
 
 Effects are stateless. The app keeps a pool of instances and may run any frame on any of them, in any
 order. A panel or a command runs on one long-lived instance, so panel state persists between frames.
+
+## Render cache
+
+A plugin effect's cache key holds the plugin's revision: a hash of its version and module, and the
+size, path and modification time of each file in the plugin's folder and its data folder (up to 256
+files). Reloading a changed plugin, or changing a file the effect reads from those folders, gives every
+layer that runs the effect a new key. The same holds for a layer that samples such a layer through a
+layer parameter, and for the comp's content key, which the thumbnails and the disk frame cache use. A
+file outside those folders, read with `files.read`, is not part of the key.
+
+A plugin's WGSL is compiled with wgpu's runtime checks on (`ShaderRuntimeChecks::checked`): naga bounds
+every loop and checks every buffer and texture access. A bounded loop can still run for seconds. wgpu 30
+has no per-dispatch time limit, so a kernel that runs too long is ended by the operating system's GPU
+watchdog, if it has one, and a readback that waits longer than 10 s marks the app's GPU context failed
+(`crates/gpu/src/readback.rs`). Until then the context is stalled for every effect, not only the plugin's.
 
 ## Panels
 
