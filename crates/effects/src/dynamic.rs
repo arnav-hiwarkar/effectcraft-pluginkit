@@ -16,11 +16,26 @@ pub struct Grid {
     pub scale: f64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GpuProgram {
     pub padding: u32,
     pub images: Vec<[u32; 2]>,
+    pub buffers: Vec<GpuBytes>,
+    pub textures: Vec<GpuPicture>,
     pub passes: Vec<GpuPass>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GpuBytes {
+    pub name: String,
+    pub bytes: Arc<[u8]>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GpuPicture {
+    pub name: String,
+    pub size: [u32; 2],
+    pub bytes: Arc<[u8]>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +46,37 @@ pub struct GpuPass {
     pub out: GpuSlot,
     pub f: Vec<f32>,
     pub u: Vec<u32>,
+    pub draw: Option<GpuDraw>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct GpuDraw {
+    pub vertices: usize,
+    pub layout: Vec<u32>,
+    pub indices: Option<usize>,
+    pub instances: Option<usize>,
+    pub instance_layout: Vec<u32>,
+    pub count: Option<u32>,
+    pub depth: bool,
+    pub blend: GpuBlend,
+    pub cull: GpuCull,
+    pub clear: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GpuBlend {
+    #[default]
+    Replace,
+    Over,
+    Add,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GpuCull {
+    #[default]
+    None,
+    Back,
+    Front,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,6 +84,7 @@ pub enum GpuSlot {
     Source,
     Output,
     Scratch(usize),
+    Texture(usize),
 }
 
 pub struct DynamicParam {

@@ -1,3 +1,4 @@
+mod forge;
 mod gate;
 mod gpu;
 mod lumen;

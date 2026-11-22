@@ -75,7 +75,7 @@ pub mod warp_stab;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-pub use card3d::{CompLight, CompScene};
+pub use card3d::{CompCamera, CompLight, CompScene, SceneLight};
 pub use color_fx::{
     BW_TINT_LUMA, EXPOSURE_LINEAR_GAMMA, HUESAT_CHANNELS, HUESAT_RANGES, LEVELS_CHANNELS, LUMA_601, PHOTO_FILTER_CUSTOM, PHOTO_FILTERS, exposure_settings,
     fill_uses_masks, huesat_ranges_identity, levels_channel_ids, levels_channel_settings, levels_channels_identity, levels_clip,

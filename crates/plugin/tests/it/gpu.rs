@@ -8,7 +8,7 @@ use crate::app;
 
 const SIZE: [u32; 2] = [61, 43];
 
-fn gpu() -> Option<&'static Gpu> {
+pub(crate) fn gpu() -> Option<&'static Gpu> {
     static GPU: std::sync::OnceLock<Result<Gpu, String>> = std::sync::OnceLock::new();
     match GPU.get_or_init(Gpu::try_headless) {
         Ok(gpu) => Some(gpu),
@@ -80,4 +80,18 @@ fn probe_gpu_effects_render_on_the_gpu_as_their_cpu_render_does() {
     let cpu = specs.iter().zip(&all_params).fold(picture(), |buf, (spec, params)| effects::apply(spec, &ctx(params), buf));
     let worst = worst_difference(&cpu.img, &batched.img);
     assert!(worst < 1e-3, "the GPU chain differs from the CPU chain by {worst}");
+}
+
+#[test]
+fn a_draw_pass_fills_the_frame_and_a_plan_with_an_index_past_its_vertices_is_declined() {
+    let app = app("test.gpu-fill", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.gpu-fill", app.id)).expect("the probe registered its draw effect");
+    let valid = params(spec, &[]);
+    let out = gpu.effects(&[FxStep { spec, ctx: ctx(&valid) }], &picture(), None).expect("the GPU ran the draw pass");
+    assert!(out.img.data.iter().all(|pixel| *pixel == [0.25, 0.5, 0.75, 1.0]), "every pixel is the fill colour, the first is {:?}", out.img.data[0]);
+    let invalid = params(spec, &[("last_index", 7.0)]);
+    assert!(gpu.effects(&[FxStep { spec, ctx: ctx(&invalid) }], &picture(), None).is_none(), "the GPU declined the plan");
+    let cpu = effects::apply(spec, &ctx(&invalid), picture());
+    assert_eq!(cpu.img.data[0], [0.25, 0.5, 0.75, 1.0]);
 }

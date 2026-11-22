@@ -72,6 +72,41 @@ impl Effect for GpuInvert {
     }
 }
 
+const FILL: [f32; 3] = [0.25, 0.5, 0.75];
+
+const FILL_SHADER: &str = r#"
+@vertex
+fn vs_probe_fill(@location(0) corner: vec2<f32>) -> @builtin(position) vec4<f32> {
+    return vec4<f32>(corner, 0.5, 1.0);
+}
+
+@fragment
+fn fs_probe_fill() -> @location(0) vec4<f32> {
+    return vec4<f32>(pass_f(0u), pass_f(1u), pass_f(2u), 1.0);
+}
+"#;
+
+struct GpuFill;
+
+impl Effect for GpuFill {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("gpu-fill", "GPU Fill", "Probe").param(Param::slider("last_index", "Last Index", 2.0, 0.0..=9.0)).shader(FILL_SHADER)
+    }
+
+    fn layout(&self, cx: &Cx) -> Layout {
+        let mut plan = GpuPlan::new();
+        let corners = plan.buffer(GpuData::Floats(vec![-1.0, -1.0, 3.0, -1.0, -1.0, 3.0]));
+        let triangle = plan.buffer(GpuData::Indices(vec![0, 1, cx.f("last_index") as u32]));
+        let fill = GpuPass::draw("probe_fill", GpuImage::Output).vertices(corners, &[2]).indices(triangle).clear().floats(&FILL);
+        Layout::pointwise().gpu(plan.pass(fill))
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        frame.pixels.fill([FILL[0], FILL[1], FILL[2], 1.0]);
+        Ok(())
+    }
+}
+
 const SOFTEN_PADDING: u32 = 4;
 
 struct GpuSoften;
@@ -230,6 +265,7 @@ fn make() -> Plugin {
         .effect(HalfDone)
         .effect(GpuInvert)
         .effect(GpuSoften)
+        .effect(GpuFill)
         .panel("counter", "Counter", Counter::default())
         .command("edit", "Edit Document", || {
             let reply = host::command("layer.newNull", json!({"name": "From Plugin"}))?;

@@ -334,7 +334,7 @@ pub struct CompLight {
 }
 
 /// The comp's camera and lights relative to the effect's layer.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CompScene {
     /// Effect-space pixels (x, y, z) → effect-space pixels, homogeneous rows X, Y, W: the comp
     /// camera's view of the layer brought back into the layer's own pixel grid (identity on the
@@ -344,6 +344,33 @@ pub struct CompScene {
     /// follows only a camera layer).
     pub camera_layer: bool,
     pub light: Option<CompLight>,
+    pub view: Option<CompCamera>,
+    pub lights: Vec<SceneLight>,
+}
+
+/// The comp camera in the effect's layer pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CompCamera {
+    /// Layer pixels → camera space (x right, y down, z away from the viewer), rows.
+    pub view: [[f64; 4]; 4],
+    pub eye: [f64; 3],
+    pub zoom: f64,
+}
+
+/// One comp light in the effect's layer pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SceneLight {
+    /// 0 parallel, 1 point, 2 ambient, 3 spot.
+    pub kind: u8,
+    pub pos: [f64; 3],
+    /// Unit direction the light travels.
+    pub dir: [f64; 3],
+    pub color: [f32; 3],
+    pub intensity: f32,
+    /// Full cone angle in degrees.
+    pub cone_angle: f32,
+    /// 0..1.
+    pub feather: f32,
 }
 
 impl CompScene {
@@ -362,6 +389,17 @@ impl CompScene {
             }
         }
         if let Some(l) = &mut self.light {
+            l.pos[0] -= origin[0];
+            l.pos[1] -= origin[1];
+        }
+        if let Some(c) = &mut self.view {
+            for row in c.view.iter_mut() {
+                row[3] += row[0] * origin[0] + row[1] * origin[1];
+            }
+            c.eye[0] -= origin[0];
+            c.eye[1] -= origin[1];
+        }
+        for l in &mut self.lights {
             l.pos[0] -= origin[0];
             l.pos[1] -= origin[1];
         }

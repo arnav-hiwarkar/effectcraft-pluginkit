@@ -53,7 +53,37 @@ pub(crate) fn comp_scene(ctx: &EvalCtx, layer: &Layer) -> Option<effectcraft_eff
         Some(effectcraft_effects::CompLight { pos: [pos.x, pos.y, pos.z], dir: [dir.x / len, dir.y / len, dir.z / len], color: l.color, kind })
     });
     let camera_layer = ctx.comp.active_camera(ctx.time).is_some();
-    Some(effectcraft_effects::CompScene { camera: Some(camera), camera_layer, light })
+    let active = three_d::active_camera(ctx);
+    let view = inv.as_ref().map(|inv| {
+        let eye = inv.apply(active.eye);
+        effectcraft_effects::CompCamera { view: (active.view * world).0, eye: [eye.x, eye.y, eye.z], zoom: active.zoom }
+    });
+    let lights = three_d::light::lights_at(ctx)
+        .iter()
+        .filter_map(|l| {
+            let inv = inv.as_ref()?;
+            let pos = inv.apply(l.pos);
+            let dir = inv.apply_vec(l.dir);
+            let len = (dir.x * dir.x + dir.y * dir.y + dir.z * dir.z).sqrt().max(1e-12);
+            let kind = match l.kind {
+                effectcraft_project::LightKind::Parallel => 0,
+                effectcraft_project::LightKind::Ambient => 2,
+                effectcraft_project::LightKind::Spot => 3,
+                _ => 1,
+            };
+            let unlit = l.intensity.abs() < 1e-9;
+            Some(effectcraft_effects::SceneLight {
+                kind,
+                pos: [pos.x, pos.y, pos.z],
+                dir: [dir.x / len, dir.y / len, dir.z / len],
+                color: if unlit { l.color } else { l.color.map(|c| (f64::from(c) / l.intensity) as f32) },
+                intensity: l.intensity as f32,
+                cone_angle: (l.cone_half * 2.0).to_degrees() as f32,
+                feather: l.feather as f32,
+            })
+        })
+        .collect();
+    Some(effectcraft_effects::CompScene { camera: Some(camera), camera_layer, light, view, lights })
 }
 
 /// Nesting limit for effects that render layers (other layers, other times).

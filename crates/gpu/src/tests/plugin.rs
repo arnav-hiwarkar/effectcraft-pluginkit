@@ -16,11 +16,11 @@ fn tint(@builtin(global_invocation_id) id: vec3<u32>) {
 "#;
 
 fn pass(kernel: &str, src: GpuSlot, out: GpuSlot) -> GpuPass {
-    GpuPass { kernel: kernel.into(), src, aux: None, out, f: TINT.to_vec(), u: Vec::new() }
+    GpuPass { kernel: kernel.into(), src, aux: None, out, f: TINT.to_vec(), u: Vec::new(), draw: None }
 }
 
 fn tint_program() -> GpuProgram {
-    GpuProgram { padding: 3, images: Vec::new(), passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Output)] }
+    GpuProgram { padding: 3, passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Output)], ..Default::default() }
 }
 
 fn register(id: &str, wgsl: &str, program: GpuProgram) {
@@ -105,8 +105,8 @@ fn plans_beyond_the_limits_are_rejected() {
     let Some(g) = gpu() else { return };
     let tint = |src, out| pass("tint", src, out);
     let finish = tint(GpuSlot::Source, GpuSlot::Output);
-    let plan = |images: Vec<[u32; 2]>, passes: Vec<GpuPass>| GpuProgram { padding: 0, images, passes };
-    let too_many_floats = GpuPass { f: vec![0.0; 49], ..finish.clone() };
+    let plan = |images: Vec<[u32; 2]>, passes: Vec<GpuPass>| GpuProgram { images, passes, ..Default::default() };
+    let too_many_floats = GpuPass { f: vec![0.0; 97], ..finish.clone() };
     let too_many_uints = GpuPass { u: vec![0; 17], ..finish.clone() };
     let cases = [
         ("no-passes", plan(vec![], vec![])),

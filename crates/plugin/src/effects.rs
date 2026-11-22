@@ -1,8 +1,13 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use craft_plugin_host::{Call, EffectSpec, GpuImage, Host, Layout, MaskPath, Param, ParamKind, Pixels, RenderCx, Scene, Value as Wire};
-use effectcraft_engine::effects::dynamic::{self, DynamicEffect, DynamicParam, GpuPass, GpuProgram, GpuSlot, Grid};
+use craft_plugin_host::{
+    Blend, Call, Camera, Cull, Draw, EffectSpec, GpuData, GpuImage, Host, Layout, Light, LightKind, MaskPath, Param, ParamKind, Pixels, RenderCx, Scene,
+    Value as Wire,
+};
+use effectcraft_engine::effects::dynamic::{
+    self, DynamicEffect, DynamicParam, GpuBlend, GpuBytes, GpuCull, GpuDraw, GpuPass, GpuPicture, GpuProgram, GpuSlot, Grid,
+};
 use effectcraft_engine::effects::{Buf, EffectCtx, Image, LayerPixels, MaskShape, util};
 use effectcraft_engine::keyframe::Value;
 use effectcraft_engine::project::ParamUi;
@@ -171,7 +176,22 @@ impl Host for RenderHost<'_, '_> {
 
     fn scene(&mut self) -> Option<Scene> {
         let scene = self.ctx.env.host?.comp_scene()?;
-        Some(Scene { projection: scene.camera, camera_layer: scene.camera_layer })
+        let camera = scene.view.map(|camera| Camera { view: camera.view, position: camera.eye, zoom: camera.zoom });
+        let light = |light: &effectcraft_engine::effects::SceneLight| Light {
+            kind: match light.kind {
+                0 => LightKind::Parallel,
+                2 => LightKind::Ambient,
+                3 => LightKind::Spot,
+                _ => LightKind::Point,
+            },
+            position: light.pos,
+            direction: light.dir,
+            colour: light.color,
+            intensity: light.intensity,
+            cone_angle: light.cone_angle,
+            feather: light.feather,
+        };
+        Some(Scene { projection: scene.camera, camera_layer: scene.camera_layer, camera, lights: scene.lights.iter().map(light).collect() })
     }
 }
 
@@ -201,11 +221,64 @@ fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) 
         GpuImage::Source => GpuSlot::Source,
         GpuImage::Output => GpuSlot::Output,
         GpuImage::Scratch(index) => GpuSlot::Scratch(index as usize),
+        GpuImage::Texture(index) => GpuSlot::Texture(index as usize),
+    };
+    let cached = |key: &str| {
+        let bytes = loaded.plugin.cached(key);
+        if bytes.is_none() {
+            loaded.report(&spec.id, Some(format!("the GPU plan names {key:?}, which is not in the plugin's cache")));
+        }
+        bytes
+    };
+    let buffers = plan
+        .buffers
+        .into_iter()
+        .enumerate()
+        .map(|(index, data)| {
+            Some(match data {
+                GpuData::Cache(key) => GpuBytes { bytes: cached(&key)?, name: key },
+                GpuData::Floats(values) => GpuBytes { name: format!("#{index}"), bytes: values.iter().flat_map(|v| v.to_le_bytes()).collect() },
+                GpuData::Indices(values) => GpuBytes { name: format!("#{index}"), bytes: values.iter().flat_map(|v| v.to_le_bytes()).collect() },
+            })
+        })
+        .collect::<Option<_>>()?;
+    let textures = plan
+        .textures
+        .into_iter()
+        .map(|texture| Some(GpuPicture { bytes: cached(&texture.key)?, name: texture.key, size: texture.size }))
+        .collect::<Option<_>>()?;
+    let draw = |draw: Draw| GpuDraw {
+        vertices: draw.vertices as usize,
+        layout: draw.layout,
+        indices: draw.indices.map(|index| index as usize),
+        instances: draw.instances.map(|index| index as usize),
+        instance_layout: draw.instance_layout,
+        count: draw.count,
+        depth: draw.depth,
+        blend: match draw.blend {
+            Blend::Replace => GpuBlend::Replace,
+            Blend::Over => GpuBlend::Over,
+            Blend::Add => GpuBlend::Add,
+        },
+        cull: match draw.cull {
+            Cull::None => GpuCull::None,
+            Cull::Back => GpuCull::Back,
+            Cull::Front => GpuCull::Front,
+        },
+        clear: draw.clear,
     };
     let passes = plan
         .passes
         .into_iter()
-        .map(|pass| GpuPass { kernel: pass.kernel, src: slot(pass.src), aux: pass.aux.map(slot), out: slot(pass.out), f: pass.f, u: pass.u })
+        .map(|pass| GpuPass {
+            kernel: pass.kernel,
+            src: slot(pass.src),
+            aux: pass.aux.map(slot),
+            out: slot(pass.out),
+            f: pass.f,
+            u: pass.u,
+            draw: pass.draw.map(draw),
+        })
         .collect();
-    Some(GpuProgram { padding: layout.padding, images: plan.images, passes })
+    Some(GpuProgram { padding: layout.padding, images: plan.images, buffers, textures, passes })
 }
