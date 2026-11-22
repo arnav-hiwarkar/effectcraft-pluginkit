@@ -7,10 +7,7 @@ use effectcraft_effects::dynamic::{GpuBlend, GpuCull, GpuDraw, GpuPass, GpuProgr
 use crate::context::{Enc, GpuContext, GpuImage, Kernel, KernelImages, Params};
 
 const MAX_ATTRIBUTES: usize = 8;
-const MAX_BUFFERS: usize = 64;
 const MAX_BUFFER_BYTES: usize = 256 << 20;
-const MAX_TEXTURES: usize = 16;
-const MAX_TEXELS: u64 = 1 << 24;
 const KEPT_BYTES: usize = 512 << 20;
 const KEPT_ENTRIES: usize = 256;
 const COLOUR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -90,6 +87,12 @@ impl Store {
         })
     }
 
+    pub(crate) fn retain(&self, keep: impl Fn(&str) -> bool) {
+        if let Ok(mut uploads) = self.uploads.lock() {
+            uploads.entries.retain(|(effect, _, _), _| keep(effect));
+        }
+    }
+
     fn kept(&self, effect: &str, name: &str, picture: Option<[u32; 2]>, bytes: &Arc<[u8]>, upload: impl FnOnce() -> Kept) -> Option<Kept> {
         let mut uploads = self.uploads.lock().ok()?;
         uploads.clock += 1;
@@ -132,9 +135,6 @@ fn stride(layout: &[u32]) -> Result<usize, String> {
 }
 
 pub(crate) fn check_data(program: &GpuProgram, fits: impl Fn(u32, u32) -> bool) -> Result<(), String> {
-    if program.buffers.len() > MAX_BUFFERS || program.textures.len() > MAX_TEXTURES {
-        return Err(format!("a GPU plan has at most {MAX_BUFFERS} buffers and {MAX_TEXTURES} textures"));
-    }
     if let Some(odd) = program.buffers.iter().find(|buffer| !buffer.bytes.len().is_multiple_of(4)) {
         return Err(format!("buffer {:?} is {} bytes, not a whole number of 4-byte values", odd.name, odd.bytes.len()));
     }
@@ -142,7 +142,6 @@ pub(crate) fn check_data(program: &GpuProgram, fits: impl Fn(u32, u32) -> bool) 
     if bytes > MAX_BUFFER_BYTES {
         return Err(format!("the buffers hold {bytes} bytes; the limit is {MAX_BUFFER_BYTES}"));
     }
-    let mut texels = 0u64;
     for texture in &program.textures {
         let [w, h] = texture.size;
         let area = u64::from(w) * u64::from(h);
@@ -153,10 +152,6 @@ pub(crate) fn check_data(program: &GpuProgram, fits: impl Fn(u32, u32) -> bool) 
                 texture.bytes.len()
             ));
         }
-        texels += area;
-    }
-    if texels > MAX_TEXELS {
-        return Err(format!("the textures hold {texels} pixels; the limit is {MAX_TEXELS}"));
     }
     Ok(())
 }

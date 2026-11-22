@@ -116,6 +116,17 @@ impl EffectHost for FxHost<'_, '_, '_> {
         Some(self.pixels(other, buf, true))
     }
 
+    fn layer_shared(&self, id: u64) -> Option<effectcraft_effects::SharedLayer> {
+        let other = self.ctx.layer(effectcraft_project::LayerId(id))?;
+        if other.id == self.layer.id || self.r.depth > MAX_FX_DEPTH || other.source.is_model() {
+            return None;
+        }
+        let buf = self.r.nested().content_buf(self.ctx, other)?;
+        let (size, origin) = self.ctx.effect_bounds(other);
+        let offset = [buf.offset[0] + origin[0] * buf.scale, buf.offset[1] + origin[1] * buf.scale];
+        Some(effectcraft_effects::SharedLayer { buf, offset, size })
+    }
+
     fn layer_masks(&self, id: u64) -> Option<LayerPixels> {
         let other = self.ctx.layer(effectcraft_project::LayerId(id))?;
         if self.r.depth > MAX_FX_DEPTH {

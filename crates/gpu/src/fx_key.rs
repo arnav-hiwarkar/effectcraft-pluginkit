@@ -90,24 +90,33 @@ fn src_index(s: Src) -> u32 {
 /// `Some(None)` when no layer is chosen (the effect then uses its own layer).
 pub(crate) fn fitted(e: &mut Enc, ctx: &EffectCtx, b: &GBuf, id: &str, masks_and_effects: bool, stretch: bool) -> Option<Option<GpuImage>> {
     let Some(o) = ctx.layer_param(id, masks_and_effects) else { return Some(None) };
-    let (w, h) = (b.img.width, b.img.height);
     if o.buf.img.is_empty() {
-        return Some(Some(e.image(w, h)));
+        return Some(Some(e.image(b.img.width, b.img.height)));
     }
+    let src = e.g.upload_image(&o.buf.img)?;
+    Some(Some(fit(e, ctx, b, &src, Placed { offset: o.buf.offset, scale: o.buf.scale, size: o.size }, stretch)))
+}
+
+pub(crate) struct Placed {
+    pub offset: [f64; 2],
+    pub scale: f64,
+    pub size: [f64; 2],
+}
+
+pub(crate) fn fit(e: &mut Enc, ctx: &EffectCtx, b: &GBuf, src: &GpuImage, other: Placed, stretch: bool) -> GpuImage {
+    let (w, h) = (b.img.width, b.img.height);
     let ls = ctx.layer_size;
-    let os = o.size;
+    let os = other.size;
     let (sx, sy) = if stretch && ls[0] > 0.0 && ls[1] > 0.0 { (os[0] / ls[0], os[1] / ls[1]) } else { (1.0, 1.0) };
     let (dx, dy) = if stretch { (0.0, 0.0) } else { ((os[0] - ls[0]) * 0.5, (os[1] - ls[1]) * 0.5) };
     let inv = 1.0 / b.scale.max(1e-9);
-    // Per column / row: the other layer's buffer coordinate.
     let mut data = Vec::with_capacity((w + h) as usize);
-    data.extend((0..w).map(|x| (((x as f64 + 0.5 - b.offset[0]) * inv * sx + dx) * o.buf.scale + o.buf.offset[0]) as f32));
-    data.extend((0..h).map(|y| (((y as f64 + 0.5 - b.offset[1]) * inv * sy + dy) * o.buf.scale + o.buf.offset[1]) as f32));
-    let src = e.g.upload_image(&o.buf.img)?;
+    data.extend((0..w).map(|x| (((x as f64 + 0.5 - b.offset[0]) * inv * sx + dx) * other.scale + other.offset[0]) as f32));
+    data.extend((0..h).map(|y| (((y as f64 + 0.5 - b.offset[1]) * inv * sy + dy) * other.scale + other.offset[1]) as f32));
     let buf = e.data(&data);
     let out = e.scratch(w, h);
-    e.pixels("fxk_fit", &Params::default(), &src, None, &out, Some(&buf));
-    Some(Some(out))
+    e.pixels("fxk_fit", &Params::default(), src, None, &out, Some(&buf));
+    out
 }
 
 /// `util::layer_or_self`.

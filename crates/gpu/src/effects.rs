@@ -136,28 +136,53 @@ fn readback_buf(r: crate::deferred::Readback) -> Option<Buf> {
 }
 
 /// An effect stack running on a GPU-resident image (adjustment layers): GPU chains stay on
-/// the device; CPU effects read the image back, run, and upload the result.
+/// the device; a run of CPU effects reads the image back once, runs, and uploads once.
 pub(crate) struct GpuFx<'e, 'g> {
     e: &'e mut Enc<'g>,
-    b: Option<GBuf>,
+    held: Held,
     levels: Option<f32>,
+}
+
+enum Held {
+    Gpu(GBuf),
+    Cpu(Buf),
+    Lost,
 }
 
 impl<'e, 'g> GpuFx<'e, 'g> {
     pub fn new(e: &'e mut Enc<'g>, img: GpuImage, offset: [f64; 2], scale: f64, levels: Option<f32>) -> Self {
-        GpuFx { e, b: Some(GBuf { img, offset, scale }), levels }
+        GpuFx { e, held: Held::Gpu(GBuf { img, offset, scale }), levels }
+    }
+
+    fn on_gpu(&mut self) -> Option<&GBuf> {
+        if let Held::Cpu(buf) = &self.held {
+            self.held = match self.e.g.upload_image(&buf.img) {
+                Some(img) => Held::Gpu(GBuf { img, offset: buf.offset, scale: buf.scale }),
+                None => Held::Lost,
+            };
+        }
+        match &self.held {
+            Held::Gpu(b) => Some(b),
+            Held::Cpu(_) | Held::Lost => None,
+        }
     }
 
     /// The result: (image, offset, scale); `None` when a step failed.
-    pub fn finish(self) -> Option<(GpuImage, [f64; 2], f64)> {
-        self.b.map(|b| (b.img, b.offset, b.scale))
+    pub fn finish(mut self) -> Option<(GpuImage, [f64; 2], f64)> {
+        self.on_gpu().map(|b| (b.img.clone(), b.offset, b.scale))
     }
 }
 
 impl effectcraft_render::FxTarget for GpuFx<'_, '_> {
     fn gpu(&mut self, steps: &[FxStep]) -> bool {
-        let Some(b) = &self.b else { return false };
-        let mut cur = GBuf { img: b.img.clone(), offset: b.offset, scale: b.scale };
+        let mut cur = match &self.held {
+            Held::Gpu(b) => GBuf { img: b.img.clone(), offset: b.offset, scale: b.scale },
+            Held::Cpu(buf) => match self.e.g.upload_image(&buf.img) {
+                Some(img) => GBuf { img, offset: buf.offset, scale: buf.scale },
+                None => return false,
+            },
+            Held::Lost => return false,
+        };
         self.e.take_missing();
         for step in steps {
             let Some(next) = apply(self.e, step.spec.id, &step.ctx, cur) else { return false };
@@ -171,41 +196,53 @@ impl effectcraft_render::FxTarget for GpuFx<'_, '_> {
                 cur.img = ops::quantize(self.e, &cur.img, l);
             }
         }
-        self.b = Some(cur);
+        self.held = Held::Gpu(cur);
         true
     }
 
     fn cpu(&mut self, f: &mut dyn FnMut(Buf) -> Buf) {
-        let Some(b) = self.b.take() else { return };
-        let Some(img) = self.e.download(&b.img) else { return };
-        let out = f(Buf { img, offset: b.offset, scale: b.scale });
-        self.b = self.e.g.upload_image(&out.img).map(|img| GBuf { img, offset: out.offset, scale: out.scale });
+        let buf = match std::mem::replace(&mut self.held, Held::Lost) {
+            Held::Gpu(b) => match self.e.download(&b.img) {
+                Some(img) => Buf { img, offset: b.offset, scale: b.scale },
+                None => return,
+            },
+            Held::Cpu(buf) => buf,
+            Held::Lost => return,
+        };
+        self.held = Held::Cpu(f(buf));
     }
 
     /// GBuf::cover, like `pad`: a bigger texture with the old one copied into place, no
     /// readback. A region the device can't allocate leaves the buffer as it is.
     fn cover(&mut self, size: [f64; 2]) {
-        let Some(mut b) = self.b.take() else { return };
-        let keep = (b.img.clone(), b.offset);
-        if b.cover(self.e, size).is_none() {
-            (b.img, b.offset) = keep;
+        match &mut self.held {
+            Held::Gpu(b) => {
+                let keep = (b.img.clone(), b.offset);
+                if b.cover(self.e, size).is_none() {
+                    (b.img, b.offset) = keep;
+                }
+            }
+            Held::Cpu(buf) => buf.cover(size),
+            Held::Lost => {}
         }
-        self.b = Some(b);
     }
 
     /// [`effectcraft_effects::Buf::align`] on the device: a texture grown left/top, the old one
     /// copied in. A size the device can't allocate leaves the buffer as it is.
     fn align(&mut self, size: [f64; 2]) {
-        let Some(b) = self.b.take() else { return };
-        let out = match effectcraft_effects::align_plan(b.offset, b.scale, size, b.img.width, b.img.height) {
-            Some((l, t)) if self.e.g.fits(b.img.width + l, b.img.height + t) => {
-                let img = self.e.image(b.img.width + l, b.img.height + t);
-                self.e.copy_into(&b.img, &img, l, t);
-                GBuf { img, offset: [b.offset[0] + l as f64, b.offset[1] + t as f64], scale: b.scale }
+        match &mut self.held {
+            Held::Gpu(b) => {
+                if let Some((l, t)) = effectcraft_effects::align_plan(b.offset, b.scale, size, b.img.width, b.img.height)
+                    && self.e.g.fits(b.img.width + l, b.img.height + t)
+                {
+                    let img = self.e.image(b.img.width + l, b.img.height + t);
+                    self.e.copy_into(&b.img, &img, l, t);
+                    *b = GBuf { img, offset: [b.offset[0] + l as f64, b.offset[1] + t as f64], scale: b.scale };
+                }
             }
-            _ => b,
-        };
-        self.b = Some(out);
+            Held::Cpu(buf) => buf.align(size),
+            Held::Lost => {}
+        }
     }
 }
 

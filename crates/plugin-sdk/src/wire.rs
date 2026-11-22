@@ -320,8 +320,11 @@ impl Layout {
 pub const MAX_PASSES: usize = 64;
 pub const MAX_SCRATCH_IMAGES: usize = 32;
 pub const MAX_SCRATCH_FRAMES: u64 = 8;
-pub const MAX_PASS_FLOATS: usize = 48;
+pub const MAX_PASS_FLOATS: usize = 96;
 pub const MAX_PASS_UINTS: usize = 16;
+pub const MAX_BUFFERS: usize = 64;
+pub const MAX_TEXTURES: usize = 16;
+pub const MAX_TEXELS: u64 = 1 << 24;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct GpuPlan {
@@ -453,6 +456,10 @@ impl GpuPlan {
         if !self.runs_on_cpu() {
             return Err("a plan with draw passes, buffers, textures or layers runs only on the GPU".into());
         }
+        self.validate(frame)
+    }
+
+    pub fn validate(&self, frame: [u32; 2]) -> Result<(), String> {
         let passes = self.passes.len();
         if !(1..=MAX_PASSES).contains(&passes) {
             return Err(format!("a plan has 1 to {MAX_PASSES} passes, this one has {passes}"));
@@ -466,33 +473,62 @@ impl GpuPlan {
                 return Err(format!("scratch image {i} is {w}x{h}; it must be non-empty and at most twice the {fw}x{fh} padded frame"));
             }
         }
-        let area = |w: u32, h: u32| u64::from(w) * u64::from(h);
-        let scratch_area: u64 = self.images.iter().map(|&[w, h]| area(w, h)).sum();
-        if scratch_area > MAX_SCRATCH_FRAMES * area(fw, fh) {
+        let area = |[w, h]: [u32; 2]| u64::from(w) * u64::from(h);
+        let scratch_area: u64 = self.images.iter().copied().map(area).sum();
+        if scratch_area > MAX_SCRATCH_FRAMES * area(frame) {
             return Err(format!("the scratch images together exceed {MAX_SCRATCH_FRAMES} times the {fw}x{fh} padded frame"));
         }
+        if self.buffers.len() > MAX_BUFFERS {
+            return Err(format!("a plan has at most {MAX_BUFFERS} buffers, this one has {}", self.buffers.len()));
+        }
+        let pictures = self.textures.len() + self.layers.len();
+        if pictures > MAX_TEXTURES {
+            return Err(format!("a plan has at most {MAX_TEXTURES} textures and layers together, this one has {pictures}"));
+        }
+        if let Some((i, texture)) = self.textures.iter().enumerate().find(|(_, texture)| area(texture.size) == 0) {
+            return Err(format!("texture {i} ({:?}) is {}x{}; it must be non-empty", texture.key, texture.size[0], texture.size[1]));
+        }
+        let texels = self.textures.iter().map(|texture| area(texture.size)).sum::<u64>() + self.layers.len() as u64 * area(frame);
+        if texels > MAX_TEXELS {
+            return Err(format!("the textures and layers hold {texels} pixels; the limit is {MAX_TEXELS}"));
+        }
         let mut written = vec![GpuImage::Source];
+        let mut depth_size = None;
         for (n, pass) in self.passes.iter().enumerate() {
             if pass.f.len() > MAX_PASS_FLOATS || pass.u.len() > MAX_PASS_UINTS {
                 let (floats, uints) = (pass.f.len(), pass.u.len());
                 return Err(format!("pass {n} has {floats} floats and {uints} uints; the limits are {MAX_PASS_FLOATS} and {MAX_PASS_UINTS}"));
             }
-            if pass.out == GpuImage::Source {
-                return Err(format!("pass {n} writes the source image"));
+            if matches!(pass.out, GpuImage::Source | GpuImage::Texture(_) | GpuImage::Layer(_)) {
+                return Err(format!("pass {n} writes {:?}, which passes only read", pass.out));
             }
             for image in std::iter::once(pass.src).chain(pass.aux) {
-                if self.size_of(image, frame).is_none() {
+                let readable = match image {
+                    GpuImage::Texture(index) => (index as usize) < self.textures.len(),
+                    GpuImage::Layer(index) => (index as usize) < self.layers.len(),
+                    other => self.size_of(other, frame).is_some(),
+                };
+                if !readable {
                     return Err(format!("pass {n} reads {image:?}, which the plan does not declare"));
                 }
-                if !written.contains(&image) {
+                if matches!(image, GpuImage::Output | GpuImage::Scratch(_)) && !written.contains(&image) {
                     return Err(format!("pass {n} reads {image:?} before a pass writes it"));
                 }
                 if image == pass.out {
                     return Err(format!("pass {n} reads the image it writes"));
                 }
             }
-            if self.size_of(pass.out, frame).is_none() {
+            let Some(out_size) = self.size_of(pass.out, frame) else {
                 return Err(format!("pass {n} writes {:?}, which the plan does not declare", pass.out));
+            };
+            if let Some(draw) = &pass.draw {
+                let named = [Some(draw.vertices), draw.indices, draw.instances];
+                if let Some(missing) = named.into_iter().flatten().find(|&buffer| buffer as usize >= self.buffers.len()) {
+                    return Err(format!("pass {n} names buffer {missing}, which the plan does not declare"));
+                }
+                if draw.depth && *depth_size.get_or_insert(out_size) != out_size {
+                    return Err(format!("pass {n} uses the depth buffer on an image of another size than an earlier pass"));
+                }
             }
             written.push(pass.out);
         }
@@ -924,4 +960,76 @@ pub enum Paint {
     Border,
     Error,
     Rgba([u8; 4]),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FRAME: [u32; 2] = [53, 37];
+
+    fn finish() -> GpuPass {
+        GpuPass::new("tint", GpuImage::Source, GpuImage::Output)
+    }
+
+    fn plan(images: Vec<[u32; 2]>, passes: Vec<GpuPass>) -> GpuPlan {
+        GpuPlan { images, passes, ..Default::default() }
+    }
+
+    #[test]
+    fn one_check_refuses_every_plan_beyond_the_limits() {
+        let tint = |src, out| GpuPass::new("tint", src, out);
+        let scratch = GpuImage::Scratch(0);
+        let mut draw_without_buffer = plan(vec![], vec![GpuPass::draw("mesh", GpuImage::Output)]);
+        draw_without_buffer.passes[0] = draw_without_buffer.passes[0].clone().vertices(0, &[3]);
+        let mut depth_on_two_sizes = plan(vec![[8, 8]], vec![]);
+        let mesh = depth_on_two_sizes.buffer(GpuData::Floats(vec![0.0; 9]));
+        depth_on_two_sizes.passes =
+            vec![GpuPass::draw("mesh", scratch).vertices(mesh, &[3]).depth(), GpuPass::draw("mesh", GpuImage::Output).vertices(mesh, &[3]).depth()];
+        let mut too_many_pictures = plan(vec![], vec![finish()]);
+        for i in 0..17 {
+            too_many_pictures.layer(&format!("layer{i}"));
+        }
+        let mut too_many_texels = plan(vec![], vec![finish()]);
+        too_many_texels.texture("big", [4096, 4097]);
+        let cases = [
+            ("no passes", plan(vec![], vec![]), "1 to 64 passes"),
+            ("65 passes", plan(vec![], vec![finish(); 65]), "1 to 64 passes"),
+            ("33 images", plan(vec![[8, 8]; 33], vec![finish()]), "at most 32 scratch images"),
+            ("empty image", plan(vec![[0, 8]], vec![finish()]), "scratch image 0 is 0x8"),
+            ("huge image", plan(vec![[2 * 53 + 1, 8]], vec![finish()]), "scratch image 0 is 107x8"),
+            ("unwritten read", plan(vec![[8, 8]], vec![tint(scratch, GpuImage::Output)]), "before a pass writes it"),
+            ("undeclared image", plan(vec![], vec![tint(GpuImage::Source, scratch), finish()]), "does not declare"),
+            ("no output", plan(vec![[8, 8]], vec![tint(GpuImage::Source, scratch)]), "no pass writes the output"),
+            ("reads own output", plan(vec![[8, 8]], vec![tint(GpuImage::Source, scratch), tint(scratch, scratch), finish()]), "reads the image it writes"),
+            ("writes source", plan(vec![], vec![tint(GpuImage::Source, GpuImage::Source), finish()]), "which passes only read"),
+            ("writes a layer", plan(vec![], vec![tint(GpuImage::Source, GpuImage::Layer(0)), finish()]), "which passes only read"),
+            ("undeclared layer", plan(vec![], vec![tint(GpuImage::Layer(0), GpuImage::Output)]), "does not declare"),
+            ("too much scratch", plan(vec![[2 * 53, 2 * 37]; 3], vec![finish()]), "exceed 8 times"),
+            ("97 floats", plan(vec![], vec![finish().floats(&[0.0; 97])]), "97 floats"),
+            ("17 uints", plan(vec![], vec![finish().uints(&[0; 17])]), "17 uints"),
+            ("17 pictures", too_many_pictures, "at most 16 textures and layers"),
+            ("too many texels", too_many_texels, "the limit is 16777216"),
+            ("draw without its buffer", draw_without_buffer, "names buffer 0"),
+            ("depth on two sizes", depth_on_two_sizes, "depth buffer on an image of another size"),
+        ];
+        for (name, plan, expected) in cases {
+            let why = plan.validate(FRAME).expect_err(name);
+            assert!(why.contains(expected), "{name}: {why}");
+        }
+    }
+
+    #[test]
+    fn plans_at_the_limits_pass_and_only_cpu_plans_pass_the_cpu_check() {
+        let mut images = vec![[2 * 53, 2 * 37], [53, 37], [53, 37], [53, 37]];
+        images.extend([[1, 1]; 12]);
+        let at_the_limits = plan(images, std::iter::repeat_n(finish().floats(&[0.0; 96]).uints(&[0; 16]), 64).collect());
+        assert_eq!(at_the_limits.validate(FRAME), Ok(()));
+        assert_eq!(at_the_limits.check(FRAME), Ok(()));
+        let mut with_layer = plan(vec![], vec![]);
+        let matte = with_layer.layer("matte");
+        let with_layer = with_layer.pass(finish().aux(matte));
+        assert_eq!(with_layer.validate(FRAME), Ok(()));
+        assert_eq!(with_layer.check(FRAME), Err("a plan with draw passes, buffers, textures or layers runs only on the GPU".into()));
+    }
 }

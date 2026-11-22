@@ -23,6 +23,7 @@ pub struct GpuProgram {
     pub images: Vec<[u32; 2]>,
     pub buffers: Vec<GpuBytes>,
     pub textures: Vec<GpuPicture>,
+    pub layers: Vec<String>,
     pub passes: Vec<GpuPass>,
 }
 
@@ -86,6 +87,7 @@ pub enum GpuSlot {
     Output,
     Scratch(usize),
     Texture(usize),
+    Layer(usize),
 }
 
 pub struct DynamicParam {
@@ -119,6 +121,11 @@ pub struct Registered {
 }
 
 static REGISTRY: RwLock<Vec<Arc<Registered>>> = RwLock::new(Vec::new());
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn generation() -> u64 {
+    GENERATION.load(std::sync::atomic::Ordering::Acquire)
+}
 
 fn passthrough(_: &EffectCtx, buf: Buf) -> Buf {
     buf
@@ -156,6 +163,7 @@ pub fn register(effect: DynamicEffect) {
     let mut registry = REGISTRY.write().unwrap_or_else(|poisoned| poisoned.into_inner());
     registry.retain(|r| r.spec.id != spec.id);
     registry.push(Arc::new(Registered { spec, effect }));
+    GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
 }
 
 pub fn unregister(owner: &str) {
@@ -164,6 +172,7 @@ pub fn unregister(owner: &str) {
         effectcraft_project::declare_reads_other_frames(gone.spec.id, false);
     }
     registry.retain(|r| r.effect.owner != owner);
+    GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
 }
 
 pub fn get(id: &str) -> Option<Arc<Registered>> {
