@@ -308,3 +308,12 @@ fn text_cannot_be_written_through_an_essential_property_without_file_permissions
     let number = app.relay("essential.set", json!({"layer": 1, "control": "c1", "value": 3.0})).unwrap_err();
     assert!(!number.contains("files.read"), "a number is not held back by the text rule: {number}");
 }
+
+#[test]
+fn a_plugin_that_may_only_read_can_list_fonts_and_read_font_features() {
+    let mut app = app("test.gate-fonts", &["document.read", "files.read"]);
+    let text = app.session.execute("layer.newText", json!({"text": "Hi"})).unwrap()["layer"].as_u64();
+    app.relay("text.fontFeatures", json!({"layer": text})).expect("reading a layer's font features needs only document.read");
+    app.relay("text.fonts", json!({})).expect("listing fonts needs only document.read and files.read");
+    app.relay("text.insert", json!({"layer": text, "text": "!"})).expect_err("editing text still needs document.write");
+}

@@ -33,7 +33,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 ## From the Opus review, not fixed
 
-- **Some queries need `document.write`.** The gate reads `journal` from the command table, and commands declared with `cmd!` are journaled even when they only read, such as `text.fonts` and `text.fontFeatures`. `crates/plugin/src/gate/census.tsv` shows each decision. Too strict, not a hole; the fix is in the engine's command table.
 - **Background jobs** (`camera.analyze`, `layer.sceneEditDetection`) apply their result later, outside the plugin's batch and its undo step. Plugins can start them but cannot wait for them.
 - **Panel events are dropped when the panel call fails**, so the click that crashed a plugin is lost.
 - **Glide: `keys.interpolation` runs on the whole selection**, so keys on properties Glide reports as skipped still lose their continuous and roving flags. (`plugins/glide/src/apply.rs`)

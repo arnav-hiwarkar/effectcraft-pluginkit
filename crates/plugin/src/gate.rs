@@ -61,6 +61,8 @@ const REFUSED: &[&str] = &[
     "prop.editGradient",
 ];
 
+const READ_ONLY: &[&str] = &["text.fontFeatures", "text.fonts"];
+
 const WRITES_A_PROPERTY: &[&str] = &["prop.set", "prop.setExpression", "prop.pickWhip", "prop.addKey", "keys.set"];
 
 const MAX_NOTICE: usize = 300;
@@ -147,7 +149,7 @@ fn needed(id: &str, params: &Value, needs: &mut BTreeSet<Permission>) -> Result<
         needs.extend(FILE_PERMISSIONS);
     }
     needs.extend(outside_the_document(id, params));
-    needs.insert(if spec.journal { Permission::DocumentWrite } else { Permission::DocumentRead });
+    needs.insert(if spec.journal && !READ_ONLY.contains(&id) { Permission::DocumentWrite } else { Permission::DocumentRead });
     Ok(())
 }
 
@@ -389,5 +391,11 @@ mod census {
             .chain(recorded.keys().filter(|id| !found.contains_key(*id)).map(|id| format!("{id}\tgone")))
             .collect();
         assert!(differences.is_empty(), "decide these commands and record them in census.tsv:\n{}", differences.join("\n"));
+    }
+
+    #[test]
+    fn every_read_only_exception_is_a_command_the_engine_journals() {
+        let stale: Vec<&str> = super::READ_ONLY.iter().copied().filter(|id| !effectcraft_engine::commands::find(id).is_some_and(|spec| spec.journal)).collect();
+        assert!(stale.is_empty(), "the engine no longer journals these, so remove them from READ_ONLY: {stale:?}");
     }
 }
