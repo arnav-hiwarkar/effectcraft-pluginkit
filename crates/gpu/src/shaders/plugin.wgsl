@@ -20,8 +20,13 @@ fn aux_size() -> vec2<u32> {
     return textureDimensions(aux);
 }
 
+fn craft_in_band(p: vec2<u32>) -> bool {
+    let row = f32(p.y);
+    return row >= data[0] && row < data[1];
+}
+
 fn inside_out(p: vec2<u32>) -> bool {
-    return all(p < out_size());
+    return all(p < out_size()) && craft_in_band(p);
 }
 
 // Value `i` of the pass's `floats` / `uints`; 0 past the values the pass gave.
@@ -50,13 +55,15 @@ fn sample_uv(t: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
 }
 
 fn store(p: vec2<u32>, c: vec4<f32>) {
-    textureStore(out, vec2<i32>(p), c);
+    if (craft_in_band(p)) {
+        textureStore(out, vec2<i32>(p), c);
+    }
 }
 
 @compute @workgroup_size(16, 16)
 fn craft_resolve(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (!inside_out(id.xy)) { return; }
-    store(id.xy, texel(src, vec2<i32>(id.xy)));
+    if (any(id.xy >= out_size())) { return; }
+    textureStore(out, vec2<i32>(id.xy), texel(src, vec2<i32>(id.xy)));
 }
 
 @vertex

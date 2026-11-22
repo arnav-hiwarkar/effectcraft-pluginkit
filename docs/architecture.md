@@ -394,7 +394,7 @@ mattes), the GPU packs the buffers into one atlas texture and one kernel does th
 fragment sort (intersecting planes, coplanar stack order), Blinn-Phong lighting, ray-cast shadows
 against the caster planes (Shadow Diffusion, Light Transmission) and blending. Adjustment layers
 run their effect stacks on the GPU-resident comp (`Renderer::run_effects_on` with an `FxTarget`):
-runs of GPU effects stay on the device and only non-GPU effects read back and upload. Advanced 3D
+runs of GPU effects stay on the device, and each run of non-GPU effects reads back once and uploads once. Advanced 3D
 runs render on the GPU end to end (`gpu::adv3d`, `Renderer::prepare_adv_run` /
 `Accelerator::render_3d`): each motion-blur sub-sample's scene is rasterised (`advanced3d.wgsl`),
 then compute kernels (`adv3d.wgsl`) resolve the 2×2 supersampling, average the sub-samples
@@ -434,7 +434,9 @@ Wide Time, Pixel Motion Blur, Timewarp) upload the frames the host renders (`tim
 combine them on the GPU; Time Displacement's per-pixel times and Timewarp's motion vectors
 (`time_fx::timewarp_plan`) are computed on the CPU. Numbers and Timecode rasterise their glyph
 coverage on the CPU (`textfx::text_layer`) and composite it on the GPU. Other layers an effect
-reads (gradients, reveals, environments) are fitted on the CPU (`util::fit_layer`) and uploaded.
+reads (gradients, reveals, environments) are fitted on the CPU (`util::fit_layer`) and uploaded;
+a plugin effect's layer inputs bind the texture of the other layer's cached buffer (`upload_buf`) and
+are resampled on the GPU.
 Where f32 cannot follow the CPU's f64, the CPU solves the part that needs it and the GPU uses
 the result: Warp's Fisheye and Twist past 50 % or with a distortion (a Newton inverse that
 wanders chaotically near the crease) sample the CPU's inverse map (`warp_inverse_map`). Settings

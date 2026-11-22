@@ -517,6 +517,13 @@ pub struct LayerPixels {
     pub size: [f64; 2],
 }
 
+#[derive(Clone, Debug)]
+pub struct SharedLayer {
+    pub buf: std::sync::Arc<Buf>,
+    pub offset: [f64; 2],
+    pub size: [f64; 2],
+}
+
 /// Services the renderer offers effects that look beyond their own pixels.
 pub trait EffectHost: Sync {
     /// Pixels entering the effect stack, in effect space, before any effects. For an
@@ -528,6 +535,9 @@ pub trait EffectHost: Sync {
     /// Layer `id` of the same composition at the current comp time. `masks_and_effects`
     /// selects "Effects & Masks" over "Source". `None` for missing/recursive references; own Source reads are supported.
     fn layer(&self, id: u64, masks_and_effects: bool) -> Option<LayerPixels>;
+    fn layer_shared(&self, _id: u64) -> Option<SharedLayer> {
+        None
+    }
     /// `frames` stereo sample frames (interleaved L R …) of layer `id`'s audio starting at comp
     /// time `start` seconds, at `rate` Hz. `None` when the layer has no audio.
     fn audio(&self, id: u64, start: f64, frames: usize, rate: u32) -> Option<Vec<f32>>;
@@ -645,6 +655,13 @@ impl EffectCtx<'_> {
             Some(1) => host.layer_masks(lid),
             Some(_) => host.layer(lid, true),
             None => host.layer(lid, masks_and_effects),
+        }
+    }
+    pub fn shared_layer_param(&self, id: &str) -> Option<SharedLayer> {
+        let lid = self.params.get(id)?.as_layer()?;
+        match self.params.get(&layer_source_id(id)).map(Value::as_enum) {
+            Some(0 | 1) => None,
+            _ => self.env.host?.layer_shared(lid),
         }
     }
     /// Frame rate for frame-based maths (comp rate, else 30).

@@ -115,6 +115,63 @@ struct PluginShader {
     pipelines: HashMap<String, Result<wgpu::ComputePipeline, String>>,
     draws: HashMap<crate::plugin_draw::DrawKey, Result<wgpu::RenderPipeline, String>>,
     reported: BTreeSet<String>,
+    stopped: Option<String>,
+    costs: HashMap<String, f64>,
+}
+
+struct PluginShaders {
+    shaders: HashMap<String, PluginShader>,
+    generation: u64,
+    budget: std::time::Duration,
+}
+
+impl Default for PluginShaders {
+    fn default() -> Self {
+        PluginShaders { shaders: HashMap::new(), generation: u64::MAX, budget: PLUGIN_GPU_BUDGET }
+    }
+}
+
+const PLUGIN_GPU_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn plugin_prelude_lines() -> usize {
+    PLUGIN_PRELUDE.iter().map(|part| part.lines().count()).sum()
+}
+
+pub(crate) fn plugin_source_lines(message: &str, prelude: usize) -> String {
+    let relabel = |number: &str| match number.parse::<usize>() {
+        Ok(line) if line > prelude => Some((line - prelude).to_string()),
+        Ok(line) => Some(format!("prelude {line}")),
+        Err(_) => None,
+    };
+    let mut out = String::with_capacity(message.len());
+    for (n, line) in message.split('\n').enumerate() {
+        if n > 0 {
+            out.push('\n');
+        }
+        let gutter = line.trim_start();
+        let digits = gutter.chars().take_while(char::is_ascii_digit).count();
+        if digits > 0 && gutter[digits..].trim_start().starts_with('│') {
+            let indent = &line[..line.len() - gutter.len()];
+            let label = relabel(&gutter[..digits]).unwrap_or_default();
+            let rest = &gutter[digits..];
+            let width = (indent.len() + digits).max(label.len());
+            out.push_str(&format!("{label:>width$}{rest}"));
+            continue;
+        }
+        let mut rest = line;
+        while let Some(at) = rest.find("wgsl:") {
+            let (before, after) = rest.split_at(at + 5);
+            out.push_str(before);
+            let digits = after.chars().take_while(char::is_ascii_digit).count();
+            match relabel(&after[..digits]) {
+                Some(label) => out.push_str(&label),
+                None => out.push_str(&after[..digits]),
+            }
+            rest = &after[digits..];
+        }
+        out.push_str(rest);
+    }
+    out
 }
 
 /// Pixel format of every working texture: premultiplied RGBA, 32-bit float (32 bpc headroom;
@@ -284,6 +341,7 @@ pub(crate) struct Transfers {
     up_bytes: std::sync::atomic::AtomicU64,
     downs: std::sync::atomic::AtomicU64,
     down_bytes: std::sync::atomic::AtomicU64,
+    pub(crate) layers_copied: std::sync::atomic::AtomicU64,
 }
 
 /// A snapshot of [`GpuContext::transfer_stats`].
@@ -293,6 +351,7 @@ pub struct TransferStats {
     pub upload_bytes: u64,
     pub readbacks: u64,
     pub readback_bytes: u64,
+    pub plugin_layers_copied: u64,
 }
 
 /// `WGPU_ADAPTER_NAME` trimmed; empty or whitespace-only counts as unset (an empty
@@ -699,7 +758,7 @@ pub struct GpuContext {
     /// Effect kernels, built on first dispatch (`GpuContext::pipeline`); one that doesn't build
     /// leaves its effects to the CPU.
     effect_pipelines: EffectPipelines,
-    plugin_shaders: Mutex<HashMap<String, PluginShader>>,
+    plugin_shaders: Mutex<PluginShaders>,
     pub(crate) plugin_draw: crate::plugin_draw::Store,
     display_bgl: wgpu::BindGroupLayout,
     display: wgpu::ComputePipeline,
@@ -1120,7 +1179,7 @@ impl GpuContext {
     /// frees resources dropped before that submission without holding `poll_lock` for seconds at a
     /// time. A timeout simply moves on without retiring the context or its readbacks; any other
     /// poll error retires the readbacks through the failure path.
-    fn poll_wait(&self, submission_index: wgpu::SubmissionIndex, timeout: std::time::Duration) {
+    pub(crate) fn poll_wait(&self, submission_index: wgpu::SubmissionIndex, timeout: std::time::Duration) {
         if self.readbacks.check().is_err() {
             return;
         }
@@ -1534,20 +1593,72 @@ impl GpuContext {
         wgsl: &str,
         with: impl FnOnce(&mut PluginShader, &wgpu::ShaderModule) -> Result<T, String>,
     ) -> Result<T, String> {
-        let mut shaders = self.plugin_shaders.lock().map_err(|_| "the plugin shader cache is poisoned".to_string())?;
+        let mut plugins = self.plugin_shaders.lock().map_err(|_| "the plugin shader cache is poisoned".to_string())?;
+        let generation = effectcraft_effects::dynamic::generation();
+        if plugins.generation != generation {
+            plugins.generation = generation;
+            let registered = |effect: &str, revision: u64| effectcraft_effects::dynamic::get(effect).is_some_and(|r| r.effect.revision == revision);
+            plugins.shaders.retain(|effect, shader| registered(effect, shader.revision));
+            self.plugin_draw.retain(|effect| plugins.shaders.contains_key(effect));
+        }
         let compile = || {
             let source: String = PLUGIN_PRELUDE.iter().copied().chain([wgsl]).collect();
             let module = init_resource(&self.device, effect, || {
                 self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(effect), source: wgpu::ShaderSource::Wgsl(source.into()) })
-            });
-            PluginShader { revision, module, pipelines: HashMap::new(), draws: HashMap::new(), reported: BTreeSet::new() }
+            })
+            .map_err(|why| plugin_source_lines(&why, plugin_prelude_lines()));
+            PluginShader { revision, module, pipelines: HashMap::new(), draws: HashMap::new(), reported: BTreeSet::new(), stopped: None, costs: HashMap::new() }
         };
-        let shader = shaders.entry(effect.to_string()).or_insert_with(compile);
+        let shader = plugins.shaders.entry(effect.to_string()).or_insert_with(compile);
         if shader.revision != revision {
             *shader = compile();
         }
+        if let Some(why) = &shader.stopped {
+            return Err(why.clone());
+        }
         let module = shader.module.clone()?;
         with(shader, &module)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn plugin_shader_cached(&self, effect: &str) -> bool {
+        self.plugin_shaders.lock().is_ok_and(|plugins| plugins.shaders.contains_key(effect))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn plugin_reports(&self, effect: &str) -> Vec<String> {
+        self.plugin_shaders.lock().ok().and_then(|plugins| Some(plugins.shaders.get(effect)?.reported.iter().cloned().collect())).unwrap_or_default()
+    }
+
+    pub fn set_plugin_gpu_budget(&self, budget: std::time::Duration) {
+        if let Ok(mut plugins) = self.plugin_shaders.lock() {
+            plugins.budget = budget;
+        }
+    }
+
+    pub(crate) fn plugin_gpu_budget(&self) -> std::time::Duration {
+        self.plugin_shaders.lock().map(|plugins| plugins.budget).unwrap_or(PLUGIN_GPU_BUDGET)
+    }
+
+    pub(crate) fn plugin_stop(&self, effect: &str, why: &str) {
+        if let Ok(mut plugins) = self.plugin_shaders.lock()
+            && let Some(shader) = plugins.shaders.get_mut(effect)
+        {
+            shader.stopped = Some(why.to_string());
+        }
+        self.plugin_declined(effect, why);
+    }
+
+    pub(crate) fn plugin_cost(&self, effect: &str, kernel: &str) -> Option<f64> {
+        self.plugin_shaders.lock().ok()?.shaders.get(effect)?.costs.get(kernel).copied()
+    }
+
+    pub(crate) fn plugin_learn(&self, effect: &str, kernel: &str, ns_per_pixel: f64) {
+        if let Ok(mut plugins) = self.plugin_shaders.lock()
+            && let Some(shader) = plugins.shaders.get_mut(effect)
+        {
+            shader.costs.insert(kernel.to_string(), ns_per_pixel);
+        }
     }
 
     pub(crate) fn plugin_pipelines(&self, effect: &str, revision: u64, wgsl: &str, kernels: &[&str]) -> Result<Vec<wgpu::ComputePipeline>, String> {
@@ -1582,8 +1693,8 @@ impl GpuContext {
     }
 
     pub(crate) fn plugin_declined(&self, effect: &str, why: &str) {
-        let Ok(mut shaders) = self.plugin_shaders.lock() else { return };
-        let Some(shader) = shaders.get_mut(effect) else { return };
+        let Ok(mut plugins) = self.plugin_shaders.lock() else { return };
+        let Some(shader) = plugins.shaders.get_mut(effect) else { return };
         if shader.reported.len() < MAX_PLUGIN_REPORTS && shader.reported.insert(why.to_string()) {
             log::warn!("gpu {}: plugin effect {effect} renders on the CPU: {why}", self.name);
         }
@@ -1773,6 +1884,7 @@ impl GpuContext {
             upload_bytes: t.up_bytes.load(Relaxed),
             readbacks: t.downs.load(Relaxed),
             readback_bytes: t.down_bytes.load(Relaxed),
+            plugin_layers_copied: t.layers_copied.load(Relaxed),
         }
     }
 

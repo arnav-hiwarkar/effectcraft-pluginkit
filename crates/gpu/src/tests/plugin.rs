@@ -24,7 +24,11 @@ fn tint_program() -> GpuProgram {
 }
 
 fn register(id: &str, wgsl: &str, program: GpuProgram) {
-    dynamic::register(DynamicEffect {
+    dynamic::register(effect(id, wgsl, program));
+}
+
+fn effect(id: &str, wgsl: &str, program: GpuProgram) -> DynamicEffect {
+    DynamicEffect {
         owner: "test".into(),
         files: None,
         id: id.into(),
@@ -48,7 +52,7 @@ fn register(id: &str, wgsl: &str, program: GpuProgram) {
         reads_param_history: false,
         presets: Vec::new(),
         revision: 1,
-    });
+    }
 }
 
 fn input() -> Buf {
@@ -104,42 +108,118 @@ fn a_plugin_shader_that_does_not_compile_declines_to_the_cpu() {
 }
 
 #[test]
-fn plans_beyond_the_limits_are_rejected() {
+fn plans_the_gpu_cannot_hold_are_declined() {
     let Some(g) = gpu() else { return };
-    let tint = |src, out| pass("tint", src, out);
-    let finish = tint(GpuSlot::Source, GpuSlot::Output);
-    let plan = |images: Vec<[u32; 2]>, passes: Vec<GpuPass>| GpuProgram { images, passes, ..Default::default() };
-    let too_many_floats = GpuPass { f: vec![0.0; 97], ..finish.clone() };
-    let too_many_uints = GpuPass { u: vec![0; 17], ..finish.clone() };
+    let finish = pass("tint", GpuSlot::Source, GpuSlot::Output);
+    let limit = g.ctx.device.limits().max_texture_dimension_2d;
+    let odd_buffer = dynamic::GpuBytes { name: "odd".into(), bytes: vec![0u8; 6].into() };
+    let short_texture = dynamic::GpuPicture { name: "short".into(), size: [4, 4], bytes: vec![0u8; 15 * 16].into() };
     let cases = [
-        ("no-passes", plan(vec![], vec![])),
-        ("65-passes", plan(vec![], vec![finish.clone(); 65])),
-        ("33-images", plan(vec![[8, 8]; 33], vec![finish.clone()])),
-        ("empty-image", plan(vec![[0, 8]], vec![finish.clone()])),
-        ("huge-image", plan(vec![[2 * 53 + 1, 8]], vec![finish.clone()])),
-        ("unwritten-read", plan(vec![[8, 8]], vec![tint(GpuSlot::Scratch(0), GpuSlot::Output)])),
-        ("undeclared-image", plan(vec![], vec![tint(GpuSlot::Source, GpuSlot::Scratch(0)), finish.clone()])),
-        ("no-output", plan(vec![[8, 8]], vec![tint(GpuSlot::Source, GpuSlot::Scratch(0))])),
-        (
-            "reads-own-output",
-            plan(vec![[8, 8]], vec![tint(GpuSlot::Source, GpuSlot::Scratch(0)), tint(GpuSlot::Scratch(0), GpuSlot::Scratch(0)), finish.clone()]),
-        ),
-        ("writes-source", plan(vec![], vec![tint(GpuSlot::Source, GpuSlot::Source), finish.clone()])),
-        ("too-much-scratch", plan(vec![[2 * 53, 2 * 37]; 3], vec![finish.clone()])),
-        ("too-many-floats", plan(vec![], vec![too_many_floats])),
-        ("too-many-uints", plan(vec![], vec![too_many_uints])),
+        ("too-wide-for-the-device", GpuProgram { images: vec![[limit + 1, 8]], passes: vec![finish.clone()], ..Default::default() }),
+        ("odd-buffer", GpuProgram { buffers: vec![odd_buffer], passes: vec![finish.clone()], ..Default::default() }),
+        ("short-texture", GpuProgram { textures: vec![short_texture], passes: vec![finish.clone()], ..Default::default() }),
     ];
     for (name, program) in cases {
         let id = format!("test.gpu.limit.{name}");
         register(&id, TINT_WGSL, program);
-        assert!(run(&id).is_none(), "{name}: the plan is rejected");
+        assert!(run(&id).is_none(), "{name}: the plan is declined");
     }
     assert!(g.ctx.check_health().is_ok());
-    let mut images = vec![[2 * 53, 2 * 37], [53, 37], [53, 37], [53, 37]];
-    images.extend([[1, 1]; 12]);
-    let at_the_limits = plan(images, std::iter::repeat_n(finish, 64).collect());
-    register("test.gpu.limit.ok", TINT_WGSL, at_the_limits);
-    assert!(run("test.gpu.limit.ok").is_some(), "a plan at the limits runs");
+    register("test.gpu.limit.ok", TINT_WGSL, GpuProgram { images: vec![[2 * 53, 2 * 37]], passes: vec![finish], ..Default::default() });
+    assert!(run("test.gpu.limit.ok").is_some(), "a plan within the device's limits runs");
+}
+
+#[test]
+fn compile_errors_quote_lines_of_the_plugin_source() {
+    let Some(g) = gpu() else { return };
+    let wgsl =
+        "fn helper() -> f32 {\n    return 1.0;\n}\n@compute @workgroup_size(16, 16) fn tint(@builtin(global_invocation_id) id: vec3<u32>) { let x = ; }\n";
+    register("test.gpu.lines", wgsl, tint_program());
+    assert!(run("test.gpu.lines").is_none());
+    let reports = g.ctx.plugin_reports("test.gpu.lines");
+    let report = reports.first().unwrap_or_else(|| panic!("the failure is reported: {reports:?}"));
+    assert!(report.contains("wgsl:4:"), "the error points at line 4 of the plugin's source: {report}");
+    assert!(report.lines().any(|line| line.trim_start().starts_with("4 │")), "the quoted line is numbered 4: {report}");
+}
+
+#[test]
+fn the_shader_cache_forgets_an_unloaded_plugin() {
+    let Some(g) = gpu() else { return };
+    dynamic::register(DynamicEffect { owner: "test.unload".into(), ..effect("test.gpu.unloaded", TINT_WGSL, tint_program()) });
+    assert!(run("test.gpu.unloaded").is_some());
+    assert!(g.ctx.plugin_shader_cached("test.gpu.unloaded"));
+    dynamic::unregister("test.unload");
+    register("test.gpu.after-unload", TINT_WGSL, tint_program());
+    assert!(run("test.gpu.after-unload").is_some());
+    assert!(!g.ctx.plugin_shader_cached("test.gpu.unloaded"), "the unloaded plugin's shader is dropped");
+    assert!(g.ctx.plugin_shader_cached("test.gpu.after-unload"));
+}
+
+const SPIN_WGSL: &str = r#"
+@compute @workgroup_size(16, 16)
+fn spin(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    var x = f32(id.x) * 0.001 + f32(id.y) * 0.0007;
+    for (var i = 0u; i < pass_u(0); i = i + 1u) {
+        x = fract(sin(x * 12.9898 + 78.233) * 43758.547);
+    }
+    store(id.xy, vec4<f32>(x, x, x, 1.0));
+}
+"#;
+
+const SPIN_SIZE: [u32; 2] = [1024, 1024];
+const HEAVY: u32 = 100_000;
+
+fn spin_program(iterations: u32) -> GpuProgram {
+    let spin = GpuPass { kernel: "spin".into(), src: GpuSlot::Source, aux: None, out: GpuSlot::Output, f: Vec::new(), u: vec![iterations], draw: None };
+    GpuProgram { passes: vec![spin], ..Default::default() }
+}
+
+fn run_sized(id: &str, size: [u32; 2]) -> Option<Buf> {
+    let g = gpu()?;
+    let spec = effectcraft_effects::find(id).expect("registered");
+    let params = Params::default();
+    let ctx = EffectCtx { params: &params, time: 0.0, layer_size: size.map(f64::from), seed: 1, adjustment: false, env: Default::default() };
+    let buf = Buf { img: pattern(7, size[0], size[1]), offset: [0.0, 0.0], scale: 1.0 };
+    g.effects(&[FxStep { spec, ctx }], &buf, None)
+}
+
+struct Budget(&'static crate::Gpu);
+
+impl Drop for Budget {
+    fn drop(&mut self) {
+        self.0.ctx.set_plugin_gpu_budget(std::time::Duration::from_secs(2));
+    }
+}
+
+#[test]
+fn plugin_work_runs_in_bounded_pieces_and_stops_past_its_budget() {
+    let Some(g) = gpu() else { return };
+    let _restore = Budget(g);
+    register("test.gpu.spin.light", SPIN_WGSL, spin_program(4));
+    let light = run_sized("test.gpu.spin.light", SPIN_SIZE).expect("a light kernel runs");
+    let row = |y: u32| light.img.data[(y * SPIN_SIZE[0] + 3) as usize];
+    assert!((0..SPIN_SIZE[1]).all(|y| row(y)[3] == 1.0), "every band of the frame is written");
+    register("test.gpu.spin.whole", SPIN_WGSL, spin_program(HEAVY));
+    register("test.gpu.spin.heavy", SPIN_WGSL, spin_program(HEAVY));
+    g.ctx.set_plugin_gpu_budget(std::time::Duration::from_secs(30));
+    let began = std::time::Instant::now();
+    assert!(run_sized("test.gpu.spin.whole", SPIN_SIZE).is_some(), "the heavy plan runs within a long budget");
+    let whole = began.elapsed();
+    g.ctx.set_plugin_gpu_budget(std::time::Duration::from_millis(40));
+    let began = std::time::Instant::now();
+    assert!(run_sized("test.gpu.spin.heavy", SPIN_SIZE).is_none(), "a plan past its budget is stopped");
+    let stopped_after = began.elapsed();
+    let reports = g.ctx.plugin_reports("test.gpu.spin.heavy");
+    assert!(
+        reports.iter().any(|why| why.contains("test.gpu.spin.heavy") && why.contains("pass 0 (`spin`)") && why.contains("40 ms")),
+        "the error names the plugin effect, the pass and the budget: {reports:?}"
+    );
+    assert!(stopped_after < whole / 2, "stopped after {stopped_after:?}; the whole plan takes {whole:?}");
+    let began = std::time::Instant::now();
+    assert!(run_sized("test.gpu.spin.heavy", SPIN_SIZE).is_none(), "the effect stays on the CPU until the plugin reloads");
+    assert!(began.elapsed() < std::time::Duration::from_millis(500), "the next frame declines at once: {:?}", began.elapsed());
+    assert!(g.ctx.check_health().is_ok(), "the device stays usable");
 }
 
 #[test]

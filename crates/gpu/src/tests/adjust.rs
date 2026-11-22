@@ -137,3 +137,35 @@ fn composite_reads_the_original_adjustment_input_on_gpu() {
         }
     }
 }
+
+#[test]
+fn a_run_of_cpu_effects_between_gpu_effects_reads_back_once_and_uploads_once() {
+    let Some(g) = gpu() else { return };
+    let stack = vec![
+        ("ec.blur.gaussian", vec![("blurriness", n(6.0))]),
+        ("ec.distort.rollingshutterrepair", vec![]),
+        ("ec.generate.fractal", vec![]),
+        ("ec.color.levels", vec![("inBlack", n(0.1)), ("gamma", n(1.4))]),
+    ];
+    for depth in [BitDepth::Bpc8, BitDepth::Bpc32] {
+        let s = adjustment_scene(depth, &stack, false);
+        check(&format!("gpu, cpu, cpu, gpu adjustment {depth:?}"), compare_at(&s, opts(), Tick::ZERO), 0.0);
+    }
+    let s = adjustment_scene(BitDepth::Bpc32, &stack, false);
+    let mut r = Renderer::new(&s.p, &Pattern, RenderOpts { backend: Backend::Gpu, ..opts() });
+    r.accel = Some(g);
+    let ctx = r.eval_ctx(s.cid, Tick::ZERO).unwrap();
+    let adj = ctx.comp.layers.iter().find(|l| l.switches.adjustment).unwrap();
+    let mut split = Probe::default();
+    r.run_effects_on(&ctx, adj, true, &mut split);
+    assert_eq!((split.gpu, split.cpu), (2, 2), "the stack is GPU, CPU, CPU, GPU");
+    let mut e = crate::context::Enc::new(&g.ctx);
+    let img = e.image(80, 50);
+    let before = g.ctx.transfer_stats();
+    let mut fx = crate::effects::GpuFx::new(&mut e, img, [0.0, 0.0], 1.0, None);
+    r.run_effects_on(&ctx, adj, true, &mut fx);
+    let (out, _, _) = fx.finish().expect("the stack runs");
+    let after = g.ctx.transfer_stats();
+    assert_eq!((out.width, out.height), (80, 50));
+    assert_eq!((after.readbacks - before.readbacks, after.uploads - before.uploads), (1, 1), "readbacks and uploads");
+}

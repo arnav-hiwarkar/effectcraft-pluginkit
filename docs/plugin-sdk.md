@@ -137,6 +137,13 @@ Tell the app how much of the frame each output pixel needs, in `layout()`.
 Scale every distance by `cx.scale`, so a half-resolution preview matches the full render. `cx.px(id)`
 does this for a slider measured in layer pixels.
 
+Check a plan in a unit test with the same check the app runs:
+
+```rust
+let plan = GpuPlan::new().pass(GpuPass::new("tint_apply", GpuImage::Source, GpuImage::Output).floats(&[1.0, 0.8, 0.6]));
+assert_eq!(plan.validate([1920, 1080]), Ok(()));
+```
+
 ## Fast maths
 
 In a sandboxed plugin, `f32::exp2`, `powf`, `sin`, `atan2` and the other maths functions are not single
@@ -162,6 +169,7 @@ fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
 
 Use them in the loop that runs for every pixel, and keep `std` for work done once per frame. `sqrt`, `abs`,
 `floor`, `min` and `max` are single instructions already; keep calling those on `f32`.
+
 
 ## Replay a simulation
 

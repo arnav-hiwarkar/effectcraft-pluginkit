@@ -137,3 +137,61 @@ fn a_gpu_pass_reads_the_layer_a_layer_parameter_names() {
     let worst = worst_difference(&on_gpu, &on_cpu);
     assert!(worst < 1e-3, "the GPU and CPU renders differ by {worst}");
 }
+
+#[test]
+fn a_layer_input_stays_on_the_gpu_after_the_first_frame() {
+    let mut app = app("test.gpu-layer-frames", &[]);
+    if gpu().is_none() {
+        return;
+    }
+    let own = Gpu::try_headless().expect("a second device for counting this test's transfers alone");
+    let gpu = &own;
+    let spec = effects::find(&format!("{}.gpu-matte", app.id)).expect("the probe registered its matte effect");
+    let session = &mut app.session;
+    session.execute("file.projectSettings", serde_json::json!({"bitDepth": 8})).expect("8 bit");
+    let matte = session.execute("layer.newSolid", serde_json::json!({"name": "Matte", "color": "#ff8000", "width": 20, "height": 10})).expect("layer.newSolid")
+        ["layer"]
+        .as_u64();
+    session.execute("prop.set", serde_json::json!({"layer": matte, "path": "transform/opacity", "value": 0})).expect("prop.set");
+    let plate = session.execute("layer.newSolid", serde_json::json!({"name": "Plate", "color": "#0000ff", "width": 64, "height": 36})).expect("layer.newSolid")
+        ["layer"]
+        .as_u64();
+    session.execute("effect.apply", serde_json::json!({"layer": plate, "effect": "ec.color.brightnesscontrast"})).expect("effect.apply");
+    session.execute("effect.apply", serde_json::json!({"layer": plate, "effect": spec.id})).expect("effect.apply");
+    for (time, value) in [(0.0, 0.0), (1.0, 40.0)] {
+        session
+            .execute("prop.addKey", serde_json::json!({"layer": plate, "path": "effects/#1/brightness", "time": time, "value": value}))
+            .expect("prop.addKey");
+    }
+    let matte_id = session.active_comp().and_then(|comp| comp.layers.iter().find(|layer| layer.name == "Matte")).expect("the matte layer").id.0;
+    session.execute_checked("prop.set", serde_json::json!({"layer": plate, "path": "effects/#2/matte", "value": matte_id})).expect("prop.set");
+    let comp = session.active_comp_id().expect("an active comp");
+    let cache = effectcraft_engine::render::LayerCache::new(256 << 20);
+    let render = |backend, frame: f64| {
+        let mut renderer = effectcraft_engine::render::Renderer::new(
+            &session.project,
+            session.footage.as_ref(),
+            effectcraft_engine::render::RenderOpts { backend, ..Default::default() },
+        );
+        renderer.cache = Some(&cache);
+        renderer.with_accel(Some(gpu)).comp_frame(comp, effectcraft_engine::time::Tick::from_seconds_f64(frame / 24.0))
+    };
+    let first = render(effectcraft_engine::render::Backend::Gpu, 0.0);
+    let (before, cached) = (gpu.context().transfer_stats(), cache.stats());
+    let second = render(effectcraft_engine::render::Backend::Gpu, 1.0);
+    let (after, now) = (gpu.context().transfer_stats(), cache.stats());
+    assert_eq!(
+        (now.misses - cached.misses, now.hits - cached.hits),
+        (1, 1),
+        "the second frame renders only the animated plate; the matte comes from the cache"
+    );
+    assert_eq!((after.uploads - before.uploads, after.upload_bytes - before.upload_bytes), (1, 64 * 36 * 16), "the second frame uploads only the plate");
+    assert_eq!(after.plugin_layers_copied, 0, "no frame copies the matte through the CPU");
+    let covered = second.data.iter().filter(|pixel| pixel[3] > 0.5).count();
+    assert_eq!(covered, 20 * 10, "the matte is drawn by the effect on the second frame");
+    for (frame, on_gpu) in [(0.0, &first), (1.0, &second)] {
+        let on_cpu = render(effectcraft_engine::render::Backend::Cpu, frame);
+        let worst = worst_difference(on_gpu, &on_cpu);
+        assert!(worst <= 1.0 / 255.0, "frame {frame}: the GPU and CPU renders differ by {worst}");
+    }
+}

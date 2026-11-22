@@ -29,7 +29,8 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **SDK: padding is one number for all four sides.** A horizontal streak pays for vertical padding too.
 - **SDK: pointer events carry no modifier keys**, and only the last pointer event per frame reaches a canvas.
 - **SDK: `read_file` cannot tell a missing file from a failed read.**
-- **GPU: a plugin kernel that runs for seconds stalls the GPU context.** naga already bounds loops (`ShaderRuntimeChecks::checked`), but a bounded loop can still run for seconds and wgpu 30 has no dispatch time limit; only the OS watchdog and the 10 s readback deadline end it. Compile errors quote line numbers that include the prelude. The shader cache keeps entries of unloaded plugins until the GPU context is dropped. On WebGPU a bad plugin shader is not contained.
+- **GPU: on WebGPU a bad plugin shader is not contained, and plugin GPU work has no time limit there**, because the browser build cannot wait for a submission (`Clock` in `crates/gpu/src/fx_plugin.rs`). Natively one band of rows is the smallest piece, so a kernel that is very slow on every pixel of one row still runs that band to the end before the limit stops the plan.
+- **GPU: a plan stopped by the time limit is reported only in the log.** The effect falls back to the CPU and Effect Controls does not say why (`plugin_stop` in `crates/gpu/src/context.rs`).
 - **UI: plugin labels have no automation id**, so the control channel cannot read a panel's text. A click made just before a tab is hidden is delivered when it reopens.
 
 ## From the Opus review, not fixed
@@ -51,7 +52,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **Effects cannot read audio.** The render path reaches footage audio, not the comp mix.
 - **A layer with its video switch off reads as empty through a layer parameter.**
 - **Plugin panels and custom controls cannot be fully used from the keyboard.** A canvas cannot take focus and custom controls get no key events. House rule 21 asks for this. (`crates/ui-egui/src/panels/plugin_view.rs`, Opus finding 8)
-- **The plan check exists twice.** The GPU path validates a plan in `crates/gpu/src/fx_plugin.rs` and the CPU path in `GpuPlan::check`.
 - **One `reach` covers a pass's `src` and `aux`.**
 - **Lumen Glow has no CPU fallback for a level that needs more than 48 floats**; its `render` returns an error there.
 - **Forge 3D draws only on the GPU.** Draw passes render to an `Rgba16Float` target that is created per frame and copied.
