@@ -126,10 +126,19 @@ There is no network permission. A sandboxed plugin cannot open a connection.
 | Native, CPU | None. The plugin writes into the app's buffer. | Trusted plugins |
 | Sandboxed, CPU | One copy of the frame in and one out | Everything else |
 
-Measured on an Apple M-series laptop with a 1920×1080 `f32` RGBA frame and a one-line effect: 1.1 ms
-native, 3.6 ms sandboxed, 1.2 ms for the same loop in the app. The 2.5 ms gap is the two copies.
-`cargo run --release -p craft-plugin-host --example bench` repeats the measurement after
-`cargo test -p craft-plugin-host` has built the probe plugin.
+Measured on a ten-core Apple M-series laptop that was also running other builds, 1920×1080 `f32` RGBA,
+median of 15, with `cargo run --release -p craft-plugin-host --example bench`:
+
+| Effect | Native | Sandboxed | Sandboxed before bands and parallel copies |
+|---|---|---|---|
+| One-line effect | 0.5 ms | 1.7 ms | 3.6 ms |
+| Plasma Beam | 2.0 ms | 5.7 ms | 15.1 ms |
+| Lumen Glow, CPU passes, padded frame | 14.3 ms | 32.9 ms | 85 ms |
+
+A sandboxed effect still takes two to three and a half times as long as the native build of the same
+source. Both now use every core. What remains is the copy of each band into and out of the instance, and
+slower code for `powf`, `exp` and similar maths, which a WebAssembly build has to bundle. A compiled
+module is cached on disk, so loading a sandboxed plugin takes a few milliseconds after its first run.
 
 A sandboxed instance is single-threaded. To use every core, an effect tells the app how far each output
 row reads from its input row. The app then splits the frame into bands and renders them on separate
