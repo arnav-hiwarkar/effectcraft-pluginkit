@@ -166,7 +166,9 @@ pub fn saturate(x: f32) -> f32 {
 }
 
 /// The sRGB transfer function's decode: an encoded value to linear light. Negative values mirror around zero and
-/// values above 1 continue the curve. Largest absolute error against the `f64` formula over `-2..=2`: 3e-6.
+/// values above 1 continue the curve. Largest absolute error against the `f64` formula over `-2..=2`: 3e-6; largest
+/// relative error up to `|encoded| = 1e15`: 3e-6. Past `6e15` the result saturates at `2^126` (about `8.5e37`), as
+/// [`pow`] does: a branch to the standard power function would cost every pixel, and no pixel is that bright.
 #[inline(always)]
 pub fn srgb_to_linear(encoded: f32) -> f32 {
     let a = encoded.abs();
@@ -361,6 +363,10 @@ mod tests {
         let trip = worst(sweep(0.0, 1.0, 1000), |v| f64::from((linear_to_srgb(srgb_to_linear(v)) - v).abs()));
         assert!(trip < 5.0e-6, "{trip}");
         assert_eq!(srgb_to_linear(0.0), 0.0);
+        let bright = worst([1e3f32, 1e8, 1e12, 1e15].into_iter(), |v| relative(srgb_to_linear(v), ((f64::from(v) + 0.055) / 1.055).powf(2.4)));
+        assert!(bright < 3.0e-6, "{bright}");
+        assert_eq!(srgb_to_linear(1e16), 2.0f32.powi(126));
+        assert_eq!(srgb_to_linear(-1e30), -(2.0f32.powi(126)));
         assert!((srgb_to_linear(1.0) - 1.0).abs() < 3e-6);
         assert!((linear_to_srgb(1.0) - 1.0).abs() < 3e-6);
     }
