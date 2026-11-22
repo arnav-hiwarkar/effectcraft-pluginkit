@@ -48,3 +48,22 @@ fn a_task_reads_the_comp_mix_or_one_layer_of_audio() {
     assert_eq!(finished(&mut app, "audio", json!({"duration": 0.5, "layer": "Loud"}))["peak"], mix["peak"]);
     assert_eq!(finished(&mut app, "audio", json!({"duration": 0.5, "layer": "Quiet"}))["peak"], json!(0.0));
 }
+
+#[test]
+fn a_task_cannot_ask_for_a_frame_larger_than_the_host_will_render() {
+    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut app = app("test.media-huge", &["document.read"]);
+    let mut failure = |width: u32, height: u32, scale: f64| {
+        app.session.execute("comp.new", json!({"name": format!("Wide {width}"), "width": width, "height": height, "frameRate": 24, "duration": 1})).unwrap();
+        let id = effectcraft_plugin::start_task(&app.id, "frame", json!({"time": 0.0, "scale": scale})).unwrap();
+        let tasks = app.session.execute("plugin.tasks", json!({"wait": true, "timeout": 30})).unwrap();
+        let state = tasks.as_array().unwrap().iter().find(|t| t["id"] == json!(id) && t["plugin"] == json!(app.id)).cloned().unwrap();
+        (state["status"].clone(), state["error"].as_str().unwrap_or_default().to_string())
+    };
+    let (status, error) = failure(4200, 4, 4.0);
+    assert_eq!(status, json!(TaskStatus::Failed), "{error}");
+    assert!(error.contains("16800×16 frame is too large"), "{error}");
+    let (status, error) = failure(2100, 2100, 4.0);
+    assert_eq!(status, json!(TaskStatus::Failed), "{error}");
+    assert!(error.contains("too large"), "{error}");
+}

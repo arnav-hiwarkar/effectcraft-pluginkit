@@ -69,6 +69,9 @@ const FILE_PERMISSIONS: [Permission; 2] = [Permission::FilesRead, Permission::Fi
 const MAX_AUDIO_FRAMES: f64 = (1u64 << 25) as f64;
 const AUDIO_RATES: std::ops::RangeInclusive<u32> = 1000..=192_000;
 const MAX_FRAME_SCALE: f64 = 4.0;
+const MAX_FRAME_SIDE: f64 = 16384.0;
+const MAX_FRAME_BYTES: f64 = (1u64 << 30) as f64;
+const RGBA_F32_BYTES: f64 = 16.0;
 
 pub type FilePicker = Box<dyn Fn(&PickFile) -> Option<PathBuf> + Send + Sync>;
 
@@ -153,6 +156,13 @@ fn outside_the_document(id: &str, params: &Value) -> Option<Permission> {
     }
 }
 
+fn outside_the_effects_by_name(path: &str) -> bool {
+    use effectcraft_engine::project::props::Seg;
+    let segs = effectcraft_engine::project::parse_path(path);
+    let no_uid = !segs.iter().any(|seg| matches!(seg, Seg::Uid(_)));
+    no_uid && matches!(segs.first(), Some(Seg::Match(first, _)) if !first.eq_ignore_ascii_case("effects"))
+}
+
 fn refers_to_a_step(value: Option<&Value>) -> bool {
     value.and_then(Value::as_str).is_some_and(|text| text.starts_with('$'))
 }
@@ -177,19 +187,30 @@ impl<'a> SessionHost<'a> {
         FILE_PERMISSIONS.iter().all(|p| self.plugin.bundle.manifest.permissions.contains(p))
     }
 
+    fn copied_keys_hold_text(&self) -> bool {
+        use effectcraft_engine::project::Value as KeyValue;
+        self.session.state.key_clipboard.iter().flat_map(|clip| &clip.keys).any(|key| matches!(key.value, KeyValue::Str(_)))
+    }
+
     fn property_write_allowed(&mut self, id: &str, params: &Value, reshaped: bool) -> Result<(), String> {
+        if id == "keys.paste" && (reshaped || self.copied_keys_hold_text()) {
+            return Err(format!("`{id}`: pasting keyframes that may hold text needs the `files.read` and `files.write` permissions"));
+        }
         if !WRITES_A_PROPERTY.contains(&id) {
             return Ok(());
         }
         let needs_files = |what: &str| format!("`{id}`: {what} needs the `files.read` and `files.write` permissions");
         let path = params.get("path").and_then(Value::as_str);
-        let under_effects = path.is_none_or(|path| path.starts_with("effects"));
-        if params.get("selected").and_then(Value::as_bool) == Some(true) && under_effects {
+        let named_outside_the_effects = params.get("prop").is_none() && path.is_some_and(outside_the_effects_by_name);
+        if params.get("selected").and_then(Value::as_bool) == Some(true) && !named_outside_the_effects {
             return Err(needs_files("writing an effect property on every selected layer"));
         }
         let created_by_the_batch = ["layer", "prop", "path"].iter().any(|key| refers_to_a_step(params.get(*key)));
         if created_by_the_batch || reshaped {
-            return if under_effects {
+            if params.get("value").is_some_and(Value::is_string) {
+                return Err(needs_files("writing text into a property a batch step can change"));
+            }
+            return if !named_outside_the_effects {
                 Err(needs_files("writing an effect property after a batch step that can change which property the path names"))
             } else {
                 Ok(())
@@ -214,12 +235,13 @@ impl<'a> SessionHost<'a> {
     fn plugin_owned_text(&self, found: &Value) -> bool {
         let (Some(layer), Some(uid)) = (found.get("layer").and_then(Value::as_u64), found.get("uid").and_then(Value::as_u64)) else { return false };
         use effectcraft_engine::project::{GroupKind, LayerId, Node, ParamUi};
-        let own = format!("{}.", self.plugin.bundle.manifest.id);
+        let own = &self.plugin.bundle.manifest.id;
+        let owned_by_this_plugin = |effect: &str| effectcraft_engine::effects::dynamic::get(effect).is_some_and(|found| &found.effect.owner == own);
         let Some(layer) = self.session.project.comps().find_map(|(_, comp)| comp.layer(LayerId(layer))) else { return false };
         let Some(effects) = layer.props.sub("effects") else { return false };
         effects.children.iter().any(|node| match node {
             Node::Group(effect) => {
-                matches!(&effect.kind, GroupKind::Effect { effect } if effect.starts_with(&own))
+                matches!(&effect.kind, GroupKind::Effect { effect } if owned_by_this_plugin(effect))
                     && effect.find(uid).is_some_and(|prop| matches!(prop.ui, ParamUi::Custom))
             }
             Node::Prop(_) => false,
@@ -237,7 +259,7 @@ impl<'a> SessionHost<'a> {
         let mut reshaped = false;
         for (inner, inner_params) in owned {
             self.property_write_allowed(&inner, &inner_params, reshaped)?;
-            reshaped |= !WRITES_A_PROPERTY.contains(&inner.as_str()) && commands::find(&inner).is_some_and(|spec| spec.journal);
+            reshaped |= inner.starts_with("keys.") || !WRITES_A_PROPERTY.contains(&inner.as_str()) && commands::find(&inner).is_some_and(|spec| spec.journal);
         }
         Ok(())
     }
@@ -283,6 +305,14 @@ impl Host for SessionHost<'_> {
             return Err(format!("a frame needs a scale above 0 and at most {MAX_FRAME_SCALE}, and a finite time"));
         }
         let comp = find_comp(self.session, request.comp.as_deref())?;
+        let size = self.session.project.comp(comp).map(|found| (found.width, found.height)).ok_or("the composition is gone")?;
+        let (width, height) = ((f64::from(size.0) * request.scale).ceil(), (f64::from(size.1) * request.scale).ceil());
+        if width > MAX_FRAME_SIDE || height > MAX_FRAME_SIDE || width * height * RGBA_F32_BYTES > MAX_FRAME_BYTES {
+            return Err(format!(
+                "a {width}×{height} frame is too large: a frame may be at most {MAX_FRAME_SIDE} pixels on a side and {} MiB as RGBA floats",
+                MAX_FRAME_BYTES / f64::from(1u32 << 20)
+            ));
+        }
         let solo = match &request.layer {
             Some(layer) => Some(only_layer(&self.session.project, comp, find_layer(&self.session.project, comp, layer)?, true)?),
             None => None,

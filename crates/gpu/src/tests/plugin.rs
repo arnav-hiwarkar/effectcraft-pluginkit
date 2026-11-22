@@ -141,3 +141,18 @@ fn plans_beyond_the_limits_are_rejected() {
     register("test.gpu.limit.ok", TINT_WGSL, at_the_limits);
     assert!(run("test.gpu.limit.ok").is_some(), "a plan at the limits runs");
 }
+
+#[test]
+fn a_plugin_texture_cached_under_one_size_is_uploaded_again_under_another() {
+    let Some(g) = gpu() else { return };
+    let bytes: std::sync::Arc<[u8]> = vec![0u8; 64 * 16].into();
+    let program = |size: [u32; 2]| GpuProgram { textures: vec![dynamic::GpuPicture { name: "lut".into(), size, bytes: bytes.clone() }], ..Default::default() };
+    let sizes: Vec<[u32; 2]> = [program([16, 4]), program([8, 8])]
+        .iter()
+        .map(|p| {
+            let image = crate::plugin_draw::Stage::new("test.gpu.reshape", 1, "", p).texture(&g.ctx, 0).expect("the texture uploads");
+            [image.width, image.height]
+        })
+        .collect();
+    assert_eq!(sizes, [[16, 4], [8, 8]]);
+}

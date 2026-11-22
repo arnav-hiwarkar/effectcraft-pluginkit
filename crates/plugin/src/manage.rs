@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use craft_plugin_host::ui::{UiInput, Widget};
-use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Plugin, Registry, RunMode, TaskState};
+use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Permission, Plugin, Registry, RunMode, TaskState};
 use craft_plugin_host::{ControlsReply, PluginImage};
 use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
@@ -96,12 +96,11 @@ pub struct Plugins {
     inner: Mutex<Inner>,
 }
 
-fn load(bundle: &Bundle, data_dir: PathBuf) -> Result<Arc<Loaded>, String> {
+fn load(bundle: &Bundle, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Result<Arc<Loaded>, String> {
     let entry = bundle.entry_path().map_err(|e| e.to_string())?;
     let bytes = std::fs::read(&entry).map_err(|e| format!("{}: {e}", entry.display()))?;
     let mut hasher = DefaultHasher::new();
     (&bundle.manifest.version, &bytes).hash(&mut hasher);
-    let grants = bundle.manifest.permissions.clone();
     let plugin = Plugin::load(bundle, grants, data_dir.clone(), Limits::default()).map_err(|e| e.to_string())?;
     if let Some(effect) = plugin.contributions().effects.iter().find(|e| !plain_id(&e.id)) {
         return Err(format!("effect id `{}` may only use lower case letters, digits, `-` and `_`", effect.id));
@@ -114,8 +113,13 @@ impl Inner {
     fn start(&mut self, bundle: &Bundle) {
         let id = bundle.manifest.id.clone();
         self.stop(&id);
-        let bundle = if self.is_session_only(&id) { bundle.clone().with_mode(RunMode::Sandboxed) } else { self.registry.running(bundle) };
-        match load(&bundle, self.registry.data_dir(&id)) {
+        let (bundle, grants) = if self.is_session_only(&id) {
+            (bundle.clone().with_mode(RunMode::Sandboxed), bundle.manifest.permissions.clone())
+        } else {
+            let Some(grants) = self.registry.grants(&bundle.manifest) else { return };
+            (self.registry.running(bundle), grants)
+        };
+        match load(&bundle, grants, self.registry.data_dir(&id)) {
             Ok(loaded) => {
                 effects::register(&loaded);
                 self.loaded.insert(id, loaded);
