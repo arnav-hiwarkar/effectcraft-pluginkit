@@ -10,7 +10,7 @@ workflow, read [Write a plugin](plugin-sdk.md).
 | `id` | Reverse-domain, lower case, at least two segments. Effect ids become `<id>.<effect>`. |
 | `name`, `version` | Shown in the plugin manager. Required. |
 | `author`, `description` | Optional. |
-| `entry` | `{"wasm": "plugin.wasm"}`, or `{"native": {"macos-aarch64": "libx.dylib", "linux-x86_64": "libx.so", "windows-x86_64": "x.dll"}}`. File names only; they live in the plugin folder. |
+| `entry` | `{"wasm": "plugin.wasm"}`, `{"native": {"macos-aarch64": "libx.dylib", "linux-x86_64": "libx.so", "windows-x86_64": "x.dll"}}`, or both keys together. File names only; they live in the plugin folder. A plugin with `wasm` runs sandboxed unless the user chooses Run Unsandboxed and the plugin has a native build for this machine. |
 | `permissions` | Any of `document.read`, `document.write`, `files.read`, `files.write`. |
 
 ## Plugin
@@ -182,8 +182,9 @@ panel state is lost.
 | Command | Parameters | Does |
 |---|---|---|
 | `plugin.list` | | Every plugin with its state, permissions, effects, panels, and commands |
-| `plugin.install` | `path` | Copies a bundle into the plugin folder. The plugin waits for approval. |
+| `plugin.install` | `path` | Installs a `.craftplugin` file or a bundle folder into the plugin folder. The plugin waits for approval. |
 | `plugin.approve` | `id` | Grants the permissions the plugin asks for and starts it |
+| `plugin.setSandbox` | `id`, `sandboxed` | For a plugin with a WebAssembly and a native build: `false` runs the native build for this version, `true` runs the sandboxed one |
 | `plugin.disable` | `id` | Stops the plugin and keeps it installed |
 | `plugin.uninstall` | `id` | Removes the plugin and its approval |
 | `plugin.load` | `path` | Runs a bundle until the app quits, with the permissions it asks for |

@@ -23,8 +23,13 @@ macro_rules! window {
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         plugin!("plugin.list", "List Plug-ins", "{} — every plug-in with its state, permissions, effects, panels and commands"),
-        plugin!("plugin.install", "Install Plug-in...", "{path: plug-in folder} — copies it in; it runs after plugin.approve"),
+        plugin!("plugin.install", "Install Plug-in...", "{path: .craftplugin file or plug-in folder} — installs it; it runs after plugin.approve"),
         plugin!("plugin.approve", "Allow and Enable Plug-in", "{id} — grants the permissions the plug-in asks for and starts it"),
+        plugin!(
+            "plugin.setSandbox",
+            "Set Plug-in Sandbox",
+            "{id, sandboxed: bool} — a plug-in with a WebAssembly and a native build runs sandboxed until sandboxed is false; the choice is for this version"
+        ),
         plugin!("plugin.disable", "Disable Plug-in", "{id}"),
         plugin!("plugin.uninstall", "Remove Plug-in", "{id}"),
         plugin!("plugin.load", "Load Plug-in for This Session", "{path: plug-in folder} — development: runs it with the permissions it asks for until quit"),

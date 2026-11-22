@@ -671,6 +671,7 @@ pub(super) fn file_dialog(app: &mut EffectcraftApp, id: &str, params: &Value) ->
         "file.installScript" | "file.installScriptUIPanel" => ("path", Ask::Open(&["jsx", "js"])),
         "file.replaceFootage" => ("path", Ask::Import(&[])),
         "file.relinkFootage" => ("folder", Ask::Folder),
+        "plugin.install" if params.get("folder").is_none() => ("path", Ask::Open(&["craftplugin"])),
         "plugin.install" | "plugin.load" => ("path", Ask::Folder),
         "file.collectFiles" => ("folder", Ask::Save("Collected Files".into())),
         // An open XML project gets ` copy` too: the copy never writes over the open file.

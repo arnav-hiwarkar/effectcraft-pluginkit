@@ -14,6 +14,7 @@ pub(crate) struct Listed {
     pub author: String,
     pub description: String,
     pub sandboxed: bool,
+    pub can_unsandbox: bool,
     pub permissions: Vec<Permission>,
     pub state: State,
     pub error: Option<String>,
@@ -72,6 +73,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 action(app, ui, "plugins.install", "Install Plug-in...", ("plugin.install", json!({})), &mut actions);
+                action(app, ui, "plugins.installFolder", "Install Folder...", ("plugin.install", json!({"folder": true})), &mut actions);
                 action(app, ui, "plugins.reload", "Reload", ("plugin.reload", json!({})), &mut actions);
             });
             ui.separator();
@@ -137,6 +139,11 @@ fn entry(app: &mut EffectcraftApp, ui: &mut egui::Ui, plugin: &Listed, actions: 
             }
             if plugin.state == State::Running {
                 action(app, ui, &format!("{scope}.disable"), "Disable", ("plugin.disable", id.clone()), actions);
+            }
+            if plugin.can_unsandbox && plugin.state != State::NeedsApproval {
+                let (auto, label, sandboxed) =
+                    if plugin.sandboxed { ("unsandbox", "Run Unsandboxed", false) } else { ("sandbox", "Run Sandboxed", true) };
+                action(app, ui, &format!("{scope}.{auto}"), label, ("plugin.setSandbox", json!({"id": plugin.id, "sandboxed": sandboxed})), actions);
             }
             if !plugin.session_only {
                 action(app, ui, &format!("{scope}.remove"), "Remove", ("plugin.uninstall", id), actions);

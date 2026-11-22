@@ -7,7 +7,7 @@ mod ui;
 mod wire;
 
 pub use effect::{Cx, Effect, Frame, Image};
-pub use manifest::{Entry, MANIFEST_FILE, Manifest, ManifestError, Permission, native_target};
+pub use manifest::{Entry, MANIFEST_FILE, Manifest, ManifestError, Permission, RunMode, native_target};
 pub use plugin::{Error, Plugin, Result};
 pub use ui::{Canvas, Panel, Ui};
 pub use wire::*;

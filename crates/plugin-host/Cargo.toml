@@ -17,6 +17,7 @@ bytemuck = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 rayon = { workspace = true }
+zip = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 libloading = { workspace = true }

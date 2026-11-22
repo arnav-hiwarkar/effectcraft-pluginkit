@@ -13,7 +13,18 @@ done
 cargo build --quiet --package effectcraft-cli
 
 export EFFECTCRAFT_CONFIG_DIR="$OUT/config"
-EFFECTCRAFT_PLUGIN_PATH="$(find "$ROOT/plugins/dist" -mindepth 1 -maxdepth 1 -type d | sort | paste -sd: -)"
+
+INSTALLED_ID="org.craftkit.plasma-beam"
+PACKAGE="$(find "$ROOT/plugins/dist" -maxdepth 1 -name "$INSTALLED_ID-*.craftplugin" | sort | tail -n 1)"
+if [ -z "$PACKAGE" ]; then
+    echo "FAIL no .craftplugin file for $INSTALLED_ID in plugins/dist"
+    exit 1
+fi
+"$CLI" exec plugin.install "{\"path\":\"$PACKAGE\"}" > /dev/null
+"$CLI" exec plugin.approve "{\"id\":\"$INSTALLED_ID\"}" > /dev/null
+echo "PASS installed $INSTALLED_ID from $(basename "$PACKAGE")"
+
+EFFECTCRAFT_PLUGIN_PATH="$(find "$ROOT/plugins/dist" -mindepth 1 -maxdepth 1 -type d ! -name "$INSTALLED_ID" | sort | paste -sd: -)"
 export EFFECTCRAFT_PLUGIN_PATH
 
 "$CLI" exec plugin.list --json > "$OUT/plugins.json"

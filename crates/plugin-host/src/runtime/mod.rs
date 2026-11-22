@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use craft_plugin::Permission;
+use craft_plugin::{Permission, RunMode};
 
 use self::native::NativeGuest;
 use self::serve::{HostCx, Identity};
@@ -31,7 +31,7 @@ pub(crate) struct Engine {
 impl Engine {
     pub fn open(bundle: &Bundle, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Result<Engine, PluginError> {
         let entry = bundle.entry_path().map_err(|e| PluginError::Load(e.to_string()))?;
-        let kind = if bundle.manifest.sandboxed() {
+        let kind = if bundle.mode == RunMode::Sandboxed {
             let bytes = std::fs::read(&entry).map_err(|e| PluginError::Load(format!("{}: {e}", entry.display())))?;
             Kind::Wasm { module: WasmModule::compile(&bytes)?, main: Mutex::new(None), pool: Mutex::new(Vec::new()) }
         } else {

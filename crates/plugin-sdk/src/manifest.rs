@@ -19,11 +19,19 @@ pub struct Manifest {
     pub permissions: BTreeSet<Permission>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum Entry {
-    Wasm(String),
-    Native(BTreeMap<String, String>),
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Entry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wasm: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub native: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunMode {
+    Sandboxed,
+    Unsandboxed,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -108,10 +116,7 @@ impl Manifest {
         if self.version.trim().is_empty() {
             return Err(ManifestError::Field("version"));
         }
-        let paths: Vec<&String> = match &self.entry {
-            Entry::Wasm(path) => vec![path],
-            Entry::Native(by_target) => by_target.values().collect(),
-        };
+        let paths: Vec<&String> = self.entry.wasm.iter().chain(self.entry.native.values()).collect();
         if paths.is_empty() {
             return Err(ManifestError::Field("entry"));
         }
@@ -121,14 +126,26 @@ impl Manifest {
         }
     }
 
-    pub fn sandboxed(&self) -> bool {
-        matches!(self.entry, Entry::Wasm(_))
+    pub fn has_wasm(&self) -> bool {
+        self.entry.wasm.is_some()
     }
 
-    pub fn entry_file(&self) -> Option<&str> {
-        match &self.entry {
-            Entry::Wasm(path) => Some(path),
-            Entry::Native(by_target) => by_target.get(&native_target()).map(String::as_str),
+    pub fn native_file(&self) -> Option<&str> {
+        self.entry.native.get(&native_target()).map(String::as_str)
+    }
+
+    pub fn can_choose_unsandboxed(&self) -> bool {
+        self.has_wasm() && self.native_file().is_some()
+    }
+
+    pub fn mode(&self, unsandboxed_chosen: bool) -> RunMode {
+        if !self.has_wasm() || (unsandboxed_chosen && self.native_file().is_some()) { RunMode::Unsandboxed } else { RunMode::Sandboxed }
+    }
+
+    pub fn entry_file(&self, mode: RunMode) -> Option<&str> {
+        match mode {
+            RunMode::Sandboxed => self.entry.wasm.as_deref(),
+            RunMode::Unsandboxed => self.native_file(),
         }
     }
 }
@@ -161,8 +178,9 @@ mod tests {
                 "permissions":["document.read","files.write"]}"#,
         )
         .unwrap();
-        assert!(m.sandboxed());
-        assert_eq!(m.entry_file(), Some("plugin.wasm"));
+        assert_eq!(m.mode(true), RunMode::Sandboxed);
+        assert_eq!(m.entry_file(RunMode::Sandboxed), Some("plugin.wasm"));
+        assert_eq!(m.entry_file(RunMode::Unsandboxed), None);
         assert_eq!(m.permissions.into_iter().collect::<Vec<_>>(), [Permission::DocumentRead, Permission::FilesWrite]);
     }
 
@@ -173,8 +191,35 @@ mod tests {
             native_target()
         );
         let m = manifest(&json).unwrap();
-        assert!(!m.sandboxed());
-        assert_eq!(m.entry_file(), Some("libn.dylib"));
+        assert_eq!(m.mode(false), RunMode::Unsandboxed);
+        assert_eq!(m.entry_file(RunMode::Unsandboxed), Some("libn.dylib"));
+        assert_eq!(m.entry_file(RunMode::Sandboxed), None);
+    }
+
+    #[test]
+    fn a_plugin_with_both_entries_is_sandboxed_until_unsandboxed_is_chosen() {
+        let json = format!(
+            r#"{{"id":"com.example.both","name":"B","version":"1","entry":{{"wasm":"b.wasm","native":{{"{}":"libb.so","plan9-mips":"b.so"}}}}}}"#,
+            native_target()
+        );
+        let m = manifest(&json).unwrap();
+        assert!(m.can_choose_unsandboxed());
+        assert_eq!(m.mode(false), RunMode::Sandboxed);
+        assert_eq!(m.mode(true), RunMode::Unsandboxed);
+        assert_eq!(m.entry_file(RunMode::Sandboxed), Some("b.wasm"));
+        assert_eq!(m.entry_file(RunMode::Unsandboxed), Some("libb.so"));
+    }
+
+    #[test]
+    fn a_plugin_with_both_entries_but_no_native_build_for_this_machine_cannot_be_unsandboxed() {
+        let m = manifest(r#"{"id":"com.example.both","name":"B","version":"1","entry":{"wasm":"b.wasm","native":{"plan9-mips":"b.so"}}}"#).unwrap();
+        assert!(!m.can_choose_unsandboxed());
+        assert_eq!(m.mode(true), RunMode::Sandboxed);
+    }
+
+    #[test]
+    fn an_entry_with_nothing_in_it_is_refused() {
+        assert_eq!(manifest(r#"{"id":"com.example.none","name":"N","version":"1","entry":{}}"#), Err(ManifestError::Field("entry")));
     }
 
     #[test]

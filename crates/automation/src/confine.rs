@@ -45,6 +45,7 @@ pub struct Confinement {
 const REFUSED: &[&str] = &[
     "plugin.install",
     "plugin.approve",
+    "plugin.setSandbox",
     "plugin.load",
     "plugin.uninstall",
     "plugin.disable",

@@ -8,6 +8,8 @@ use craft_plugin::{Call, MaskPath, Permission, Pixel, RenderCx, UiEvent, UiEvent
 use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Registry};
 use serde_json::{Value, json};
 
+mod package;
+
 fn probe_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/probe")
 }
@@ -283,7 +285,7 @@ fn a_native_plugin_needs_explicit_trust_beyond_its_permissions() {
     let root = tempfile::tempdir().unwrap();
     let mut registry = Registry::open(root.path());
     let installed = registry.install(source.path()).unwrap();
-    assert!(!installed.manifest.sandboxed());
+    assert_eq!(registry.mode(&installed.manifest), craft_plugin::RunMode::Unsandboxed);
     assert_eq!(registry.grants(&installed.manifest), None);
     registry.approve(&installed.manifest).unwrap();
     assert_eq!(registry.grants(&installed.manifest), Some(BTreeSet::new()));

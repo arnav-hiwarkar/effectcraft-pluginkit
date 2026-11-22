@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use craft_plugin_host::ui::{UiInput, Widget};
-use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Plugin, Registry};
+use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Plugin, Registry, RunMode};
 use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -66,6 +66,7 @@ pub struct PluginInfo {
     pub author: String,
     pub description: String,
     pub sandboxed: bool,
+    pub can_unsandbox: bool,
     pub permissions: Vec<PermissionInfo>,
     pub state: PluginState,
     pub error: Option<String>,
@@ -105,7 +106,8 @@ impl Inner {
     fn start(&mut self, bundle: &Bundle) {
         let id = bundle.manifest.id.clone();
         self.stop(&id);
-        match load(bundle, self.registry.data_dir(&id)) {
+        let bundle = if self.is_session_only(&id) { bundle.clone().with_mode(RunMode::Sandboxed) } else { self.registry.running(bundle) };
+        match load(&bundle, self.registry.data_dir(&id)) {
             Ok(loaded) => {
                 effects::register(&loaded);
                 self.loaded.insert(id, loaded);
@@ -122,6 +124,10 @@ impl Inner {
         if self.loaded.remove(id).is_some() {
             effects::unregister(id);
         }
+    }
+
+    fn is_session_only(&self, id: &str) -> bool {
+        self.session_only.iter().any(|bundle| bundle.manifest.id == id)
     }
 
     fn forget_session_copy(&mut self, id: &str) -> bool {
@@ -174,7 +180,8 @@ impl Inner {
             version: manifest.version.clone(),
             author: manifest.author.clone(),
             description: manifest.description.clone(),
-            sandboxed: manifest.sandboxed(),
+            sandboxed: if session_only { true } else { self.registry.mode(manifest) == RunMode::Sandboxed },
+            can_unsandbox: !session_only && manifest.can_choose_unsandboxed(),
             permissions: manifest.permissions.iter().map(|p| PermissionInfo { name: p.name(), summary: p.summary() }).collect(),
             state,
             error,
@@ -196,7 +203,7 @@ fn plain_id(id: &str) -> bool {
 }
 
 fn covers(consent: &craft_plugin_host::Consent, manifest: &Manifest) -> bool {
-    manifest.permissions.is_subset(&consent.granted) && (manifest.sandboxed() || consent.unsandboxed.as_ref() == Some(&manifest.version))
+    manifest.permissions.is_subset(&consent.granted) && (manifest.has_wasm() || consent.unsandboxed.as_ref() == Some(&manifest.version))
 }
 
 fn reserved(manifest: &Manifest) -> Result<(), String> {
@@ -270,6 +277,17 @@ impl Plugins {
         Ok(inner.info(&bundle, false))
     }
 
+    pub fn set_sandboxed(&self, id: &str, sandboxed: bool) -> Result<PluginInfo, String> {
+        let mut inner = self.lock();
+        let bundle = inner.find(id)?;
+        if !inner.registry.consent(id).is_some_and(|consent| consent.enabled) {
+            return Err(format!("allow plugin `{id}` before choosing how it runs"));
+        }
+        inner.registry.set_unsandboxed(&bundle.manifest, !sandboxed).map_err(|e| e.to_string())?;
+        inner.start(&bundle);
+        Ok(inner.info(&bundle, false))
+    }
+
     pub fn disable(&self, id: &str) -> Result<(), String> {
         let mut inner = self.lock();
         inner.stop(id);
@@ -293,7 +311,7 @@ impl Plugins {
     pub fn load_for_session(&self, dir: &Path) -> Result<PluginInfo, String> {
         let bundle = Bundle::open(dir).map_err(|e| e.to_string())?;
         reserved(&bundle.manifest)?;
-        if !bundle.manifest.sandboxed() {
+        if !bundle.manifest.has_wasm() {
             return Err("a native plugin runs only after it is installed and approved".into());
         }
         let mut inner = self.lock();
@@ -384,6 +402,10 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
         "plugin.install" => plugins.install(Path::new(text("path")?)).map_err(failed).and_then(info),
         "plugin.load" => plugins.load_for_session(Path::new(text("path")?)).map_err(failed).and_then(info),
         "plugin.approve" => plugins.approve(text("id")?).map_err(failed).and_then(info),
+        "plugin.setSandbox" => {
+            let sandboxed = params.get("sandboxed").and_then(Value::as_bool).ok_or_else(|| failed("`plugin.setSandbox` needs a `sandboxed` boolean".into()))?;
+            plugins.set_sandboxed(text("id")?, sandboxed).map_err(failed).and_then(info)
+        }
         "plugin.disable" => plugins.disable(text("id")?).map(|()| Value::Null).map_err(failed),
         "plugin.uninstall" => plugins.uninstall(text("id")?).map(|()| Value::Null).map_err(failed),
         "plugin.reload" => {

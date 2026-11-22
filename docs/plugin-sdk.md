@@ -1,70 +1,70 @@
 # Write a plugin
 
-This page takes you from an empty folder to an effect running in EffectCraft, then shows panels,
-commands, and native builds. For every type and call, see the [plugin reference](plugin-reference.md).
+This page takes you from nothing to an effect running in EffectCraft, then shows how to package it, and
+covers panels, commands, and native builds. For every type and call, see the [plugin reference](plugin-reference.md).
 For how the system works, see [About the plugin system](plugin-system.md).
 
 You need Rust and the WebAssembly target: `rustup target add wasm32-unknown-unknown`.
 
-## Create an effect
+## Make an effect in five minutes
 
-A plugin is a folder with three files.
+Start the app with its control channel on, then make a plugin and run it.
+
+```sh
+cargo run -p effectcraft -- --control 9877     # in one terminal
+cargo xtask plugin new tint                    # in another: writes plugins/tint
+cargo xtask plugin dev plugins/tint            # builds it and loads it into the running app
+```
+
+`dev` prints one line each time it loads the plugin:
 
 ```
-my-plugin/
+reloaded com.example.tint: built in 7.9 s
+```
+
+In the app, apply **Tint** from Effects & Presets, Color Correction. Now open `plugins/tint/src/lib.rs`
+and change `render`: for example, replace `*channel *= gain;` with `*channel = 1.0 - *channel * gain;`.
+Save. A few seconds later `dev` prints a new line and the frame in the app changes. `dev` checks your files
+once a second and stops when you press Ctrl-C.
+
+`cargo xtask plugin new` takes two options. `--panel` adds a panel, and `--gpu` adds a GPU kernel to the
+effect. The new plugin has its own test: `cargo test --manifest-path plugins/tint/Cargo.toml`.
+
+You need Rust and the WebAssembly target: `rustup target add wasm32-unknown-unknown`.
+
+### What is in the folder
+
+```
+tint/
   Cargo.toml
   plugin.json
   src/lib.rs
 ```
 
-`Cargo.toml`:
-
-```toml
-[package]
-name = "my-plugin"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-craft-plugin = { path = "../../crates/plugin-sdk" }   # from a plugin in this repository's plugins/ folder
-
-[profile.release]
-opt-level = 3
-lto = true
-panic = "abort"
-
-[workspace]
-```
-
-`plugin.json`:
+`plugin.json` names the plugin and what it asks for:
 
 ```json
 {
   "id": "com.example.tint",
   "name": "Tint",
-  "version": "1.0.0",
-  "author": "Example",
-  "description": "Tints a layer.",
+  "version": "0.1.0",
+  "author": "",
+  "description": "Tint, made with cargo xtask plugin new.",
   "entry": { "wasm": "plugin.wasm" },
   "permissions": []
 }
 ```
 
-`src/lib.rs`:
+`src/lib.rs` is the effect:
 
 ```rust
 use craft_plugin::prelude::*;
 
-struct Tint;
+struct TintEffect;
 
-impl Effect for Tint {
+impl Effect for TintEffect {
     fn spec(&self) -> EffectSpec {
-        EffectSpec::new("tint", "Tint", "Color Correction")
-            .param(Param::color("color", "Color", [1.0, 0.5, 0.0, 1.0]))
-            .param(Param::percent("amount", "Amount", 100.0))
+        EffectSpec::new("tint", "Tint", "Color Correction").param(Param::percent("amount", "Amount", 100.0))
     }
 
     fn layout(&self, _cx: &Cx) -> Layout {
@@ -72,12 +72,10 @@ impl Effect for Tint {
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let tint = cx.color("color");
-        let amount = (cx.f("amount") / 100.0) as f32;
+        let gain = (cx.f("amount") / 100.0) as f32;
         for pixel in frame.pixels.iter_mut() {
-            let luma = 0.2126 * pixel[0] + 0.7152 * pixel[1] + 0.0722 * pixel[2];
-            for c in 0..3 {
-                pixel[c] += (luma * tint[c] - pixel[c]) * amount;
+            for channel in &mut pixel[..3] {
+                *channel *= gain;
             }
         }
         Ok(())
@@ -85,29 +83,42 @@ impl Effect for Tint {
 }
 
 fn plugin() -> Plugin {
-    Plugin::new().effect(Tint)
+    Plugin::new().effect(TintEffect)
 }
 
 craft_plugin::export!(plugin);
 ```
 
-Build and load it:
+The effect appears in Effects & Presets under Color Correction, and Effect Controls shows the Amount row
+with a stopwatch.
+
+## Package and install a plugin
+
+A `.craftplugin` file is one file a user can install. It is a zip archive with `plugin.json` at the root,
+the plugin's module and its `assets` folder.
 
 ```sh
-cargo xtask plugin plugins/my-plugin          # writes plugins/dist/com.example.tint/
-effectcraft-cli exec plugin.load '{"path": "plugins/dist/com.example.tint"}'
+cargo xtask plugin plugins/tint
 ```
 
-`cargo xtask plugin` builds the crate for WebAssembly and writes a bundle: `plugin.json`, the module, and
-the `assets` folder if the plugin has one. `plugin.load` runs a bundle for the current session with the
-permissions it asks for. To load bundles every time the app starts while you develop, list their folders in
-`EFFECTCRAFT_PLUGIN_PATH`.
+This writes the unpacked folder `plugins/dist/com.example.tint/` and the package
+`plugins/dist/com.example.tint-0.1.0.craftplugin`. The same source always gives the same bytes.
 
-The effect is now in Effects & Presets under Color Correction. Apply it, and Effect Controls shows the
-Color and Amount rows with stopwatches.
+To install the package, use any of these:
 
-Users install a bundle through **Window ▸ Plug-ins ▸ Manage Plug-ins**. The app copies the bundle into its plugin
-folder and runs nothing until the user approves the permissions.
+- **Window ▸ Plug-ins ▸ Manage Plug-ins ▸ Install Plug-in...**, then choose the file. On macOS you can also
+  double-click the file.
+- `effectcraft-cli exec plugin.install '{"path": "plugins/dist/com.example.tint-0.1.0.craftplugin"}'`
+- `plugin.install` with a folder path installs an unpacked bundle the same way.
+
+The app unpacks the file into a temporary folder next to the plugin folder and moves it into place, so a
+broken package leaves the installed version working. It refuses a package with an absolute path, a `..`
+path, a link, more than 4096 entries or more than 512 MiB of content. The plugin runs after the user
+approves what it asks for.
+
+`plugin.load` runs an unpacked bundle for the current session with the permissions it asks for, and
+`EFFECTCRAFT_PLUGIN_PATH` loads bundle folders every time the app starts. `cargo xtask plugin dev` uses
+`plugin.load`.
 
 
 ## Make the effect fast
@@ -193,21 +204,37 @@ let lut = host::read_file(Root::Bundle, "assets/film.cube")?;  // shipped with t
 let any = host::read_file(Root::User, "/abs/path")?;    // needs files.read
 ```
 
-## Build a native plugin
+## Add a native build
 
-Build a native plugin only for work the sandbox cannot do. The source does not change.
+Add a native build only for work the sandbox cannot do. The source does not change.
 
 ```sh
 cargo xtask plugin plugins/my-plugin --native
 ```
 
-The bundle's `entry` then names the library for this platform. A native plugin renders in place with no
-copy and may use threads. The user sees a warning that it runs with full access before enabling it.
+The package then holds both builds, and the manifest's `entry` names each:
 
-`plugin.load` and `EFFECTCRAFT_PLUGIN_PATH` refuse a native bundle. Install it and approve it instead:
+```json
+"entry": { "wasm": "plugin.wasm", "native": { "macos-aarch64": "libx.dylib" } }
+```
+
+The plugin runs sandboxed. For a plugin with both builds, the manager shows **Run Unsandboxed**. It
+loads the native build, which renders in place with no copy and may use threads, and it shows the
+warning that the plugin has full access to the computer. The choice holds for that version only; a new
+version runs sandboxed again. **Run Sandboxed** switches back. From the command line:
 
 ```sh
-effectcraft-cli exec plugin.install '{"path": "plugins/dist/com.example.tint"}'
+effectcraft-cli exec plugin.setSandbox '{"id": "com.example.tint", "sandboxed": false}'
+```
+
+A package built on one platform carries that platform's library. On another platform it runs
+sandboxed only.
+
+A plugin whose manifest has no `wasm` entry is native only. The user sees the warning before enabling
+it, and `plugin.load` and `EFFECTCRAFT_PLUGIN_PATH` refuse it. Install it and approve it instead:
+
+```sh
+effectcraft-cli exec plugin.install '{"path": "plugins/dist/com.example.tint-0.1.0.craftplugin"}'
 effectcraft-cli exec plugin.approve '{"id": "com.example.tint"}'
 ```
 

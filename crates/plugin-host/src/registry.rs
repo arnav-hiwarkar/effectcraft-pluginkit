@@ -1,11 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use craft_plugin::{MANIFEST_FILE, Manifest, ManifestError, Permission, native_target};
+use craft_plugin::{MANIFEST_FILE, Manifest, ManifestError, Permission, RunMode, native_target};
+
+use crate::package::{self, PackageError};
 use serde::{Deserialize, Serialize};
 
 const STATE_FILE: &str = "state.json";
 const DATA_DIR: &str = ".data";
+const UNPACKING_DIR: &str = ".unpacking";
 
 #[derive(Debug, thiserror::Error)]
 pub enum BundleError {
@@ -17,23 +20,35 @@ pub enum BundleError {
     NoBuildForThisMachine(String),
     #[error("plugin `{0}` is not installed")]
     NotInstalled(String),
+    #[error(transparent)]
+    Package(#[from] PackageError),
+    #[error("plugin `{0}` has no build for this machine, so it cannot run unsandboxed")]
+    NoNativeBuild(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bundle {
     pub dir: PathBuf,
     pub manifest: Manifest,
+    pub mode: RunMode,
 }
 
 impl Bundle {
     pub fn open(dir: &Path) -> Result<Bundle, BundleError> {
         let file = dir.join(MANIFEST_FILE);
         let text = std::fs::read_to_string(&file).map_err(|e| BundleError::Io(file, e))?;
-        Ok(Bundle { dir: dir.to_path_buf(), manifest: Manifest::parse(&text)? })
+        let manifest = Manifest::parse(&text)?;
+        let mode = manifest.mode(false);
+        Ok(Bundle { dir: dir.to_path_buf(), manifest, mode })
+    }
+
+    pub fn with_mode(mut self, mode: RunMode) -> Bundle {
+        self.mode = mode;
+        self
     }
 
     pub fn entry_path(&self) -> Result<PathBuf, BundleError> {
-        self.manifest.entry_file().map(|file| self.dir.join(file)).ok_or_else(|| BundleError::NoBuildForThisMachine(native_target()))
+        self.manifest.entry_file(self.mode).map(|file| self.dir.join(file)).ok_or_else(|| BundleError::NoBuildForThisMachine(native_target()))
     }
 }
 
@@ -76,11 +91,20 @@ impl Registry {
         self.consents.get(id)
     }
 
+    pub fn mode(&self, manifest: &Manifest) -> RunMode {
+        let chosen = self.consents.get(&manifest.id).is_some_and(|consent| consent.unsandboxed.as_ref() == Some(&manifest.version));
+        manifest.mode(chosen)
+    }
+
     pub fn grants(&self, manifest: &Manifest) -> Option<BTreeSet<Permission>> {
         let consent = self.consents.get(&manifest.id)?;
         let covered = manifest.permissions.is_subset(&consent.granted);
-        let trusted = manifest.sandboxed() || consent.unsandboxed.as_ref() == Some(&manifest.version);
+        let trusted = self.mode(manifest) == RunMode::Sandboxed || consent.unsandboxed.as_ref() == Some(&manifest.version);
         (consent.enabled && covered && trusted).then(|| manifest.permissions.clone())
+    }
+
+    pub fn running(&self, bundle: &Bundle) -> Bundle {
+        bundle.clone().with_mode(self.mode(&bundle.manifest))
     }
 
     pub fn data_dir(&self, id: &str) -> PathBuf {
@@ -88,21 +112,43 @@ impl Registry {
     }
 
     pub fn install(&mut self, source: &Path) -> Result<Bundle, BundleError> {
-        let incoming = Bundle::open(source)?;
-        incoming.entry_path()?;
-        let target = self.root.join(&incoming.manifest.id);
-        let staging = self.root.join(format!(".installing-{}", incoming.manifest.id));
-        let retired = self.root.join(format!(".replaced-{}", incoming.manifest.id));
         let io = |path: &Path| {
             let path = path.to_path_buf();
             move |e| BundleError::Io(path, e)
         };
+        std::fs::create_dir_all(&self.root).map_err(io(&self.root))?;
+        let unpacking = self.root.join(UNPACKING_DIR);
+        if unpacking.exists() {
+            std::fs::remove_dir_all(&unpacking).map_err(io(&unpacking))?;
+        }
+        let from_file = source.is_file();
+        let unpacked = if from_file {
+            package::unpack(source, &unpacking).map_err(BundleError::from).and_then(|()| Bundle::open(&unpacking))
+        } else {
+            Bundle::open(source)
+        };
+        let incoming = match unpacked.and_then(|bundle| bundle.entry_path().map(|_| bundle)) {
+            Ok(bundle) => bundle,
+            Err(error) => {
+                if from_file {
+                    let _ = std::fs::remove_dir_all(&unpacking);
+                }
+                return Err(error);
+            }
+        };
+        let target = self.root.join(&incoming.manifest.id);
+        let staging = self.root.join(format!(".installing-{}", incoming.manifest.id));
+        let retired = self.root.join(format!(".replaced-{}", incoming.manifest.id));
         for leftover in [&staging, &retired] {
             if leftover.exists() {
                 std::fs::remove_dir_all(leftover).map_err(io(leftover))?;
             }
         }
-        copy_dir(source, &staging).map_err(io(&staging))?;
+        if from_file {
+            std::fs::rename(&unpacking, &staging).map_err(io(&staging))?;
+        } else {
+            copy_dir(source, &staging).map_err(io(&staging))?;
+        }
         let replaces = target.exists();
         if replaces {
             std::fs::rename(&target, &retired).map_err(io(&target))?;
@@ -128,10 +174,23 @@ impl Registry {
     }
 
     pub fn approve(&mut self, manifest: &Manifest) -> Result<(), BundleError> {
-        let unsandboxed = (!manifest.sandboxed()).then(|| manifest.version.clone());
+        let unsandboxed = (!manifest.has_wasm()).then(|| manifest.version.clone());
         let consent = Consent { enabled: true, granted: manifest.permissions.clone(), unsandboxed };
         let mut consents = self.consents.clone();
         consents.insert(manifest.id.clone(), consent);
+        self.commit(consents)
+    }
+
+    pub fn set_unsandboxed(&mut self, manifest: &Manifest, unsandboxed: bool) -> Result<(), BundleError> {
+        if unsandboxed && !manifest.can_choose_unsandboxed() {
+            return Err(BundleError::NoNativeBuild(manifest.id.clone()));
+        }
+        if !manifest.has_wasm() {
+            return Ok(());
+        }
+        let mut consents = self.consents.clone();
+        let consent = consents.entry(manifest.id.clone()).or_default();
+        consent.unsandboxed = unsandboxed.then(|| manifest.version.clone());
         self.commit(consents)
     }
 

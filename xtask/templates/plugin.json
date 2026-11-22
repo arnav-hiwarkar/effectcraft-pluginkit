@@ -1,0 +1,9 @@
+{
+  "id": "com.example.{{name}}",
+  "name": "{{Title}}",
+  "version": "0.1.0",
+  "author": "",
+  "description": "{{Title}}, made with cargo xtask plugin new.",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": []
+}
