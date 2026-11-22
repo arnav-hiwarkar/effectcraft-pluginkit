@@ -196,6 +196,9 @@ impl<'a> SessionHost<'a> {
         if id == "keys.paste" && (reshaped || self.copied_keys_hold_text()) {
             return Err(format!("`{id}`: pasting keyframes that may hold text needs the `files.read` and `files.write` permissions"));
         }
+        if id == "essential.set" && params.get("value").is_some_and(Value::is_string) {
+            return Err(format!("`{id}`: writing text through an essential property needs the `files.read` and `files.write` permissions"));
+        }
         if !WRITES_A_PROPERTY.contains(&id) {
             return Ok(());
         }

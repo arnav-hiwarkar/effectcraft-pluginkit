@@ -296,3 +296,15 @@ fn keyframes_holding_text_cannot_be_pasted_without_file_permissions() {
     let value = app.session.execute_checked("prop.get", json!({"path": "effects/#2/lut"})).unwrap()["value"].clone();
     assert_eq!(value, json!(""));
 }
+
+#[test]
+fn text_cannot_be_written_through_an_essential_property_without_file_permissions() {
+    let mut app = app("test.gate-essential", EDITOR);
+    let denied = app.relay("essential.set", json!({"layer": 1, "control": "c1", "value": "/Users/someone/look.cube"})).unwrap_err();
+    assert!(denied.contains("files.read"), "{denied}");
+    let batch = json!({"steps": [{"command": "essential.set", "params": {"layer": 1, "control": "c1", "value": "/Users/someone/look.cube"}}]});
+    let denied = app.relay("engine.batch", batch).unwrap_err();
+    assert!(denied.contains("files.read"), "batch: {denied}");
+    let number = app.relay("essential.set", json!({"layer": 1, "control": "c1", "value": 3.0})).unwrap_err();
+    assert!(!number.contains("files.read"), "a number is not held back by the text rule: {number}");
+}

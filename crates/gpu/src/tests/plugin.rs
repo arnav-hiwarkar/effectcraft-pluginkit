@@ -114,7 +114,7 @@ fn plans_beyond_the_limits_are_rejected() {
     let cases = [
         ("no-passes", plan(vec![], vec![])),
         ("65-passes", plan(vec![], vec![finish.clone(); 65])),
-        ("17-images", plan(vec![[8, 8]; 17], vec![finish.clone()])),
+        ("33-images", plan(vec![[8, 8]; 33], vec![finish.clone()])),
         ("empty-image", plan(vec![[0, 8]], vec![finish.clone()])),
         ("huge-image", plan(vec![[2 * 53 + 1, 8]], vec![finish.clone()])),
         ("unwritten-read", plan(vec![[8, 8]], vec![tint(GpuSlot::Scratch(0), GpuSlot::Output)])),
