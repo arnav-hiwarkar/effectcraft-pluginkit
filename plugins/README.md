@@ -10,6 +10,7 @@ Each folder here is one plugin: a standalone Rust crate outside the workspace, b
 | [Plasma Beam](plasma-beam) | Effect | A white-hot core with layered coloured glow between two points or along the layer's masks, with presets, taper, trim, flicker and distortion |
 | [Halo Flares](halo) | Effect | A lens flare from a light point: core glow, star rays, anamorphic streak, chromatic ring, iris ghosts along the line through the centre, lens-dirt bloom and a hoop, with six looks, edge trigger, shimmer, occlusion by another layer and Add or Screen compositing |
 | [Forge 3D](forge-3d) | Effect | Lit, depth-correct 3D models over a layer, drawn by GPU draw passes: a cube, sphere, torus, extruded star or the bundled OBJ model, a grid or ring replicator with a colour ramp, a material, and the comp's camera and lights |
+| [Curves](curves) | Effect and panel | Tone curves for RGB, red, green, blue and alpha drawn as a graph in Effect Controls, and a Curve Presets panel of thumbnails |
 | [Glide](glide) | Panel and commands | A cubic-bezier easing editor with a preset library that applies the curve to the selected keyframes in one undo step |
 
 ## Halo Flares
@@ -83,3 +84,16 @@ cargo run --manifest-path plugins/ember/Cargo.toml --release --example showcase 
 
 Keyframed parameters are read at the current frame only, so the simulation uses today's values for its whole history;
 emitter motion is the constant `Emitter Motion` velocity, which `Inherit Emitter Motion` passes to new particles.
+
+## Curves
+
+The Curves effect keeps its five curves (RGB, Red, Green, Blue, Alpha) in one custom parameter as JSON.
+Its control in Effect Controls is a graph: click to add a point, drag to move it, drag it off the graph or
+Alt-click it to remove it. The channel popup picks the curve and Reset straightens it. The curves are
+monotone cubics, sampled into a 1024-entry table per channel, applied to straight colour with
+`Layout::pointwise()`. Values above 1 and below 0 continue the end segments in a straight line.
+
+The Curve Presets panel shows a scrollable grid of preset thumbnails. A click sets the Curves effect of
+the selected layer, and adds one first if the layer has none.
+
+`curves/verify.sh` builds the bundle, applies the effect in `effectcraft-cli` and checks rendered pixels.

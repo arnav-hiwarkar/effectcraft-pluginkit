@@ -161,6 +161,57 @@ fn plugin() -> Plugin {
 
 The panel appears in **Window ▸ Plug-ins**. Its tab docks like the app's own panels.
 
+### Show images
+
+Upload RGBA pixels once under a key, then show them by key. Uploading again under the same key replaces
+the image.
+
+```rust
+host::upload_image("thumb/0", 56, 56, &rgba8)?;      // straight RGBA, 4 bytes per pixel
+ui.scroll("thumbs", 240.0, |ui| {
+    ui.grid(3, |ui| {
+        if ui.image("thumb/0", [56.0, 56.0]) {          // true on the frame it was clicked
+            apply_preset(0)?;
+        }
+        ui.tooltip("Soft Contrast");                    // for the widget just before it
+    });
+});
+```
+
+A canvas draws an uploaded image with `c.image(key, min, max)`. The app drops a plugin's images when the
+plugin stops.
+
+## Draw a control in Effect Controls
+
+A custom parameter holds text the plugin owns, usually JSON. The effect draws its control with the same
+widgets as a panel, in the parameter's row, at the width of Effect Controls.
+
+```rust
+impl Effect for Curves {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("curves", "Curves", "Color Correction").param(Param::custom("curve", "Curve", "[]"))
+    }
+
+    fn controls(&self, param: &str, value: &mut String, ui: &mut Ui) {
+        if ui.button("Reset") {
+            *value = "[]".into();
+        }
+    }
+
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let curve = cx.text("curve");
+        …
+    }
+}
+```
+
+When `controls` changes `value`, the app sets the parameter. One drag is one undo step. `controls` runs
+in the long-lived instance, like a panel, so state kept in the effect (a selected channel, the point being
+dragged) lasts between frames. `render` runs in pooled instances and sees only `cx`. A project with a
+custom value opens without the plugin: the value is kept and the layer renders without the effect.
+
+`plugins/curves` is a complete example.
+
 ## Add a command
 
 ```rust

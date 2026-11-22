@@ -523,4 +523,34 @@ mod tests {
         harness.run();
         assert!(harness.state().iter().all(|event| event.id == 7));
     }
+
+    #[test]
+    fn clicking_an_image_with_no_upload_yet_still_sends_a_click_with_its_id() {
+        let mut harness = harness(vec![Widget::Image { id: 9, key: "thumb/0".into(), size: [40.0, 30.0] }]);
+        harness.get_by_label("thumb/0").click();
+        harness.run();
+        assert_eq!(harness.state(), &vec![UiEvent { id: 9, kind: UiEventKind::Click }]);
+    }
+
+    #[test]
+    fn clicking_a_tab_inside_a_scroll_area_and_a_grid_sends_its_index() {
+        let tabs = Widget::Tabs { id: 5, options: vec!["Red".into(), "Green".into()], selected: 0 };
+        let grid = Widget::Grid { id: 6, columns: 2, children: vec![tabs, Widget::Progress { fraction: 0.5, text: "Half".into() }] };
+        let mut harness = harness(vec![Widget::Scroll { id: 4, height: 80.0, children: vec![grid] }]);
+        harness.get_by_label("Green").click();
+        harness.run();
+        assert_eq!(harness.state(), &vec![UiEvent { id: 5, kind: UiEventKind::Number(1.0) }]);
+    }
+
+    #[test]
+    fn a_collapsing_section_closed_by_default_hides_its_children_until_opened() {
+        let button = Widget::Button { id: 3, text: "Inside".into(), enabled: true };
+        let mut harness = harness(vec![Widget::Collapsing { id: 2, title: "More".into(), open: false, children: vec![button] }]);
+        harness.run();
+        assert!(harness.query_by_label("Inside").is_none());
+        harness.get_by_label("More").click();
+        harness.run();
+        harness.run();
+        assert!(harness.query_by_label("Inside").is_some());
+    }
 }

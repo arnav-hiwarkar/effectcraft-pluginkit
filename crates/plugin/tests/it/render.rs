@@ -2,6 +2,8 @@ use effectcraft_engine::render::{RenderOpts, Renderer};
 use effectcraft_engine::time::Tick;
 use serde_json::json;
 
+use effectcraft_plugin::ui::{TextStyle, UiEvent, UiEventKind, UiInput, Widget};
+
 use crate::{App, app};
 
 fn centre_pixel(app: &App) -> [f32; 4] {
@@ -116,4 +118,44 @@ fn a_plugin_effect_changes_its_cache_key_when_a_file_in_its_data_folder_changes(
     std::fs::write(data.join("palette.json"), "[1, 2, 3]").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(600));
     assert_ne!(reader_key(&app).expect("the layer is cacheable"), before);
+fn controls(app: &mut App, effect: &str, value: &str, events: Vec<UiEvent>) -> (Vec<Widget>, Option<String>) {
+    let input = UiInput { events, size: [240.0, 80.0], ..Default::default() };
+    let (plugin, reply) = effectcraft_plugin::controls(&mut app.session, effect, "level", value, input).expect("the controls draw");
+    assert_eq!(plugin, app.id);
+    (reply.widgets, reply.value)
+}
+
+#[test]
+fn a_custom_control_draws_widgets_for_the_current_value_and_returns_the_edited_value() {
+    let mut app = app("test.render-controls", &[]);
+    let (widgets, value) = controls(&mut app, "test.render-controls.scale", "1", vec![]);
+    assert_eq!(value, None);
+    assert_eq!(widgets[0], Widget::Label { text: "Level 1".into(), style: TextStyle::Body });
+    let Widget::Button { id, .. } = widgets[1] else { panic!("a button, not {:?}", widgets[1]) };
+    let (_, value) = controls(&mut app, "test.render-controls.scale", "1", vec![UiEvent { id, kind: UiEventKind::Click }]);
+    assert_eq!(value.as_deref(), Some("0.5"));
+}
+
+#[test]
+fn a_project_with_a_custom_value_opens_and_renders_without_the_plugin_and_again_with_it() {
+    let mut app = app("test.render-custom", &[]);
+    app.session.execute("layer.newSolid", json!({"name": "White", "color": "#ffffff", "width": 64, "height": 36})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "test.render-custom.scale"})).unwrap();
+    app.session.execute("prop.set", json!({"path": "effects/#1/level", "value": "0.25"})).unwrap();
+    assert!(close(centre_pixel(&app), [0.25, 0.25, 0.25, 1.0]), "level 0.25 gives {:?}", centre_pixel(&app));
+    let saved = app.bundle.path().join("custom.ecproj");
+    app.session.execute("file.saveAs", json!({"path": saved})).unwrap();
+
+    let module = std::fs::read(app.bundle.path().join("probe.wasm")).unwrap();
+    std::fs::remove_file(app.bundle.path().join("probe.wasm")).unwrap();
+    assert!(app.plugins.load_for_session(app.bundle.path()).is_err());
+    app.session.execute("file.open", json!({"path": saved})).unwrap();
+    assert!(close(centre_pixel(&app), [1.0, 1.0, 1.0, 1.0]), "without the plugin it is {:?}", centre_pixel(&app));
+    let kept = app.session.execute("prop.get", json!({"layer": "White", "path": "effects/#1/level"})).unwrap();
+    assert_eq!(kept["value"], "0.25");
+
+    std::fs::write(app.bundle.path().join("probe.wasm"), module).unwrap();
+    app.plugins.load_for_session(app.bundle.path()).expect("the plugin loads again");
+    app.session.execute("file.open", json!({"path": saved})).unwrap();
+    assert!(close(centre_pixel(&app), [0.25, 0.25, 0.25, 1.0]), "with the plugin back it is {:?}", centre_pixel(&app));
 }
