@@ -47,10 +47,12 @@ fn glow(gpu: &mut GpuPlan, settings: &Settings, plan: &Plan, sizes: &[[u32; 2]],
     for (level, &([pyramid, scratch], _)) in plan.levels.iter().zip(&images).rev() {
         let [x, y] = level.kernels();
         gpu.passes.push(GpuPass::convolve(pyramid, scratch, Taps::Separable { x, y }));
-        gpu.passes.push(GpuPass::matrix(scratch, scratch, mix_rows(&level.mix, settings.glow_opacity)));
         if let Some((image, halve)) = coarser {
             let scale = halve.map(|halved| 1.0 / factor(halved));
             gpu.passes.push(GpuPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some(scale) }, image, pyramid));
+        }
+        gpu.passes.push(GpuPass::matrix(scratch, scratch, mix_rows(&level.mix, settings.glow_opacity)));
+        if coarser.is_some() {
             gpu.passes.push(GpuPass::blend_images(scratch, pyramid, scratch, BlendMode::Add, 1.0));
         }
         coarser = Some((scratch, level.halve));

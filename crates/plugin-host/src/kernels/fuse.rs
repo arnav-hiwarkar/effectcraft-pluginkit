@@ -42,7 +42,7 @@ fn reads_aux(kernel: &HostKernel) -> bool {
     matches!(kernel, HostKernel::Blend { .. })
 }
 
-fn live_after(passes: &[GpuPass], image: GpuImage) -> bool {
+pub(crate) fn live_after(passes: &[GpuPass], image: GpuImage) -> bool {
     for pass in passes {
         if pass.src == image || pass.aux == Some(image) {
             return true;

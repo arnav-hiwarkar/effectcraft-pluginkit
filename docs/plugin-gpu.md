@@ -263,7 +263,9 @@ Rules shared by all of them:
   pass may write the image it reads, as in `GpuPass::matrix(work, work, rows)`.
 - Consecutive pointwise passes of one size run as one loop over the frame on the CPU and one shader on the
   GPU. An image they write that no later pass reads is never stored. The loop ends before a pass that would
-  need a third stored image, and after a pass whose image a later, non-fused pass reads.
+  need a third stored image, and after a pass whose image a later, non-fused pass reads. On the GPU a
+  `resample` whose image only the next such loop reads is sampled inside that loop's shader instead of
+  being stored.
 
 `plan.validate` checks each kernel's fields and names the pass and the field it refuses:
 `pass 2 (blur): `radius` is [600.0, 2.0]; each axis must be 0 to 512`.

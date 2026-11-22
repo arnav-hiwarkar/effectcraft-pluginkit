@@ -1,6 +1,6 @@
 use craft_plugin::{BlendMode, Filter, GpuImage, GpuPass, GpuPlan, HostKernel, Measure, Taps};
 
-use super::fuse::{Fused, Op, Ref, Step, steps};
+use super::fuse::{Fused, Op, Ref, Step, live_after, steps};
 use super::{blur_taps, resample_scale};
 
 const FIRST_REGISTER: f32 = 2.0;
@@ -33,10 +33,22 @@ pub fn lower(plan: &GpuPlan, frame: [u32; 2]) -> (Vec<Lowered<'_>>, Vec<[u32; 2]
     let size = |image: GpuImage| plan.size_of(image, frame).unwrap_or(frame);
     let mut temps = Vec::new();
     let mut lowered = Vec::new();
-    for step in steps(plan, frame) {
+    let steps = steps(plan, frame);
+    let mut at = 0;
+    while at < steps.len() {
+        if let (Step::Single(index), Some(Step::Fused(fused))) = (&steps[at], steps.get(at + 1))
+            && let Some(step) = resampled_input(plan, &plan.passes[*index], fused, size)
+        {
+            lowered.push(Lowered::Host(step));
+            at += 2;
+            continue;
+        }
+        let step = &steps[at];
+        at += 1;
         match step {
-            Step::Fused(fused) => lowered.push(Lowered::Host(pointwise(&fused))),
+            Step::Fused(fused) => lowered.push(Lowered::Host(pointwise(fused, "craft_pointwise", Vec::new()))),
             Step::Single(index) => {
+                let index = *index;
                 let pass = &plan.passes[index];
                 let Some(kernel) = &pass.host else {
                     lowered.push(Lowered::Plugin(pass));
@@ -81,13 +93,29 @@ pub fn lower(plan: &GpuPlan, frame: [u32; 2]) -> (Vec<Lowered<'_>>, Vec<[u32; 2]
     (lowered, temps)
 }
 
-fn pointwise(fused: &Fused) -> GpuStep {
+fn resampled_input(plan: &GpuPlan, resample: &GpuPass, fused: &Fused, size: impl Fn(GpuImage) -> [u32; 2]) -> Option<GpuStep> {
+    let Some(HostKernel::Resample { filter, scale }) = &resample.host else { return None };
+    let slot = fused.inputs.iter().position(|image| *image == resample.out)?;
+    if live_after(&plan.passes[fused.passes.end..], resample.out) {
+        return None;
+    }
+    let mut step = pointwise(fused, "craft_pointwise", resample_scale(*scale, size(resample.src), size(resample.out)).to_vec());
+    step.u = vec![slot as u32 + 1, u32::from(*filter == Filter::Bicubic)];
+    if slot == 0 {
+        step.src = StepImage::Plan(resample.src);
+    } else {
+        step.aux = Some(StepImage::Plan(resample.src));
+    }
+    Some(step)
+}
+
+fn pointwise(fused: &Fused, entry: &'static str, f: Vec<f32>) -> GpuStep {
     GpuStep {
-        entry: "craft_pointwise",
+        entry,
         src: StepImage::Plan(fused.inputs[0]),
         aux: fused.inputs.get(1).copied().map(StepImage::Plan),
         out: StepImage::Plan(fused.out),
-        f: Vec::new(),
+        f,
         u: Vec::new(),
         data: program(&fused.ops),
     }

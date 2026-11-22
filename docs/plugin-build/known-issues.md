@@ -70,6 +70,20 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **Timeout checks cost 8 to 35 % of sandboxed compute** (Plasma Beam 4.44 → 3.23 ms with them off, Halo
   25 → 17.5 ms). They are needed to stop a plugin that hangs; the options are in the study.
 
+## Found by the second host kernel work, not fixed
+
+- **Lumen Glow on the GPU is 25 % slower than with its own shaders.** 1080p, in-process median of 21 runs
+  at load 3 to 4: 9.4 ms against 7.5 ms for the build before (`pk/kernels`). The fused pointwise loop is
+  one interpreting shader (`craft_pointwise` in `crates/gpu/src/shaders/plugin_kernels.wgsl`): its register
+  array indexed at run time costs about 0.4 ms (measured by replacing it), and the switch and per-op data
+  reads cost more. The emission is stored at full size before the first halving, where the old shader
+  thresholded each of the halving's 16 taps; running the fused program per tap instead was slower (10.0
+  ms). Generating WGSL per fused loop, or allocating its values to named registers on the host, would
+  remove the interpreter.
+- **Native Lumen Glow on all cores takes 5 % longer in wall time** (14.4 ms against 13.7 ms at 1080p, load
+  3) although it runs 3 % fewer instructions: the emission and the upsampled glow are two more
+  full-size images written and read.
+
 ## Seen in the third build
 
 - **One UI test fails now and then under load.** `app::viewer_frames::tests::the_viewers_show_a_still_reloaded_at_the_same_size`

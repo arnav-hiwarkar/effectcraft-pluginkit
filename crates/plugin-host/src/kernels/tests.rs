@@ -1,6 +1,6 @@
 use craft_plugin::{BlendMode, BlurShape, Filter, GpuImage, GpuPass, GpuPlan, HostKernel, Measure, Pixel, Taps};
 
-use super::{Image, Ref, Step, blur_taps, run, run_fused, steps};
+use super::{Image, Lowered, Ref, Step, StepImage, blur_taps, lower, run, run_fused, steps};
 
 const SIZE: [u32; 2] = [37, 23];
 
@@ -386,4 +386,30 @@ fn a_fused_loop_ends_where_a_value_is_read_later_or_a_third_image_is_needed() {
             (vec![6], vec![Ref::Input(0)]),
         ]
     );
+}
+
+#[test]
+fn on_the_gpu_a_resample_read_only_by_the_next_fused_loop_is_sampled_inside_it() {
+    let mut plan = GpuPlan::new();
+    let (half, up) = (plan.scratch([19, 12]), plan.scratch(SIZE));
+    let plan = plan
+        .pass(GpuPass::resample(GpuImage::Source, half, Filter::Bilinear))
+        .pass(GpuPass::resample(half, up, Filter::Bicubic))
+        .pass(GpuPass::blend_images(GpuImage::Source, up, GpuImage::Output, BlendMode::Screen, 1.0));
+    let (lowered, temps) = lower(&plan, SIZE);
+    let steps: Vec<(&str, StepImage, Option<StepImage>, Vec<u32>)> = lowered
+        .iter()
+        .map(|step| match step {
+            Lowered::Host(step) => (step.entry, step.src, step.aux, step.u.clone()),
+            Lowered::Plugin(pass) => panic!("no plugin pass in this plan: {pass:?}"),
+        })
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            ("craft_resample", StepImage::Plan(GpuImage::Source), None, vec![0]),
+            ("craft_pointwise", StepImage::Plan(GpuImage::Source), Some(StepImage::Plan(half)), vec![2, 1]),
+        ]
+    );
+    assert!(temps.is_empty());
 }
