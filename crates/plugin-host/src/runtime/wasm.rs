@@ -200,7 +200,7 @@ fn host_call(mut caller: Caller<'_, State>, _ctx: u32, request: u32, request_len
     };
     let request = slice(request, request_len)?;
     let bulk_in = slice(bulk, bulk_len)?;
-    let (reply, bulk_out, paused) = native::serve_erased(caller.data().ctx, &request, &bulk_in);
+    let (reply, bulk_out, paused) = native::serve_erased(caller.data().ctx, &request, &bulk_in, caller.data().deadline);
     if !paused.is_zero()
         && let Some(deadline) = caller.data().deadline.and_then(|deadline| deadline.checked_add(paused))
     {
