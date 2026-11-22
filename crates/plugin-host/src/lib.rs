@@ -1,3 +1,5 @@
+#[cfg(not(target_family = "wasm"))]
+mod cache;
 mod host;
 mod plugin;
 mod registry;

@@ -39,6 +39,19 @@ pub fn write_file(root: Root, path: &str, bytes: &[u8]) -> Result<()> {
     call::<serde_json::Value>(&HostCall::WriteFile { root, path: path.into() }, bytes).map(|_| ())
 }
 
+pub fn cache_get(key: &str) -> Option<Vec<u8>> {
+    let (found, bulk) = call::<bool>(&HostCall::CacheGet { key: key.into() }, &[]).ok()?;
+    found.then(|| bulk.bytes().to_vec())
+}
+
+pub fn cache_put(key: &str, bytes: &[u8]) -> Result<()> {
+    call::<serde_json::Value>(&HostCall::CachePut { key: key.into() }, bytes).map(|_| ())
+}
+
+pub fn cache_remove(key: &str) {
+    let _ = call::<serde_json::Value>(&HostCall::CacheRemove { key: key.into() }, &[]);
+}
+
 pub fn list_files(root: Root, path: &str) -> Result<Vec<String>> {
     call(&HostCall::ListFiles { root, path: path.into() }, &[]).map(|(names, _)| names)
 }

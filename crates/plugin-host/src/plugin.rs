@@ -65,6 +65,10 @@ impl Plugin {
         &self.manifest
     }
 
+    pub fn cached(&self, key: &str) -> Option<std::sync::Arc<[u8]>> {
+        self.engine.cached(key)
+    }
+
     pub fn contributions(&self) -> &Contributions {
         &self.contributions
     }

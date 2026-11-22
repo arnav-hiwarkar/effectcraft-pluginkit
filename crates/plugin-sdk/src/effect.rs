@@ -114,6 +114,14 @@ impl Cx {
         host::call(&HostCall::Masks, &[]).map(|(masks, _)| masks).unwrap_or_default()
     }
 
+    pub fn recall(&self, name: &str) -> Option<Vec<u8>> {
+        host::cache_get(&format!("{}/{name}", self.instance))
+    }
+
+    pub fn remember(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        host::cache_put(&format!("{}/{name}", self.instance), bytes)
+    }
+
     pub fn scene(&self) -> Option<Scene> {
         host::call(&HostCall::Scene, &[]).ok().map(|(scene, _)| scene)
     }

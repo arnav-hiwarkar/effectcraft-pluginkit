@@ -1,10 +1,12 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use craft_plugin::{HostCall, ImageDesc, LogLevel, Outcome, Permission, Pixel, Root};
 use serde_json::{Value, json};
 
 use super::gate;
+use crate::cache::Cache;
 use crate::host::{Host, Pixels};
 
 pub(crate) struct Identity {
@@ -12,6 +14,7 @@ pub(crate) struct Identity {
     pub dir: PathBuf,
     pub data_dir: PathBuf,
     pub grants: BTreeSet<Permission>,
+    pub cache: Arc<Cache>,
 }
 
 pub(crate) struct HostCx<'a> {
@@ -22,6 +25,7 @@ pub(crate) struct HostCx<'a> {
 pub(crate) enum Bulk {
     None,
     Bytes(Vec<u8>),
+    Shared(Arc<[u8]>),
     Pixels(Vec<Pixel>),
 }
 
@@ -30,6 +34,7 @@ impl Bulk {
         match self {
             Bulk::None => &[],
             Bulk::Bytes(bytes) => bytes,
+            Bulk::Shared(bytes) => bytes,
             Bulk::Pixels(pixels) => bytemuck::cast_slice(pixels),
         }
     }
@@ -73,6 +78,15 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
         HostCall::WriteFile { root, path } => {
             let target = resolve(cx.plugin, root, &path)?;
             std::fs::write(target, bulk).map_err(|e| format!("{path}: {e}"))?;
+            plain(Value::Null)
+        }
+        HostCall::CacheGet { key } => Ok(match cx.plugin.cache.get(&key) {
+            Some(bytes) => (Value::Bool(true), Bulk::Shared(bytes)),
+            None => (Value::Bool(false), Bulk::None),
+        }),
+        HostCall::CachePut { key } => cx.plugin.cache.put(key, bulk).map(|()| (Value::Null, Bulk::None)),
+        HostCall::CacheRemove { key } => {
+            cx.plugin.cache.remove(&key);
             plain(Value::Null)
         }
         HostCall::ListFiles { root, path } => {

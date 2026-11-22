@@ -5,7 +5,7 @@ mod wasm;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use craft_plugin::Permission;
@@ -13,6 +13,7 @@ use craft_plugin::Permission;
 use self::native::NativeGuest;
 use self::serve::{HostCx, Identity};
 use self::wasm::{WasmGuest, WasmModule};
+use crate::cache::{BUDGET, Cache};
 use crate::host::Host;
 use crate::plugin::{Io, PluginError};
 use crate::registry::Bundle;
@@ -36,8 +37,12 @@ impl Engine {
         } else {
             Kind::Native(NativeGuest::load(&entry)?)
         };
-        let identity = Identity { id: bundle.manifest.id.clone(), dir: bundle.dir.clone(), data_dir, grants };
+        let identity = Identity { id: bundle.manifest.id.clone(), dir: bundle.dir.clone(), data_dir, grants, cache: Arc::new(Cache::new(BUDGET)) };
         Ok(Engine { identity, kind })
+    }
+
+    pub fn cached(&self, key: &str) -> Option<Arc<[u8]>> {
+        self.identity.cache.get(key)
     }
 
     pub fn copies_pixels(&self) -> bool {

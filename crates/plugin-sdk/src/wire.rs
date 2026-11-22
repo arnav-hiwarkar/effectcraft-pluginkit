@@ -348,6 +348,9 @@ pub enum HostCall {
     ReadFile { root: Root, path: String },
     WriteFile { root: Root, path: String },
     ListFiles { root: Root, path: String },
+    CacheGet { key: String },
+    CachePut { key: String },
+    CacheRemove { key: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

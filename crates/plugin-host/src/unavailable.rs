@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use craft_plugin::Permission;
@@ -13,6 +14,10 @@ pub(crate) enum Engine {}
 impl Engine {
     pub fn open(_: &Bundle, _: BTreeSet<Permission>, _: PathBuf) -> Result<Engine, PluginError> {
         Err(PluginError::Load("plugins run in the desktop app only".into()))
+    }
+
+    pub fn cached(&self, _: &str) -> Option<Arc<[u8]>> {
+        match *self {}
     }
 
     pub fn copies_pixels(&self) -> bool {
