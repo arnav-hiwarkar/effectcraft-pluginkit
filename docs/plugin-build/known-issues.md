@@ -81,3 +81,13 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
   the old one only when all bands succeed. A native band copies its input rows into that frame and renders
   there, so native Probe went from 0.54 to 1.23 ms and native Plasma Beam from 2.23 to 2.60 ms at 1080p. The
   cure is a frame with separate rows to read and rows to write, which the region-of-interest work brings.
+
+## Found by the host kernel work, not fixed
+
+- **Sandboxed Lumen Glow stays about 1.7x native on the CPU.** Its blur, resample, colour mix and level
+  sums are host kernels now, but its threshold (`lumen_emit`) and composite (`lumen_composite`) passes read
+  the whole padded frame in plugin code, and before the change they were about 80 % of its native time.
+  Measured with one rayon thread and `/usr/bin/time -l`: 2,567 M against 1,512 M instructions per 1080p
+  frame (2,960 M against 1,420 M before). The same split costs native Lumen 7 % more instructions than its
+  old fused level pass, because each level is now four host passes. A kernel for a brightness knee and a
+  transfer curve on premultiplied colour would move the rest out of the sandbox.
