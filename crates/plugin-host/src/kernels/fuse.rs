@@ -4,8 +4,8 @@ use craft_plugin::{GpuImage, GpuPass, GpuPlan, HostKernel, Pixel};
 
 use super::{CLEAR, Image, each_row, pointwise};
 
-pub const MAX_FUSED_PASSES: usize = 14;
-pub const MAX_FUSED_INPUTS: usize = 2;
+const MAX_FUSED_PASSES: usize = 14;
+const MAX_FUSED_INPUTS: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ref {

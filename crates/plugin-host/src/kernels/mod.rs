@@ -8,7 +8,7 @@ use craft_plugin::{BlurShape, Filter, HostKernel, Pixel, Taps};
 use rayon::prelude::*;
 
 pub(crate) use fuse::run as run_fused;
-pub use fuse::{Fused, MAX_FUSED_INPUTS, MAX_FUSED_PASSES, Op, Ref, Step, steps};
+pub use fuse::{Fused, Op, Ref, Step, steps};
 pub use gpu::{GpuStep, Lowered, StepImage, lower};
 
 const CLEAR: Pixel = [0.0; 4];
