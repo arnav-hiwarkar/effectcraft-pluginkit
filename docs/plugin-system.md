@@ -9,7 +9,7 @@ built and why. To write a plugin, read [Write a plugin](plugin-sdk.md). For the 
 | Contribution | Where it shows up | What it is built from |
 |---|---|---|
 | Effect | Effects & Presets, Effect Controls, the timeline, saved projects | Parameters the app draws and keyframes, plus a CPU render function, GPU passes, or both |
-| Panel | A dockable tab, listed in **Window ▸ Plug-ins** | A function the app calls every frame the tab is visible |
+| Panel | A dockable tab, listed in **Window ▸ Plug-ins** | A function the app calls when the panel's widgets, app events or timers ask for a new drawing |
 | Command | **Window ▸ Plug-ins** | A function that runs app commands |
 | Task | The plugin manager, while it runs | A function that runs in the background with progress and cancel |
 | Viewer tool | The toolbar, and the Composition viewer while it is picked | A function that gets the viewer's pointer and key events and returns what to draw |
@@ -80,6 +80,7 @@ update of a native plugin waits for a new approval.
 | `document.write` | App commands that change the project |
 | `files.read` | Reading files outside the plugin's own folders |
 | `files.write` | Writing files outside the plugin's own folders |
+| `clipboard` | Reading and replacing the text on the system clipboard |
 
 Every host call passes one check, `gate::check` in `crates/plugin-host/src/runtime/gate.rs`, before the
 app sees it. For an app command, EffectCraft decides what the command needs in
@@ -170,9 +171,15 @@ watchdog, if it has one, and a readback that waits longer than 10 s marks the ap
 
 ## Panels
 
-A panel is drawn in immediate mode across the sandbox boundary. Every frame the app sends the events
-from the last frame and the plugin returns a list of widgets. The app draws them with egui and collects
-the next events. A click therefore reaches the plugin one frame after it happens.
+A panel describes its widgets across the sandbox boundary, and the app keeps the last description. The
+app draws it with egui every frame and calls the plugin again only when something happened: an event from
+one of the panel's widgets, an app event the panel subscribed to (selection, current time, active comp,
+project, edits), a timer, or a new size. The call runs on a worker thread; a host call that needs the
+project waits in a queue the UI thread answers within the frame (`effectcraft_plugin::Panels`), as a
+task's do. The UI waits at most 4 ms a frame for the answer and otherwise draws the last tree, so a slow
+plugin cannot stall the app. The state machine for one panel, `craft_plugin_host::Retained`, holds no
+EffectCraft types: another Craft app reuses it with its own event source. Custom Effect Controls rows are
+retained the same way and are called again on their own widget events, a new value or a new width.
 
 A plugin has no access to egui or to the app's fonts and colours. It names theme colours, and the app
 resolves them.

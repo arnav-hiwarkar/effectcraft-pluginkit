@@ -11,7 +11,7 @@ workflow, read [Write a plugin](plugin-sdk.md).
 | `name`, `version` | Shown in the plugin manager. Required. |
 | `author`, `description` | Optional. |
 | `entry` | `{"wasm": "plugin.wasm"}`, `{"native": {"macos-aarch64": "libx.dylib", "linux-x86_64": "libx.so", "windows-x86_64": "x.dll"}}`, or both keys together. File names only; they live in the plugin folder. A plugin with `wasm` runs sandboxed unless the user chooses Run Unsandboxed and the plugin has a native build for this machine. |
-| `permissions` | Any of `document.read`, `document.write`, `files.read`, `files.write`. |
+| `permissions` | Any of `document.read`, `document.write`, `files.read`, `files.write`, `clipboard`. |
 
 ## Plugin
 
@@ -264,6 +264,54 @@ pub trait Panel: Send + 'static {
 Panels and commands of one plugin run in the same long-lived instance, so a `static` is shared between
 them. Effects do not see it: they run in pooled instances.
 
+The app keeps the widget tree a panel returned and draws it every frame. It calls `ui` again, on a worker
+thread, only for: an event from one of the panel's widgets, an app event the panel subscribed to, a timer
+of the panel, or a new panel size. Host calls that need the project are answered on the UI thread. The
+tree on screen stays until the new one arrives. A failed call shows its error above the last tree, and
+the events it carried are delivered again with the next call. Events of a hidden tab are dropped.
+
+### App events
+
+| Call | Returns |
+|---|---|
+| `ui.on(Topic::Selection)` | `AppEvent::Selection { layers, properties, keyframes }`: selected layer ids, `[layer, property uid]` pairs and the number of selected keyframes |
+| `ui.on(Topic::Time)` | `AppEvent::Time { comp, time }`: the current time of the active comp in seconds |
+| `ui.on(Topic::Comp)` | `AppEvent::Comp { comp }`: the active comp, or `None` |
+| `ui.on(Topic::Project)` | `AppEvent::Project { path }`: a project was opened, created, closed or saved under a new path |
+| `ui.on(Topic::Edit)` | `AppEvent::Edit { layers }`: the project changed; `layers` are the active comp's layers that changed, were added or removed |
+
+`ui.on` subscribes for the call's reply and returns the event when it arrived in this call. Each kind is
+delivered at most once per UI frame with its latest contents.
+
+### Timers
+
+| Call | Does |
+|---|---|
+| `ui.every(name, ms) -> bool` | Calls the panel every `ms` while the panel's replies ask for it; `true` when it fired for this call |
+| `ui.after(name, ms) -> bool` | Calls the panel once, `ms` after the reply that armed it; `true` when it fired. Asked for again in the call it fired in, it arms again |
+
+`ms` is at least 16 (`MIN_TIMER_MS`). Timers wait while the tab is hidden and start over when it shows.
+A timer the next reply does not ask for is stopped.
+
+### Keyboard, pointer and drops
+
+| Field or call | Holds |
+|---|---|
+| `c.pointers` | Every pointer event over the canvas since the last call, in order |
+| `c.pointer` | The last of `c.pointers` |
+| `c.keys` | Every key pressed while the canvas had the keyboard focus: `Key { name, modifiers }`. Names are egui key names: `Left`, `Right`, `Up`, `Down`, `Enter`, `Escape`, `Delete`, `Backspace`, `Space`, `A` to `Z`, `0` to `9`, `F1` … |
+| `ui.drop_target(key, \|ui\| …) -> Option<&Dropped>` | `Dropped::Files { paths }`, `Dropped::Items { ids }` (project items) or `Dropped::Data { plugin, data }` |
+| `ui.drag_source(key, drag, \|ui\| …)` | Lets the user drag its contents. `Drag::File { root, path }` drags a file from `Root::Bundle` or `Root::Data` (or `Root::User` with `files.read`); `Drag::Data { data }` drags text to a plugin drop target |
+
+A panel's widgets have the automation ids `plugin.<plugin>.<panel>.<widget id>`, and its labels
+`plugin.<plugin>.<panel>.label.<n>` in drawing order, so the control channel can read a panel's text.
+
+Every widget takes the focus with Tab. A canvas also takes it on a click, keeps the arrow keys while it
+has it, and shows a focus ring.
+
+A reply of an older SDK is a bare widget list. The app redraws such a panel every frame, on the worker
+thread, and does not send it key or drop events.
+
 Widgets: `label`, `heading`, `weak`, `mono`, `error`, `button`, `button_enabled`, `checkbox`, `slider`, `number`,
 `text_edit`, `popup`, `color`, `separator`, `space`, and the containers `row`, `column` and `group`.
 Value widgets take `&mut` state and return `true` on the frame the user changed it.
@@ -281,9 +329,8 @@ Value widgets take `&mut` state and return `true` on the frame the user changed 
 `ui.keys()` is the text typed while the pointer is over the panel and no text field has the keyboard.
 
 `ui.canvas(key, [width, height], |c| …)` gives a drawing surface with `line`, `bezier`, `rect`, `circle`,
-`polygon` (convex, filled), `image` and `text`, in canvas-local pixels. `c.pointer` is the pointer over
-the canvas this frame, with a phase of `Hover`, `Down`, `Drag` or `Up`, the `modifiers` held (`shift`,
-`alt`, `command`) and the `scroll` delta. A drag keeps reporting positions after the pointer leaves the
+`polygon` (convex, filled), `image` and `text`, in canvas-local pixels. A pointer event has a phase of
+`Hover`, `Down`, `Drag` or `Up`, the `modifiers` held (`shift`, `alt`, `command`) and the `scroll` delta. A drag keeps reporting positions after the pointer leaves the
 canvas. Colours are theme tokens (`Paint::Text`, `Paint::Accent`, `Paint::Weak`, `Paint::Surface`, …)
 or `Paint::Rgba`.
 
@@ -377,6 +424,8 @@ All are in `craft_plugin::host`.
 | `pick_file(PickFile { save, title, extensions })`: the app's file dialog, `Some(path)` or `None`. The chosen path is then readable, and writable when `save` is set, through `Root::User` for the rest of the session. The host holds the identity of the picked file: once it is replaced, for example by a link, reading or writing it fails with `is no longer the file the user picked`, and the plugin should ask the user to pick it again. Panels and commands only. Refused in headless runs. | None |
 | `upload_image(key, width, height, rgba8)`: stores an image for `ui.image` and `c.image` | None |
 | `remove_image(key)`: removes an uploaded image and frees its share of the 256 MiB image budget | None |
+| `clipboard()`: the text on the system clipboard | `clipboard` |
+| `set_clipboard(text)`: replaces the text on the system clipboard | `clipboard` |
 
 A plugin may run the document commands (`layer.*`, `comp.*`, `prop.*`, `keys.*`, `effect.*`, `mask.*`,
 `text.*`, `shape.*`, and the other families in `DOCUMENT_FAMILIES` in `crates/plugin/src/gate.rs`) and the

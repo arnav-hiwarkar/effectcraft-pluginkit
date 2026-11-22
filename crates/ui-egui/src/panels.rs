@@ -92,6 +92,8 @@ pub enum DragPayload {
     Property { layer: u64, prop: u64 },
     /// Files from the Media Browser (import; into the timeline: import and add).
     Files(Vec<String>),
+    /// Data a plug-in panel started dragging, for a plug-in drop target.
+    Plugin { plugin: String, data: String },
 }
 
 /// An animation preset in Effects & Presets.

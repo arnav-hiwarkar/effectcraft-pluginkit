@@ -4,12 +4,15 @@ use crate::curve::{CHANNELS, Curves, Point, Spline, identity};
 
 pub const GRAB: f32 = 8.0;
 pub const DROP_OFF: f32 = 24.0;
+pub const NUDGE: f64 = 0.01;
+pub const BIG_NUDGE: f64 = 0.1;
 const SAMPLES: usize = 96;
 
 #[derive(Default)]
 pub struct ControlState {
     pub channel: usize,
     pub dragging: Option<usize>,
+    pub selected: Option<usize>,
 }
 
 pub fn side(ui: &Ui) -> f32 {
@@ -60,7 +63,7 @@ pub fn edit(state: &mut ControlState, points: &mut Vec<Point>, pointer: Pointer,
         }
         PointerPhase::Down => {
             if let Some(index) = nearest(points, pointer.pos, side) {
-                state.dragging = Some(index);
+                (state.dragging, state.selected) = (Some(index), Some(index));
                 return false;
             }
             let point = to_curve(pointer.pos, side);
@@ -69,7 +72,7 @@ pub fn edit(state: &mut ControlState, points: &mut Vec<Point>, pointer: Pointer,
                 return false;
             }
             points.insert(index, point);
-            state.dragging = Some(index);
+            (state.dragging, state.selected) = (Some(index), Some(index));
             true
         }
         PointerPhase::Drag => {
@@ -79,10 +82,9 @@ pub fn edit(state: &mut ControlState, points: &mut Vec<Point>, pointer: Pointer,
                 state.dragging = None;
                 return true;
             }
-            let lo = if index == 0 { 0.0 } else { points[index - 1][0] + 1e-3 };
-            let hi = if index + 1 == points.len() { 1.0 } else { points[index + 1][0] - 1e-3 };
+            let (lo, hi) = neighbours(points, index);
             let [x, y] = to_curve(pointer.pos, side);
-            let moved = [x.clamp(lo, hi.max(lo)), y];
+            let moved = [x.clamp(lo, hi), y];
             let changed = points[index] != moved;
             points[index] = moved;
             changed
@@ -93,6 +95,34 @@ pub fn edit(state: &mut ControlState, points: &mut Vec<Point>, pointer: Pointer,
         }
         PointerPhase::Hover => false,
     }
+}
+
+fn neighbours(points: &[Point], index: usize) -> (f64, f64) {
+    let lo = if index == 0 { 0.0 } else { points[index - 1][0] + 1e-3 };
+    let hi = if index + 1 == points.len() { 1.0 } else { points[index + 1][0] - 1e-3 };
+    (lo, hi.max(lo))
+}
+
+pub fn key(state: &mut ControlState, points: &mut Vec<Point>, key: &Key) -> bool {
+    let Some(index) = state.selected.filter(|i| *i < points.len()) else { return false };
+    let step = if key.modifiers.shift { BIG_NUDGE } else { NUDGE };
+    let (dx, dy) = match key.name.as_str() {
+        "Left" => (-step, 0.0),
+        "Right" => (step, 0.0),
+        "Up" => (0.0, step),
+        "Down" => (0.0, -step),
+        "Delete" | "Backspace" if points.len() > 2 => {
+            points.remove(index);
+            state.selected = None;
+            return true;
+        }
+        _ => return false,
+    };
+    let (lo, hi) = neighbours(points, index);
+    let moved = [(points[index][0] + dx).clamp(lo, hi), (points[index][1] + dy).clamp(0.0, 1.0)];
+    let changed = points[index] != moved;
+    points[index] = moved;
+    changed
 }
 
 pub fn draw_curve(canvas: &mut Canvas, points: &[Point], side: f32, paint: Paint, width: f32) {
@@ -120,8 +150,11 @@ pub fn draw(state: &mut ControlState, value: &mut String, ui: &mut Ui) {
     let channel = state.channel.min(CHANNELS.len() - 1);
     let side = side(ui);
     ui.canvas("graph", [side, side], |c| {
-        if let Some(pointer) = c.pointer {
-            changed |= edit(state, &mut curves.channels[channel], pointer, side);
+        for pointer in &c.pointers {
+            changed |= edit(state, &mut curves.channels[channel], *pointer, side);
+        }
+        for pressed in &c.keys {
+            changed |= key(state, &mut curves.channels[channel], pressed);
         }
         c.rect([0.0, 0.0], [side, side], Some(Paint::Surface), Some((Paint::Border, 1.0)), 0.0);
         for k in 1..4 {
@@ -132,11 +165,11 @@ pub fn draw(state: &mut ControlState, value: &mut String, ui: &mut Ui) {
         c.line(&[[0.0, side], [side, 0.0]], Paint::Weak, 1.0);
         draw_curve(c, &curves.channels[channel], side, channel_paint(channel), 2.0);
         for (i, point) in curves.channels[channel].iter().enumerate() {
-            let fill = if state.dragging == Some(i) { Paint::Accent } else { Paint::Background };
+            let fill = if state.dragging == Some(i) || state.selected == Some(i) { Paint::Accent } else { Paint::Background };
             c.circle(to_canvas(*point, side), 4.0, Some(fill), Some((Paint::Text, 1.0)));
         }
     });
-    ui.weak("Click to add a point, drag to move it, drag it off or Alt-click to remove it.");
+    ui.weak("Click to add a point, drag to move it, drag it off or Alt-click to remove it. Arrow keys move the chosen point, Delete removes it.");
     if changed {
         *value = curves.to_text();
     }

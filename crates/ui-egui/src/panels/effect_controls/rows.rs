@@ -693,32 +693,34 @@ fn custom_control(
     let gesture = egui::Id::unique(("ec-custom", uid));
     let held = held_gesture(ui, gesture, started);
     let merge = gesture_key(ui, gesture, started);
-    let events = app.plugin_ui.control_events.remove(&uid).unwrap_or_default();
     let budget = ui.clip_rect().height().max(ROW);
-    let input = effectcraft_plugin::ui::UiInput { events, size: [block.width(), budget], keys: String::new() };
     let mut body = ui.new_child(egui::UiBuilder::new().id_salt(("ec-custom-body", uid)).max_rect(block));
     body.set_clip_rect(clip.intersect(ui.clip_rect()));
     let scope = format!("effectControls.prop.{uid}.control");
-    match effectcraft_plugin::controls(&mut app.session, effect, param, uid, &value, input) {
-        Ok((plugin, reply)) => {
-            let tokens = app.tokens;
-            let source = crate::panels::plugin_view::Source { plugin: &plugin, images: &mut app.plugin_ui.images };
-            let events = crate::panels::plugin_view::draw(&mut body, &reply.widgets, &tokens, &mut app.auto, &scope, source);
-            if let Some(new) = reply.value.filter(|new| *new != value && !prop.has_expression()) {
+    let surface = effectcraft_plugin::Surface::Control { effect, param, instance: uid, value: &value };
+    let events = match app.plugin_ui.panels.show(&mut app.session, &scope, surface, [block.width(), budget]) {
+        Ok(shown) => {
+            if let Some(error) = shown.error {
+                body.label(
+                    egui::RichText::new(crate::i18n::tr_args("The plug-in control failed: {}", &[&error])).font(Tokens::ui(12.0)).color(app.tokens.text_dim),
+                );
+            }
+            if let Some(new) = shown.edited.filter(|new| *new != value && !prop.has_expression()) {
                 let merge = if held { merge } else { gesture_key(ui, gesture, true) };
                 actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": uid, "value": new, "merge": merge})));
             }
-            if !events.is_empty() {
-                app.plugin_ui.control_events.insert(uid, events);
-                ui.ctx().request_repaint();
-            }
+            let tokens = app.tokens;
+            let source = crate::panels::plugin_view::Source { plugin: shown.plugin, images: &mut app.plugin_ui.images };
+            crate::panels::plugin_view::draw(&mut body, shown.widgets, &tokens, &mut app.auto, &scope, source)
         }
         Err(error) => {
             body.label(
                 egui::RichText::new(crate::i18n::tr_args("The plug-in control failed: {}", &[&error])).font(Tokens::ui(12.0)).color(app.tokens.text_dim),
             );
+            Vec::new()
         }
-    }
+    };
+    crate::panels::plugin_view::submit(app, ui, &scope, events, "");
     let height = body.min_rect().height().max(ROW);
     if app.plugin_ui.control_heights.insert(uid, height) != Some(height) {
         ui.ctx().request_repaint();

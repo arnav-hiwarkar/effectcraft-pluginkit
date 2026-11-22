@@ -781,6 +781,8 @@ pub enum HostCall {
     ParamsAt { time: f64 },
     CacheHas { key: String },
     RemoveImage { key: String },
+    ClipboardRead,
+    ClipboardWrite { text: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -897,13 +899,93 @@ impl Scene {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct UiInput {
     #[serde(default)]
     pub events: Vec<UiEvent>,
     pub size: [f32; 2],
     #[serde(default)]
     pub keys: String,
+    #[serde(default)]
+    pub app: Vec<AppEvent>,
+    #[serde(default)]
+    pub timers: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Topic {
+    Selection,
+    Time,
+    Comp,
+    Project,
+    Edit,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "topic", rename_all = "snake_case")]
+pub enum AppEvent {
+    Selection { layers: Vec<u64>, properties: Vec<[u64; 2]>, keyframes: u32 },
+    Time { comp: u64, time: f64 },
+    Comp { comp: Option<u64> },
+    Project { path: Option<String> },
+    Edit { layers: Vec<u64> },
+}
+
+impl AppEvent {
+    pub fn topic(&self) -> Topic {
+        match self {
+            AppEvent::Selection { .. } => Topic::Selection,
+            AppEvent::Time { .. } => Topic::Time,
+            AppEvent::Comp { .. } => Topic::Comp,
+            AppEvent::Project { .. } => Topic::Project,
+            AppEvent::Edit { .. } => Topic::Edit,
+        }
+    }
+}
+
+pub const MIN_TIMER_MS: u32 = 16;
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Timer {
+    pub name: String,
+    pub ms: u32,
+    #[serde(default)]
+    pub repeat: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(from = "PanelWire")]
+pub struct PanelReply {
+    pub widgets: Vec<Widget>,
+    #[serde(default)]
+    pub topics: Vec<Topic>,
+    #[serde(default)]
+    pub timers: Vec<Timer>,
+    #[serde(skip)]
+    pub legacy: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PanelWire {
+    Legacy(Vec<Widget>),
+    Reply {
+        widgets: Vec<Widget>,
+        #[serde(default)]
+        topics: Vec<Topic>,
+        #[serde(default)]
+        timers: Vec<Timer>,
+    },
+}
+
+impl From<PanelWire> for PanelReply {
+    fn from(wire: PanelWire) -> Self {
+        match wire {
+            PanelWire::Legacy(widgets) => PanelReply { widgets, legacy: true, ..Default::default() },
+            PanelWire::Reply { widgets, topics, timers } => PanelReply { widgets, topics, timers, legacy: false },
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -921,6 +1003,36 @@ pub enum UiEventKind {
     Text(String),
     Color([f32; 4]),
     Pointer(Pointer),
+    Key(Key),
+    Drop(Dropped),
+}
+
+impl UiEventKind {
+    pub fn known_to_every_sdk(&self) -> bool {
+        !matches!(self, UiEventKind::Key(_) | UiEventKind::Drop(_))
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Key {
+    pub name: String,
+    #[serde(default)]
+    pub modifiers: Modifiers,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Dropped {
+    Files { paths: Vec<String> },
+    Items { ids: Vec<u64> },
+    Data { plugin: String, data: String },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Drag {
+    File { root: Root, path: String },
+    Data { data: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -982,6 +1094,8 @@ pub enum Widget {
     Progress { fraction: f32, text: String },
     Tooltip { text: String },
     Grid { id: u64, columns: u32, children: Vec<Widget> },
+    DropTarget { id: u64, children: Vec<Widget> },
+    DragSource { id: u64, drag: Drag, children: Vec<Widget> },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

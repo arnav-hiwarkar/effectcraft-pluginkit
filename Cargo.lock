@@ -2205,6 +2205,7 @@ dependencies = [
 name = "effectcraft"
 version = "0.24.1"
 dependencies = [
+ "arboard",
  "chrono",
  "cpal",
  "craft-update",

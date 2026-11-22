@@ -557,15 +557,57 @@ impl Tool for Stamp {
 struct Counter {
     clicks: u32,
     speed: f64,
+    calls: u32,
 }
 
 impl Panel for Counter {
     fn ui(&mut self, ui: &mut Ui) {
+        self.calls += 1;
         if ui.button("Count") {
             self.clicks += 1;
         }
         ui.slider("Speed", &mut self.speed, 0.0..=10.0);
         ui.label(&format!("{} clicks at speed {}", self.clicks, self.speed));
+        ui.label(&format!("calls {}", self.calls));
+    }
+}
+
+#[derive(Default)]
+struct Watch {
+    seen: Vec<String>,
+}
+
+impl Panel for Watch {
+    fn ui(&mut self, ui: &mut Ui) {
+        for topic in [Topic::Selection, Topic::Time, Topic::Comp, Topic::Project, Topic::Edit] {
+            if let Some(event) = ui.on(topic) {
+                self.seen.push(serde_json::to_string(event).unwrap_or_default());
+            }
+        }
+        let mut keys = Vec::new();
+        ui.canvas("keys", [100.0, 40.0], |c| keys.extend(c.keys.iter().map(|key| format!("key {} shift {}", key.name, key.modifiers.shift))));
+        self.seen.extend(keys);
+        for line in &self.seen {
+            ui.mono(line);
+        }
+    }
+}
+
+#[derive(Default)]
+struct Ticker {
+    ticks: u32,
+    once: bool,
+}
+
+impl Panel for Ticker {
+    fn ui(&mut self, ui: &mut Ui) {
+        if ui.every("tick", 100) {
+            self.ticks += 1;
+        }
+        if !self.once && ui.after("once", 250) {
+            self.once = true;
+        }
+        ui.label(&format!("ticks {} once {}", self.ticks, self.once));
     }
 }
 
@@ -592,11 +634,17 @@ fn make() -> Plugin {
         .effect(Aim)
         .tool("stamp", "Stamp", Stamp::default())
         .panel("counter", "Counter", Counter::default())
+        .panel("watch", "Watch", Watch::default())
+        .panel("ticker", "Ticker", Ticker::default())
         .command("edit", "Edit Document", || {
             let reply = host::command("layer.newNull", json!({"name": "From Plugin"}))?;
             host::write_file(Root::Data, "last-reply.json", reply.to_string().as_bytes())
         })
         .command("read", "Read Document", || host::command("comp.info", json!({})).map(|_| ()))
+        .command("swap-clipboard", "Swap Clipboard", || {
+            let before = host::clipboard()?;
+            host::set_clipboard(&format!("probe saw {before}"))
+        })
         .command("batch-edit", "Edit In A Batch", || {
             let steps = json!([{"command": "layer.newNull", "params": {"name": "One"}}, {"command": "layer.newNull", "params": {"name": "Two"}}]);
             host::command("engine.batch", json!({"label": "Two Nulls", "steps": steps})).map(|_| ())

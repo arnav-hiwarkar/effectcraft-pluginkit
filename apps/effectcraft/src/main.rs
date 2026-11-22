@@ -31,6 +31,7 @@ mod native_menu;
 // dialogs without blocking the frame.
 #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
 mod file_dialogs;
+mod plugin_clipboard;
 mod window;
 
 use effectcraft_ui_egui::EffectcraftApp;
@@ -383,6 +384,7 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
             // Every dialog opens through `file_dialogs::guarded`: one that can't open is an error
             // in the status line, not a crash (#3084).
             let dialog_errors = file_dialogs::install_pickers(&mut app, &cc.egui_ctx);
+            plugin_clipboard::install();
             // The window closes after a lost graphics device (#591); say why, unless an agent drives
             // the app through the control channel.
             if control_port.is_none() {

@@ -2,7 +2,7 @@ use effectcraft_engine::render::{RenderOpts, Renderer};
 use effectcraft_engine::time::Tick;
 use serde_json::json;
 
-use effectcraft_plugin::ui::{TextStyle, UiEvent, UiEventKind, UiInput, Widget};
+use effectcraft_plugin::ui::{TextStyle, UiEvent, UiEventKind, Widget};
 
 use crate::{App, app};
 
@@ -125,10 +125,15 @@ fn controls(app: &mut App, effect: &str, value: &str, events: Vec<UiEvent>) -> (
 }
 
 fn controls_of(app: &mut App, effect: &str, instance: u64, value: &str, events: Vec<UiEvent>) -> (Vec<Widget>, Option<String>) {
-    let input = UiInput { events, size: [240.0, 80.0], ..Default::default() };
-    let (plugin, reply) = effectcraft_plugin::controls(&mut app.session, effect, "level", instance, value, input).expect("the controls draw");
-    assert_eq!(plugin, app.id);
-    (reply.widgets, reply.value)
+    let mut panels = effectcraft_plugin::Panels::default();
+    let surface = effectcraft_plugin::Surface::Control { effect, param: "level", instance, value };
+    let mut frame = 0;
+    let drawn = crate::panels::settled(app, &mut panels, "control", surface, &mut frame);
+    if events.is_empty() {
+        return drawn;
+    }
+    panels.submit("control", events, "");
+    crate::panels::settled(app, &mut panels, "control", surface, &mut frame)
 }
 
 #[test]
@@ -136,7 +141,7 @@ fn a_custom_control_draws_widgets_for_the_current_value_and_returns_the_edited_v
     let mut app = app("test.render-controls", &[]);
     let (widgets, value) = controls(&mut app, "test.render-controls.scale", "1", vec![]);
     assert_eq!(value, None);
-    assert_eq!(widgets[0], Widget::Label { text: "Level 1".into(), style: TextStyle::Body });
+    assert!(matches!(&widgets[0], Widget::Label { text, style: TextStyle::Body, .. } if text == "Level 1"), "{:?}", widgets[0]);
     let Widget::Button { id, .. } = widgets[2] else { panic!("a button, not {:?}", widgets[2]) };
     let (_, value) = controls(&mut app, "test.render-controls.scale", "1", vec![UiEvent { id, kind: UiEventKind::Click }]);
     assert_eq!(value.as_deref(), Some("0.5"));
@@ -147,8 +152,11 @@ fn a_custom_control_is_told_which_effect_instance_it_draws() {
     let mut app = app("test.render-instances", &[]);
     let (first, _) = controls_of(&mut app, "test.render-instances.scale", 11, "1", vec![]);
     let (second, _) = controls_of(&mut app, "test.render-instances.scale", 12, "1", vec![]);
-    assert_eq!(first[1], Widget::Label { text: "Instance 11".into(), style: TextStyle::Body });
-    assert_eq!(second[1], Widget::Label { text: "Instance 12".into(), style: TextStyle::Body });
+    let text = |widget: &Widget| match widget {
+        Widget::Label { text, .. } => text.clone(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!((text(&first[1]), text(&second[1])), ("Instance 11".to_string(), "Instance 12".to_string()));
 }
 
 #[test]

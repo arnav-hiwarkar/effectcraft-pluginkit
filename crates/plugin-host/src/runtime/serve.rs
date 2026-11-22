@@ -107,7 +107,15 @@ impl Bulk {
 }
 
 fn needs_the_app(call: &HostCall) -> bool {
-    matches!(call, HostCall::Command { .. } | HostCall::Notify { .. } | HostCall::Frame { .. } | HostCall::Audio { .. })
+    matches!(
+        call,
+        HostCall::Command { .. }
+            | HostCall::Notify { .. }
+            | HostCall::Frame { .. }
+            | HostCall::Audio { .. }
+            | HostCall::ClipboardRead
+            | HostCall::ClipboardWrite { .. }
+    )
 }
 
 pub(crate) fn serve(cx: &mut HostCx, request: &[u8], bulk: &[u8]) -> (Vec<u8>, Bulk) {
@@ -205,6 +213,8 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
         HostCall::UploadImage { key, width, height } => cx.plugin.images.put(key, width, height, bulk).map(|()| (Value::Null, Bulk::None)),
         HostCall::RemoveImage { key } => plain(json!(cx.plugin.images.remove(&key))),
         HostCall::ParamsAt { time } => cx.host.params_at(time).map(|answer| (json!(answer), Bulk::None)).ok_or("no parameters at that time".into()),
+        HostCall::ClipboardRead => cx.host.clipboard().map(|text| (json!(text), Bulk::None)),
+        HostCall::ClipboardWrite { text } => cx.host.set_clipboard(&text).map(|()| (Value::Null, Bulk::None)),
     }
 }
 

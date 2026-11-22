@@ -114,3 +114,11 @@ pub fn upload_image(key: &str, width: u32, height: u32, rgba8: &[u8]) -> Result<
 pub fn remove_image(key: &str) -> Result<()> {
     call::<serde_json::Value>(&HostCall::RemoveImage { key: key.into() }, &[]).map(|_| ())
 }
+
+pub fn clipboard() -> Result<String> {
+    call(&HostCall::ClipboardRead, &[]).map(|(text, _)| text)
+}
+
+pub fn set_clipboard(text: &str) -> Result<()> {
+    call::<serde_json::Value>(&HostCall::ClipboardWrite { text: text.into() }, &[]).map(|_| ())
+}

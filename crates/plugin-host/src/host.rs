@@ -77,4 +77,12 @@ pub trait Host {
     fn project_closed(&self) -> Option<Arc<AtomicBool>> {
         None
     }
+
+    fn clipboard(&mut self) -> Result<String, String> {
+        Err("the clipboard is not available here".into())
+    }
+
+    fn set_clipboard(&mut self, _text: &str) -> Result<(), String> {
+        Err("the clipboard is not available here".into())
+    }
 }

@@ -61,7 +61,7 @@ pub(crate) fn show(app: &mut EffectcraftApp, ui: &egui::Ui, painter: &egui::Pain
                 .collect()
         }
         DragPayload::Files(paths) => vec![("mediaBrowser.import", json!({"paths": paths, "addToComp": true, "position": at}))],
-        DragPayload::Property { .. } => vec![],
+        DragPayload::Property { .. } | DragPayload::Plugin { .. } => vec![],
     };
     // Layer drops outline the target layer; the others outline the whole viewer.
     let layer_drop = alt_item || matches!(payload.as_ref(), DragPayload::Effect(_) | DragPayload::Preset { .. });

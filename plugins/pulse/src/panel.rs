@@ -15,6 +15,7 @@ pub const BANDS: [(&str, f64, f64); 7] = [
 
 const PLOT_HEIGHT: f32 = 200.0;
 const PAD: f32 = 8.0;
+const PROGRESS_MS: u32 = 100;
 
 #[derive(Default)]
 pub struct PulsePanel {
@@ -74,6 +75,9 @@ impl PulsePanel {
 impl Panel for PulsePanel {
     fn ui(&mut self, ui: &mut Ui) {
         self.poll();
+        if self.running.is_some() {
+            ui.every("progress", PROGRESS_MS);
+        }
         ui.heading("Pulse");
         ui.text_edit("layer", &mut self.layer, "Audio layer (empty: the composition mix)");
         let names: Vec<&str> = BANDS.iter().map(|(name, _, _)| *name).collect();

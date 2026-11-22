@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use craft_plugin::{Paint, Panel, Pointer, PointerPhase, Shape, Ui, UiEvent, UiEventKind, UiInput, Widget};
+use craft_plugin::{AppEvent, Paint, Panel, Pointer, PointerPhase, Shape, Ui, UiEvent, UiEventKind, UiInput, Widget};
 use serde_json::{Value, json};
 
 use crate::apply::{self, arc_length};
@@ -344,4 +344,24 @@ fn the_result_names_properties_that_were_skipped() {
     }
     let host = FakeHost::replying(&[("keys.info", selection), ("prop.get", two_key_property()), ("engine.batch", json!({}))]);
     assert_eq!(apply::apply(&host, Curve::DEFAULT, "Test"), Ok("Applied to 2 keys on 1 property; skipped 1 property with one selected key".to_string()));
+}
+
+fn selection_changed(panel: &mut GlidePanel<FakeHost>, keyframes: u32) -> Vec<Widget> {
+    let event = AppEvent::Selection { layers: vec![4], properties: vec![], keyframes };
+    let input = UiInput { app: vec![event], size: PANEL_SIZE, ..Default::default() };
+    let mut ui = Ui::new(&input);
+    panel.ui(&mut ui);
+    ui.finish()
+}
+
+#[test]
+fn the_panel_reads_the_curve_when_the_keyframe_selection_changes_and_goes_idle_when_it_empties() {
+    let host = FakeHost::replying(&[("keys.info", opacity_selection()), ("prop.get", two_key_property())]);
+    let mut panel = GlidePanel::new(host.clone());
+    frame(&mut panel, vec![]);
+    assert!(host.calls("keys.info").is_empty());
+    assert!(labels(&selection_changed(&mut panel, 2)).contains(&"Read cubic-bezier(0.42, 0, 0.58, 1) from Opacity".to_string()));
+    assert_eq!(host.calls("keys.info").len(), 1);
+    assert!(labels(&selection_changed(&mut panel, 0)).contains(&"Select keyframes, shape the curve, then Apply.".to_string()));
+    assert_eq!(host.calls("keys.info").len(), 1);
 }

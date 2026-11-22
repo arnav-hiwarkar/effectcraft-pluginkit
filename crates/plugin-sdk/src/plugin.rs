@@ -162,7 +162,7 @@ impl Plugin {
                 let (_, state) = self.panels.iter().find(|(spec, _)| spec.id == panel).ok_or_else(|| Error(format!("no panel `{panel}`")))?;
                 let mut ui = Ui::new(&input);
                 state.lock().map_err(|_| Error("the panel panicked earlier".into()))?.ui(&mut ui);
-                json(&ui.finish())
+                json(&ui.reply())
             }
             Call::Controls { effect, param, instance, value, input } => {
                 let mut edited = value.clone();

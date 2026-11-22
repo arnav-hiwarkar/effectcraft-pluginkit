@@ -3,9 +3,8 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use craft_plugin_host::ui::{UiInput, Widget};
+use craft_plugin_host::PluginImage;
 use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Permission, Plugin, Registry, RunMode, TaskState};
-use craft_plugin_host::{ControlsReply, PluginImage};
 use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -407,19 +406,6 @@ pub(crate) fn running(plugin: &str) -> Result<Arc<Loaded>, String> {
     plugins().and_then(|p| p.get(plugin)).ok_or_else(|| format!("plugin `{plugin}` is not running"))
 }
 
-pub fn panel_ui(session: &mut Session, plugin: &str, panel: &str, input: UiInput) -> Result<Vec<Widget>, String> {
-    let loaded = running(plugin)?;
-    let call = Call::Panel { panel: panel.to_string(), input };
-    loaded.plugin.call(&call, None, &mut SessionHost::new(session, &loaded)).map_err(|e| e.to_string())
-}
-
-pub fn controls(session: &mut Session, effect_id: &str, param: &str, instance: u64, value: &str, input: UiInput) -> Result<(String, ControlsReply), String> {
-    let (owner, plugin, local) = effect_owner(effect_id)?;
-    let call = Call::Controls { effect: local, param: param.to_string(), instance, value: value.to_string(), input };
-    let reply = plugin.plugin.call(&call, None, &mut SessionHost::new(session, &plugin)).map_err(|e| e.to_string())?;
-    Ok((owner, reply))
-}
-
 pub(crate) fn effect_owner(effect_id: &str) -> Result<(String, Arc<Loaded>, String), String> {
     let plugins = plugins().ok_or("plugins are not available")?;
     let inner = plugins.lock();
@@ -440,11 +426,13 @@ pub fn image(plugin: &str, key: &str) -> Option<Arc<PluginImage>> {
 
 pub fn run_command(session: &mut Session, plugin: &str, command: &str) -> Result<(), String> {
     let loaded = running(plugin)?;
+    crate::panels::settle(session, plugin);
     let call = Call::Command { command: command.to_string() };
     loaded.plugin.call(&call, None, &mut SessionHost::new(session, &loaded)).map_err(|e| e.to_string())
 }
 
 pub fn pump(session: &mut Session) -> bool {
+    crate::panels::serve(session);
     let Some(plugins) = plugins() else { return false };
     let mut running = false;
     for loaded in plugins.running_plugins() {

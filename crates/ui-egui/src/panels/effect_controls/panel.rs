@@ -202,7 +202,6 @@ fn render_error_mark(app: &mut EffectcraftApp, ui: &mut egui::Ui, bp: &egui::Pai
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, crate::i18n::tr_args("Render error: {}", &[&err])));
     app.auto.add(&format!("effectControls.effect.{}.error", g.uid), wr, &err);
     resp.on_hover_text(err);
-    ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
 }
 
 fn designer_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, effect: &str, g: &PropGroup, row: Rect, actions: &mut Actions) -> f32 {

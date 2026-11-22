@@ -1,4 +1,4 @@
-use craft_plugin::{Canvas, Paint, Panel, Pointer, PointerPhase, Ui};
+use craft_plugin::{AppEvent, Canvas, Paint, Panel, Pointer, PointerPhase, Topic, Ui};
 
 use crate::apply::{self, APPLY_LABEL};
 use crate::bridge::Host;
@@ -189,6 +189,15 @@ impl<H: Host> GlidePanel<H> {
         };
     }
 
+    fn follow_selection(&mut self, ui: &mut Ui) {
+        if let Some(AppEvent::Selection { keyframes, .. }) = ui.on(Topic::Selection) {
+            match keyframes {
+                0 => self.status = IDLE_STATUS.into(),
+                _ => self.read_selection(),
+            }
+        }
+    }
+
     fn choose(&mut self, curve: Curve) {
         self.curve = curve.clamped();
         if self.auto_apply {
@@ -324,6 +333,7 @@ impl<H: Host> GlidePanel<H> {
 impl<H: Host + Send + 'static> Panel for GlidePanel<H> {
     fn ui(&mut self, ui: &mut Ui) {
         self.load_presets_once();
+        self.follow_selection(ui);
         self.editor(ui);
         self.fields(ui);
         self.controls(ui);
