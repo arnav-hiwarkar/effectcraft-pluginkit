@@ -81,7 +81,7 @@ impl Engine {
 
     pub fn call(self: &Arc<Self>, request: &[u8], io: Io, host: &mut dyn Host, origin: Origin, budget: Duration) -> Result<Vec<u8>, PluginError> {
         let stateful = origin == Origin::Interactive;
-        let mut cx = HostCx { host, plugin: &self.identity, engine: self, origin, task: None, on_task_thread: false };
+        let mut cx = HostCx { host, plugin: &self.identity, engine: self, origin, task: None, on_task_thread: false, paused: Duration::ZERO };
         match &self.kind {
             Kind::Native(guest) => match io {
                 Io::None => Ok(guest.call(request, None, &mut cx)),
@@ -135,7 +135,15 @@ impl Engine {
 
     fn run_task(self: &Arc<Self>, request: &[u8], slot: &Arc<Slot>) -> Result<Value, String> {
         let mut detached = Detached;
-        let mut cx = HostCx { host: &mut detached, plugin: &self.identity, engine: self, origin: Origin::Task, task: Some(slot.clone()), on_task_thread: true };
+        let mut cx = HostCx {
+            host: &mut detached,
+            plugin: &self.identity,
+            engine: self,
+            origin: Origin::Task,
+            task: Some(slot.clone()),
+            on_task_thread: true,
+            paused: Duration::ZERO,
+        };
         let reply = match &self.kind {
             Kind::Native(guest) => guest.call(request, None, &mut cx),
             Kind::Wasm { module, .. } => {
@@ -173,6 +181,7 @@ impl Engine {
                 origin: Origin::Task,
                 task: Some(forwarded.task.clone()),
                 on_task_thread: false,
+                paused: Duration::ZERO,
             };
             let answer = native::guarded(&mut cx, &forwarded.request, &forwarded.bulk);
             let _ = forwarded.reply.send(answer);

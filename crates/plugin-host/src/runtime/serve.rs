@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use craft_plugin::{AudioDesc, HostCall, ImageDesc, LogLevel, Outcome, Permission, Pixel, Root};
 use serde_json::{Value, json};
@@ -37,6 +38,7 @@ pub(crate) struct HostCx<'a> {
     pub origin: Origin,
     pub task: Option<Arc<Slot>>,
     pub on_task_thread: bool,
+    pub paused: Duration,
 }
 
 pub(crate) enum Bulk {
@@ -142,7 +144,10 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             Ok((json!(AudioDesc { channels: audio.channels, rate: audio.rate }), Bulk::Floats(audio.samples)))
         }
         HostCall::PickFile { request } => {
-            let chosen = cx.host.pick_file(&request)?;
+            let started = Instant::now();
+            let chosen = cx.host.pick_file(&request);
+            cx.paused += started.elapsed();
+            let chosen = chosen?;
             if let (Some(path), Ok(mut picked)) = (&chosen, cx.plugin.picked.lock()) {
                 picked.push((path.clone(), request.save));
             }

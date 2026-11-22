@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use craft_plugin::{ABI, Outcome, Pixel};
 use std::sync::Arc;
 
-use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc, UpdateDeadline};
+use wasmtime::{AsContextMut, Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc, UpdateDeadline};
 
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
@@ -203,7 +203,13 @@ fn host_call(mut caller: Caller<'_, State>, _ctx: u32, request: u32, request_len
     };
     let request = slice(request, request_len)?;
     let bulk_in = slice(bulk, bulk_len)?;
-    let (reply, bulk_out) = native::serve_erased(caller.data().ctx, &request, &bulk_in);
+    let (reply, bulk_out, paused) = native::serve_erased(caller.data().ctx, &request, &bulk_in);
+    if !paused.is_zero()
+        && let Some(deadline) = caller.data().deadline.and_then(|deadline| deadline.checked_add(paused))
+    {
+        caller.data_mut().deadline = Some(deadline);
+        caller.as_context_mut().set_epoch_deadline(ticks(deadline.saturating_duration_since(Instant::now())));
+    }
     if caller.data().deadline.is_some_and(|deadline| Instant::now() > deadline) {
         wasmtime::bail!("the plugin passed its time limit while the host served a call");
     }

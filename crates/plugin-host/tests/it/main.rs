@@ -471,6 +471,24 @@ fn a_plugin_with_file_access_cannot_touch_the_apps_plugin_folders() {
     });
 }
 
+#[test]
+fn time_spent_in_a_file_dialog_does_not_count_against_the_call_limit() {
+    struct SlowPicker(PathBuf);
+    impl Host for SlowPicker {
+        fn pick_file(&mut self, _request: &craft_plugin::PickFile) -> Result<Option<PathBuf>, String> {
+            std::thread::sleep(Duration::from_millis(900));
+            Ok(Some(self.0.clone()))
+        }
+    }
+    let outside = tempfile::tempdir().unwrap();
+    let chosen = outside.path().join("chosen.txt");
+    std::fs::write(&chosen, "chosen slowly").unwrap();
+    let loaded = load(Kind::Wasm, &["files.write"]);
+    loaded.plugin.call::<()>(&Call::Command { command: "pick-and-read".into() }, None, &mut SlowPicker(chosen.clone())).unwrap();
+    assert_eq!(std::fs::read_to_string(loaded.data.path().join("data/picked.txt")).unwrap(), "chosen slowly");
+    assert_eq!(std::fs::read_to_string(&chosen).unwrap(), "overwritten");
+}
+
 fn settle(loaded: &Loaded, id: u64, host: &mut Recorder) -> TaskState {
     let until = std::time::Instant::now() + Duration::from_secs(10);
     loop {
