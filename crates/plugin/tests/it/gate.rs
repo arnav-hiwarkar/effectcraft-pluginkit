@@ -242,3 +242,23 @@ fn changing_how_an_updated_plugin_runs_does_not_grant_permissions_the_user_has_n
     assert_eq!(granted, ["document.read"]);
     app.plugins.uninstall(id).unwrap();
 }
+
+#[test]
+fn a_batch_cannot_plant_text_in_an_effect_parameter_by_its_uid_or_another_spelling() {
+    let mut app = app("test.gate-lut-uid", EDITOR);
+    app.session.execute("layer.newSolid", json!({"name": "Graded"})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "ec.utility.applylut"})).unwrap();
+    let uid = app.session.execute_checked("prop.get", json!({"path": "effects/#1/lut"})).unwrap()["uid"].as_u64().unwrap();
+    for path in [format!("@{uid}"), "Effects/#1/lut".to_string(), "#3/#1/lut".to_string()] {
+        let batch = json!({"steps": [
+            {"command": "layer.newNull", "params": {"name": "Other"}},
+            {"command": "prop.set", "params": {"layer": "Graded", "path": path, "value": "/Users/someone/look.cube"}},
+        ]});
+        let denied = app.relay("engine.batch", batch).unwrap_err();
+        assert!(denied.contains("files.read"), "{path}: {denied}");
+    }
+    let alone = app.relay("prop.set", json!({"layer": "Graded", "path": format!("@{uid}"), "value": "/Users/someone/look.cube"})).unwrap_err();
+    assert!(alone.contains("files.read"), "{alone}");
+    let lut = app.session.execute_checked("prop.get", json!({"layer": "Graded", "path": "effects/#1/lut"})).unwrap()["value"].clone();
+    assert_eq!(lut, json!(""));
+}

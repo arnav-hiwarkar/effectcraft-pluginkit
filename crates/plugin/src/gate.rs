@@ -153,6 +153,13 @@ fn outside_the_document(id: &str, params: &Value) -> Option<Permission> {
     }
 }
 
+fn outside_the_effects_by_name(path: &str) -> bool {
+    use effectcraft_engine::project::props::Seg;
+    let segs = effectcraft_engine::project::parse_path(path);
+    let no_uid = !segs.iter().any(|seg| matches!(seg, Seg::Uid(_)));
+    no_uid && matches!(segs.first(), Some(Seg::Match(first, _)) if !first.eq_ignore_ascii_case("effects"))
+}
+
 fn refers_to_a_step(value: Option<&Value>) -> bool {
     value.and_then(Value::as_str).is_some_and(|text| text.starts_with('$'))
 }
@@ -183,13 +190,16 @@ impl<'a> SessionHost<'a> {
         }
         let needs_files = |what: &str| format!("`{id}`: {what} needs the `files.read` and `files.write` permissions");
         let path = params.get("path").and_then(Value::as_str);
-        let under_effects = path.is_none_or(|path| path.starts_with("effects"));
-        if params.get("selected").and_then(Value::as_bool) == Some(true) && under_effects {
+        let named_outside_the_effects = params.get("prop").is_none() && path.is_some_and(outside_the_effects_by_name);
+        if params.get("selected").and_then(Value::as_bool) == Some(true) && !named_outside_the_effects {
             return Err(needs_files("writing an effect property on every selected layer"));
         }
         let created_by_the_batch = ["layer", "prop", "path"].iter().any(|key| refers_to_a_step(params.get(*key)));
         if created_by_the_batch || reshaped {
-            return if under_effects {
+            if params.get("value").is_some_and(Value::is_string) {
+                return Err(needs_files("writing text into a property a batch step can change"));
+            }
+            return if !named_outside_the_effects {
                 Err(needs_files("writing an effect property after a batch step that can change which property the path names"))
             } else {
                 Ok(())
