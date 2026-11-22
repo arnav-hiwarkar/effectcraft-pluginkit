@@ -1,5 +1,7 @@
 use std::f32::consts::PI;
 
+use craft_plugin::math::{atan2, cos, exp, ln, sin, smoothstep};
+
 pub const FLOATS: usize = 48;
 pub const UINTS: usize = 6;
 
@@ -106,11 +108,6 @@ fn add(sum: &mut Rgb, colour: Rgb, amount: f32) {
     }
 }
 
-pub fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
-    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
 pub fn hash(v: u32) -> u32 {
     let state = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
     let word = ((state >> ((state >> 28) + 4)) ^ state).wrapping_mul(277_803_737);
@@ -119,57 +116,6 @@ pub fn hash(v: u32) -> u32 {
 
 pub fn unit(v: u32) -> f32 {
     (hash(v) >> 8) as f32 / 16_777_216.0
-}
-
-pub fn exp(x: f32) -> f32 {
-    let t = x.clamp(-80.0, 80.0) * std::f32::consts::LOG2_E;
-    let i = (t + 0.5).floor();
-    let f = (t - i) * std::f32::consts::LN_2;
-    let p = 1.0 + f * (1.0 + f * (0.5 + f * (1.0 / 6.0 + f * (1.0 / 24.0 + f * (1.0 / 120.0 + f / 720.0)))));
-    p * f32::from_bits(((i as i32 + 127) as u32) << 23)
-}
-
-pub fn ln(x: f32) -> f32 {
-    let bits = x.to_bits();
-    let mut e = ((bits >> 23) & 255) as i32 - 127;
-    let mut m = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000);
-    if m > std::f32::consts::SQRT_2 {
-        m *= 0.5;
-        e += 1;
-    }
-    let t = (m - 1.0) / (m + 1.0);
-    let s = t * t;
-    e as f32 * std::f32::consts::LN_2 + 2.0 * t * (1.0 + s * (1.0 / 3.0 + s * (1.0 / 5.0 + s * (1.0 / 7.0 + s / 9.0))))
-}
-
-pub fn sin(x: f32) -> f32 {
-    let k = (x / PI + 0.5).floor();
-    let y = x - k * PI;
-    let s = y * y;
-    let p = y * (1.0 + s * (-1.0 / 6.0 + s * (1.0 / 120.0 + s * (-1.0 / 5040.0 + s / 362_880.0))));
-    if (k as i32) & 1 == 1 { -p } else { p }
-}
-
-pub fn cos(x: f32) -> f32 {
-    sin(x + 0.5 * PI)
-}
-
-pub fn atan2(y: f32, x: f32) -> f32 {
-    let (ax, ay) = (x.abs(), y.abs());
-    let (hi, lo) = (ax.max(ay), ax.min(ay));
-    if hi == 0.0 {
-        return 0.0;
-    }
-    let a = lo / hi;
-    let s = a * a;
-    let mut r = a * (0.999_977_26 + s * (-0.332_623_47 + s * (0.193_543_46 + s * (-0.116_432_87 + s * (0.052_653_32 - 0.011_721_2 * s)))));
-    if ay > ax {
-        r = 0.5 * PI - r;
-    }
-    if x < 0.0 {
-        r = PI - r;
-    }
-    if y < 0.0 { -r } else { r }
 }
 
 pub fn glow(r: f32, radius: f32, falloff: f32) -> f32 {
@@ -390,21 +336,6 @@ mod tests {
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
-    }
-
-    #[test]
-    fn fast_maths_tracks_the_standard_library() {
-        for i in -400..400 {
-            let x = i as f32 * 0.05;
-            assert!((exp(x) - x.exp()).abs() <= 2e-6 * x.exp().max(1.0), "exp {x}");
-            assert!((sin(x) - x.sin()).abs() < 2e-5, "sin {x}");
-            assert!((cos(x) - x.cos()).abs() < 2e-5, "cos {x}");
-            let y = (i as f32 * 0.37).cos() * 3.0;
-            assert!((atan2(y, x) - y.atan2(x)).abs() < 5e-6, "atan2 {y} {x}");
-            let z = 1e-3 + (i + 400) as f32 * 0.25;
-            assert!((ln(z) - z.ln()).abs() < 2e-6 * z.ln().abs().max(1.0), "ln {z}");
-        }
-        assert_eq!(atan2(0.0, 0.0), 0.0);
     }
 
     #[test]

@@ -1,4 +1,6 @@
 mod flare;
+#[cfg(test)]
+mod golden;
 mod looks;
 mod settings;
 mod spec;

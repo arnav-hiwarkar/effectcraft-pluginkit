@@ -136,6 +136,32 @@ Tell the app how much of the frame each output pixel needs, in `layout()`.
 Scale every distance by `cx.scale`, so a half-resolution preview matches the full render. `cx.px(id)`
 does this for a slider measured in layer pixels.
 
+## Fast maths
+
+In a sandboxed plugin, `f32::exp2`, `powf`, `sin`, `atan2` and the other maths functions are not single
+instructions. They are calls into a soft library that the compiler does not inline, and each call pays the
+timeout check. A per-pixel loop that makes several of them runs measurably slower than it needs to, and a native
+build gives slightly different digits than the sandboxed one because each uses its own library.
+
+`craft_plugin::math` has inline replacements. They use no tables and no library calls, so the sandboxed and the
+native plugin compute the same bits. The accuracy is 2e-7 to 2e-5 depending on the function, listed in the
+[reference](plugin-reference.md#fast-maths). That is far below one level of an 8-bit image.
+
+```rust
+use craft_plugin::math::{linear_to_srgb, saturate};
+
+fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+    let gain = cx.f("gain") as f32;
+    for pixel in frame.pixels.iter_mut() {
+        pixel[..3].iter_mut().for_each(|c| *c = linear_to_srgb(saturate(*c * gain)));
+    }
+    Ok(())
+}
+```
+
+Use them in the loop that runs for every pixel, and keep `std` for work done once per frame. `sqrt`, `abs`,
+`floor`, `min` and `max` are single instructions already; keep calling those on `f32`.
+
 ## Replay a simulation
 
 A simulation renders frame 40 by stepping from frame 0, and each step needs the parameters at its

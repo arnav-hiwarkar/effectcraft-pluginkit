@@ -1,3 +1,5 @@
+use craft_plugin::math::pow;
+
 use crate::noise;
 use crate::path::{Path, Point, Span};
 use crate::settings::{Motion, Shape};
@@ -60,7 +62,7 @@ fn envelope(span: &Span, distance: f32, motion: &Motion) -> f32 {
         return 1.0;
     }
     let along = ((distance - span.from) / span.length()).clamp(0.0, 1.0);
-    (4.0 * along * (1.0 - along)).powf(0.5 * motion.pin)
+    pow(4.0 * along * (1.0 - along), 0.5 * motion.pin)
 }
 
 pub fn taper(ends: [f32; 2], along: f32) -> f32 {

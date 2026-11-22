@@ -1,3 +1,4 @@
+use craft_plugin::math;
 use craft_plugin::prelude::*;
 use serde_json::json;
 
@@ -18,6 +19,26 @@ impl Effect for Invert {
             for channel in &mut pixel[..3] {
                 *channel += (1.0 - 2.0 * *channel) * amount;
             }
+        }
+        Ok(())
+    }
+}
+
+struct FastMaths;
+
+impl Effect for FastMaths {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("fast-maths", "Fast Maths", "Probe")
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise()
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        for pixel in frame.pixels.iter_mut() {
+            let x = pixel[0];
+            *pixel = [math::exp(x), math::sin(x), math::atan2(x, 2.0 - x), math::pow(x.abs(), 2.4)];
         }
         Ok(())
     }
@@ -411,6 +432,7 @@ impl Panel for Counter {
 fn make() -> Plugin {
     Plugin::new()
         .effect(Invert)
+        .effect(FastMaths)
         .effect(Scale)
         .effect(ShiftDown)
         .effect(ReadInputs)

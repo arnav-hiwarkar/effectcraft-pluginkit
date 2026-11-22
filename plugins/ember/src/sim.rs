@@ -1,3 +1,5 @@
+use craft_plugin::math::{cos, exp, sin};
+
 use crate::noise;
 use crate::random::{Stream, mix};
 use crate::settings::{Emitter, Sim, Vec3};
@@ -120,10 +122,10 @@ impl<'a> Simulator<'a> {
         };
         let (u, v) = basis(sim.direction);
         let cone = sim.spread * std::f32::consts::PI;
-        let cos_theta = 1.0 - rng.next() * (1.0 - cone.cos());
+        let cos_theta = 1.0 - rng.next() * (1.0 - cos(cone));
         let sin_theta = (1.0 - cos_theta * cos_theta).max(0.0).sqrt();
         let phi = rng.next() * std::f32::consts::TAU;
-        let heading = [0, 1, 2].map(|a| sim.direction[a] * cos_theta + (u[a] * phi.cos() + v[a] * phi.sin()) * sin_theta);
+        let heading = [0, 1, 2].map(|a| sim.direction[a] * cos_theta + (u[a] * cos(phi) + v[a] * sin(phi)) * sin_theta);
         let speed = sim.speed * (1.0 + sim.speed_random * rng.signed());
         let velocity = add(scale(heading, speed), scale(emission.motion, sim.inherit));
         let life = sim.life * (1.0 + sim.life_random * rng.signed());
@@ -146,7 +148,7 @@ impl<'a> Simulator<'a> {
         let room = (self.base.max_particles as usize).saturating_sub(particles.len());
         particles.extend((0..born.min(room as u64) as u32).filter_map(|i| self.spawn(sim, emission, step, i)));
         let dt = self.dt;
-        let drag = 1.0 - (-sim.drag * dt).exp();
+        let drag = 1.0 - exp(-sim.drag * dt);
         let time = step as f32 * dt;
         let field_scale = 1.0 / sim.turbulence_scale;
         let evolution = time * sim.turbulence_evolution;

@@ -1,4 +1,5 @@
 use craft_plugin::Pixel;
+use craft_plugin::math::{exp2, sin_cos};
 
 pub type Rgb = [f32; 3];
 
@@ -29,25 +30,17 @@ pub struct Shading {
     pub alpha_boost: f32,
 }
 
-pub fn exp2_neg(v: f32) -> f32 {
-    let x = -v.clamp(0.0, 126.0);
-    let whole = x.round();
-    let f = x - whole;
-    let poly = 1.0 + f * (std::f32::consts::LN_2 + f * (0.240_226_5 + f * (0.055_504_1 + f * (0.009_618_1 + f * 0.001_333_4))));
-    f32::from_bits(((whole as i32 + 127) as u32) << 23) * poly
-}
-
 pub fn one_minus_exp2_neg(v: f32) -> f32 {
     if v < 0.03 {
         let x = v * std::f32::consts::LN_2;
         x * (1.0 - 0.5 * x)
     } else {
-        1.0 - exp2_neg(v)
+        1.0 - exp2(-v)
     }
 }
 
 pub fn rotate_hue(colour: Rgb, degrees: f32) -> Rgb {
-    let (sin, cos) = degrees.to_radians().sin_cos();
+    let (sin, cos) = sin_cos(degrees.to_radians());
     let k = (1.0 - cos) / 3.0;
     let s = sin / 3.0f32.sqrt();
     let rows = [[cos + k, k - s, k + s], [k + s, cos + k, k - s], [k - s, k + s, cos + k]];
@@ -88,15 +81,6 @@ impl Shading {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn fast_exponential_tracks_the_exact_one() {
-        for v in [0.0, 0.3, 1.0, 2.7, 9.5, 40.0] {
-            let (fast, exact) = (exp2_neg(v), (-v).exp2());
-            assert!((fast - exact).abs() <= exact * 1e-4, "{v}: {fast} vs {exact}");
-        }
-        assert_eq!(exp2_neg(1000.0), (-126.0f32).exp2());
-    }
 
     #[test]
     fn faint_glow_keeps_relative_precision() {

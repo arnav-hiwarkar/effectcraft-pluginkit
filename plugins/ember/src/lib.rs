@@ -361,4 +361,30 @@ mod tests {
             (0..=30).map(|f| simulate(&shelf, &Settings { frame: f, ..moving.clone() }, &Moving(moving.sim.clone()), u64::MAX).expect("finishes")).collect();
         assert_eq!(stepped[30], trail, "checkpoints of a moving emitter give the same frame as a cold run");
     }
+
+    fn block_means(frame: u32) -> Vec<u8> {
+        let settings = settings(frame);
+        let view = View { projection: None, scale: 1.0, offset: [0.0, 0.0], size: [320, 180], frame_rate: 30.0 };
+        let list = prepare(&Forgetful, &settings, &Still, &view, u64::MAX).expect("finishes");
+        let mut pixels = vec![[0.02, 0.02, 0.05, 1.0]; 320 * 180];
+        raster::render(&list, &mut Frame { width: 320, height: 180, origin: [0, 0], pixels: &mut pixels });
+        let mean = |bx: usize, by: usize, channel: usize| {
+            let total: f32 = (0..30).flat_map(|y| (0..40).map(move |x| (by * 30 + y) * 320 + bx * 40 + x)).map(|at| pixels[at][channel].min(1.0)).sum();
+            (total / 1200.0 * 255.0 + 0.5) as u8
+        };
+        (0..6).flat_map(|by| (0..8).flat_map(move |bx| (0..3).map(move |c| (bx, by, c)))).map(|(bx, by, c)| mean(bx, by, c)).collect()
+    }
+
+    const BLOCK_MEANS: [u8; 144] = [
+        5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 18, 16, 20, 21, 18, 21, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 13, 12, 18, 46, 40, 36, 9,
+        8, 15, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 13, 12, 18, 38, 34, 34, 10, 9, 16, 5, 5, 13, 6, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 17, 16, 21, 8, 7,
+        14, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 6, 5, 13, 5, 5, 13, 6, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 5, 5,
+        13, 5, 5, 13, 5, 5, 13, 5, 5, 13, 6, 5, 13,
+    ];
+
+    #[test]
+    fn a_frame_matches_the_block_means_made_with_the_standard_library_within_one_level() {
+        let worst = block_means(37).iter().zip(BLOCK_MEANS).map(|(a, b)| a.abs_diff(b)).max().unwrap();
+        assert!(worst <= 1, "largest 8-bit difference {worst}");
+    }
 }

@@ -1,14 +1,10 @@
+use craft_plugin::math::exp;
 use craft_plugin::prelude::Pixel;
 
 pub const TAU: f32 = std::f32::consts::TAU;
 
 pub fn luma(p: Pixel) -> f32 {
     0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]
-}
-
-pub fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
-    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
 }
 
 pub fn fract(x: f32) -> f32 {
@@ -31,7 +27,7 @@ pub fn blur_radius(sigma: f32) -> i32 {
 
 pub fn gauss(i: i32, sigma: f32) -> f32 {
     let d = i as f32;
-    (-(d * d) / (2.0 * sigma * sigma)).exp()
+    exp(-(d * d) / (2.0 * sigma * sigma))
 }
 
 pub fn reduction(sigma_px: f32) -> u32 {
@@ -65,14 +61,6 @@ mod tests {
     }
 
     #[test]
-    fn smoothstep_has_its_textbook_values() {
-        assert_eq!(smoothstep(0.0, 1.0, -1.0), 0.0);
-        assert_eq!(smoothstep(0.0, 1.0, 0.5), 0.5);
-        assert_eq!(smoothstep(0.0, 1.0, 0.25), 0.15625);
-        assert_eq!(smoothstep(0.0, 1.0, 2.0), 1.0);
-    }
-
-    #[test]
     fn hash_is_fixed_and_in_the_unit_interval() {
         assert_eq!(hash(0, 0, 0), 0.0);
         let h = hash(12, 34, 5);
@@ -89,7 +77,7 @@ mod tests {
         assert_eq!(reduction(12.0), 4);
         assert_eq!(reduction(40.0), 8);
         assert_eq!(gauss(0, 3.0), 1.0);
-        assert!((gauss(2, 2.0) - (-0.5f32).exp()).abs() < 1e-7);
+        assert!((gauss(2, 2.0) - (-0.5f32).exp()).abs() < 3e-7);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use craft_plugin::math::log2;
 use std::f32::consts::{SQRT_2, TAU};
 
 use crate::beam::Node;
@@ -51,7 +52,7 @@ pub fn windows(heights: &[usize], wanted: Range<usize>) -> (Vec<Range<usize>>, V
 }
 
 fn level_count(bands: &[GlowBand], base: [usize; 2]) -> usize {
-    let wanted = bands.iter().filter(|b| b.energy[0] + b.energy[1] > 0.0).map(|b| (b.sigma / SQRT_2).max(1.0).log2().ceil() as usize + 1).max().unwrap_or(1);
+    let wanted = bands.iter().filter(|b| b.energy[0] + b.energy[1] > 0.0).map(|b| log2((b.sigma / SQRT_2).max(1.0)).ceil() as usize + 1).max().unwrap_or(1);
     let available = (0..).take_while(|&k| base[0].min(base[1]) >> k > 1).count().max(1);
     wanted.min(available)
 }
@@ -60,7 +61,7 @@ pub fn level_weights(bands: &[GlowBand], source_radius: f32, count: usize) -> Ve
     let mut weights = vec![[0.0; 2]; count];
     let top = (count - 1) as f32;
     for band in bands {
-        let level = (band.sigma / SQRT_2).max(1e-6).log2().clamp(0.0, top);
+        let level = log2((band.sigma / SQRT_2).max(1e-6)).clamp(0.0, top);
         let low = level.floor() as usize;
         let share = level - low as f32;
         let norm = (TAU.sqrt() * band.sigma / (2.0 * source_radius.max(1e-6))).max(0.0);

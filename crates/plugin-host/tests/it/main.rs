@@ -153,6 +153,31 @@ fn an_effect_changes_the_pixels_it_is_given_using_its_parameters() {
 }
 
 #[test]
+fn fast_maths_gives_the_same_bits_sandboxed_and_native_and_stays_within_its_bounds() {
+    let source: Vec<Pixel> = (0..4096).map(|i| [-3.0 + i as f32 * (6.0 / 4096.0), 0.0, 0.0, 1.0]).collect();
+    let render = |kind: Kind| {
+        let loaded = load(kind, &[]);
+        let mut pixels = source.clone();
+        loaded.plugin.render("fast-maths", &cx(4096, 1), Some(0), &mut pixels, Recorder::default).unwrap();
+        pixels
+    };
+    let (wasm, native) = (render(Kind::Wasm), render(Kind::Native));
+    assert!(wasm == native, "the sandboxed and the native render differ");
+    let mut worst = [0.0f64; 4];
+    for (input, out) in source.iter().zip(&wasm) {
+        let x = f64::from(input[0]);
+        let exact = [x.exp(), x.sin(), x.atan2(2.0 - x), x.abs().powf(2.4)];
+        let relative = [true, false, false, true];
+        for c in 0..4 {
+            let error = (f64::from(out[c]) - exact[c]).abs();
+            worst[c] = worst[c].max(if relative[c] { error / exact[c].max(1e-30) } else { error });
+        }
+    }
+    assert!(worst[0] < 5e-7 && worst[1] < 2e-6 && worst[2] < 5e-6 && worst[3] < 2e-5, "{worst:?}");
+    assert!((wasm[3072][0] - 4.481_689).abs() < 1e-5 && (wasm[3072][1] - 0.997_495).abs() < 1e-5, "{:?}", wasm[3072]);
+}
+
+#[test]
 fn rendering_in_parallel_bands_gives_the_same_picture_as_one_pass() {
     each_kind(|kind| {
         let loaded = load(kind, &[]);
