@@ -26,8 +26,9 @@ impl Effect for Halo {
     }
 
     fn overlay(&self, cx: &Cx, overlay: &mut Overlay) {
-        let unit = f64::from(looks::look(cx.index("look")).glow.size) * cx.f("scale") / 10_000.0;
-        overlay.point(cx, "light").radius("Glow/size", cx.point("light"), unit * cx.f("Glow/size"), unit.max(1e-3)).named("Glow Size");
+        let overall = spec::Overall::read(cx);
+        let unit = f64::from(looks::look(overall.look).glow.size) * overall.scale / 10_000.0;
+        overlay.point(cx, "light").radius("Glow/size", overall.light, unit * spec::Glow::read(cx).size, unit.max(1e-3)).named("Glow Size");
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
@@ -50,3 +51,20 @@ fn plugin() -> Plugin {
 }
 
 craft_plugin::export!(plugin);
+
+#[cfg(test)]
+mod tests {
+    use craft_plugin_host::assert_frame;
+    use craft_plugin_host::testing::TestPlugin;
+
+    #[test]
+    fn the_sun_look_matches_its_stored_frame() {
+        assert_frame!(TestPlugin::of(super::plugin), "flare", { "look": 1 }, "sun");
+    }
+
+    #[test]
+    fn the_anamorphic_look_with_its_light_moved_matches_its_stored_frame() {
+        let plugin = TestPlugin::of(super::plugin);
+        assert_frame!(plugin.render("flare").set("look", 2.0).set("light", [200.0, 60.0]).set("Streak/size", 150.0), "anamorphic");
+    }
+}

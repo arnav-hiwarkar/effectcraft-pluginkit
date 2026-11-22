@@ -3,6 +3,7 @@
   "name": "Forge 3D",
   "version": "1.0.0",
   "author": "Craft Kit",
+  "license": "MIT OR Apache-2.0",
   "description": "Lit, depth-correct 3D models over a layer: primitives or an OBJ file, a grid or ring replicator, and the comp's camera and lights.",
   "entry": { "wasm": "plugin.wasm" },
   "permissions": []

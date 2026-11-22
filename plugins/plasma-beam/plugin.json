@@ -3,6 +3,7 @@
   "name": "Plasma Beam",
   "version": "1.0.0",
   "author": "Craft Kit",
+  "license": "MIT OR Apache-2.0",
   "description": "Energy beams and neon strokes: a white-hot core with layered coloured glow between two points or along layer masks, with animated distortion and flicker.",
   "entry": { "wasm": "plugin.wasm" },
   "permissions": []

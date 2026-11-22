@@ -10,6 +10,9 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 craft-plugin = { path = "../../crates/plugin-sdk" }
 
+[dev-dependencies]
+craft-plugin-host = { path = "../../crates/plugin-host", features = ["testing"] }
+
 [profile.release]
 opt-level = 3
 lto = true

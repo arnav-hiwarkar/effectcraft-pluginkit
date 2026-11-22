@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn on_black_replaces_the_source_everywhere() {
-        let pixels = rendered(&settings(&[(crate::spec::COMPOSITE, 3.0)]), &[]);
+        let pixels = rendered(&settings(&[("Render/composite", 3.0)]), &[]);
         assert!(pixels.iter().all(|p| *p == [0.0, 0.0, 0.0, 1.0]));
     }
 }

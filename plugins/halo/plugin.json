@@ -3,6 +3,7 @@
   "name": "Halo Flares",
   "version": "1.0.0",
   "author": "Craft Kit",
+  "license": "MIT OR Apache-2.0",
   "description": "Lens flares built from a core glow, star rays, an anamorphic streak, a chromatic ring, iris ghosts, lens-dirt bloom and a hoop, with looks, edge trigger, shimmer and occlusion.",
   "entry": { "wasm": "plugin.wasm" },
   "permissions": []

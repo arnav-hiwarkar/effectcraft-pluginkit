@@ -11,7 +11,7 @@ Each folder here is one plugin: a standalone Rust crate outside the workspace, b
 | [Halo Flares](halo) | Effect | A lens flare from a light point: core glow, star rays, anamorphic streak, chromatic ring, iris ghosts along the line through the centre, lens-dirt bloom and a hoop, with six looks, edge trigger, shimmer, occlusion by another layer and Add or Screen compositing |
 | [Forge 3D](forge-3d) | Effect | Lit, depth-correct 3D models over a layer, drawn by GPU draw passes: a cube, sphere, torus, extruded star or the bundled OBJ model, a grid or ring replicator with a colour ramp, a material, and the comp's camera and lights |
 | [Curves](curves) | Effect and panel | Tone curves for RGB, red, green, blue and alpha drawn as a graph in Effect Controls, and a Curve Presets panel of thumbnails |
-| [Retro](retro) | Effects | CRT Display (curvature, aperture grille, slot or dot mask, rolling scanlines, convergence error, phosphor glow, noise and flicker) and Neon Outline (luma or alpha edges with a three-radius bloom), each with matching GPU kernels and a banded CPU render; `retro/bench.sh` times both |
+| [Retro](retro) | Effects | CRT Display (curvature, aperture grille, slot or dot mask, rolling scanlines, convergence error, phosphor glow, noise and flicker) and Neon Outline (luma or alpha edges with a three-radius bloom), the CRT's glow runs on the host's convolution kernel and Neon Outline on matching GPU kernels and a banded CPU render; `retro/bench.sh` times both |
 | [Glide](glide) | Panel and commands | A cubic-bezier easing editor with a preset library that applies the curve to the selected keyframes in one undo step |
 | [Cookbook](cookbook) | Effects, panels, a command, a task and a tool | Every recipe of [the cookbook](../docs/plugin-cookbook.md), each with its test; the page's code is checked against it |
 | [Pulse](pulse) | Panel and task | Analyses a frequency band of a layer's audio in a cancellable background task and writes its energy per frame as slider keyframes in one undo step |
@@ -26,6 +26,52 @@ scaled so the loudest frame is 100, go onto a Slider Control of a new null named
 Hz`, as one keyframe per frame in one `engine.batch`: one undo removes them. `plugins/pulse/verify.sh`
 drives `effectcraft-cli` over a 60 s tone whose level rises linearly and checks the curve, the undo and
 cancel.
+
+## Plasma Beam
+
+Pick a **Preset** (Default, Neon, Electric, Fire, Plasma, Portal, Blade, Laser). **Core** sets the Core Type (Two Points with draggable
+handles in the viewer, or Layer Masks), Core Start and End, Core Size (log slider, 0.5 to 60 px, up to 200 by typing), Core Brightness,
+Start and End Size for the taper and Start and End Offset to trim the beam. **Glow** takes its colour from the preset or from Glow Colour and
+scales Glow Intensity, Spread and Bias. **Flicker** and **Distortion** (Amount, Scale, Speed, Core and Glow Amount) animate the beam.
+**Render** composites with Add, Screen, On Transparent or On Black and boosts alpha. Each group is one `params!` struct in `src/spec.rs`
+because the ids repeat across groups.
+
+## Ember
+
+A deterministic particle system. **Emitter**: type (Point, Box, Sphere or Layer Masks), position in 3D, size, emission (Continuous or Burst),
+Particles/sec and Velocity as log sliders, direction and elevation, spread, inherited motion, seed, pre-run and Max Particles.
+**Physics**: gravity, wind, air resistance, turbulence with its scale and evolution, spin. **Particle**: life, shape (Soft Disc, Streak, Spark),
+size and its curve over life, three colours, intensity, opacity and fades. **Render**: Add or Normal blend, Comp Camera or Flat view, motion
+blur with shutter angle and samples. All controls are one `params!` struct in `src/spec.rs`.
+
+## Forge 3D
+
+Pick a **Model** (Cube, Sphere, Torus, Star or the bundled gem OBJ). **Transform** has the 3D position, three rotations, Size (log) and Scale.
+**Replicator** repeats the model as a Grid or a Ring with Copies, Rows, spacing, Step Z, Ring Radius and an optional colour ramp to Last
+Colour. **Material** sets Base Colour, Specular, Roughness and Rim. **Lighting** uses the comp's lights or a built-in key light, plus Ambient.
+Smooth Edges draws at twice the size, Show Layer keeps the layer under the model. The draw is GPU only: on the CPU the layer passes through
+unchanged, and the tests check the plan the effect hands the GPU.
+
+## Curves
+
+One Curves control drawn in Effect Controls: a graph for RGB, red, green, blue and alpha with draggable points (Alt-click deletes, arrow keys
+nudge) and a Reset button. The **Curve Presets** panel shows a thumbnail for each of twelve looks and applies it to the selected Curves effect.
+The value is one JSON text declared as a `custom` parameter in `params!`.
+
+## Retro
+
+**CRT Display** has Screen (Curvature, Corner Radius, Vignette), Mask (Aperture Grille, Slot Mask or Dots with Pitch and Strength),
+Scanlines (Strength, Period, Roll Speed), Signal (Convergence Error, Noise, Flicker), Phosphor Glow (Amount, Radius as a log slider,
+Threshold) and Compensation (Brightness, Contrast). The glow is a plan of three passes: the plugin's own bright-pass and reduction, the host's
+separable convolution with the same Gaussian taps the plugin used before, and the plugin's display pass. It runs natively on the CPU and with
+the app's own WGSL on the GPU. **Neon Outline** has Edges (Detect On Luma or Alpha, Threshold, Softness, Thickness), Colour (Core, Glow),
+Bloom (Intensity, Radius as a log slider, Falloff, Flicker) and Lines Only; its three-width bloom still uses the plugin's own blur passes.
+
+## Glide
+
+Open **Window ▸ Plug-ins ▸ Glide**: drag the two handles of the cubic-bezier editor or type x1, y1, x2 and y2, pick one of the built-in or saved
+presets, **Read Selection** to load the curve of the selected keyframes, then **Apply** (or turn on **Auto Apply**). Applying is one undo step.
+Save the current curve under a name with **Save**; **Delete** removes a saved one.
 
 ## Lumen Glow
 

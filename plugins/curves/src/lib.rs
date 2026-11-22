@@ -15,6 +15,12 @@ use crate::curve::{Curves, Luts};
 pub const EFFECT: &str = "curves";
 pub const PARAM: &str = "curves";
 
+params! {
+    struct Controls {
+        curves: String = custom("Curves", &Curves::default_text()),
+    }
+}
+
 #[derive(Default)]
 struct CurvesEffect {
     controls: Mutex<HashMap<u64, ControlState>>,
@@ -22,7 +28,7 @@ struct CurvesEffect {
 
 impl Effect for CurvesEffect {
     fn spec(&self) -> EffectSpec {
-        EffectSpec::new(EFFECT, "Curves", "Color Correction").param(Param::custom(PARAM, "Curves", &Curves::default_text()))
+        EffectSpec::new(EFFECT, "Curves", "Color Correction").params(Controls::params())
     }
 
     fn layout(&self, _cx: &Cx) -> Layout {
@@ -30,7 +36,7 @@ impl Effect for CurvesEffect {
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let luts = Luts::new(&Curves::parse(cx.text(PARAM)));
+        let luts = Luts::new(&Curves::parse(&Controls::read(cx).curves));
         frame.map(|pixel| luts.pixel(pixel));
         Ok(())
     }

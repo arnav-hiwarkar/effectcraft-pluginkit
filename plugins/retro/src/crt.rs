@@ -1,8 +1,8 @@
 use craft_plugin::math::cos;
 use craft_plugin::prelude::*;
 
-use crate::grid::{Band, Grid, coarse_rows};
-use crate::math::{TAU, bilinear, blur_radius, fract, hash, luma, reduction};
+use crate::grid::Band;
+use crate::math::{TAU, bilinear, blur_radius, fract, gauss, hash, luma, reduction};
 
 pub const MASKS: [&str; 3] = ["Aperture Grille", "Slot Mask", "Dots"];
 
@@ -29,73 +29,69 @@ pub struct Crt {
     pub frame: u32,
 }
 
+params! {
+    struct Controls {
+        "Screen" {
+            curvature: f32 = slider("Curvature", 0.06, 0.0..=0.3),
+            corner: f32 = slider("Corner Radius", 0.06, 0.0..=0.5),
+            vignette: f32 = percent("Vignette", 35.0),
+        }
+        "Mask" {
+            mask: usize = popup("Mask", &MASKS, 0),
+            pitch: f32 = slider("Pitch", 3.0, 1.0..=16.0),
+            mask_strength: f32 = percent("Strength", 45.0),
+        }
+        "Scanlines" {
+            scan_strength: f32 = percent("Strength", 45.0),
+            scan_period: f32 = slider("Period", 3.0, 1.0..=16.0),
+            roll: f32 = slider("Roll Speed", 0.25, -4.0..=4.0),
+        }
+        "Signal" {
+            convergence: f32 = slider("Convergence Error", 1.2, -8.0..=8.0),
+            noise: f32 = percent("Noise", 5.0),
+            flicker: f32 = percent("Flicker", 3.0),
+        }
+        "Phosphor Glow" {
+            glow: f32 = percent("Amount", 60.0),
+            glow_radius: f32 = slider("Radius", 10.0, 1.0..=60.0).log(),
+            glow_threshold: f32 = slider("Threshold", 0.35, 0.0..=2.0),
+        }
+        "Compensation" {
+            compensation: f32 = percent("Brightness", 100.0),
+            contrast: f32 = slider("Contrast", 1.05, 0.5..=2.0),
+        }
+    }
+}
+
 pub fn spec() -> EffectSpec {
-    EffectSpec::new("crt", "CRT Display", "Stylize")
-        .group(
-            "Screen",
-            [
-                Param::slider("curvature", "Curvature", 0.06, 0.0..=0.3),
-                Param::slider("corner", "Corner Radius", 0.06, 0.0..=0.5),
-                Param::percent("vignette", "Vignette", 35.0),
-            ],
-        )
-        .group(
-            "Mask",
-            [Param::popup("mask", "Mask", &MASKS, 0), Param::slider("pitch", "Pitch", 3.0, 1.0..=16.0), Param::percent("mask_strength", "Strength", 45.0)],
-        )
-        .group(
-            "Scanlines",
-            [
-                Param::percent("scan_strength", "Strength", 45.0),
-                Param::slider("scan_period", "Period", 3.0, 1.0..=16.0),
-                Param::slider("roll", "Roll Speed", 0.25, -4.0..=4.0),
-            ],
-        )
-        .group(
-            "Signal",
-            [
-                Param::slider("convergence", "Convergence Error", 1.2, -8.0..=8.0),
-                Param::percent("noise", "Noise", 5.0),
-                Param::percent("flicker", "Flicker", 3.0),
-            ],
-        )
-        .group(
-            "Phosphor Glow",
-            [
-                Param::percent("glow", "Amount", 60.0),
-                Param::slider("glow_radius", "Radius", 10.0, 1.0..=60.0),
-                Param::slider("glow_threshold", "Threshold", 0.35, 0.0..=2.0),
-            ],
-        )
-        .group("Compensation", [Param::percent("compensation", "Brightness", 100.0), Param::slider("contrast", "Contrast", 1.05, 0.5..=2.0)])
-        .time_dependent()
+    EffectSpec::new("crt", "CRT Display", "Stylize").params(Controls::params()).time_dependent()
 }
 
 impl Crt {
     pub fn from_cx(cx: &Cx) -> Crt {
         let s = cx.scale as f32;
-        let at = |id: &str| cx.f(&format!("{}/{id}", group(id))) as f32;
-        let roll_rows = at("roll") as f64 * cx.time;
-        let scan_period = (at("scan_period") * s).max(0.5);
+        let controls = Controls::read(cx);
+        let roll_rows = controls.roll as f64 * cx.time;
+        let scan_period = (controls.scan_period * s).max(0.5);
         Crt {
             size: cx.size,
-            curvature: at("curvature"),
-            corner: at("corner"),
-            mask: cx.index("Mask/mask").min(2) as u32,
-            pitch: (at("pitch") * s).max(0.5),
-            mask_strength: at("mask_strength") / 100.0,
-            scan_strength: at("scan_strength") / 100.0,
+            curvature: controls.curvature,
+            corner: controls.corner,
+            mask: controls.mask.min(2) as u32,
+            pitch: (controls.pitch * s).max(0.5),
+            mask_strength: controls.mask_strength / 100.0,
+            scan_strength: controls.scan_strength / 100.0,
             scan_period,
             roll: (roll_rows.rem_euclid(1.0) as f32) * scan_period,
-            convergence: at("convergence") * s,
-            glow: at("glow") / 100.0,
-            glow_sigma: (at("glow_radius") * s).max(0.5),
-            glow_threshold: at("glow_threshold"),
-            vignette: at("vignette") / 100.0,
-            noise: at("noise") / 100.0,
-            flicker: at("flicker") / 100.0,
-            compensation: at("compensation") / 100.0,
-            contrast: at("contrast"),
+            convergence: controls.convergence * s,
+            glow: controls.glow / 100.0,
+            glow_sigma: (controls.glow_radius * s).max(0.5),
+            glow_threshold: controls.glow_threshold,
+            vignette: controls.vignette / 100.0,
+            noise: controls.noise / 100.0,
+            flicker: controls.flicker / 100.0,
+            compensation: controls.compensation / 100.0,
+            contrast: controls.contrast,
             frame: (cx.time * cx.frame_rate.max(1.0)).round().max(0.0) as u32,
         }
     }
@@ -108,11 +104,8 @@ impl Crt {
         (self.glow_sigma / self.factor() as f32).max(0.3)
     }
 
-    pub fn reach(&self) -> u32 {
-        let d = self.factor() as i32;
-        let bend = (self.curvature * self.size[1] as f32 * 0.5).ceil() as i32 + 2;
-        let glow = (blur_radius(self.coarse_sigma()) + 3) * d;
-        (bend + glow + self.convergence.abs().ceil() as i32) as u32
+    pub fn bend(&self) -> u32 {
+        (self.curvature * self.size[1] as f32 * 0.5).ceil() as u32 + 2 + self.convergence.abs().ceil() as u32
     }
 
     pub fn floats(&self) -> Vec<f32> {
@@ -142,17 +135,6 @@ impl Crt {
     pub fn gain(&self) -> f32 {
         let average = (1.0 - self.mask_strength * 0.5) * (1.0 - self.scan_strength * 0.5);
         1.0 + self.compensation * (1.0 / average.max(0.05) - 1.0)
-    }
-}
-
-fn group(id: &str) -> &'static str {
-    match id {
-        "curvature" | "corner" | "vignette" => "Screen",
-        "pitch" | "mask_strength" => "Mask",
-        "scan_strength" | "scan_period" | "roll" => "Scanlines",
-        "convergence" | "noise" | "flicker" => "Signal",
-        "glow" | "glow_radius" | "glow_threshold" => "Phosphor Glow",
-        _ => "Compensation",
     }
 }
 
@@ -236,35 +218,65 @@ pub fn shade(crt: &Crt, source: impl Fn(i32, i32) -> Pixel, glow: impl Fn(f32, f
     [rgb[0], rgb[1], rgb[2], alpha * shape]
 }
 
-pub fn render(crt: &Crt, frame: &mut Frame) {
-    let band = Band::of(frame.input);
-    let d = crt.factor() as i32;
-    let width = (crt.size[0] as i32 + d - 1) / d;
-    let (first, last) = coarse_rows(band.top, band.top + band.rows, d, crt.size[1]);
-    let threshold = crt.glow_threshold;
-    let reduced = Grid::reduce(width, first, last, d, |x, y| bright(band.at(x, y), threshold));
-    let sigma = crt.coarse_sigma();
-    let glow = reduced.blur(false, false, [sigma; 3]).blur(true, false, [sigma; 3]);
-    let x0 = frame.origin[0] as u32;
-    for (y, pixels) in frame.rows_mut() {
-        for (x, pixel) in (x0..).zip(pixels.iter_mut()) {
-            *pixel = shade(crt, |i, j| band.at(i, j), |gx, gy| glow.sample_full(d, gx, gy), x, y as u32);
+pub fn emit(crt: &Crt, pass: &Pass, out: &mut Frame) {
+    let d = crt.factor() as usize;
+    let norm = 1.0 / (d * d) as f32;
+    let source = Band::of(pass.src);
+    let x0 = out.origin[0];
+    for (y, row) in out.rows_mut() {
+        for (x, pixel) in (x0..).zip(row.iter_mut()) {
+            let mut sum = [0.0f32; 4];
+            for j in 0..d {
+                for i in 0..d {
+                    let lit = bright(source.at((x * d + i) as i32, (y * d + j) as i32), crt.glow_threshold);
+                    sum.iter_mut().zip(lit).for_each(|(s, v)| *s += v);
+                }
+            }
+            *pixel = sum.map(|s| s * norm);
         }
     }
+}
+
+pub fn display(crt: &Crt, pass: &Pass, out: &mut Frame) -> Result<()> {
+    let aux = pass.aux.ok_or("the display pass needs the blurred glow as its second image")?;
+    let d = crt.factor() as f32;
+    let (source, halo) = (Band::of(pass.src), Band::of(aux));
+    let glow = |x: f32, y: f32| bilinear(|i, j| halo.at(i, j), (x + 0.5) / d - 0.5, (y + 0.5) / d - 0.5);
+    let x0 = out.origin[0] as u32;
+    for (y, pixels) in out.rows_mut() {
+        for (x, pixel) in (x0..).zip(pixels.iter_mut()) {
+            *pixel = shade(crt, |i, j| source.at(i, j), glow, x, y as u32);
+        }
+    }
+    Ok(())
+}
+
+fn glow_taps(sigma: f32) -> Vec<f32> {
+    let radius = blur_radius(sigma);
+    let weights: Vec<f32> = (-radius..=radius).map(|i| gauss(i, sigma)).collect();
+    let total: f32 = weights.iter().sum();
+    weights.into_iter().map(|w| w / total).collect()
 }
 
 pub fn plan(crt: &Crt) -> GpuPlan {
     let d = crt.factor();
     let coarse = crt.size.map(|s| s.div_ceil(d));
-    let sigma = crt.coarse_sigma();
     let mut plan = GpuPlan::new();
     let reduced = plan.scratch(coarse);
-    let across = plan.scratch(coarse);
     let glow = plan.scratch(coarse);
-    plan.pass(GpuPass::new("retro_crt_emit", GpuImage::Source, reduced).floats(&[crt.glow_threshold]).uints(&[d]))
-        .pass(GpuPass::new("retro_blur", reduced, across).floats(&[sigma; 3]).uints(&[0, 0]))
-        .pass(GpuPass::new("retro_blur", across, glow).floats(&[sigma; 3]).uints(&[1, 0]))
-        .pass(GpuPass::new("retro_crt", GpuImage::Source, GpuImage::Output).aux(glow).floats(&crt.floats()).uints(&crt.uints()))
+    let taps = glow_taps(crt.coarse_sigma());
+    let blur_reach = taps.len() as u32 / 2;
+    let glow_rows = crt.bend().div_ceil(d) + 2;
+    plan.pass(GpuPass::new("retro_crt_emit", GpuImage::Source, reduced).floats(&[crt.glow_threshold]).uints(&[d]).reach(d))
+        .pass(GpuPass::convolve(reduced, glow, craft_plugin::Taps::Separable { x: taps.clone(), y: taps }).reach(blur_reach))
+        .pass(
+            GpuPass::new("retro_crt", GpuImage::Source, GpuImage::Output)
+                .aux(glow)
+                .floats(&crt.floats())
+                .uints(&crt.uints())
+                .reach(crt.bend())
+                .aux_reach(glow_rows),
+        )
 }
 
 #[cfg(test)]

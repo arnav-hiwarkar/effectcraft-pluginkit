@@ -41,21 +41,53 @@ fn build(model: usize) -> Mesh {
     }
 }
 
-fn position(cx: &Cx) -> [f32; 3] {
-    let [x, y, z] = cx.point3("Transform/position");
+params! {
+    struct Controls {
+        model: usize = popup("Model", &MODELS, 2),
+        "Transform" {
+            position: [f64; 3] = point3("Position", [0.5, 0.5, 0.0]),
+            rotation_x: f32 = angle("X Rotation", 20.0),
+            rotation_y: f32 = angle("Y Rotation", 30.0),
+            rotation_z: f32 = angle("Z Rotation", 0.0),
+            size: f64 = slider("Size", 150.0, 1.0..=2000.0).log(),
+            scale: f64 = percent("Scale", 100.0),
+        }
+        "Replicator" {
+            shape: usize = popup("Shape", &["Off", "Grid", "Ring"], 0),
+            columns: f64 = slider("Copies", 5.0, 1.0..=MAX_COPIES),
+            rows: f64 = slider("Rows", 1.0, 1.0..=MAX_COPIES),
+            spacing_x: f32 = slider("Spacing X", 320.0, -4000.0..=4000.0),
+            spacing_y: f32 = slider("Spacing Y", 320.0, -4000.0..=4000.0),
+            step_z: f32 = slider("Step Z", 0.0, -4000.0..=4000.0),
+            radius: f32 = slider("Ring Radius", 500.0, 0.0..=8000.0).soft(0.0..=2000.0),
+            ramp: bool = checkbox("Colour Ramp", false),
+            last_colour: [f32; 4] = color("Last Colour", [0.2, 0.5, 1.0, 1.0]),
+        }
+        "Material" {
+            colour: [f32; 4] = color("Base Colour", [0.9, 0.45, 0.15, 1.0]),
+            specular: f64 = percent("Specular", 60.0),
+            roughness: f64 = percent("Roughness", 35.0),
+            rim: f64 = percent("Rim", 15.0),
+        }
+        "Lighting" {
+            comp_lights: bool = checkbox("Use Comp Lights", true),
+            ambient: f64 = percent("Ambient", 15.0),
+        }
+        smooth: bool = checkbox("Smooth Edges", true),
+        show_layer: bool = checkbox("Show Layer", true),
+    }
+}
+
+fn position(cx: &Cx, [x, y, z]: [f64; 3]) -> [f32; 3] {
     let scale = cx.scale.max(1e-9);
     [((x - cx.offset[0]) / scale) as f32, ((y - cx.offset[1]) / scale) as f32, (z / scale) as f32]
 }
 
-fn replicator(cx: &Cx) -> Replicator {
-    let copies = |id: &str| cx.f(id).clamp(1.0, MAX_COPIES) as u32;
-    match cx.index("Replicator/shape") {
-        1 => Replicator::Grid {
-            columns: copies("Replicator/columns"),
-            rows: copies("Replicator/rows"),
-            spacing: [cx.f("Replicator/spacing_x") as f32, cx.f("Replicator/spacing_y") as f32, cx.f("Replicator/step_z") as f32],
-        },
-        2 => Replicator::Ring { count: copies("Replicator/columns"), radius: cx.f("Replicator/radius") as f32 },
+fn replicator(c: &Controls) -> Replicator {
+    let copies = |value: f64| value.clamp(1.0, MAX_COPIES) as u32;
+    match c.shape {
+        1 => Replicator::Grid { columns: copies(c.columns), rows: copies(c.rows), spacing: [c.spacing_x, c.spacing_y, c.step_z] },
+        2 => Replicator::Ring { count: copies(c.columns), radius: c.radius },
         _ => Replicator::Off,
     }
 }
@@ -64,29 +96,26 @@ fn plan(cx: &Cx) -> Option<GpuPlan> {
     let scene = cx.scene().filter(|scene| scene.projection.is_some()).unwrap_or_else(|| Scene::centred(cx.layer_size));
     let view_projection = scene.view_projection(cx)?;
     let eye = scene.camera.map_or_else(|| Scene::centred(cx.layer_size).camera.unwrap_or_default().position, |camera| camera.position);
-    let placement = Placement {
-        position: position(cx),
-        rotation: [cx.f("Transform/rotation_x") as f32, cx.f("Transform/rotation_y") as f32, cx.f("Transform/rotation_z") as f32],
-        size: (cx.f("Transform/size") * cx.f("Transform/scale") / 100.0) as f32,
-    };
-    let first = cx.color("Material/colour");
-    let last = if cx.bool("Replicator/ramp") { cx.color("Replicator/last_colour") } else { first };
-    let instances = scene::instances(&placement, replicator(cx), first, last);
-    let lights = scene::lights(&scene, cx.bool("Lighting/comp_lights"));
+    let c = Controls::read(cx);
+    let placement =
+        Placement { position: position(cx, c.position), rotation: [c.rotation_x, c.rotation_y, c.rotation_z], size: (c.size * c.scale / 100.0) as f32 };
+    let last = if c.ramp { c.last_colour } else { c.colour };
+    let instances = scene::instances(&placement, replicator(&c), c.colour, last);
+    let lights = scene::lights(&scene, c.comp_lights);
     let light_count = (lights.len() / scene::FLOATS_PER_LIGHT) as u32;
 
     let mut floats = Vec::with_capacity(24 + lights.len());
     floats.extend(view_projection);
     floats.extend(eye.map(|c| c as f32));
-    floats.push((cx.f("Lighting/ambient") / 100.0) as f32);
-    floats.push((cx.f("Material/specular") / 100.0) as f32);
-    floats.push(scene::shininess((cx.f("Material/roughness") / 100.0) as f32));
-    floats.push((cx.f("Material/rim") / 100.0) as f32);
+    floats.push((c.ambient / 100.0) as f32);
+    floats.push((c.specular / 100.0) as f32);
+    floats.push(scene::shininess((c.roughness / 100.0) as f32));
+    floats.push((c.rim / 100.0) as f32);
     floats.push(0.0);
     floats.extend(lights);
 
-    let (vertices, indices) = stored_mesh(cx.index("model").min(MODELS.len() - 1));
-    let samples = if cx.bool("smooth") { 2 } else { 1 };
+    let (vertices, indices) = stored_mesh(c.model.min(MODELS.len() - 1));
+    let samples = if c.smooth { 2 } else { 1 };
     let mut plan = GpuPlan::new();
     let canvas = plan.scratch([cx.size[0] * samples, cx.size[1] * samples]);
     let vertices = plan.buffer(GpuData::Cache(vertices));
@@ -100,53 +129,13 @@ fn plan(cx: &Cx) -> Option<GpuPlan> {
         .clear()
         .floats(&floats)
         .uints(&[light_count]);
-    let keep_layer = if cx.bool("show_layer") { 1.0 } else { 0.0 };
+    let keep_layer = if c.show_layer { 1.0 } else { 0.0 };
     Some(plan.pass(draw).pass(GpuPass::new("forge_over", GpuImage::Source, GpuImage::Output).aux(canvas).floats(&[keep_layer])))
 }
 
 impl Effect for Forge {
     fn spec(&self) -> EffectSpec {
-        EffectSpec::new("forge", "Forge 3D", "3D")
-            .param(Param::popup("model", "Model", &MODELS, 2))
-            .group(
-                "Transform",
-                [
-                    Param::point3("position", "Position", [0.5, 0.5, 0.0]),
-                    Param::angle("rotation_x", "X Rotation", 20.0),
-                    Param::angle("rotation_y", "Y Rotation", 30.0),
-                    Param::angle("rotation_z", "Z Rotation", 0.0),
-                    Param::slider("size", "Size", 150.0, 1.0..=2000.0),
-                    Param::percent("scale", "Scale", 100.0),
-                ],
-            )
-            .group(
-                "Replicator",
-                [
-                    Param::popup("shape", "Shape", &["Off", "Grid", "Ring"], 0),
-                    Param::slider("columns", "Copies", 5.0, 1.0..=MAX_COPIES),
-                    Param::slider("rows", "Rows", 1.0, 1.0..=MAX_COPIES),
-                    Param::slider("spacing_x", "Spacing X", 320.0, -4000.0..=4000.0),
-                    Param::slider("spacing_y", "Spacing Y", 320.0, -4000.0..=4000.0),
-                    Param::slider("step_z", "Step Z", 0.0, -4000.0..=4000.0),
-                    Param::slider("radius", "Ring Radius", 500.0, 0.0..=8000.0),
-                    Param::checkbox("ramp", "Colour Ramp", false),
-                    Param::color("last_colour", "Last Colour", [0.2, 0.5, 1.0, 1.0]),
-                ],
-            )
-            .group(
-                "Material",
-                [
-                    Param::color("colour", "Base Colour", [0.9, 0.45, 0.15, 1.0]),
-                    Param::percent("specular", "Specular", 60.0),
-                    Param::percent("roughness", "Roughness", 35.0),
-                    Param::percent("rim", "Rim", 15.0),
-                ],
-            )
-            .group("Lighting", [Param::checkbox("comp_lights", "Use Comp Lights", true), Param::percent("ambient", "Ambient", 15.0)])
-            .param(Param::checkbox("smooth", "Smooth Edges", true))
-            .param(Param::checkbox("show_layer", "Show Layer", true))
-            .reads_scene()
-            .shader(SHADER)
+        EffectSpec::new("forge", "Forge 3D", "3D").params(Controls::params()).reads_scene().shader(SHADER)
     }
 
     fn layout(&self, cx: &Cx) -> Layout {
@@ -162,3 +151,32 @@ fn plugin() -> Plugin {
 }
 
 craft_plugin::export!(plugin);
+
+#[cfg(test)]
+mod tests {
+    use craft_plugin::GpuData;
+    use craft_plugin_host::assert_frame;
+    use craft_plugin_host::testing::TestPlugin;
+
+    #[test]
+    fn without_a_gpu_the_layer_is_left_as_it_is() {
+        let plugin = TestPlugin::of(super::plugin);
+        let render = plugin.render("forge");
+        assert_eq!(render.run().unwrap(), render.source());
+        assert_frame!(plugin.render("forge"), "layer-only");
+    }
+
+    #[test]
+    fn a_three_by_two_grid_draws_six_copies_into_a_canvas_twice_the_frame_for_smooth_edges() {
+        let plugin = TestPlugin::of(super::plugin);
+        let render = plugin.render("forge").set("Replicator/shape", 1.0).set("Replicator/columns", 3.0).set("Replicator/rows", 2.0);
+        let plan = render.layout().unwrap().gpu.expect("the effect plans its draw");
+        assert_eq!(plan.validate([320, 180]), Ok(()));
+        assert_eq!(plan.images, [[640, 360]]);
+        assert_eq!(plan.passes.iter().map(|pass| pass.kernel.as_str()).collect::<Vec<_>>(), ["forge", "forge_over"]);
+        let copies = plan.buffers.iter().find_map(|buffer| if let GpuData::Floats(floats) = buffer { Some(floats.len()) } else { None });
+        assert_eq!(copies, Some(6 * 20));
+        let plain = render.set("smooth", false).layout().unwrap().gpu.unwrap();
+        assert_eq!(plain.images, [[320, 180]]);
+    }
+}

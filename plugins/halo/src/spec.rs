@@ -1,63 +1,108 @@
-use craft_plugin::prelude::*;
 use craft_plugin::Value;
+use craft_plugin::prelude::*;
 
 use crate::flare::wgsl_constants;
 use crate::looks;
 
 pub const BLENDS: [&str; 2] = ["Add", "Screen"];
-pub const ELEMENTS: [&str; 7] = ["Glow", "Rays", "Streak", "Ring", "Ghosts", "Dirt", "Hoop"];
 
 const WHITE: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 
-fn element(extra: Vec<Param>) -> Vec<Param> {
-    let mut params = vec![
-        Param::checkbox("enable", "Enable", true),
-        Param::percent("brightness", "Brightness", 100.0),
-        Param::percent("size", "Size", 100.0),
-        Param::color("color", "Colour", WHITE),
-    ];
-    params.extend(extra);
-    params
+pub struct Own {
+    pub enable: bool,
+    pub brightness: f64,
+    pub size: f64,
+    pub colour: [f32; 4],
+}
+
+macro_rules! element {
+    ($name:ident, $group:literal { $($extra:tt)* }) => {
+        params! {
+            pub struct $name {
+                $group {
+                    pub enable: bool = checkbox("Enable", true),
+                    pub brightness: f64 = percent("Brightness", 100.0),
+                    pub size: f64 = percent("Size", 100.0),
+                    pub color: [f32; 4] = color("Colour", WHITE),
+                    $($extra)*
+                }
+            }
+        }
+
+        impl $name {
+            pub fn own(&self) -> Own {
+                Own { enable: self.enable, brightness: self.brightness, size: self.size, colour: self.color }
+            }
+        }
+    };
+}
+
+params! {
+    pub struct Overall {
+        pub look: usize = popup("Look", &looks::NAMES, 1),
+        pub light: [f64; 2] = point("Light Position", [0.3, 0.3]),
+        pub brightness: f64 = percent("Brightness", 100.0),
+        pub scale: f64 = percent("Scale", 100.0),
+        pub color: [f32; 4] = color("Colour", WHITE),
+        pub rotation: f64 = angle("Rotation", 0.0),
+    }
+}
+
+element!(Glow, "Glow" { pub falloff: f64 = percent("Falloff", 100.0), });
+element!(Rays, "Rays" {
+    pub count: f64 = slider("Ray Count (0 = Look)", 0.0, 0.0..=64.0),
+    pub sharpness: f64 = percent("Sharpness", 100.0),
+});
+element!(Streak, "Streak" { pub thickness: f64 = percent("Thickness", 100.0), });
+element!(Ring, "Ring" {
+    pub width: f64 = percent("Width", 100.0),
+    pub fringe: f64 = percent("Chromatic Fringe", 100.0),
+});
+element!(Ghosts, "Ghosts" {
+    pub count: f64 = slider("Ghost Count (0 = Look)", 0.0, 0.0..=16.0),
+    pub blades: f64 = slider("Iris Blades (0 = Look, 1 = Round)", 0.0, 0.0..=12.0),
+    pub iris_rotation: f64 = angle("Iris Rotation", 0.0),
+    pub spread: f64 = percent("Spread", 100.0),
+    pub seed: f64 = slider("Seed", 1.0, 0.0..=9999.0),
+});
+element!(Dirt, "Dirt" {});
+element!(Hoop, "Hoop" { pub width: f64 = percent("Width", 100.0), });
+
+params! {
+    pub struct Behaviour {
+        "Behaviour" {
+            pub edge: bool = checkbox("Edge Trigger", true),
+            pub edge_width: f64 = slider("Edge Width", 150.0, 0.0..=2000.0).soft(0.0..=500.0),
+            pub shimmer: f64 = percent("Shimmer", 30.0),
+            pub shimmer_speed: f64 = slider("Shimmer Speed", 1.0, 0.0..=20.0),
+            pub occlusion: bool = checkbox("Occlusion", false),
+            pub occluder: LayerParam = layer("Occluding Layer"),
+            pub occlusion_radius: f64 = slider("Occlusion Radius", 12.0, 0.0..=500.0).soft(1.0..=500.0).log(),
+        }
+    }
+}
+
+params! {
+    pub struct Composite {
+        "Composite" {
+            pub blend: usize = popup("Blend", &BLENDS, 0),
+            pub flare_only: bool = checkbox("Flare Only", false),
+        }
+    }
 }
 
 pub fn spec() -> EffectSpec {
-    let extras: [Vec<Param>; 7] = [
-        vec![Param::percent("falloff", "Falloff", 100.0)],
-        vec![Param::slider("count", "Ray Count (0 = Look)", 0.0, 0.0..=64.0), Param::percent("sharpness", "Sharpness", 100.0)],
-        vec![Param::percent("thickness", "Thickness", 100.0)],
-        vec![Param::percent("width", "Width", 100.0), Param::percent("fringe", "Chromatic Fringe", 100.0)],
-        vec![
-            Param::slider("count", "Ghost Count (0 = Look)", 0.0, 0.0..=16.0),
-            Param::slider("blades", "Iris Blades (0 = Look, 1 = Round)", 0.0, 0.0..=12.0),
-            Param::angle("iris_rotation", "Iris Rotation", 0.0),
-            Param::percent("spread", "Spread", 100.0),
-            Param::slider("seed", "Seed", 1.0, 0.0..=9999.0),
-        ],
-        vec![],
-        vec![Param::percent("width", "Width", 100.0)],
-    ];
     let spec = EffectSpec::new("flare", "Halo Flares", "Generate")
-        .param(Param::popup("look", "Look", &looks::NAMES, 1))
-        .param(Param::point("light", "Light Position", [0.3, 0.3]))
-        .param(Param::percent("brightness", "Brightness", 100.0))
-        .param(Param::percent("scale", "Scale", 100.0))
-        .param(Param::color("color", "Colour", WHITE))
-        .param(Param::angle("rotation", "Rotation", 0.0));
-    let spec = ELEMENTS.iter().zip(extras).fold(spec, |spec, (name, extra)| spec.group(name, element(extra)));
-    let spec = spec
-        .group(
-            "Behaviour",
-            [
-                Param::checkbox("edge", "Edge Trigger", true),
-                Param::slider("edge_width", "Edge Width", 150.0, 0.0..=2000.0),
-                Param::percent("shimmer", "Shimmer", 30.0),
-                Param::slider("shimmer_speed", "Shimmer Speed", 1.0, 0.0..=20.0),
-                Param::checkbox("occlusion", "Occlusion", false),
-                Param::layer("occluder", "Occluding Layer"),
-                Param::slider("occlusion_radius", "Occlusion Radius", 12.0, 0.0..=500.0),
-            ],
-        )
-        .group("Composite", [Param::popup("blend", "Blend", &BLENDS, 0), Param::checkbox("flare_only", "Flare Only", false)])
+        .params(Overall::params())
+        .params(Glow::params())
+        .params(Rays::params())
+        .params(Streak::params())
+        .params(Ring::params())
+        .params(Ghosts::params())
+        .params(Dirt::params())
+        .params(Hoop::params())
+        .params(Behaviour::params())
+        .params(Composite::params())
         .time_dependent()
         .shader(&format!("{}{}", wgsl_constants(), include_str!("halo.wgsl")));
     with_look_presets(spec)
