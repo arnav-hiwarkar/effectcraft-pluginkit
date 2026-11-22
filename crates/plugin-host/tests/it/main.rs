@@ -227,6 +227,27 @@ fn the_cheaper_fast_maths_gives_the_same_bits_sandboxed_and_native_and_stays_wit
 }
 
 #[test]
+fn fast_exp2_gives_the_same_bits_sandboxed_and_native_and_stays_within_its_bound() {
+    let source: Vec<Pixel> = (0..4096).map(|i| [-126.0 + i as f32 * (252.0 / 4096.0) + 1e-3, 0.0, 0.0, 1.0]).collect();
+    let render = |kind: Kind| {
+        let loaded = load(kind, &[]);
+        let mut cx = cx(4096, 1);
+        cx.params.insert("exp2".into(), craft_plugin::Value::Bool(true));
+        let mut pixels = source.clone();
+        loaded.plugin.render("fast-maths", &cx, &Layout::neighbourhood(0), None, &mut pixels, Recorder::default).unwrap();
+        pixels
+    };
+    let (wasm, native) = (render(Kind::Wasm), render(Kind::Native));
+    assert!(wasm == native, "the sandboxed and the native render differ");
+    let worst = source.iter().zip(&wasm).map(|(input, out)| {
+        let exact = f64::from(input[0]).exp2();
+        (f64::from(out[0]) - exact).abs() / exact
+    });
+    assert!(worst.fold(0.0, f64::max) < 4e-6);
+    assert!((wasm[2048][0] - 1.000_693_4).abs() < 1e-5, "{}", wasm[2048][0]);
+}
+
+#[test]
 fn rendering_in_parallel_bands_gives_the_same_picture_as_one_pass() {
     each_kind(|kind| {
         let loaded = load(kind, &[]);

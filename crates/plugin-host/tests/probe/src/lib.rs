@@ -27,7 +27,8 @@ struct FastMaths;
 
 impl Effect for FastMaths {
     fn spec(&self) -> EffectSpec {
-        EffectSpec::new("fast-maths", "Fast Maths", "Probe").param(Param::checkbox("cheaper", "Cheaper", false))
+        let spec = EffectSpec::new("fast-maths", "Fast Maths", "Probe").param(Param::checkbox("cheaper", "Cheaper", false));
+        spec.param(Param::checkbox("exp2", "Exp2", false))
     }
 
     fn layout(&self, _cx: &Cx) -> Layout {
@@ -35,6 +36,10 @@ impl Effect for FastMaths {
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        if cx.bool("exp2") {
+            frame.map(|pixel| [math::fast::exp2(pixel[0]), 0.0, 0.0, 1.0]);
+            return Ok(());
+        }
         if cx.bool("cheaper") {
             frame.map(|pixel| {
                 let x = pixel[0];
