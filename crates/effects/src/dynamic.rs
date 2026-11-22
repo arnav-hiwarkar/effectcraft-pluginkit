@@ -135,11 +135,23 @@ fn keep(text: &str) -> &'static str {
     Box::leak(text.to_owned().into_boxed_str())
 }
 
-static SPECS: RwLock<Vec<(u64, &'static EffectSpec)>> = RwLock::new(Vec::new());
+static SPECS: RwLock<Vec<&'static EffectSpec>> = RwLock::new(Vec::new());
+
+fn declares(spec: &EffectSpec, effect: &DynamicEffect) -> bool {
+    let same_param = |(known, param): (&ParamSpec, &DynamicParam)| {
+        known.id == param.id && known.name == param.name && known.default == param.default && known.ui == param.ui
+    };
+    spec.id == effect.id
+        && spec.name == effect.name
+        && spec.category == effect.category
+        && spec.gpu == effect.gpu.is_some()
+        && spec.params.len() == effect.params.len()
+        && spec.params.iter().zip(&effect.params).all(same_param)
+}
 
 fn spec_of(effect: &DynamicEffect) -> &'static EffectSpec {
     let mut specs = SPECS.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((_, known)) = specs.iter().find(|(revision, spec)| *revision == effect.revision && spec.id == effect.id) {
+    if let Some(known) = specs.iter().find(|spec| declares(spec, effect)) {
         return known;
     }
     let params = effect.params.iter().map(|p| ParamSpec { id: keep(&p.id), name: keep(&p.name), default: p.default.clone(), ui: p.ui.clone() }).collect();
@@ -152,8 +164,7 @@ fn spec_of(effect: &DynamicEffect) -> &'static EffectSpec {
         gpu: effect.gpu.is_some(),
         float: true,
     }));
-    specs.retain(|(_, known)| known.id != spec.id);
-    specs.push((effect.revision, spec));
+    specs.push(spec);
     spec
 }
 

@@ -217,3 +217,18 @@ fn a_layer_parameter_reads_a_layer_whose_video_is_off_as_its_pixels() {
     session.execute_checked("prop.set", json!({"layer": plate, "path": "effects/#1/matte", "value": matte})).unwrap();
     assert!(close(centre_pixel(&app), [1.0, 0.502, 0.0, 1.0]), "the plate shows the hidden matte: {:?}", centre_pixel(&app));
 }
+
+#[test]
+fn reloading_new_code_with_the_same_effect_declarations_reuses_their_descriptions() {
+    let app = app("test.render-reuse", &[]);
+    let effect = "test.render-reuse.invert";
+    let first = effectcraft_engine::effects::find(effect).unwrap();
+    let module = app.bundle.path().join("probe.wasm");
+    for extra in 0..3u8 {
+        let mut bytes = std::fs::read(&module).unwrap();
+        bytes.extend_from_slice(&[0, 4, 1, b'x', 7, extra]);
+        std::fs::write(&module, bytes).unwrap();
+        app.plugins.load_for_session(app.bundle.path()).unwrap();
+        assert!(std::ptr::eq(effectcraft_engine::effects::find(effect).unwrap(), first), "reload {extra} leaked a new description");
+    }
+}

@@ -15,7 +15,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 - **Late plugin start skips parameter migration.** A project opened while its plugin is disabled keeps its saved parameters. If the plugin later starts with a new parameter, existing instances lack it. The render uses the declared default for a missing value (`wire_params` in `crates/plugin/src/effects.rs`), but the parameter has no property, so it cannot be shown or keyframed until the effect is applied again. Migrating needs a hook when a plugin starts late.
 - **A slow host call is not interrupted.** The call fails when the host call returns past the limit, but the app cannot stop its own file read on a stalled disk. Instantiation has its own 5 s limit on top of the call limit. Interrupting needs host calls that run on another thread.
-- **Reloading leaks the old effect descriptions.** Each reload leaks a few kilobytes of strings, because the effect registry hands out `'static` references.
 - **A dangling link is also possible in the automation confinement.** `crates/automation/src/confine.rs` falls back to the parent folder when a path does not resolve. This is upstream code and affects agents too.
 
 ## Reported by the flagship plugin authors, not fixed
