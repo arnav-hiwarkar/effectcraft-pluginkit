@@ -229,7 +229,7 @@ fn default_value(kind: &craft_plugin::ParamKind, width: u32, height: u32) -> Opt
         K::Point { default } => Value::List(vec![default[0] * w, default[1] * h]),
         K::Point3 { default } => Value::List(vec![default[0] * w, default[1] * h, default[2]]),
         K::Color { default } => Value::List(default.to_vec()),
-        K::Text { default } => Value::Text(default.clone()),
+        K::Text { default } | K::Custom { default } => Value::Text(default.clone()),
         K::Layer | K::Mask => return None,
     })
 }

@@ -15,6 +15,7 @@ use self::serve::{HostCx, Identity};
 use self::wasm::{WasmGuest, WasmModule};
 use crate::cache::{BUDGET, Cache};
 use crate::host::Host;
+use crate::images::{IMAGE_BUDGET, Images, PluginImage};
 use crate::plugin::{Io, PluginError};
 use crate::registry::Bundle;
 
@@ -38,12 +39,16 @@ impl Engine {
         } else {
             Kind::Native(NativeGuest::load(&entry)?)
         };
-        let identity = Identity { id: bundle.manifest.id.clone(), dir: bundle.dir.clone(), data_dir, grants, cache: Arc::new(Cache::new(BUDGET)) };
+        let identity = Identity { id: bundle.manifest.id.clone(), dir: bundle.dir.clone(), data_dir, grants, cache: Arc::new(Cache::new(BUDGET)), images: Images::new(IMAGE_BUDGET) };
         Ok(Engine { identity, kind })
     }
 
     pub fn cached(&self, key: &str) -> Option<Arc<[u8]>> {
         self.identity.cache.get(key)
+    }
+
+    pub fn image(&self, key: &str) -> Option<Arc<PluginImage>> {
+        self.identity.images.get(key)
     }
 
     pub fn copies_pixels(&self) -> bool {

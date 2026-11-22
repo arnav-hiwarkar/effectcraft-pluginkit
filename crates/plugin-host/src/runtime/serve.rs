@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use super::gate;
 use crate::cache::Cache;
 use crate::host::{Host, Pixels};
+use crate::images::Images;
 
 pub(crate) struct Identity {
     pub id: String,
@@ -15,6 +16,7 @@ pub(crate) struct Identity {
     pub data_dir: PathBuf,
     pub grants: BTreeSet<Permission>,
     pub cache: Arc<Cache>,
+    pub images: Images,
 }
 
 pub(crate) struct HostCx<'a> {
@@ -89,6 +91,7 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             cx.plugin.cache.remove(&key);
             plain(Value::Null)
         }
+        HostCall::UploadImage { key, width, height } => cx.plugin.images.put(key, width, height, bulk).map(|()| (Value::Null, Bulk::None)),
         HostCall::ListFiles { root, path } => {
             let dir = resolve(cx.plugin, root, &path)?;
             let mut names: Vec<String> =
