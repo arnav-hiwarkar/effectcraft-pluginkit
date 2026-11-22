@@ -179,7 +179,8 @@ pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 
             }
         };
         match &param.kind {
-            ParamKind::Slider { .. } | ParamKind::Percent { .. } | ParamKind::Angle { .. } => Wire::Number(value.as_f64()),
+            ParamKind::Slider { min, max, .. } => Wire::Number(value.as_f64().max(*min).min(*max)),
+            ParamKind::Percent { .. } | ParamKind::Angle { .. } => Wire::Number(value.as_f64()),
             ParamKind::Checkbox { .. } => Wire::Bool(value.as_bool()),
             ParamKind::Popup { .. } | ParamKind::Mask => Wire::Number(f64::from(value.as_enum())),
             ParamKind::Point { .. } => Wire::List(to_px(grid, value.as_vec2()).to_vec()),

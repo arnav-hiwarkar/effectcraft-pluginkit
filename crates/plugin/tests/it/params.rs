@@ -131,3 +131,16 @@ fn a_slider_shows_its_soft_range_in_log_scale_and_a_percent_takes_a_range() {
     let plain = param("plain");
     assert_eq!((&plain["sliderMax"], plain.get("log"), plain.get("percent")), (&json!(20.0), None, None));
 }
+
+#[test]
+fn a_value_an_expression_pushes_outside_the_hard_range_reaches_the_plugin_inside_it() {
+    let mut app = app("test.params-clamp", &[]);
+    report_layer(&mut app, "Sim");
+    app.session.execute_checked("prop.setExpression", json!({"layer": "Sim", "path": "effects/#1/level", "expression": "150"})).unwrap();
+    render_at(&app, 0.0);
+    assert_eq!(reports(&app)[0]["now"].as_f64(), Some(100.0));
+    app.session.execute_checked("prop.setExpression", json!({"layer": "Sim", "path": "effects/#1/level", "expression": "-20"})).unwrap();
+    clear_reports(&app);
+    render_at(&app, 0.0);
+    assert_eq!(reports(&app)[0]["now"].as_f64(), Some(0.0));
+}
