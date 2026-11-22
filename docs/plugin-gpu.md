@@ -238,7 +238,8 @@ own. Mix host kernel passes and plugin passes freely in one plan.
 | `GpuPass::convolve(src, out, Taps::Full { width, weights })` | A full kernel, odd sides up to 31, row by row. |
 | `GpuPass::warp(src, displacement, out, [ax, ay])` | Each pixel read from `src` at its position plus `ax` times the red and `ay` times the green of `displacement`, bilinear. |
 | `GpuPass::matrix(src, out, rows)` | A 4×4 colour matrix: output channel `i` is `rows[i]` dotted with the input pixel. |
-| `GpuPass::to_linear(src, out)`, `GpuPass::to_srgb(src, out)` | The sRGB transfer curve on red, green and blue as they are (no division by alpha), alpha kept. Negative values mirror around zero and values above 1 continue the curve. |
+| `GpuPass::to_linear(src, out)`, `GpuPass::to_srgb(src, out)` | The sRGB transfer curve on red, green and blue as they are (no division by alpha), alpha kept. Negative values mirror around zero and values above 1 continue the curve; results saturate at 2^126. |
+| `GpuPass::transfer(src, out, to, negatives)` | The same curve towards `Encoding::Linear` or `Encoding::Srgb`, with `Negatives::Mirror` as above or `Negatives::Linear`, which continues the straight segment through zero (`x / 12.92`, `x * 12.92`). |
 | `GpuPass::brightness_curve(src, out, measure, curve, range)` | Each pixel's colour scaled so that its brightness `m` becomes `curve(m)`, hue and alpha kept. `measure` is `Measure::MaxChannel` (the largest of red, green and blue) or `Measure::Luma` (Rec. 709). Entry `i` of `n` holds the output for `m = range * i / (n - 1)`; past `range` the last segment continues. A pixel with no brightness becomes black. Threshold, soft knee and highlight or shadow selection are curves. |
 | `GpuPass::dither(src, out, seed, origin)` | Triangular noise of at most one 8-bit level on red, green and blue, the same for a seed and a pixel position minus `origin` on the CPU and the GPU. Values at or beyond 0 and 1 are left exact. |
 | `GpuPass::light_alpha(src, out)` | Alpha raised to the brightest colour channel, at most 1, so light added onto transparent pixels stays visible as valid premultiplied colour. |
@@ -251,13 +252,14 @@ Rules shared by all of them:
   and `blend_images` and `warp` an `aux` of that size too. `resample` maps any size to any size, shrinking
   at most 64 times in one pass.
 - The `BlendMode`s are `Over` (premultiplied over), `Add`, `Subtract`, `Multiply`, `Screen`, `Overlay`,
-  `Darken`, `Lighten` and `Difference`. All but `Over` work channel by channel, alpha included.
+  `Darken`, `Lighten`, `Difference` and `ScreenHdr` (`base + top * (1 - clamp(base, 0, 1))`). All but
+  `Over` work channel by channel, alpha included.
 - `curves` works on straight colour: it divides by alpha, looks the colour up, and multiplies by the
   alpha it looked up. Inputs outside 0 to 1 take the end entries. `matrix` works on the premultiplied
   values as they are.
 - A pass's `floats`, `uints` and `reach` are ignored; the app knows what each kernel reads.
-- `blend_images`, `curves`, `matrix`, `to_linear`, `to_srgb`, `brightness_curve`, `dither` and
-  `light_alpha` are pointwise: each output pixel depends only on the same pixel of its inputs. A pointwise
+- `blend_images`, `curves`, `matrix`, `to_linear`, `to_srgb`, `transfer`, `brightness_curve`, `dither`
+  and `light_alpha` are pointwise: each output pixel depends only on the same pixel of its inputs. A pointwise
   pass may write the image it reads, as in `GpuPass::matrix(work, work, rows)`.
 - Consecutive pointwise passes of one size run as one loop over the frame on the CPU and one shader on the
   GPU. An image they write that no later pass reads is never stored. The loop ends before a pass that would
@@ -272,12 +274,13 @@ An effect with no WGSL runs a plan on the GPU too when that plan is made only of
 decides per frame: at settings where the layout gives no plan, or a plan naming the effect's own kernels,
 the frame renders on the CPU. Once the effect has given such a plan (at the default settings when the
 plugin loads, or at any later frame), the app offers it to the GPU; until then it renders on the CPU, so
-when the defaults give no such plan, the first frame at settings that do renders on the CPU. An effect whose plans name its own kernels gives WGSL with `.shader(..)`.
+when the defaults give no such plan, the first frame at settings that do renders on the CPU. An effect
+whose plans name its own kernels gives WGSL with `.shader(..)`.
 
 Lumen Glow (`plugins/lumen-glow`) is made only of host kernels and has no WGSL and no `pass` method:
-`to_linear` and a `brightness_curve` soft knee, `resample` passes down a pyramid, a separable `convolve`,
-`matrix` and `blend_images` per level, and one fused composite of `to_linear`, `matrix`,
-`brightness_curve`, `blend_images`, `to_srgb`, `dither` and `light_alpha`.
+`transfer` to linear and a `brightness_curve` soft knee, `resample` passes down a pyramid, a separable
+`convolve`, `matrix` and `blend_images` per level, and one fused composite of `transfer`, `matrix`,
+`brightness_curve`, `blend_images`, `transfer` back to sRGB, `dither` and `light_alpha`.
 
 ## The WGSL side
 

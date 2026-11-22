@@ -337,8 +337,10 @@ impl Effect for HostKernels {
             "tiny curve range",
             "huge resample",
             "huge to linear",
+            "to linear, negatives linear",
+            "to sRGB, negatives linear",
         ];
-        let modes = ["over", "add", "subtract", "multiply", "screen", "overlay", "darken", "lighten", "difference"];
+        let modes = ["over", "add", "subtract", "multiply", "screen", "overlay", "darken", "lighten", "difference", "screen hdr"];
         EffectSpec::new("host-kernels", "Host Kernels", "Probe")
             .param(Param::popup("kernel", "Kernel", &kernels, 0))
             .param(Param::popup("mode", "Mode", &modes, 0))
@@ -355,7 +357,7 @@ impl Effect for HostKernels {
             0 => plan.pass(GpuPass::blur(source, output, [4.0, 2.5])),
             1 => plan.pass(GpuPass::box_blur(source, output, [2.5, 0.0])),
             2 => plan.pass(GpuPass::resample(source, half, Filter::Bilinear)).pass(GpuPass::resample(half, output, Filter::Bicubic)),
-            3 => plan.pass(blurred).pass(GpuPass::blend_images(source, soft, output, BlendMode::ALL[cx.index("mode").min(8)], 0.8)),
+            3 => plan.pass(blurred).pass(GpuPass::blend_images(source, soft, output, BlendMode::ALL[cx.index("mode").min(9)], 0.8)),
             4 => plan.pass(GpuPass::curves(source, output, &curve)),
             5 => plan.pass(GpuPass::convolve(source, output, craft_plugin::Taps::Separable { x: vec![-0.5, 2.0, -0.5], y: vec![0.25, 0.5, 0.25] })),
             6 => plan.pass(GpuPass::convolve(
@@ -396,6 +398,8 @@ impl Effect for HostKernels {
             }
             22 => plan.pass(GpuPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some([2.0, 2.0]) }, source, output)),
             23 => plan.pass(GpuPass::to_linear(source, output)),
+            24 => plan.pass(GpuPass::transfer(source, output, Encoding::Linear, Negatives::Linear)),
+            25 => plan.pass(GpuPass::transfer(source, output, Encoding::Srgb, Negatives::Linear)),
             _ => {
                 let quarter = frame.map(|side| side.div_ceil(4));
                 let (small, blurred) = (plan.scratch(quarter), plan.scratch(quarter));

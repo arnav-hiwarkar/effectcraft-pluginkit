@@ -1,4 +1,4 @@
-use craft_plugin::{BlendMode, BlurShape, Filter, GpuImage, GpuPass, GpuPlan, HostKernel, Measure, Pixel, Taps};
+use craft_plugin::{BlendMode, BlurShape, Encoding, Filter, GpuImage, GpuPass, GpuPlan, HostKernel, Measure, Negatives, Pixel, Taps};
 
 use super::{Image, Lowered, Ref, Step, StepImage, blur_taps, lower, run, run_fused, steps};
 
@@ -177,11 +177,14 @@ fn every_blend_mode_gives_its_formula() {
         (BlendMode::Darken, [0.2, 0.3, 0.1, 0.5]),
         (BlendMode::Lighten, [0.5, 0.6, 0.9, 0.8]),
         (BlendMode::Difference, [0.3, 0.3, 0.8, 0.3]),
+        (BlendMode::ScreenHdr, [0.6, 0.72, 0.91, 0.9]),
     ];
     for (mode, expected) in expected {
         let got = host(HostKernel::Blend { mode, amount: 1.0 }, &[base], [1, 1], Some(&[top]), [1, 1]);
         assert_close(&got, &[expected], 1e-6, &format!("{mode:?}"));
     }
+    let outside = host(HostKernel::Blend { mode: BlendMode::ScreenHdr, amount: 1.0 }, &[[-0.25, 1.5, 0.5, 1.0]], [1, 1], Some(&[[0.5; 4]]), [1, 1]);
+    assert_close(&outside, &[[0.25, 1.5, 0.75, 1.0]], 1e-6, "screen past 0 and 1 adds below black and keeps above white");
     let half = host(HostKernel::Blend { mode: BlendMode::Add, amount: 0.5 }, &[base], [1, 1], Some(&[top]), [1, 1]);
     assert_close(&half, &[[0.45, 0.75, 0.95, 1.05]], 1e-6, "half add");
 }
@@ -229,6 +232,17 @@ fn exact_to_linear(x: f64) -> f64 {
 fn exact_to_srgb(x: f64) -> f64 {
     let a = x.abs();
     (if a <= 0.003_130_8 { a * 12.92 } else { 1.055 * a.powf(1.0 / 2.4) - 0.055 }).copysign(x)
+}
+
+#[test]
+fn transfers_with_linear_negatives_continue_the_straight_segment_below_zero() {
+    let pixels = [[-0.5, -0.01, 0.5, 0.7]];
+    let decoded = host(HostKernel::Transfer { to: Encoding::Linear, negatives: Negatives::Linear }, &pixels, [1, 1], None, [1, 1]);
+    let encoded = host(HostKernel::Transfer { to: Encoding::Srgb, negatives: Negatives::Linear }, &pixels, [1, 1], None, [1, 1]);
+    assert_close(&decoded, &[[-0.5 / 12.92, -0.01 / 12.92, 0.214_041_14, 0.7]], 1e-6, "decode");
+    assert_close(&encoded, &[[-6.46, -0.1292, 0.735_356_6, 0.7]], 1e-5, "encode");
+    let mirrored = host(HostKernel::Transfer { to: Encoding::Linear, negatives: Negatives::Mirror }, &pixels, [1, 1], None, [1, 1]);
+    assert_eq!(mirrored, host(HostKernel::ToLinear, &pixels, [1, 1], None, [1, 1]));
 }
 
 #[test]

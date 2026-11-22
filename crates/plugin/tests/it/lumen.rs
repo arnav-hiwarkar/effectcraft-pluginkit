@@ -177,6 +177,23 @@ fn lumen_glow_on_host_kernels_matches_the_build_before_them_and_that_build_still
 }
 
 #[test]
+fn negative_colour_screens_and_encodes_as_the_build_before_host_kernels_did() {
+    let (spec, before) = (spec(), before_spec());
+    let flat = |pixel: [f32; 4]| Buf { img: Image { width: 32, height: 32, data: vec![pixel; 32 * 32] }, offset: [0.0, 0.0], scale: 1.0 };
+    let plain = [("Glow/radius", 1.0), ("Glow/threshold", 0.0), ("Output/gamma", 0.0)];
+    let screen: Vec<(&str, f64)> = plain.iter().copied().chain([("Output/blend", 1.0)]).collect();
+    let encoded = [("Glow/radius", 1.0), ("Glow/threshold", 0.0), ("Output/view", 1.0), ("Glow/exposure", 1.0)];
+    let cases = [("Screen", screen, [-0.25, 0.5, 0.0, 1.0], -0.75), ("Glow Only encoded", encoded.to_vec(), [-0.5, 0.5, 0.0, 1.0], -1.0)];
+    for (name, values, pixel, red) in cases {
+        let params = params_for(spec, [32, 32], &values);
+        let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [32.0; 2], seed: 11, adjustment: false, env: Default::default() };
+        let centre = |out: Buf| out.img.data[(out.img.width * out.img.height / 2 + out.img.width / 2) as usize][0];
+        let (new, old) = (centre(effects::apply(spec, &ctx, flat(pixel))), centre(effects::apply(before, &ctx, flat(pixel))));
+        assert!((old - red).abs() < 1e-5 && (new - old).abs() < 1e-5, "{name}: red {new}, the build before host kernels {old}, expected {red}");
+    }
+}
+
+#[test]
 fn lumen_glow_renders_on_the_gpu_as_its_cpu_render_does() {
     let spec = spec();
     let Some(gpu) = gpu() else { return };

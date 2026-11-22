@@ -25,7 +25,7 @@ fn linear(gpu: &mut GpuPlan, settings: &Settings, work: GpuImage) -> GpuImage {
     if !settings.gamma {
         return GpuImage::Source;
     }
-    gpu.passes.push(GpuPass::to_linear(GpuImage::Source, work));
+    gpu.passes.push(GpuPass::transfer(GpuImage::Source, work, Encoding::Linear, Negatives::Linear));
     work
 }
 
@@ -105,14 +105,11 @@ fn composite(gpu: &mut GpuPlan, settings: &Settings, core: &Mix, glow: Option<Gp
     if settings.view == View::Final {
         match settings.blend {
             Blend::Add => pass(GpuPass::blend_images(base, work, work, BlendMode::Add, 1.0)),
-            Blend::Screen => {
-                pass(GpuPass::blend_images(base, work, work, BlendMode::Screen, 1.0));
-                pass(GpuPass::blend_images(work, base, work, BlendMode::Lighten, 1.0));
-            }
+            Blend::Screen => pass(GpuPass::blend_images(base, work, work, BlendMode::ScreenHdr, 1.0)),
         }
     }
     if settings.gamma {
-        pass(GpuPass::to_srgb(work, work));
+        pass(GpuPass::transfer(work, work, Encoding::Srgb, Negatives::Linear));
     }
     if let Some(d) = settings.dither {
         pass(GpuPass::dither(work, work, d.seed, d.origin.map(|o| o.wrapping_add(i64::from(padding)))));
@@ -162,8 +159,8 @@ mod tests {
         let plan = plan(&settings, [640, 360], settings.frame_padding([640, 360])).expect("a plan");
         let levels = Plan::new(&settings).levels.len();
         let count = |kernel: &str| plan.passes.iter().filter(|p| p.kernel == kernel).count();
-        let kernels = ["resample", "convolve", "matrix", "blend", "brightness_curve", "to_linear", "to_srgb", "dither", "light_alpha"].map(count);
-        assert_eq!(kernels, [2 * levels, levels, levels + 2, levels + 1, 2, 2, 1, 1, 1]);
+        let kernels = ["resample", "convolve", "matrix", "blend", "brightness_curve", "transfer", "dither", "light_alpha"].map(count);
+        assert_eq!(kernels, [2 * levels, levels, levels + 2, levels + 1, 2, 3, 1, 1]);
         assert!(plan.images.len() <= 2 * levels + 3, "{} scratch images for {levels} levels", plan.images.len());
     }
 

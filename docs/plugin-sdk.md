@@ -314,6 +314,16 @@ let plan = plan
     .pass(GpuPass::dither(work, GpuImage::Output, cx.instance as u32, [0, 0]));
 ```
 
+Light that can go negative (a glow of signed colour) keeps the sRGB curve's straight segment below zero
+instead of mirroring it, and `BlendMode::ScreenHdr` screens a base outside 0 to 1 without darkening it:
+
+```rust
+let plan = plan
+    .pass(GpuPass::transfer(GpuImage::Source, work, Encoding::Linear, Negatives::Linear))
+    .pass(GpuPass::blend_images(work, glow, work, BlendMode::ScreenHdr, 1.0))
+    .pass(GpuPass::transfer(work, GpuImage::Output, Encoding::Srgb, Negatives::Linear));
+```
+
 ## Fast maths
 
 In a sandboxed plugin, `f32::exp2`, `powf`, `sin`, `atan2` and the other maths functions are not single

@@ -263,7 +263,7 @@ fn every_host_kernel_renders_on_the_gpu_within_two_levels_of_the_cpu() {
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
     assert!(spec.gpu && gpu.supports_effect(spec.id), "a plan of host kernels needs no plugin WGSL to run on the GPU");
-    let cases = (0..16).map(|kernel| (kernel, 0)).chain((1..9).map(|mode| (3, mode)));
+    let cases = (0..16).map(|kernel| (kernel, 0)).chain((1..10).map(|mode| (3, mode)));
     for (kernel, mode) in cases {
         let params = params(spec, &[("kernel", f64::from(kernel)), ("mode", f64::from(mode))]);
         let cpu = effects::apply(spec, &ctx(&params), picture());
@@ -320,7 +320,7 @@ fn host_kernel_edge_cases_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() 
 }
 
 #[test]
-fn extreme_values_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() {
+fn extreme_values_and_negative_colour_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() {
     let app = app("test.gpu-kernel-extremes", &[]);
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
@@ -329,6 +329,8 @@ fn extreme_values_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() {
         ("a curve over 0..1e-36", 21, filled([1e-36, 0.0, 0.0, 1.0]), [6, 6], [1e-36, 0.0, 0.0, 1.0]),
         ("halving 1.25e38", 22, filled([1.25e38, 0.0, 0.0, 1.0]), [3, 3], [1.25e38 * 0.875 * 0.875, 0.0, 0.0, 0.875 * 0.875]),
         ("decoding sRGB 1e16", 23, filled([1e16, 0.0, 0.0, 1.0]), [6, 6], [2f32.powi(126), 0.0, 0.0, 1.0]),
+        ("decoding with linear negatives", 24, filled([-0.5, 0.0, 0.0, 1.0]), [6, 6], [-0.5 / 12.92, 0.0, 0.0, 1.0]),
+        ("encoding with linear negatives", 25, filled([-0.5, 0.0, 0.0, 1.0]), [6, 6], [-6.46, 0.0, 0.0, 1.0]),
     ];
     let mut wrong = Vec::new();
     for (case, kernel, input, [x, y], want) in cases {

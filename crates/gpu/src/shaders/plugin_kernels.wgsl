@@ -154,6 +154,10 @@ fn craft_srgb(v: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(craft_to_srgb(v.r), craft_to_srgb(v.g), craft_to_srgb(v.b), v.a);
 }
 
+fn craft_linear_below_zero(v: vec4<f32>, transferred: vec4<f32>, slope: f32) -> vec4<f32> {
+    return vec4<f32>(select(transferred.rgb, v.rgb * slope, v.rgb < vec3<f32>(0.0)), v.a);
+}
+
 fn craft_light_alpha(v: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(v.rgb, max(v.a, clamp(max(max(v.r, v.g), v.b), 0.0, 1.0)));
 }

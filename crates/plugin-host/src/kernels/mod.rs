@@ -78,6 +78,7 @@ pub(crate) fn run(kernel: &HostKernel, src: Image, aux: Option<Image>, size: [u3
         | HostKernel::Matrix { .. }
         | HostKernel::ToLinear
         | HostKernel::ToSrgb
+        | HostKernel::Transfer { .. }
         | HostKernel::BrightnessCurve { .. }
         | HostKernel::Dither { .. }
         | HostKernel::LightAlpha => {

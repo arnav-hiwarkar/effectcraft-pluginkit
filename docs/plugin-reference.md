@@ -294,12 +294,13 @@ each other. See [Host kernels](plugin-gpu.md#host-kernels) for what each compute
 |---|---|
 | `GpuPass::blur(src, out, radius)`, `GpuPass::box_blur(..)` | `HostKernel::Blur { shape: BlurShape::Gaussian | Box, radius: [f32; 2] }`, each axis 0 to `MAX_BLUR_RADIUS` (512). `src` and `out` the same size. |
 | `GpuPass::resample(src, out, filter)` | `HostKernel::Resample { filter: Filter::Bilinear | Bicubic, scale: Option<[f32; 2]> }`. `scale` is source pixels per output pixel, above 0 and at most 64; `None` takes it from the sizes. |
-| `GpuPass::blend_images(base, top, out, mode, amount)` | `HostKernel::Blend { mode: BlendMode, amount: f32 }`, `top` as `aux`. All three the same size; `amount` finite. |
+| `GpuPass::blend_images(base, top, out, mode, amount)` | `HostKernel::Blend { mode: BlendMode, amount: f32 }`, `top` as `aux`. All three the same size; `amount` finite. `BlendMode::ScreenHdr` is `base + top * (1 - clamp(base, 0, 1))`: Screen for a base in 0 to 1, an add below 0, the base kept above 1. |
 | `GpuPass::curves(src, out, table)` | `HostKernel::Curves { table: Vec<Pixel> }`, 2 to `MAX_CURVE_POINTS` (4096) entries. |
 | `GpuPass::convolve(src, out, taps)` | `HostKernel::Convolve { taps: Taps::Separable { x, y } | Taps::Full { width, weights } }`. Separable: odd counts up to `MAX_TAPS` (1025). Full: odd sides up to `MAX_FULL_SIDE` (31). |
 | `GpuPass::warp(src, displacement, out, amount)` | `HostKernel::Warp { amount: [f32; 2] }`, displacement as `aux`, each axis at most `MAX_WARP` (4096) pixels. |
 | `GpuPass::matrix(src, out, rows)` | `HostKernel::Matrix { rows: [[f32; 4]; 4] }`, finite. |
 | `GpuPass::to_linear(src, out)`, `GpuPass::to_srgb(src, out)` | `HostKernel::ToLinear`, `HostKernel::ToSrgb`. `src` and `out` the same size. |
+| `GpuPass::transfer(src, out, to, negatives)` | `HostKernel::Transfer { to: Encoding::Linear | Srgb, negatives: Negatives::Mirror | Linear }`. `Mirror` is `to_linear` or `to_srgb`; `Linear` continues the curve's straight segment below zero (`x / 12.92` decoding, `x * 12.92` encoding). `src` and `out` the same size. |
 | `GpuPass::brightness_curve(src, out, measure, curve, range)` | `HostKernel::BrightnessCurve { measure: Measure::MaxChannel | Luma, curve: Vec<f32>, range: f32 }`, 2 to `MAX_CURVE_POINTS` (4096) entries, `range` above 0. |
 | `GpuPass::dither(src, out, seed, origin)` | `HostKernel::Dither { seed: u32, origin: [i64; 2] }`. |
 | `GpuPass::light_alpha(src, out)` | `HostKernel::LightAlpha`. |

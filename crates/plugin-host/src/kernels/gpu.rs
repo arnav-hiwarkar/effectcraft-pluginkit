@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use craft_plugin::{BlendMode, Filter, GpuImage, GpuPass, GpuPlan, HostKernel, Measure, Taps};
+use craft_plugin::{BlendMode, Encoding, Filter, GpuImage, GpuPass, GpuPlan, HostKernel, Measure, Negatives, Taps};
 
 use super::fuse::{Fused, Op, Ref, Step, live_after, steps};
 use super::{blur_taps, resample_scale};
@@ -144,6 +144,16 @@ fn pointwise(fused: &Fused, resampled: Option<(usize, Filter)>, f: Vec<f32>) -> 
             }
             HostKernel::ToLinear => format!("craft_linear({v})"),
             HostKernel::ToSrgb => format!("craft_srgb({v})"),
+            HostKernel::Transfer { to, negatives } => {
+                let (curve, slope) = match to {
+                    Encoding::Linear => ("craft_linear", "1.0 / 12.92"),
+                    Encoding::Srgb => ("craft_srgb", "12.92"),
+                };
+                match negatives {
+                    Negatives::Mirror => format!("{curve}({v})"),
+                    Negatives::Linear => format!("craft_linear_below_zero({v}, {curve}({v}), {slope})"),
+                }
+            }
             HostKernel::BrightnessCurve { measure, curve, range } => {
                 data.extend([f32::from(*measure == Measure::Luma), curve.len() as f32, *range].into_iter().chain(curve.iter().copied()));
                 format!("craft_brightness_curve({at}u, {v})")
@@ -188,6 +198,7 @@ fn blended(mode: BlendMode, b: &str, t: &str) -> String {
         BlendMode::Darken => format!("min({b}, {t})"),
         BlendMode::Lighten => format!("max({b}, {t})"),
         BlendMode::Difference => format!("abs({b} - {t})"),
+        BlendMode::ScreenHdr => format!("{b} + {t} * (1.0 - clamp({b}, vec4<f32>(0.0), vec4<f32>(1.0)))"),
     }
 }
 

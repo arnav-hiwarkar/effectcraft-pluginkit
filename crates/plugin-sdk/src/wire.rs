@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 
 use serde::{Deserialize, Serialize};
 
-use crate::kernels::{BlendMode, BlurShape, Filter, HostKernel, Measure, Taps};
+use crate::kernels::{BlendMode, BlurShape, Encoding, Filter, HostKernel, Measure, Negatives, Taps};
 use crate::viewer::{ToolEvent, ToolSpec};
 
 pub const ABI: u32 = 1;
@@ -771,6 +771,10 @@ impl GpuPass {
 
     pub fn to_srgb(src: GpuImage, out: GpuImage) -> Self {
         GpuPass::host(HostKernel::ToSrgb, src, out)
+    }
+
+    pub fn transfer(src: GpuImage, out: GpuImage, to: Encoding, negatives: Negatives) -> Self {
+        GpuPass::host(HostKernel::Transfer { to, negatives }, src, out)
     }
 
     pub fn brightness_curve(src: GpuImage, out: GpuImage, measure: Measure, curve: Vec<f32>, range: f32) -> Self {
