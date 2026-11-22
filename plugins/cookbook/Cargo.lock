@@ -173,6 +173,7 @@ dependencies = [
  "libloading",
  "log",
  "rayon",
+ "rustix",
  "same-file",
  "serde",
  "serde_json",
