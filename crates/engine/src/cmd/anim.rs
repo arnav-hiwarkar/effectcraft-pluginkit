@@ -460,6 +460,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         _ => s.state.selected_keys.clone(),
     };
     let mut out = vec![];
+    let mut paths: std::collections::BTreeMap<(LayerId, Uid), Vec<f64>> = Default::default();
     for r in refs {
         let Some(l) = comp.layer(r.layer) else { continue };
         let Some(pr) = l.props.find(r.prop) else { continue };
@@ -497,8 +498,14 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         } else {
             json!("bezier")
         };
-        let segment_length = (spatial && i + 1 < pr.keys.len()).then(|| effectcraft_keyframe::spatial_segment_length(&pr.keys, i));
-        let path_length = spatial.then(|| (0..pr.keys.len().saturating_sub(1)).map(|j| effectcraft_keyframe::spatial_segment_length(&pr.keys, j)).sum::<f64>());
+        let segments = spatial.then(|| {
+            paths
+                .entry((l.id, pr.uid))
+                .or_insert_with(|| (0..pr.keys.len().saturating_sub(1)).map(|j| effectcraft_keyframe::spatial_segment_length(&pr.keys, j)).collect())
+                .as_slice()
+        });
+        let segment_length = segments.and_then(|lengths| lengths.get(i).copied());
+        let path_length = segments.map(|lengths| lengths.iter().sum::<f64>());
         out.push(json!({
             "layer": l.id.0, "prop": pr.uid, "name": pr.name, "index": i, "keyCount": pr.keys.len(),
             "segmentLength": segment_length, "pathLength": path_length, "easeDims": ease_dims, "path": l.props.match_path_of(pr.uid),
