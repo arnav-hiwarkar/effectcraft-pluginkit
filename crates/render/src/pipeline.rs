@@ -730,7 +730,7 @@ impl<'a> Renderer<'a> {
         }
         let mut contents = Vec::new();
         for layer in ctx.comp.layers.iter() {
-            if layer.is_3d() || !cache::timeless(layer) {
+            if layer.is_3d() || layer.track_matte.is_some() || !cache::timeless(layer) {
                 return None;
             }
             if let LayerSource::Footage { item } = &layer.source {

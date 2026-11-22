@@ -111,3 +111,18 @@ fn every_edit_of_a_static_comp_renders_a_new_frame() {
         assert!(orig != fresh, "{what}: edit had no visible effect");
     }
 }
+
+#[test]
+fn a_hidden_matte_that_ends_clears_the_cached_frame() {
+    let (mut p, cid, comp) = setup();
+    let fill = solid(&mut p, &comp, [1.0, 0.0, 0.0], 200, 100);
+    let mut matte = solid(&mut p, &comp, [1.0, 1.0, 1.0], 200, 100);
+    matte.switches.video = false;
+    matte.out_point = Tick::from_seconds_f64(1.0);
+    let fill = effectcraft_project::Layer { track_matte: Some(TrackMatte { layer: matte.id, kind: MatteKind::Alpha }), ..fill };
+    p.comp_mut(cid).unwrap().layers = vec![matte, fill].into();
+    let cache = LayerCache::default();
+    let before = render_cached(&p, cid, Tick::from_seconds_f64(0.5), Some(&cache));
+    let after = render_cached(&p, cid, Tick::from_seconds_f64(1.5), Some(&cache));
+    assert_eq!((before.get(100, 50), after.get(100, 50)), ([1.0, 0.0, 0.0, 1.0], [0.0; 4]));
+}
