@@ -11,7 +11,7 @@ pub fn spec() -> EffectSpec {
         .group(
             "Glow",
             [
-                Param::slider("radius", "Radius", 120.0, 1.0..=3000.0),
+                Param::slider("radius", "Radius", 120.0, 0.0..=3000.0),
                 Param::slider("exposure", "Exposure", 1.0, -8.0..=8.0),
                 Param::slider("threshold", "Threshold", 0.0, 0.0..=4.0),
                 Param::percent("smoothness", "Threshold Smoothness", 50.0),

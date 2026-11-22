@@ -211,6 +211,15 @@ fn a_frame_as_wide_as_the_app_grows_one_glows_at_the_largest_radius_on_the_cpu_a
 }
 
 #[test]
+fn a_stored_radius_of_zero_asks_for_no_padding() {
+    let spec = spec();
+    let params = params(spec, &[("Glow/radius", 0.0)]);
+    let out = effects::apply(spec, &ctx(&params), picture());
+    assert_eq!((out.offset, out.img.width, out.img.height), ([0.0, 0.0], SIZE[0], SIZE[1]));
+    assert!(out.img.data.iter().flatten().all(|v| v.is_finite()), "a zero radius renders finite pixels");
+}
+
+#[test]
 fn lumen_glow_renders_on_the_gpu_as_its_cpu_render_does() {
     let spec = spec();
     let Some(gpu) = gpu() else { return };

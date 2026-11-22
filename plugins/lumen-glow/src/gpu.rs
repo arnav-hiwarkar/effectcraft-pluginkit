@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn every_setting_fits_the_host_limits() {
-        for radius in [1.0, 3.0, 10.0, 120.0, 600.0, 3000.0] {
+        for radius in [0.0, 1.0, 3.0, 10.0, 120.0, 600.0, 3000.0] {
             for aspect in [-1.0, -0.6, 0.0, 0.3, 1.0] {
                 for aberration in [0.0, 100.0] {
                     let widest = (aspect >= 0.0).then_some(([16384, 1], 1.0));
