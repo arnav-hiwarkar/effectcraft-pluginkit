@@ -9,6 +9,7 @@ use super::serve::Bulk;
 
 pub(crate) const MAX_RUNNING: usize = 4;
 pub(crate) const GRACE: Duration = Duration::from_millis(500);
+const KEPT_FINISHED: usize = 16;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -100,6 +101,10 @@ impl Tasks {
         let state = TaskState { id, task: task.to_string(), ..Default::default() };
         let slot = Arc::new(Slot { state: Mutex::new(state), cancelled_at: Mutex::new(None) });
         slots.insert(id, slot.clone());
+        let finished: Vec<u64> = slots.iter().filter(|(_, slot)| !slot.running()).map(|(id, _)| *id).collect();
+        finished.iter().take(finished.len().saturating_sub(KEPT_FINISHED)).for_each(|old| {
+            slots.remove(old);
+        });
         Ok((id, slot))
     }
 

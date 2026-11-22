@@ -35,6 +35,9 @@ pub fn specs() -> Vec<CommandSpec> {
         plugin!("plugin.load", "Load Plug-in for This Session", "{path: plug-in folder} — development: runs it with the permissions it asks for until quit"),
         plugin!("plugin.reload", "Reload Plug-ins", "{}"),
         plugin!("plugin.run", "Run Plug-in Command", "{plugin, command}"),
+        plugin!("plugin.startTask", "Start Plug-in Task", "{plugin, task, args?} — runs the task in the background; returns its id"),
+        plugin!("plugin.tasks", "List Plug-in Tasks", "{wait?: bool, timeout?: seconds (600)} — every plug-in task with status, progress, message, result and error; `wait` answers the tasks' app calls until none runs"),
+        plugin!("plugin.cancelTask", "Cancel Plug-in Task", "{plugin, id}"),
         window!("window.plugins", "Manage Plug-ins...", "{}"),
         window!("window.pluginPanel", "Show Plug-in Panel", "{plugin, panel}"),
     ]

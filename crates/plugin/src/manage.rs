@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use craft_plugin_host::ui::{UiInput, Widget};
-use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Plugin, Registry, RunMode};
+use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Plugin, Registry, RunMode, TaskState};
 use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -50,6 +50,13 @@ pub enum PluginState {
 pub struct PermissionInfo {
     pub name: &'static str,
     pub summary: &'static str,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct PluginTask {
+    pub plugin: String,
+    #[serde(flatten)]
+    pub state: TaskState,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -121,7 +128,8 @@ impl Inner {
 
     fn stop(&mut self, id: &str) {
         self.failed.remove(id);
-        if self.loaded.remove(id).is_some() {
+        if let Some(loaded) = self.loaded.remove(id) {
+            loaded.plugin.cancel_all();
             effects::unregister(id);
         }
     }
@@ -235,6 +243,19 @@ impl Plugins {
 
     pub fn get(&self, id: &str) -> Option<Arc<Loaded>> {
         self.lock().loaded.get(id).cloned()
+    }
+
+    fn running_plugins(&self) -> Vec<Arc<Loaded>> {
+        self.lock().loaded.values().cloned().collect()
+    }
+
+    pub fn tasks(&self) -> Vec<PluginTask> {
+        let running = self.running_plugins();
+        let of = |loaded: &Arc<Loaded>| {
+            let plugin = loaded.bundle.manifest.id.clone();
+            loaded.plugin.tasks().into_iter().map(move |state| PluginTask { plugin: plugin.clone(), state })
+        };
+        running.iter().flat_map(of).collect()
     }
 
     pub fn render_error(&self, effect_id: &str) -> Option<String> {
@@ -392,6 +413,40 @@ pub fn run_command(session: &mut Session, plugin: &str, command: &str) -> Result
     loaded.plugin.call(&call, None, &mut SessionHost::new(session, &loaded)).map_err(|e| e.to_string())
 }
 
+pub fn pump(session: &mut Session) -> bool {
+    let Some(plugins) = plugins() else { return false };
+    let mut running = false;
+    for loaded in plugins.running_plugins() {
+        loaded.plugin.pump(&mut SessionHost::new(session, &loaded));
+        running |= loaded.plugin.running_tasks() > 0;
+    }
+    running
+}
+
+const DEFAULT_WAIT: f64 = 600.0;
+
+fn wait_for_tasks(session: &mut Session, timeout: f64) -> bool {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs_f64(timeout.clamp(0.0, 86_400.0));
+    while pump(session) {
+        if std::time::Instant::now() > until {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    true
+}
+
+pub fn start_task(plugin: &str, task: &str, args: Value) -> Result<u64, String> {
+    running(plugin)?.plugin.start(task, args).map_err(|e| e.to_string())
+}
+
+pub fn cancel_task(plugin: &str, id: u64) -> Result<(), String> {
+    match running(plugin)?.plugin.cancel(id) {
+        true => Ok(()),
+        false => Err(format!("plugin `{plugin}` has no task {id}")),
+    }
+}
+
 fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engine::Result<Value> {
     let failed = |message: String| EngineError::Other(message);
     let plugins = plugins().ok_or_else(|| failed("plugins are not available".into()))?;
@@ -413,6 +468,23 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
             Ok(Value::Null)
         }
         "plugin.run" => run_command(session, text("plugin")?, text("command")?).map(|()| Value::Null).map_err(failed),
+        "plugin.startTask" => {
+            let args = params.get("args").cloned().unwrap_or(Value::Null);
+            start_task(text("plugin")?, text("task")?, args).map(|id| json!(id)).map_err(failed)
+        }
+        "plugin.cancelTask" => {
+            let task = params.get("id").and_then(Value::as_u64).ok_or_else(|| failed("`plugin.cancelTask` needs an `id` number".into()))?;
+            cancel_task(text("plugin")?, task).map(|()| Value::Null).map_err(failed)
+        }
+        "plugin.tasks" => {
+            let waited = params.get("wait").and_then(Value::as_bool) == Some(true);
+            let finished = !waited || wait_for_tasks(session, params.get("timeout").and_then(Value::as_f64).unwrap_or(DEFAULT_WAIT));
+            pump(session);
+            match finished {
+                true => Ok(json!(plugins.tasks())),
+                false => Err(failed("plug-in tasks were still running when the wait timed out".into())),
+            }
+        }
         _ => Err(failed(format!("unknown plugin command `{id}`"))),
     };
     session.plugin_items = plugins.items();
