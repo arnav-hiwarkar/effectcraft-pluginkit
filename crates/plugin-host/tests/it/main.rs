@@ -778,6 +778,39 @@ fn a_picked_file_replaced_by_a_link_is_refused_and_a_new_save_target_is_not_foll
 
 #[cfg(unix)]
 #[test]
+fn a_new_save_target_is_created_in_the_folder_the_user_picked_even_if_that_folder_is_moved_and_replaced_by_a_link() {
+    each_kind(|kind| {
+        let outside = tempfile::tempdir().unwrap();
+        let (chosen, moved, elsewhere) = (outside.path().join("chosen"), outside.path().join("moved"), outside.path().join("elsewhere"));
+        std::fs::create_dir(&chosen).unwrap();
+        std::fs::create_dir(&elsewhere).unwrap();
+        let target = chosen.join("new.txt");
+        let loaded = load(kind, &[]);
+        let mut host = Recorder { picked: Some(target.clone()), ..Default::default() };
+        command(&loaded, "pick-save-target", &mut host).unwrap();
+        std::fs::rename(&chosen, &moved).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &chosen).unwrap();
+        std::fs::write(loaded._dir.path().join("user-target.txt"), target.to_str().unwrap()).unwrap();
+        command(&loaded, "write-user", &mut host).unwrap();
+        assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0, "{kind:?}");
+        assert_eq!(std::fs::read_to_string(moved.join("new.txt")).unwrap(), "written by plugin", "{kind:?}");
+    });
+}
+
+#[test]
+fn a_save_target_picked_inside_the_apps_folders_is_refused() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let planted = loaded.data.path().join("planted.json");
+        let mut host = Recorder { picked: Some(planted.clone()), ..Default::default() };
+        let error = command(&loaded, "pick-and-save", &mut host).unwrap_err().to_string();
+        assert!(error.contains("that folder belongs to the app"), "{kind:?} {error}");
+        assert!(!planted.exists(), "{kind:?}");
+    });
+}
+
+#[cfg(unix)]
+#[test]
 fn a_sandboxed_call_whose_file_write_stalls_returns_only_after_the_write_landed() {
     let outside = tempfile::tempdir().unwrap();
     let stalled = outside.path().join("stalled");
