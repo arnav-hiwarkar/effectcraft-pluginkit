@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use craft_plugin::{Call, MaskPath, ParamsAt, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Widget, native_target};
+use craft_plugin::{Call, GpuImage, GpuPass, GpuPlan, MaskPath, ParamsAt, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Widget, native_target};
 use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Registry};
 use serde_json::{Value, json};
 
@@ -534,5 +534,91 @@ fn a_picked_file_becomes_readable_without_the_files_permission_but_not_writable(
         let id = loaded.plugin.start("pick", json!({})).unwrap();
         let state = settle(&loaded, id, &mut host);
         assert!(state.error.as_deref().unwrap_or_default().contains("only from a panel or a command"), "{kind:?} {state:?}");
+    });
+}
+
+const PASS_FRAME: [u32; 2] = [37, 301];
+
+fn ramp() -> Vec<Pixel> {
+    let [width, height] = PASS_FRAME;
+    (0..height).flat_map(|y| (0..width).map(move |x| [x as f32, y as f32, (x * y % 7) as f32, 1.0])).collect()
+}
+
+fn run_plan(kind: Kind, plan: &GpuPlan) -> Result<Vec<Pixel>, PluginError> {
+    let loaded = load(kind, &[]);
+    let mut pixels = ramp();
+    loaded.plugin.run_passes("passes", &cx(PASS_FRAME[0], PASS_FRAME[1]), plan, &mut pixels, Recorder::default)?;
+    Ok(pixels)
+}
+
+fn halve_and_restore(reach: [Option<u32>; 2]) -> GpuPlan {
+    let mut plan = GpuPlan::new();
+    let half = plan.scratch(PASS_FRAME.map(|side| side.div_ceil(2)));
+    let mut down = GpuPass::new("probe_down", GpuImage::Source, half);
+    let mut up = GpuPass::new("probe_up", half, GpuImage::Output);
+    (down.reach, up.reach) = (reach[0], reach[1]);
+    plan.pass(down).pass(up)
+}
+
+fn at(pixels: &[Pixel], x: usize, y: usize) -> Pixel {
+    pixels[y * PASS_FRAME[0] as usize + x]
+}
+
+#[test]
+fn a_two_pass_plan_gives_the_same_pixels_in_bands_as_in_one_call() {
+    each_kind(|kind| {
+        let banded = run_plan(kind, &halve_and_restore([Some(2), Some(1)])).unwrap();
+        let whole = run_plan(kind, &halve_and_restore([None, None])).unwrap();
+        assert_eq!(banded, whole, "{kind:?}");
+        assert_eq!(at(&banded, 10, 100), [10.5, 101.5, 3.5, 1.0], "{kind:?}");
+        assert_eq!(at(&banded, 10, 75)[..2], [10.5, 75.5], "{kind:?}");
+        assert_eq!(at(&banded, 10, 76)[..2], [10.5, 77.5], "{kind:?}");
+        assert_eq!(at(&banded, 36, 300), [4.5, 37.5, 0.75, 0.125], "{kind:?}");
+    });
+}
+
+#[test]
+fn a_pass_reads_its_reach_across_band_edges() {
+    each_kind(|kind| {
+        let tall = |reach| GpuPlan::new().pass(GpuPass { reach, ..GpuPass::new("probe_tall", GpuImage::Source, GpuImage::Output) });
+        let banded = run_plan(kind, &tall(Some(3))).unwrap();
+        assert_eq!(banded, run_plan(kind, &tall(None)).unwrap(), "{kind:?}");
+        assert_eq!(at(&banded, 10, 0)[..2], [220.0, 38.0], "{kind:?}");
+        assert_eq!(at(&banded, 10, 75), [280.0, 2128.0, 70.0, 28.0], "{kind:?}");
+        assert_eq!(at(&banded, 10, 76)[..2], [280.0, 2156.0], "{kind:?}");
+        assert_eq!(at(&banded, 10, 300)[..2], [100.0, 2990.0], "{kind:?}");
+    });
+}
+
+#[test]
+fn a_pass_with_too_little_reach_is_missing_rows_at_band_edges() {
+    let short = GpuPlan::new().pass(GpuPass::new("probe_tall", GpuImage::Source, GpuImage::Output).reach(2));
+    let pixels = run_plan(Kind::Wasm, &short).unwrap();
+    assert_eq!(at(&pixels, 10, 74)[..2], [280.0, 2100.0]);
+    assert_eq!(at(&pixels, 10, 75)[..2], [210.0, 1582.0]);
+}
+
+#[test]
+fn a_plan_naming_an_image_it_does_not_declare_is_refused() {
+    each_kind(|kind| {
+        let writes = GpuPlan::new().pass(GpuPass::new("probe_tall", GpuImage::Source, GpuImage::Scratch(3)));
+        assert_eq!(run_plan(kind, &writes), Err(PluginError::Failed("pass 0 writes Scratch(3), which the plan does not declare".into())));
+        let reads = GpuPlan::new().pass(GpuPass::new("probe_tall", GpuImage::Scratch(1), GpuImage::Output));
+        assert_eq!(run_plan(kind, &reads), Err(PluginError::Failed("pass 0 reads Scratch(1), which the plan does not declare".into())));
+    });
+}
+
+#[test]
+fn a_pass_writing_the_image_it_reads_is_refused() {
+    let tall = |src| GpuPass::new("probe_tall", src, GpuImage::Output).reach(3);
+    let plan = GpuPlan::new().pass(tall(GpuImage::Source)).pass(tall(GpuImage::Output));
+    assert_eq!(run_plan(Kind::Wasm, &plan), Err(PluginError::Failed("pass 1 reads the image it writes".into())));
+}
+
+#[test]
+fn a_failing_pass_fails_the_render() {
+    each_kind(|kind| {
+        let plan = GpuPlan::new().pass(GpuPass::new("nope", GpuImage::Source, GpuImage::Output).reach(0));
+        assert_eq!(run_plan(kind, &plan), Err(PluginError::Failed("no probe kernel `nope`".into())));
     });
 }
