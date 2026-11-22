@@ -129,8 +129,9 @@ Tell the app how much of the frame each output pixel needs, in `layout()`.
   on all cores.
 - If each row depends on rows at most `n` away, return `Layout::neighbourhood(n)`.
 - If the effect spills past the layer, add `.padded(n)`.
-- If the effect needs the whole frame, do the heavy work at reduced resolution, or run it on the GPU.
-  See [GPU effects](plugin-gpu.md).
+- If the effect needs the whole frame, describe it as passes: `Layout::whole_frame().passes(plan)`. The
+  app runs each pass on the GPU when there is one, and otherwise calls your `pass` method for bands of
+  each pass on all cores. See [Passes](plugin-gpu.md).
 
 Scale every distance by `cx.scale`, so a half-resolution preview matches the full render. `cx.px(id)`
 does this for a slider measured in layer pixels.

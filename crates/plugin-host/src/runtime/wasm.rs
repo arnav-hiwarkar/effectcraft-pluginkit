@@ -128,7 +128,7 @@ impl WasmGuest {
             Io::None => ([&[], &[]], 0),
             Io::InPlace(pixels) => ([pixels, &[]], 0),
             Io::Region { input, .. } => ([input, &[]], 0),
-            Io::Pass { src, aux, out } => ([src, aux], size_of_val::<[Pixel]>(out)),
+            Io::Pass { src, aux, out } => ([src, aux], size_of_val::<[Pixel]>(&**out)),
         };
         let [first, second] = inputs.map(bytemuck::cast_slice::<Pixel, u8>);
         let pixel_bytes = first.len() + second.len() + blank;

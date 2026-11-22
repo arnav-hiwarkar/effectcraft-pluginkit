@@ -84,17 +84,31 @@ fn median_ms(rounds: usize, mut reset: impl FnMut(), mut run: impl FnMut()) -> [
     [times[rounds / 2], times[0]]
 }
 
+fn padded(pixels: &[Pixel], size: [u32; 2], padding: u32) -> Vec<Pixel> {
+    let (width, pad) = (size[0] as usize, padding as usize);
+    let wide = width + 2 * pad;
+    let mut out = vec![[0.0; 4]; wide * (size[1] as usize + 2 * pad)];
+    for (y, row) in pixels.chunks_exact(width).enumerate() {
+        let at = (y + pad) * wide + pad;
+        out[at..at + width].copy_from_slice(row);
+    }
+    out
+}
+
 fn render(plugin: &Plugin, effect: &str, size: [u32; 2], rounds: usize) -> ([f64; 2], Vec<Pixel>) {
     let mut cx = RenderCx { size, scale: 1.0, time: 1.25, frame_rate: 24.0, layer_size: [f64::from(size[0]), f64::from(size[1])], ..Default::default() };
     cx.params = defaults(plugin, effect, size);
     let layout: Layout = plugin.call(&Call::Layout { effect: effect.into(), cx: cx.clone() }, None, &mut NoHost).unwrap();
-    let original = source(size);
+    let original = padded(&source(size), size, layout.padding);
+    cx.size = size.map(|side| side + 2 * layout.padding);
+    cx.offset = [f64::from(layout.padding); 2];
     let pixels = std::cell::RefCell::new(original.clone());
     let ms = median_ms(
         rounds,
         || pixels.borrow_mut().copy_from_slice(&original),
-        || {
-            plugin.render(effect, &cx, layout.reach, &mut pixels.borrow_mut(), || NoHost).unwrap();
+        || match layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu()) {
+            Some(plan) => plugin.run_passes(effect, &cx, plan, &mut pixels.borrow_mut(), || NoHost).unwrap(),
+            None => plugin.render(effect, &cx, layout.reach, &mut pixels.borrow_mut(), || NoHost).unwrap(),
         },
     );
     (ms, pixels.into_inner())

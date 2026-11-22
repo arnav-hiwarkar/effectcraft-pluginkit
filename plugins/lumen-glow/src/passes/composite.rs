@@ -1,41 +1,32 @@
-use craft_plugin::Pixel;
+use craft_plugin::{Frame, Pass, Pixel};
 
-use crate::image::Image;
 use crate::passes::resample::upsample_row;
 use crate::pixel::{CLEAR, Mix, add, brightest, scale};
 use crate::settings::{Blend, Settings, View};
 
 const FULL_TO_HALF: [bool; 2] = [true, true];
 
-pub struct Target<'a> {
-    pub pixels: &'a mut [Pixel],
-    pub width: usize,
-}
-
-pub fn composite(
-    target: Target,
-    settings: &Settings,
-    core: &Mix,
-    glow: Option<&Image>,
-    spread: &mut [Pixel],
-    column: &mut [Pixel],
-) {
-    let spread = &mut spread[..target.width];
-    spread.fill(CLEAR);
-    for (y, row) in target.pixels.chunks_exact_mut(target.width).enumerate() {
-        if let Some(glow) = glow {
-            upsample_row(glow, FULL_TO_HALF, y, spread, column);
+pub fn composite(settings: &Settings, pass: &Pass, out: &mut Frame) {
+    let core = Mix::from_floats(pass.f);
+    let mut spread = vec![CLEAR; out.width];
+    let mut column = vec![CLEAR; pass.aux.map_or(0, |glow| glow.width)];
+    for (y, row) in out.rows_mut() {
+        if let Some(glow) = &pass.aux {
+            upsample_row(glow, FULL_TO_HALF, y, &mut spread, &mut column);
         }
-        for (x, (p, s)) in row.iter_mut().zip(spread.iter()).enumerate() {
-            if *p == CLEAR && *s == CLEAR {
+        let source = pass.src.row(y as isize).unwrap_or(&[]);
+        for (x, (o, s)) in row.iter_mut().zip(spread.iter()).enumerate() {
+            let p = source.get(x).copied().unwrap_or(CLEAR);
+            if p == CLEAR && *s == CLEAR {
+                *o = CLEAR;
                 continue;
             }
-            let shaded = shade(settings, core, *p, *s);
+            let shaded = shade(settings, &core, p, *s);
             let dithered = match settings.dither {
                 Some(d) => d.apply(shaded, x, y),
                 None => shaded,
             };
-            *p = with_light_alpha(dithered);
+            *o = with_light_alpha(dithered);
         }
     }
 }
@@ -48,11 +39,7 @@ fn shade(settings: &Settings, core: &Mix, src: Pixel, spread: Pixel) -> Pixel {
 
 fn light(settings: &Settings, core: &Mix, src: Pixel, spread: Pixel) -> (Pixel, f32) {
     if src == CLEAR {
-        let glow = if settings.view == View::GlowSource {
-            CLEAR
-        } else {
-            scale(spread, settings.glow_opacity)
-        };
+        let glow = if settings.view == View::GlowSource { CLEAR } else { scale(spread, settings.glow_opacity) };
         return (glow, 0.0);
     }
     let linear = settings.transfer.decode(src);
@@ -70,20 +57,10 @@ fn light(settings: &Settings, core: &Mix, src: Pixel, spread: Pixel) -> (Pixel, 
 
 fn blend(mode: Blend, base: Pixel, glow: Pixel) -> Pixel {
     match mode {
-        Blend::Add => [
-            base[0] + glow[0],
-            base[1] + glow[1],
-            base[2] + glow[2],
-            base[3],
-        ],
+        Blend::Add => [base[0] + glow[0], base[1] + glow[1], base[2] + glow[2], base[3]],
         Blend::Screen => {
             let screen = |b: f32, g: f32| b + g * (1.0 - b.clamp(0.0, 1.0));
-            [
-                screen(base[0], glow[0]),
-                screen(base[1], glow[1]),
-                screen(base[2], glow[2]),
-                base[3],
-            ]
+            [screen(base[0], glow[0]), screen(base[1], glow[1]), screen(base[2], glow[2]), base[3]]
         }
     }
 }

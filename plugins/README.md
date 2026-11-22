@@ -26,6 +26,12 @@ Hz`, as one keyframe per frame in one `engine.batch`: one undo removes them. `pl
 drives `effectcraft-cli` over a 60 s tone whose level rises linearly and checks the curve, the undo and
 cancel.
 
+## Lumen Glow
+
+One plan drives both renderers: `src/gpu.rs` builds the passes (emit, downsample, one blur-and-sum pass
+per pyramid level, composite), `src/glow.wgsl` holds their GPU kernels and `src/passes/` the same kernels
+for the CPU, which the app runs in bands on all cores.
+
 ## Halo Flares
 
 Pick a **Look** (Sun, Anamorphic Blue, Warm Studio, Sci-Fi Ring, Vintage Zoom, Night Street, or Custom) and

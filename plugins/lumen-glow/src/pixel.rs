@@ -13,12 +13,7 @@ pub fn scale(a: Pixel, s: f32) -> Pixel {
 }
 
 pub fn mul_add(acc: Pixel, a: Pixel, s: f32) -> Pixel {
-    [
-        acc[0] + a[0] * s,
-        acc[1] + a[1] * s,
-        acc[2] + a[2] * s,
-        acc[3] + a[3] * s,
-    ]
+    [acc[0] + a[0] * s, acc[1] + a[1] * s, acc[2] + a[2] * s, acc[3] + a[3] * s]
 }
 
 pub fn luma(rgb: [f32; 3]) -> f32 {
@@ -35,9 +30,7 @@ pub struct Mix {
 }
 
 impl Mix {
-    pub const ZERO: Mix = Mix {
-        columns: [CLEAR; 3],
-    };
+    pub const ZERO: Mix = Mix { columns: [CLEAR; 3] };
 
     pub fn tint(colour: [f32; 3], amount: f32) -> Mix {
         let column = |j: usize| {
@@ -48,9 +41,7 @@ impl Mix {
             }
             c
         };
-        Mix {
-            columns: [column(0), column(1), column(2)],
-        }
+        Mix { columns: [column(0), column(1), column(2)] }
     }
 
     pub fn identity() -> Mix {
@@ -58,25 +49,18 @@ impl Mix {
     }
 
     pub fn weighted(self, channel_weights: [f32; 3]) -> Mix {
-        let w = [
-            channel_weights[0],
-            channel_weights[1],
-            channel_weights[2],
-            0.0,
-        ];
-        Mix {
-            columns: self
-                .columns
-                .map(|c| [c[0] * w[0], c[1] * w[1], c[2] * w[2], c[3] * w[3]]),
-        }
+        let w = [channel_weights[0], channel_weights[1], channel_weights[2], 0.0];
+        Mix { columns: self.columns.map(|c| [c[0] * w[0], c[1] * w[1], c[2] * w[2], c[3] * w[3]]) }
     }
 
     pub fn plus(self, other: Mix) -> Mix {
         let [a, b, c] = self.columns;
         let [x, y, z] = other.columns;
-        Mix {
-            columns: [add(a, x), add(b, y), add(c, z)],
-        }
+        Mix { columns: [add(a, x), add(b, y), add(c, z)] }
+    }
+
+    pub fn from_floats(floats: &[f32]) -> Mix {
+        Mix { columns: std::array::from_fn(|c| std::array::from_fn(|r| floats.get(4 * c + r).copied().unwrap_or(0.0))) }
     }
 
     pub fn columns(&self) -> [Pixel; 3] {
@@ -102,9 +86,7 @@ mod tests {
 
     #[test]
     fn weighted_identity_scales_each_channel() {
-        let out = Mix::identity()
-            .weighted([2.0, 1.0, 0.5])
-            .apply([1.0, 1.0, 1.0, 1.0]);
+        let out = Mix::identity().weighted([2.0, 1.0, 0.5]).apply([1.0, 1.0, 1.0, 1.0]);
         assert_eq!(out, [2.0, 1.0, 0.5, 0.0]);
     }
 }

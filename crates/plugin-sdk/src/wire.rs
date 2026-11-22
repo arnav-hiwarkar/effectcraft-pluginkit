@@ -318,7 +318,7 @@ impl Layout {
 }
 
 pub const MAX_PASSES: usize = 64;
-pub const MAX_SCRATCH_IMAGES: usize = 16;
+pub const MAX_SCRATCH_IMAGES: usize = 32;
 pub const MAX_SCRATCH_FRAMES: u64 = 8;
 pub const MAX_PASS_FLOATS: usize = 48;
 pub const MAX_PASS_UINTS: usize = 16;

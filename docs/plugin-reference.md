@@ -47,8 +47,13 @@ pub trait Effect: Send + Sync + 'static {
     fn layout(&self, cx: &Cx) -> Layout;                       // default: Layout::whole_frame()
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()>; // default: leaves the frame unchanged
     fn controls(&self, param: &str, value: &mut String, ui: &mut Ui); // default: draws nothing
+    fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()>; // default: an error naming the kernel
 }
 ```
+
+`pass` computes one band of one pass of a plan on the CPU. `Pass` holds `kernel`, `f`, `u`, `src` and
+`aux` (`Rows`: `width`, `height`, `first_row`, `pixels`, `at(x, y)`, `row(y)` in whole-image coordinates)
+and `out_size`. See [Passes](plugin-gpu.md).
 
 `render` takes `&self` and can run on several threads at once. A sandboxed plugin runs each call in a
 pooled instance, so values stored outside `cx` are not shared between calls.
@@ -66,7 +71,7 @@ pooled instance, so values stored outside `cx` are not shared between calls.
 | `.reads_scene()` | The effect calls `cx.scene`. |
 | `.reads_param_history()` | The effect calls `cx.at` or `cx.param_history`. A layer whose other effects or masks have expressions is then not cached, because the key cannot see what an expression returned at another time. |
 | `.preset(name, [(id, Value), …])` | A named set of parameter values, see [Presets](#presets). |
-| `.shader(wgsl)` | WGSL kernels for GPU passes. See [GPU effects](plugin-gpu.md). |
+| `.shader(wgsl)` | WGSL kernels for GPU passes. See [Passes](plugin-gpu.md). |
 | `.designer(panel_id)` | Effect Controls shows a button that opens this panel. |
 
 The render cache uses the four declarations. An effect that omits one shows stale frames. The
@@ -183,7 +188,11 @@ coordinates within this call's pixels, so subtract `frame.origin` from a full-fr
 | `Layout::pointwise()` | Each output pixel depends only on the same input pixel. |
 | `Layout::neighbourhood(n)` | Each output row depends on input rows at most `n` away. |
 | `.padded(n)` | Grow the frame by `n` pixels on each side first. The app caps `n` at 4096. |
-| `.gpu(plan)` | Run these GPU passes when the GPU renderer is active. |
+| `.passes(plan)` | Run these passes on the GPU when the GPU renderer is active, and otherwise on the CPU through `Effect::pass`, in bands on all cores. |
+| `.gpu(plan)` | Run these passes when the GPU renderer is active; `render` is the CPU path. |
+
+`GpuPass::reach(n)` gives a pass the number of source rows above and below the matching source row that
+an output row reads. Without it the pass runs as one call on the CPU.
 
 ## Panel
 

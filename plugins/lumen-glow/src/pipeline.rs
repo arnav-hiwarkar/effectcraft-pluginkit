@@ -1,96 +1,40 @@
-use craft_plugin::Pixel;
-
-use crate::image::Image;
-use crate::passes::accumulate::{Coarser, accumulate};
-use crate::passes::blur::blur;
-use crate::passes::composite::{Target, composite};
-use crate::passes::emit::{Source, emit};
-use crate::passes::resample::downsample;
-use crate::pixel::CLEAR;
-use crate::plan::{Pass, Plan};
-use crate::settings::Settings;
-
-struct Scratch {
-    line: Vec<Pixel>,
-    column: Vec<Pixel>,
-    padded: Vec<Pixel>,
-    copy: Vec<Pixel>,
-}
-
-pub fn render(settings: &Settings, pixels: &mut [Pixel], width: usize) {
-    if width == 0 || pixels.is_empty() {
-        return;
-    }
-    let height = pixels.len() / width;
-    let plan = Plan::new(settings);
-    let mut levels: Vec<Image> = plan
-        .sizes([width, height])
-        .into_iter()
-        .map(Image::new)
-        .collect();
-    let mut scratch = Scratch {
-        line: vec![CLEAR; width],
-        column: vec![CLEAR; width],
-        padded: Vec::new(),
-        copy: Vec::new(),
-    };
-    for pass in plan.passes() {
-        match pass {
-            Pass::Emit => emit(
-                &Source { pixels, width },
-                settings.knee,
-                settings.transfer,
-                &mut levels[0],
-                &mut scratch.line,
-                &mut scratch.column,
-            ),
-            Pass::Downsample { level } => {
-                let (finer, coarser) = levels.split_at_mut(level);
-                downsample(
-                    &finer[level - 1],
-                    &mut coarser[0],
-                    plan.levels[level].halve,
-                    &mut scratch.column,
-                );
-            }
-            Pass::Blur { level } => blur(
-                &mut levels[level],
-                &plan.levels[level].kernels(),
-                &mut scratch.padded,
-                &mut scratch.copy,
-            ),
-            Pass::Accumulate { level } => {
-                let (finer, coarser) = levels.split_at_mut(level + 1);
-                let coarser = coarser.first().map(|image| Coarser {
-                    image,
-                    halve: plan.levels[level + 1].halve,
-                });
-                accumulate(
-                    &mut finer[level],
-                    &plan.levels[level].mix,
-                    coarser,
-                    &mut scratch.line,
-                    &mut scratch.column,
-                );
-            }
-            Pass::Composite => composite(
-                Target { pixels, width },
-                settings,
-                &plan.core,
-                levels.first(),
-                &mut scratch.line,
-                &mut scratch.column,
-            ),
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use craft_plugin::Value;
 
-    use super::*;
-    use crate::settings::tests::settings_with;
+    use craft_plugin::prelude::*;
+
+    use crate::LumenGlow;
+    use crate::pixel::CLEAR;
+    use crate::settings::Settings;
+    use crate::settings::tests::cx_with;
+
+    fn render(cx: &Cx, pixels: &mut [Pixel], width: usize) {
+        let frame = [width as u32, (pixels.len() / width) as u32];
+        let plan = crate::gpu::plan(&Settings::from_cx(cx), frame, 0).expect("a plan");
+        let area = |size: [u32; 2]| (size[0] * size[1]) as usize;
+        let sizes: Vec<[u32; 2]> = std::iter::once(frame).chain(plan.images.clone()).collect();
+        let mut written: Vec<Vec<Pixel>> = sizes.iter().map(|s| vec![CLEAR; area(*s)]).collect();
+        let slot = |image: GpuImage| match image {
+            GpuImage::Source => None,
+            GpuImage::Output => Some(0),
+            GpuImage::Scratch(index) => Some(index as usize + 1),
+        };
+        for step in &plan.passes {
+            let target = slot(step.out).expect("no pass writes the source");
+            let mut out = std::mem::take(&mut written[target]);
+            let rows = |image: GpuImage| {
+                let [width, height] = slot(image).map_or(frame, |i| sizes[i]).map(|s| s as usize);
+                let pixels = slot(image).map_or(&pixels[..], |i| &written[i][..]);
+                Rows { width, height, first_row: 0, pixels }
+            };
+            let [width, height] = sizes[target].map(|s| s as usize);
+            let pass = Pass { kernel: &step.kernel, f: &step.f, u: &step.u, src: rows(step.src), aux: step.aux.map(rows), out_size: [width, height] };
+            let mut band = Frame { width, height, origin: [0, 0], pixels: &mut out };
+            LumenGlow.pass(cx, &pass, &mut band).expect("the pass runs");
+            written[target] = out;
+        }
+        pixels.copy_from_slice(&written[0]);
+    }
 
     const SIZE: usize = 257;
     const CENTRE: usize = SIZE / 2;
@@ -100,14 +44,11 @@ mod tests {
     }
 
     fn glow_of_point_with_brightness(brightness: f32, overrides: &[(&str, Value)]) -> Vec<Pixel> {
-        let mut base = vec![
-            ("Output/view", Value::Number(1.0)),
-            ("Output/dither", Value::Bool(false)),
-        ];
+        let mut base = vec![("Output/view", Value::Number(1.0)), ("Output/dither", Value::Bool(false))];
         base.extend(overrides.iter().cloned());
         let mut pixels = vec![CLEAR; SIZE * SIZE];
         pixels[CENTRE * SIZE + CENTRE] = [brightness, brightness, brightness, 1.0];
-        render(&settings_with(&base), &mut pixels, SIZE);
+        render(&cx_with(&base, 1.0), &mut pixels, SIZE);
         pixels
     }
 
@@ -119,41 +60,25 @@ mod tests {
     fn a_single_bright_pixel_glows_radially_symmetric() {
         let glow = glow_of_point(&[("Glow/radius", Value::Number(120.0))]);
         for d in [8, 20, 50, 90] {
-            let axis = [
-                at(&glow, d, 0),
-                at(&glow, -d, 0),
-                at(&glow, 0, d),
-                at(&glow, 0, -d),
-            ];
+            let axis = [at(&glow, d, 0), at(&glow, -d, 0), at(&glow, 0, d), at(&glow, 0, -d)];
             let diagonal_d = (d as f32 / std::f32::consts::SQRT_2).round() as isize;
             let diagonal = at(&glow, diagonal_d, diagonal_d);
-            let (lo, hi) = axis
-                .iter()
-                .fold((f32::MAX, 0.0f32), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+            let (lo, hi) = axis.iter().fold((f32::MAX, 0.0f32), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
             assert!(lo > 0.0 && hi / lo < 1.05, "distance {d}: {axis:?}");
-            assert!(
-                (diagonal / hi - 1.0).abs() < 0.1,
-                "distance {d}: diagonal {diagonal} axis {hi}"
-            );
+            assert!((diagonal / hi - 1.0).abs() < 0.1, "distance {d}: diagonal {diagonal} axis {hi}");
         }
     }
 
     #[test]
     fn glow_falls_off_monotonically_from_the_core() {
-        let glow = glow_of_point(&[
-            ("Glow/radius", Value::Number(120.0)),
-            ("Output/gamma", Value::Bool(false)),
-        ]);
+        let glow = glow_of_point(&[("Glow/radius", Value::Number(120.0)), ("Output/gamma", Value::Bool(false))]);
         let profile: Vec<f32> = (0..120).map(|d| at(&glow, d, 0)).collect();
         assert!(profile.windows(2).all(|w| w[1] <= w[0]), "{profile:?}");
     }
 
     #[test]
     fn hdr_sources_glow_in_proportion_to_their_energy() {
-        let linear = [
-            ("Glow/radius", Value::Number(60.0)),
-            ("Output/gamma", Value::Bool(false)),
-        ];
+        let linear = [("Glow/radius", Value::Number(60.0)), ("Output/gamma", Value::Bool(false))];
         let dim = glow_of_point_with_brightness(1.0, &linear);
         let hot = glow_of_point_with_brightness(16.0, &linear);
         for d in [4, 15, 40] {
@@ -167,11 +92,7 @@ mod tests {
         (0..size * size)
             .map(|i| {
                 let (x, y) = ((i % size) as f32 + 0.5 - c, (i / size) as f32 + 0.5 - c);
-                if x * x + y * y < radius * radius {
-                    [1.0; 4]
-                } else {
-                    CLEAR
-                }
+                if x * x + y * y < radius * radius { [1.0; 4] } else { CLEAR }
             })
             .collect()
     }
@@ -185,22 +106,13 @@ mod tests {
             ("Output/dither", Value::Bool(false)),
         ];
         let mut full = disc(256, 24.0);
-        render(&settings_with(&overrides), &mut full, 256);
-        let mut half_settings = settings_with(&overrides);
-        half_settings.scale = 0.5;
+        render(&cx_with(&overrides, 1.0), &mut full, 256);
         let mut half = disc(128, 12.0);
-        render(&half_settings, &mut half, 128);
+        render(&cx_with(&overrides, 0.5), &mut half, 128);
         for (x, y) in [(64, 30), (64, 10), (100, 100), (64, 64), (20, 64)] {
-            let averaged: f32 = [(0, 0), (1, 0), (0, 1), (1, 1)]
-                .iter()
-                .map(|(dx, dy)| full[(2 * y + dy) * 256 + 2 * x + dx][1])
-                .sum::<f32>()
-                / 4.0;
+            let averaged: f32 = [(0, 0), (1, 0), (0, 1), (1, 1)].iter().map(|(dx, dy)| full[(2 * y + dy) * 256 + 2 * x + dx][1]).sum::<f32>() / 4.0;
             let preview = half[y * 128 + x][1];
-            assert!(
-                (preview / averaged - 1.0).abs() < 0.04,
-                "({x}, {y}): half {preview} full {averaged}"
-            );
+            assert!((preview / averaged - 1.0).abs() < 0.04, "({x}, {y}): half {preview} full {averaged}");
         }
     }
 }

@@ -285,7 +285,11 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
     }
     let grid = grid_of(&buf);
     let cx = render_cx(spec, ctx, grid);
-    let rendered = loaded.plugin.render(&spec.id, &cx, layout.reach, &mut buf.img.data, || RenderHost { ctx, grid, spec });
+    let host = || RenderHost { ctx, grid, spec };
+    let rendered = match layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu()) {
+        Some(plan) => loaded.plugin.run_passes(&spec.id, &cx, plan, &mut buf.img.data, host),
+        None => loaded.plugin.render(&spec.id, &cx, layout.reach, &mut buf.img.data, host),
+    };
     loaded.report(&spec.id, rendered.err().map(|e| e.to_string()));
     buf
 }

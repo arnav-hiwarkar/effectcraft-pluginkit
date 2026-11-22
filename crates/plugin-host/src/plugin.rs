@@ -194,6 +194,9 @@ impl Plugin {
         if pixels.len() != area(cx.size) {
             return Err(PluginError::Protocol(format!("{} pixels for a {}x{} frame", pixels.len(), cx.size[0], cx.size[1])));
         }
+        if pixels.is_empty() {
+            return Ok(());
+        }
         plan.check(cx.size).map_err(PluginError::Failed)?;
         let sizes: Vec<[u32; 2]> = [cx.size].into_iter().chain(plan.images.iter().copied()).collect();
         let mut written: Vec<Vec<Pixel>> = sizes.iter().map(|size| vec![[0.0; 4]; area(*size)]).collect();
