@@ -580,11 +580,11 @@ impl Render<'_> {
         let mut params: BTreeMap<String, Value> =
             spec.params.iter().filter_map(|param| Some((param.id.clone(), default_value(&param.kind, layer_size)?))).collect();
         for (id, value) in &self.set {
-            if !params.contains_key(id) {
+            let Some(param) = spec.params.iter().find(|param| param.id == *id) else {
                 let known: Vec<&str> = spec.params.iter().map(|param| param.id.as_str()).collect();
                 return Err(format!("effect `{}` has no parameter `{id}`; its parameters are {known:?}", spec.id));
-            }
-            params.insert(id.clone(), value.clone());
+            };
+            params.insert(id.clone(), param.fit(value.clone())?);
         }
         for param in &spec.params {
             let value = params.get_mut(&param.id);

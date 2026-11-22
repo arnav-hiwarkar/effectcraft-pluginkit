@@ -193,8 +193,7 @@ pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 
             }
         };
         match &param.kind {
-            ParamKind::Slider { min, max, .. } => Wire::Number(value.as_f64().max(*min).min(*max)),
-            ParamKind::Percent { .. } | ParamKind::Angle { .. } => Wire::Number(value.as_f64()),
+            ParamKind::Slider { .. } | ParamKind::Percent { .. } | ParamKind::Angle { .. } => Wire::Number(value.as_f64()),
             ParamKind::Checkbox { .. } => Wire::Bool(value.as_bool()),
             ParamKind::Popup { .. } | ParamKind::Mask => Wire::Number(f64::from(value.as_enum())),
             ParamKind::Point { .. } => Wire::List(to_px(grid, value.as_vec2()).to_vec()),
@@ -211,7 +210,7 @@ pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 
             ParamKind::Layer => Wire::Bool(value.as_layer().is_some()),
         }
     };
-    spec.params.iter().map(|param| (param.id.clone(), convert(param))).collect()
+    spec.params.iter().filter_map(|param| Some((param.id.clone(), param.fit(convert(param)).ok()?))).collect()
 }
 
 fn render_cx(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> RenderCx {

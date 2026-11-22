@@ -126,6 +126,9 @@ when an expression or a script pushes the value outside it. `.soft(low..=high)` 
 row shows, so a value up to 1000 can be typed while the slider covers 0.01 to 10. `.log()` spaces the slider
 by ratio, which suits gains and sizes; it needs a soft (or hard) minimum above 0 and is linear otherwise.
 `.range(min..=max)` gives a percent parameter a hard range and a slider (a percent without one has none).
+`param.fit(value)` is the check the app applies to every value it delivers and the test kit applies to every
+`.set`: it clamps a slider to its hard range, truncates a popup or mask index, and refuses a value of the
+wrong kind with `parameter `amount` takes a number, not the text "x"`.
 
 ```rust
 Param::slider("gain", "Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log()
@@ -584,7 +587,7 @@ the app uses, with the permissions `plugin.json` asks for. Commands the plugin r
 |---|---|
 | `TestPlugin::of(plugin)` | Runs the plugin that the function `plugin` (the one given to `export!`) makes, with the `plugin.json` of the crate under test. One test binary runs one plugin. |
 | `assert_frame!(plugin, "effect", { "id": value, … }, "name")`, `assert_frame!(render, "name")` | Renders and compares with `tests/frames/<name>.png`, within 1/255 per channel by default. `<name>` is a plain name of letters, digits, `-` and `_`; a stored frame that is a link is refused. A missing frame is stored (except when `CI` is set); a different one fails, writes `<name>.actual.png` and `<name>.diff.png` under the plugin's `target/frames/` and prints their paths. Only `UPDATE_FRAMES=1` stores every rendered frame; any other value is ignored. |
-| `plugin.render(effect)` | A `Render` builder: `.set(id, value)`, `.with(json)`, `.on(Pattern)`, `.input(Picture)`, `.size(w, h)` (320x180 by default), `.layer(param, Picture)`, `.mask(points, closed)`, `.time(s)`, `.scale(f)`, `.float()`, `.tolerance(levels)`. |
+| `plugin.render(effect)` | A `Render` builder: `.set(id, value)`, `.with(json)`, `.on(Pattern)`, `.input(Picture)`, `.size(w, h)` (320x180 by default), `.layer(param, Picture)`, `.mask(points, closed)`, `.time(s)`, `.scale(f)`, `.float()`, `.tolerance(levels)`. A `.set` value passes through `Param::fit` as in the app: clamped to the hard range, and an error when its kind is wrong. |
 | `render.run()`, `render.timed(rounds)` | The output `Picture` (padded by the layout's padding), and the best time. When the layout has a reach, the render in bands is also compared with a whole render, and a difference is an error naming the first pixel. |
 | `render.layout()`, `render.overlay()`, `render.source()` | The effect's `Layout`, its `Overlay` (in layer pixels), and the input picture. |
 | `plugin.panel(id)` | A `PanelTest`: `.click(label)`, `.send(label, UiEventKind)`, `.app_event(AppEvent)`, `.timer(name)`, `.redraw()`, `.texts()`, `.widgets()`. |

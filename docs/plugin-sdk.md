@@ -139,6 +139,18 @@ render in bands that differs from a whole render fails with the first pixel that
 `Layout::neighbourhood` reach that is too small. Panels, commands, tasks and tools are tested the same way:
 see [Testing](plugin-reference.md#testing).
 
+A test gets the values the app would deliver. `.set` goes through `Param::fit`, the same function the app
+uses, so a slider value past its hard range is clamped and a value of the wrong kind is an error. With
+`radius: f64 = slider("Radius", 20.0, 0.0..=200.0)`:
+
+```rust
+let plugin = TestPlugin::of(super::plugin);
+let over = plugin.render("glow").set("radius", 500.0).run().unwrap();
+assert_eq!(over, plugin.render("glow").set("radius", 200.0).run().unwrap());
+let error = plugin.render("glow").set("radius", "wide").run().unwrap_err();
+assert_eq!(error, r#"parameter `radius` takes a number, not the text "wide""#);
+```
+
 ## Log, errors and panics
 
 `log!(warn, "radius {radius} is larger than the layer")` writes a line with its file and line to the

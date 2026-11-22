@@ -91,3 +91,13 @@ fn a_failed_call_is_journalled_with_the_call_and_the_effect() {
     assert_eq!(error, "no matte layer");
     assert_eq!(plugin.logs(), ["render of effect `read-inputs` failed: no matte layer"]);
 }
+
+#[test]
+fn a_test_render_clamps_to_the_hard_range_and_refuses_text_for_a_number_like_the_app() {
+    let (_bundle, plugin) = probe();
+    let render = |amount: f64| plugin.render("invert").on(Pattern::Checker).size(2, 1).set("amount", amount).run().unwrap();
+    assert_eq!(render(2.0).pixels, [[0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0]]);
+    assert_eq!(render(2.0), render(1.0));
+    let error = plugin.render("invert").set("amount", "x").run().unwrap_err();
+    assert_eq!(error, r#"parameter `amount` takes a number, not the text "x""#);
+}

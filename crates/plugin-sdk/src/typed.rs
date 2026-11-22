@@ -1,4 +1,5 @@
 use crate::effect::{Cx, Image};
+use crate::wire::{Param, ParamKind, Value};
 
 pub trait FromParam: Sized {
     fn from_param(cx: &Cx, id: &'static str) -> Self;
@@ -77,6 +78,41 @@ impl LayerParam {
 impl FromParam for LayerParam {
     fn from_param(cx: &Cx, id: &'static str) -> Self {
         LayerParam { id, connected: cx.bool(id) }
+    }
+}
+
+impl Param {
+    pub fn fit(&self, value: Value) -> Result<Value, String> {
+        let list = |items: &[f64], n: usize| (items.len() == n).then(|| Value::List(items.to_vec()));
+        let fitted = match (&self.kind, &value) {
+            (ParamKind::Slider { min, max, .. }, Value::Number(n)) => Some(Value::Number(n.max(*min).min(*max))),
+            (ParamKind::Percent { .. } | ParamKind::Angle { .. }, Value::Number(n)) => Some(Value::Number(*n)),
+            (ParamKind::Popup { .. } | ParamKind::Mask, Value::Number(n)) => Some(Value::Number(n.max(0.0).trunc())),
+            (ParamKind::Checkbox { .. } | ParamKind::Layer, Value::Bool(b)) => Some(Value::Bool(*b)),
+            (ParamKind::Point { .. }, Value::List(items)) => list(items, 2),
+            (ParamKind::Point3 { .. }, Value::List(items)) => list(items, 3),
+            (ParamKind::Color { .. }, Value::List(items)) => list(items, 4),
+            (ParamKind::Text { .. } | ParamKind::Custom { .. }, Value::Text(text)) => Some(Value::Text(text.clone())),
+            _ => None,
+        };
+        fitted.ok_or_else(|| {
+            let wanted = match &self.kind {
+                ParamKind::Slider { .. } | ParamKind::Percent { .. } | ParamKind::Angle { .. } => "a number",
+                ParamKind::Popup { .. } | ParamKind::Mask => "an index",
+                ParamKind::Checkbox { .. } | ParamKind::Layer => "true or false",
+                ParamKind::Point { .. } => "a list of 2 numbers",
+                ParamKind::Point3 { .. } => "a list of 3 numbers",
+                ParamKind::Color { .. } => "a list of 4 numbers",
+                ParamKind::Text { .. } | ParamKind::Custom { .. } => "text",
+            };
+            let given = match value {
+                Value::Number(n) => format!("the number {n}"),
+                Value::Bool(b) => format!("{b}"),
+                Value::Text(text) => format!("the text {text:?}"),
+                Value::List(items) => format!("a list of {} numbers", items.len()),
+            };
+            format!("parameter `{}` takes {wanted}, not {given}", self.id)
+        })
     }
 }
 
