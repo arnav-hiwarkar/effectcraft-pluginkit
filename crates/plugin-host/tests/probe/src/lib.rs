@@ -226,6 +226,22 @@ impl Effect for Recurse {
     }
 }
 
+struct SceneCamera;
+
+impl Effect for SceneCamera {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("scene-camera", "Scene Camera", "Probe").reads_scene()
+    }
+
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let camera = cx.scene().and_then(|scene| scene.camera).ok_or("no scene camera")?;
+        let [x, y, z] = camera.position.map(|c| c as f32);
+        frame.pixels[0] = [x, y, z, 1.0];
+        frame.pixels[1] = [camera.zoom as f32, 0.0, 0.0, 1.0];
+        Ok(())
+    }
+}
+
 struct HalfDone;
 
 impl Effect for HalfDone {
@@ -276,6 +292,7 @@ fn make() -> Plugin {
         .effect(Invert)
         .effect(ShiftDown)
         .effect(ReadInputs)
+        .effect(SceneCamera)
         .effect(Spin)
         .effect(HalfDone)
         .effect(Recurse)

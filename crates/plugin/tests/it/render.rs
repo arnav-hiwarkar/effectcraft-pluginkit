@@ -117,3 +117,34 @@ fn a_plugin_effect_changes_its_cache_key_when_a_file_in_its_data_folder_changes(
     std::thread::sleep(std::time::Duration::from_millis(600));
     assert_ne!(reader_key(&app).expect("the layer is cacheable"), before);
 }
+
+fn reported_camera(id: &str, camera: Option<serde_json::Value>) -> ([f32; 3], f32, serde_json::Value) {
+    let mut app = app(id, &[]);
+    app.session.execute("file.projectSettings", json!({"bitDepth": 32})).expect("32 bit");
+    if let Some(camera) = camera {
+        app.session.execute("layer.newCamera", camera).expect("layer.newCamera");
+    }
+    app.session.execute("layer.newSolid", json!({"name": "Plate", "color": "#000000", "width": 64, "height": 36})).expect("layer.newSolid");
+    app.session.execute("effect.apply", json!({"effect": format!("{id}.scene-camera")})).expect("effect.apply");
+    let view = app.session.execute("view.get3D", json!({})).expect("view.get3D");
+    let comp = app.session.active_comp_id().expect("an active comp");
+    let image = Renderer::new(&app.session.project, app.session.footage.as_ref(), RenderOpts::default()).comp_frame(comp, Tick::from_seconds_f64(0.0));
+    let [x, y, z, _] = image.data[0];
+    ([x, y, z], image.data[1][0], view)
+}
+
+#[test]
+fn the_scene_camera_a_plugin_reads_is_the_camera_layer_in_the_layer_pixels() {
+    let camera = json!({"name": "Shot", "type": "twoNode", "position": [10.0, 5.0, -300.0], "poi": [40.0, 20.0, 0.0], "zoom": 250.0});
+    let (position, zoom, _) = reported_camera("test.camera-layer", Some(camera));
+    assert_eq!((position, zoom), ([10.0, 5.0, -300.0], 250.0));
+}
+
+#[test]
+fn without_a_camera_layer_the_scene_camera_is_the_comp_default_view() {
+    let (position, zoom, view) = reported_camera("test.default-view", None);
+    let eye: Vec<f32> = view["camera"]["eye"].as_array().expect("an eye").iter().map(|c| c.as_f64().expect("a number") as f32).collect();
+    let default_zoom = view["camera"]["zoom"].as_f64().expect("a zoom") as f32;
+    assert_eq!(position.to_vec(), eye);
+    assert!((zoom - default_zoom).abs() < 1e-3, "zoom {zoom} against the view's {default_zoom}");
+}

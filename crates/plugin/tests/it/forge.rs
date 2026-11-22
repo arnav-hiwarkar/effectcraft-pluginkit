@@ -320,3 +320,68 @@ fn a_parallel_light_shines_along_its_direction() {
     let [_, _, top, bottom] = halves(&from_below);
     assert!(bottom > top + 0.05, "from below: bottom {bottom:.3} against top {top:.3}");
 }
+
+fn centre_of_coverage(image: &Image) -> [f64; 2] {
+    let (mut sum, mut count) = ([0.0, 0.0], 0.0);
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let alpha = f64::from(image.data[(y * image.width + x) as usize][3]);
+            sum = [sum[0] + alpha * f64::from(x), sum[1] + alpha * f64::from(y)];
+            count += alpha;
+        }
+    }
+    assert!(count > 4.0, "something is drawn: coverage {count}");
+    [sum[0] / count + 0.5, sum[1] / count + 0.5]
+}
+
+fn aligned_centres(camera: Option<serde_json::Value>, at: [f64; 3]) -> Option<([f64; 2], [f64; 2])> {
+    let gpu = gpu()?;
+    const FRAME: [u32; 2] = [320, 180];
+    spec();
+    let with_camera = |session: &mut effectcraft_engine::Session| {
+        session.execute("comp.new", json!({"name": "Aligned", "width": FRAME[0], "height": FRAME[1], "frameRate": 24, "duration": 2})).expect("comp.new");
+        if let Some(camera) = &camera {
+            session.execute("layer.newCamera", camera.clone()).expect("layer.newCamera");
+        }
+    };
+    let mut app = effectcraft_host::session();
+    with_camera(&mut app);
+    let solid = app.execute("layer.newSolid", json!({"name": "Card", "color": "#ffffff", "width": 6, "height": 6})).expect("layer.newSolid")["layer"].as_u64();
+    app.execute("layer.setSwitch", json!({"layers": [solid], "switch": "threeD", "value": true})).expect("layer.setSwitch");
+    app.execute("prop.set", json!({"layer": solid, "path": "transform/position", "value": at})).expect("prop.set");
+    let app = Comp { layer: solid.expect("a layer id"), session: app };
+
+    let mut plugin = effectcraft_host::session();
+    with_camera(&mut plugin);
+    let layer = plugin.execute("layer.newSolid", json!({"name": "Forge", "color": "#000000", "width": FRAME[0], "height": FRAME[1]})).expect("layer.newSolid")
+        ["layer"]
+        .as_u64();
+    let mut plugin = Comp { layer: layer.expect("a layer id"), session: plugin };
+    plugin.forge(&[
+        ("model", json!(1)),
+        ("Transform/size", json!(3.0)),
+        ("Transform/position", json!([at[0], at[1]])),
+        ("Transform/depth", json!(at[2])),
+        ("Lighting/ambient", json!(100.0)),
+        ("show_layer", json!(false)),
+    ]);
+    Some((centre_of_coverage(&app.frame(gpu)), centre_of_coverage(&plugin.frame(gpu))))
+}
+
+fn assert_within_two_pixels((solid, forge): ([f64; 2], [f64; 2]), case: &str) {
+    let apart = ((solid[0] - forge[0]).powi(2) + (solid[1] - forge[1]).powi(2)).sqrt();
+    assert!(apart <= 2.0, "{case}: the 3D solid's centre is {solid:?}, Forge 3D's is {forge:?}, {apart:.2} pixels apart");
+}
+
+#[test]
+fn forge_3d_lines_up_with_a_3d_layer_under_a_moved_camera() {
+    let camera = json!({"name": "Off axis", "type": "twoNode", "position": [60.0, 20.0, -450.0], "poi": [190.0, 110.0, 80.0], "zoom": 400.0});
+    let Some(centres) = aligned_centres(Some(camera), [210.0, 70.0, 140.0]) else { return };
+    assert_within_two_pixels(centres, "a moved and rotated camera");
+}
+
+#[test]
+fn forge_3d_lines_up_with_a_3d_layer_in_the_default_view() {
+    let Some(centres) = aligned_centres(None, [230.0, 50.0, 300.0]) else { return };
+    assert_within_two_pixels(centres, "the comp's default view");
+}
