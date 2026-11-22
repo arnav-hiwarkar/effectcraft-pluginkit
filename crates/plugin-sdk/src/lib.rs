@@ -2,6 +2,7 @@ pub mod abi;
 mod effect;
 pub mod host;
 mod manifest;
+pub mod math;
 mod plugin;
 mod ui;
 mod wire;
