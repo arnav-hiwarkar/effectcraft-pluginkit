@@ -141,7 +141,12 @@ A parameter declared without these behaves as before. `effect.list` reports `sli
 makes a struct with one field per parameter and two functions: `Name::params()`, the `Vec<Param>` for
 `EffectSpec::params`, and `Name::read(cx)`, the struct filled from `cx`. The builder is any `Param` builder
 above without its first argument; the id is the field name, or `Group/field` inside a group. Range builders chain after it: `gain: f64 = slider("Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log()`. `Name::IDS`
-lists the ids. A field type implements `FromParam`:
+lists the ids. A field can state its saved id with `as`: `kind as "type": usize = popup("Type", &TYPES, 0)`
+saves `type` (or `Group/type`), so an id that is a Rust keyword, or the same id in two groups
+(`core_gain as "gain"` in `"Core"`, `glow_gain as "gain"` in `"Glow"`), needs no hand-written parameter.
+A struct may have no fields, a group may be empty, and a trailing comma is allowed after a field or a group.
+The field type must fit the builder; a `String` field with `slider(...)` stops the build with
+`a slider, percent or angle parameter is read as a number, so its field cannot be String`:
 
 | Type | Read with | For |
 |---|---|---|

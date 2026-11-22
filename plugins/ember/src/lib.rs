@@ -133,7 +133,7 @@ pub fn simulate(memo: &dyn Memo, settings: &Settings, source: &dyn Source, work_
 }
 
 fn masks(cx: &Cx) -> Vec<Vec<[f64; 2]>> {
-    if cx.index(spec::EMITTER_TYPE) == 3 { cx.masks().into_iter().map(|m| closed(m.points, m.closed)).collect() } else { Vec::new() }
+    if spec::Controls::read(cx).kind == 3 { cx.masks().into_iter().map(|m| closed(m.points, m.closed)).collect() } else { Vec::new() }
 }
 
 fn closed(mut points: Vec<[f64; 2]>, is_closed: bool) -> Vec<[f64; 2]> {

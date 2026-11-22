@@ -37,8 +37,8 @@ impl Effect for PlasmaBeam {
     }
 
     fn overlay(&self, cx: &Cx, overlay: &mut Overlay) {
-        if cx.index(spec::CORE_TYPE) == 0 {
-            let core = spec::CoreControls::read(cx);
+        let core = spec::CoreControls::read(cx);
+        if core.kind == 0 {
             overlay.line(&[core.start, core.end]);
             overlay.point(cx, spec::CORE_START).point(cx, spec::CORE_END);
         }
@@ -67,7 +67,7 @@ mod tests {
 
     fn overlay(core_type: f64) -> Overlay {
         let params =
-            [(spec::CORE_TYPE, Value::Number(core_type)), (spec::CORE_START, Value::List(vec![80.0, 72.0])), (spec::CORE_END, Value::List(vec![80.0, 18.0]))];
+            [("Core/type", Value::Number(core_type)), (spec::CORE_START, Value::List(vec![80.0, 72.0])), (spec::CORE_END, Value::List(vec![80.0, 18.0]))];
         let cx = Cx::new(RenderCx { params: params.into_iter().map(|(id, value)| (id.to_string(), value)).collect(), scale: 1.0, ..Default::default() });
         let mut overlay = Overlay::new();
         PlasmaBeam.overlay(&cx, &mut overlay);

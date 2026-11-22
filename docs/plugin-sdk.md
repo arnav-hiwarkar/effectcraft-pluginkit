@@ -89,8 +89,26 @@ fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
 ```
 
 The builder after `=` is any `Param` builder without its id. A misspelt field is a compile error, where
-`cx.f("radus")` silently reads 0. The string
-API stays for ids built at run time.
+`cx.f("radus")` silently reads 0, and a field whose type does not fit its builder (`String` with `slider`)
+is one too. The string API stays for ids built at run time.
+
+When the saved id cannot be the field name, state it with `as`:
+
+```rust
+params! {
+    struct Emitter {
+        "Emitter" {
+            kind as "type": usize = popup("Emitter Type", &["Point", "Box"], 0),
+            emitter_gain as "gain": f64 = slider("Gain", 1.0, 0.0..=10.0),
+        },
+        "Glow" {
+            glow_gain as "gain": f64 = slider("Gain", 1.0, 0.0..=10.0),
+        },
+    }
+}
+```
+
+This saves `Emitter/type`, `Emitter/gain` and `Glow/gain`.
 
 ## Test your plugin
 

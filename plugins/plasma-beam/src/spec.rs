@@ -3,13 +3,13 @@ use craft_plugin::prelude::*;
 use crate::look;
 
 pub const PRESET: &str = "preset";
-pub const CORE_TYPE: &str = "Core/type";
 pub const CORE_START: &str = "Core/start";
 pub const CORE_END: &str = "Core/end";
 
 params! {
     pub struct CoreControls {
         "Core" {
+            pub kind as "type": usize = popup("Core Type", &["Two Points", "Layer Masks"], 0),
             pub start: [f64; 2] = point("Core Start", [0.5, 0.8]),
             pub end: [f64; 2] = point("Core End", [0.5, 0.2]),
             pub size: f64 = slider("Core Size", 6.0, 0.0..=200.0).soft(0.5..=60.0).log(),
@@ -65,11 +65,9 @@ params! {
 }
 
 pub fn effect() -> EffectSpec {
-    let mut core = CoreControls::params();
-    core.insert(0, Param::popup(CORE_TYPE, "Core Type", &["Two Points", "Layer Masks"], 0));
     EffectSpec::new("beam", "Plasma Beam", "Generate")
         .param(Param::popup(PRESET, "Preset", &look::names(), 0))
-        .params(core)
+        .params(CoreControls::params())
         .params(GlowControls::params())
         .params(FlickerControls::params())
         .params(DistortionControls::params())

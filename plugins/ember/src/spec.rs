@@ -1,7 +1,5 @@
 use craft_plugin::prelude::*;
 
-pub const EMITTER_TYPE: &str = "Emitter/type";
-
 pub const EMISSIONS: [&str; 2] = ["Continuous", "Burst"];
 pub const EMITTER_TYPES: [&str; 4] = ["Point", "Box", "Sphere", "Layer Masks"];
 pub const SHAPES: [&str; 3] = ["Soft Disc", "Streak", "Spark"];
@@ -12,6 +10,7 @@ pub const VIEWS: [&str; 2] = ["Comp Camera", "Flat"];
 params! {
     pub struct Controls {
         "Emitter" {
+            pub kind as "type": usize = popup("Emitter Type", &EMITTER_TYPES, 0),
             pub position: [f64; 3] = point3("Position", [0.5, 0.7, 0.0]),
             pub size_x: f64 = slider("Size X", 100.0, 0.0..=10000.0).soft(0.0..=1000.0),
             pub size_y: f64 = slider("Size Y", 100.0, 0.0..=10000.0).soft(0.0..=1000.0),
@@ -67,7 +66,5 @@ params! {
 }
 
 pub fn effect() -> EffectSpec {
-    let mut controls = Controls::params();
-    controls.insert(0, Param::popup(EMITTER_TYPE, "Emitter Type", &EMITTER_TYPES, 0));
-    EffectSpec::new("ember", "Ember", "Simulation").params(controls).time_dependent().reads_param_history().reads_scene()
+    EffectSpec::new("ember", "Ember", "Simulation").params(Controls::params()).time_dependent().reads_param_history().reads_scene()
 }

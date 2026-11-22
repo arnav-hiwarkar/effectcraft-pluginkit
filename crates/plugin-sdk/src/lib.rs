@@ -5,7 +5,7 @@ mod kernels;
 mod manifest;
 pub mod math;
 mod plugin;
-mod typed;
+pub mod typed;
 mod ui;
 mod viewer;
 mod wire;

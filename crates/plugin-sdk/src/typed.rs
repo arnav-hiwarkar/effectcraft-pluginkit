@@ -80,19 +80,99 @@ impl FromParam for LayerParam {
     }
 }
 
+pub mod fits {
+    #[diagnostic::on_unimplemented(
+        message = "a slider, percent or angle parameter is read as a number, so its field cannot be `{Self}`",
+        label = "declare this field as `f64` or `f32`"
+    )]
+    pub trait Number {}
+    impl Number for f64 {}
+    impl Number for f32 {}
+
+    #[diagnostic::on_unimplemented(message = "a checkbox parameter is read as `bool`, so its field cannot be `{Self}`", label = "declare this field as `bool`")]
+    pub trait Flag {}
+    impl Flag for bool {}
+
+    #[diagnostic::on_unimplemented(
+        message = "a popup or mask parameter is read as an index, so its field cannot be `{Self}`",
+        label = "declare this field as `usize` or `u32`"
+    )]
+    pub trait Choice {}
+    impl Choice for usize {}
+    impl Choice for u32 {}
+
+    #[diagnostic::on_unimplemented(
+        message = "a point parameter is read as `[f64; 2]`, so its field cannot be `{Self}`",
+        label = "declare this field as `[f64; 2]`"
+    )]
+    pub trait Point {}
+    impl Point for [f64; 2] {}
+
+    #[diagnostic::on_unimplemented(
+        message = "a point3 parameter is read as `[f64; 3]`, so its field cannot be `{Self}`",
+        label = "declare this field as `[f64; 3]`"
+    )]
+    pub trait Point3 {}
+    impl Point3 for [f64; 3] {}
+
+    #[diagnostic::on_unimplemented(
+        message = "a color parameter is read as `[f32; 4]`, so its field cannot be `{Self}`",
+        label = "declare this field as `[f32; 4]`"
+    )]
+    pub trait Colour {}
+    impl Colour for [f32; 4] {}
+
+    #[diagnostic::on_unimplemented(
+        message = "a text or custom parameter is read as `String`, so its field cannot be `{Self}`",
+        label = "declare this field as `String`"
+    )]
+    pub trait Text {}
+    impl Text for String {}
+
+    #[diagnostic::on_unimplemented(
+        message = "a layer parameter is read as `LayerParam`, so its field cannot be `{Self}`",
+        label = "declare this field as `LayerParam`"
+    )]
+    pub trait Layer {}
+    impl Layer for super::LayerParam {}
+
+    pub fn slider<T: Number>() {}
+    pub fn percent<T: Number>() {}
+    pub fn angle<T: Number>() {}
+    pub fn checkbox<T: Flag>() {}
+    pub fn popup<T: Choice>() {}
+    pub fn mask<T: Choice>() {}
+    pub fn point<T: Point>() {}
+    pub fn point3<T: Point3>() {}
+    pub fn color<T: Colour>() {}
+    pub fn text<T: Text>() {}
+    pub fn custom<T: Text>() {}
+    pub fn layer<T: Layer>() {}
+}
+
+/// Declares an effect's parameters and a struct that reads them.
+///
+/// ```compile_fail,E0277
+/// craft_plugin::params! { struct Wrong { name: String = slider("Name", 1.0, 0.0..=2.0) } }
+/// ```
 #[macro_export]
 macro_rules! params {
     ($(#[$meta:meta])* $vis:vis struct $name:ident { $($body:tt)* }) => {
         $crate::params!(@munch [$(#[$meta])* $vis struct $name] [] $($body)*);
     };
-    (@munch $head:tt [$($done:tt)*] $group:literal { $($inner:tt)* } $(,)? $($rest:tt)*) => {
+    (@id $field:ident) => { ::core::stringify!($field) };
+    (@id $field:ident $id:literal) => { $id };
+    (@munch $head:tt [$($done:tt)*] $group:literal { $($inner:tt)* } , $($rest:tt)*) => {
         $crate::params!(@group $head [$($done)*] $group [$($rest)*] $($inner)*);
     };
-    (@munch $head:tt [$($done:tt)*] $fvis:vis $field:ident : $ty:ty = $kind:ident ( $($arg:tt)* ) $(. $method:ident ( $($method_arg:tt)* ))* $(, $($rest:tt)*)?) => {
-        $crate::params!(@munch $head [$($done)* ($fvis, $field, $ty, stringify!($field), $kind, ($($arg)*), ($(. $method ( $($method_arg)* ))*))] $($($rest)*)?);
+    (@munch $head:tt [$($done:tt)*] $group:literal { $($inner:tt)* } $($rest:tt)*) => {
+        $crate::params!(@group $head [$($done)*] $group [$($rest)*] $($inner)*);
     };
-    (@group $head:tt [$($done:tt)*] $group:literal [$($rest:tt)*] $fvis:vis $field:ident : $ty:ty = $kind:ident ( $($arg:tt)* ) $(. $method:ident ( $($method_arg:tt)* ))* $(, $($inner:tt)*)?) => {
-        $crate::params!(@group $head [$($done)* ($fvis, $field, $ty, concat!($group, "/", stringify!($field)), $kind, ($($arg)*), ($(. $method ( $($method_arg)* ))*))] $group [$($rest)*] $($($inner)*)?);
+    (@munch $head:tt [$($done:tt)*] $fvis:vis $field:ident $(as $id:literal)? : $ty:ty = $kind:ident ( $($arg:tt)* ) $(. $method:ident ( $($method_arg:tt)* ))* $(, $($rest:tt)*)?) => {
+        $crate::params!(@munch $head [$($done)* ($fvis, $field, $ty, $crate::params!(@id $field $($id)?), $kind, ($($arg)*), ($(. $method ( $($method_arg)* ))*))] $($($rest)*)?);
+    };
+    (@group $head:tt [$($done:tt)*] $group:literal [$($rest:tt)*] $fvis:vis $field:ident $(as $id:literal)? : $ty:ty = $kind:ident ( $($arg:tt)* ) $(. $method:ident ( $($method_arg:tt)* ))* $(, $($inner:tt)*)?) => {
+        $crate::params!(@group $head [$($done)* ($fvis, $field, $ty, ::core::concat!($group, "/", $crate::params!(@id $field $($id)?)), $kind, ($($arg)*), ($(. $method ( $($method_arg)* ))*))] $group [$($rest)*] $($($inner)*)?);
     };
     (@group $head:tt [$($done:tt)*] $group:literal [$($rest:tt)*]) => {
         $crate::params!(@munch $head [$($done)*] $($rest)*);
@@ -111,6 +191,8 @@ macro_rules! params {
             }
 
             pub fn read(cx: &$crate::Cx) -> Self {
+                $($crate::typed::fits::$kind::<$ty>();)*
+                let _ = cx;
                 $name { $($field: <$ty as $crate::FromParam>::from_param(cx, $id),)* }
             }
         }
@@ -156,5 +238,41 @@ mod tests {
         let glow = Glow::read(&Cx::new(RenderCx { params, ..Default::default() }));
         assert_eq!((glow.radius, glow.gain, glow.tint, glow.mode, glow.on), (12.5, 3.0, [0.25, 0.5, 0.75, 1.0], 1, false));
         assert_eq!(glow.occluder, crate::LayerParam { id: "occluder", connected: true });
+    }
+
+    params! {
+        struct Nothing {}
+    }
+
+    params! {
+        struct Saved {
+            kind as "type": usize = popup("Type", &MODES, 1),
+            "Core" {
+                core_gain as "gain": f64 = slider("Core Gain", 1.0, 0.0..=4.0),
+                shape as "type": usize = popup("Shape", &MODES, 0),
+            },
+            "Glow" {
+                glow_gain as "gain": f64 = slider("Glow Gain", 2.0, 0.0..=4.0),
+            }
+            "Empty" {}
+            last: bool = checkbox("Last", true),
+        }
+    }
+
+    #[test]
+    fn a_field_states_its_saved_id_and_empty_structs_groups_and_trailing_commas_parse() {
+        assert!(Nothing::IDS.is_empty() && Nothing::params().is_empty());
+        let _ = Nothing::read(&Cx::new(RenderCx::default()));
+        assert_eq!(Saved::IDS, ["type", "Core/gain", "Core/type", "Glow/gain", "last"]);
+        assert_eq!(Saved::params()[3], Param::slider("Glow/gain", "Glow Gain", 2.0, 0.0..=4.0));
+        let params = BTreeMap::from([
+            ("type".to_string(), Value::Number(0.0)),
+            ("Core/gain".to_string(), Value::Number(3.0)),
+            ("Core/type".to_string(), Value::Number(1.0)),
+            ("Glow/gain".to_string(), Value::Number(0.5)),
+            ("last".to_string(), Value::Bool(false)),
+        ]);
+        let saved = Saved::read(&Cx::new(RenderCx { params, ..Default::default() }));
+        assert_eq!((saved.kind, saved.core_gain, saved.shape, saved.glow_gain, saved.last), (0, 3.0, 1, 0.5, false));
     }
 }

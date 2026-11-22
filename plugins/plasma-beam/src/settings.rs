@@ -7,7 +7,7 @@ use crate::look::{LOOKS, Look};
 use crate::noise::{self, Fractal};
 use crate::path::{Path, Point};
 use crate::shade::{self, Composite, Shading};
-use crate::spec::{CORE_TYPE, CoreControls, DistortionControls, FlickerControls, GlowControls, PRESET, RenderControls};
+use crate::spec::{CoreControls, DistortionControls, FlickerControls, GlowControls, PRESET, RenderControls};
 
 const VISIBLE_ENERGY: f32 = 0.004;
 const MAX_REACH: f32 = 600.0;
@@ -78,7 +78,7 @@ impl Settings {
         let look = &LOOKS[cx.index(PRESET).min(LOOKS.len() - 1)];
         let scale = (cx.scale as f32).max(1e-3);
         let seed = noise::mix(cx.instance as u32, (cx.instance >> 32) as u32);
-        let source = match cx.index(CORE_TYPE) {
+        let source = match core.kind {
             0 => Source::TwoPoints([point(core.start), point(core.end)]),
             _ => Source::Masks,
         };
