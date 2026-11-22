@@ -24,6 +24,7 @@ returns.
 | `.panel(id, title, value)` | A panel. `value` implements `Panel`. |
 | `.command(id, title, function)` | A command. `function` is `Fn() -> Result<()>`. |
 | `.task(id, title, function)` | A long-running task. `function` is `Fn(&Task) -> Result<serde_json::Value>`. |
+| `.tool(id, name, value)` | A viewer tool in the toolbar. `value` implements `Tool`. |
 
 ### Task
 
@@ -51,6 +52,8 @@ pub trait Effect: Send + Sync + 'static {
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()>; // default: leaves the frame unchanged
     fn controls(&self, instance: u64, param: &str, value: &mut String, ui: &mut Ui); // default: draws nothing
     fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()>; // default: an error naming the kernel
+    fn overlay(&self, cx: &Cx, overlay: &mut Overlay);          // default: draws nothing
+    fn drag(&self, cx: &Cx, key: &str, to: [f64; 2], value: &mut String); // default: leaves the value
 }
 ```
 
@@ -266,6 +269,70 @@ or `Paint::Rgba`.
 
 Two buttons with the same label in the same container are told apart by order. Put widgets that come
 and go inside their own `row`, `column` or `group` so the others keep their identity.
+
+## On-viewer controls
+
+`Effect::overlay` runs while the effect is selected and **View ▸ Show Layer Controls** is on. Its `cx`
+is in layer pixels: `scale` 1, `offset` 0, `size` the layer size. It runs in the long-lived instance.
+The app keeps the overlay and calls `overlay` again only when the request changes: a value, the time,
+or the effect being selected.
+
+Marks are drawn in the overlay's current space (`overlay.space(Space::Layer)`, the default, or
+`Space::Comp`) with the current paint (`overlay.paint(Paint::Accent)`, the default):
+
+| Method | Draws |
+|---|---|
+| `line(&[p, …])` | A line through the points, 1.5 points wide |
+| `circle(centre, radius)` | A circle outline; the radius is in the space's pixels |
+| `rectangle(min, max)` | A rectangle outline |
+| `text(at, text)` | Text at 12 points, its top left at `at` |
+| `shape(Shape)` | Any canvas shape (`Line`, `Bezier`, `Rect`, `Circle`, `Polygon`, `Text`); widths and text sizes are screen points, `Image` is not drawn |
+
+Handles are in layer pixels. Each is bound to what a drag changes:
+
+| Method | Handle | A drag sets |
+|---|---|---|
+| `point(cx, param)` | A crosshair at the point | The point parameter to the handle's new place |
+| `angle(param, centre, at)` | A square at `at` | The angle parameter, by the turn around `centre` in degrees (clockwise on screen) |
+| `radius(param, centre, pixels, unit)` | A ring of `pixels` and a square on it | The parameter to the distance from `centre` divided by `unit` (pixels per unit, above 0) |
+| `rect(cx, min, max)` | The rectangle, a square at its centre and two corner crosshairs | Both point parameters, moved together; each corner alone |
+| `custom(param, key, at)` | A square at `at` | The text of the custom parameter, to what `Effect::drag(cx, key, to, value)` writes |
+| `handle(at, Bind)` | Any of the above, from its `Bind` | |
+
+`named(text)` names the last handle for its tooltip and screen readers; the default is the parameter's
+name. Every drag of one handle is one undo step; on a keyframed parameter it sets the key at the current
+time. The focused handle moves 1 pixel per arrow key, 10 with Shift, each press one undo step. A point
+parameter bound by no handle keeps the built-in crosshair.
+
+## Viewer tools
+
+```rust
+pub trait Tool: Send + 'static {
+    fn icon(&self) -> Vec<Shape>;   // default: a circle; shapes in a 16 × 16 box
+    fn cursor(&self) -> Cursor;     // default: Cursor::Crosshair (also Arrow, Move, Grab, Text)
+    fn event(&mut self, event: &ToolEvent, overlay: &mut Overlay) -> Result<()>;
+}
+```
+
+The tool's button follows the toolbar's tools; clicking it again, or picking another tool, puts it
+away. `event` runs in the long-lived instance, so the tool keeps its state between events. The overlay
+it draws starts in `Space::Comp` and stays on screen until the next event.
+
+| `ToolEvent` field | Holds |
+|---|---|
+| `kind` | `Down`, `Move`, `Up` (primary button), `Scroll`, `Key` |
+| `comp` | The pointer in comp pixels |
+| `layer`, `layer_id` | The pointer in the first selected layer's pixels, and that layer's id, or `None` |
+| `modifiers` | `shift`, `alt`, `command` |
+| `pressure` | 1 while the button is down, else 0 |
+| `scroll` | The wheel delta of a `Scroll` |
+| `key` | The key of a `Key`, such as `Escape`, `Enter`, `A` |
+| `zoom` | Screen points per comp pixel |
+| `time` | The comp time in seconds |
+
+`Move` comes while the pointer is over the viewer or the button is held. `Scroll` and `Key` come while the
+pointer is over the viewer and no text field has the keyboard. The project changes a tool makes with
+`host::command` between `Down` and `Up` are one undo step named after the tool.
 
 ## Host calls
 

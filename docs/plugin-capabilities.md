@@ -16,7 +16,8 @@ To write a plugin, read [Write a plugin](plugin-sdk.md). For the design, read
 | Particle system | Particular, Stardust | A deterministic simulation with checkpoints in the plugin cache | `plugins/ember` |
 | 3D object renderer | Element 3D, Helium | GPU draw passes with vertex buffers, depth, the comp camera and lights | `plugins/forge-3d` |
 | Time effect | Twixtor, ReelSmart Motion Blur, Echo | An effect that declares `.reads_other_frames()` and calls `cx.source_at` | |
-| Tracker, stabiliser, rotoscoping tool | Mocha, Lockdown | A panel, a task that reads frames with `host::frame`, and commands that write keyframes | |
+| Tracker, stabiliser, rotoscoping tool | Mocha, Lockdown | A panel, a task that reads frames with `host::frame`, commands that write keyframes, and a viewer tool or overlay for search boxes | |
+| Paint or gizmo tool | Paint brushes, 3D model gizmos | A viewer tool (`Plugin::tool`) that edits the project through commands, and an effect overlay | |
 | Audio tool | Sound Keys, audio spectrum | A panel and a task that reads samples with `host::audio` | `plugins/pulse` |
 | Animation and workflow tool | Flow, Duik, Motion Tools, Overlord | A panel and commands that run app commands | `plugins/glide` |
 | Preset or asset browser | Animation Composer, Motion Bro | A panel with images, a scroll area, and files shipped in the package | `plugins/curves` (Curve Presets panel) |
@@ -38,6 +39,8 @@ To write a plugin, read [Write a plugin](plugin-sdk.md). For the design, read
 | Offer presets | `EffectSpec::preset`, applied with `effect.applyPreset` | None |
 | Read another layer, another time, or the masks | `cx.layer`, `cx.source_at`, `cx.masks` | None |
 | Draw its own control in Effect Controls | `Param::custom` and `Effect::controls` | None |
+| Draw handles and guides on the Composition viewer | `Effect::overlay` | None |
+| Add a tool that works on the Composition viewer | `Plugin::tool` and `Tool::event` | `document.write` to change the project |
 | Show a panel | `Plugin::panel` | None |
 | Show images in a panel | `host::upload_image` and `ui.image` | None |
 | Read the project | `host::command` with a reading command | `document.read` |
