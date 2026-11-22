@@ -4,8 +4,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use craft_plugin::{
-    AppEvent, Call, EffectSpec, Layout, MaskPath, Overlay, PanelReply, ParamKind, ParamsAt, Pixel, RenderCx, Scene, TaskStatus, ToolEvent, UiEvent,
-    UiEventKind, UiInput, Value, Widget,
+    AppEvent, Call, EffectSpec, FrameRequest, Layout, MaskPath, Overlay, PanelReply, ParamKind, ParamsAt, Pixel, RenderCx, Scene, TaskStatus, ToolEvent,
+    ToolEventKind, UiEvent, UiEventKind, UiInput, Value, Widget,
 };
 pub use serde_json::json;
 
@@ -136,7 +136,7 @@ impl Pattern {
         for (i, pixel) in picture.pixels.iter_mut().enumerate() {
             let (x, y) = ((i as u32 % width) as f32 + 0.5, (i as u32 / width) as f32 + 0.5);
             *pixel = match self {
-                Pattern::Photo => photo(x / w, y / h, h),
+                Pattern::Photo => photo(x / w, y / h, w / h),
                 Pattern::Gradient => [x / w, y / h, 1.0 - x / w, 1.0],
                 Pattern::Checker => {
                     let cell = (h / 8.0).max(1.0);
@@ -151,9 +151,9 @@ impl Pattern {
     }
 }
 
-fn photo(u: f32, v: f32, height: f32) -> Pixel {
+fn photo(u: f32, v: f32, aspect: f32) -> Pixel {
     let sky = [0.25 + 0.35 * v, 0.45 + 0.3 * v, 0.95 - 0.25 * v];
-    let sun = (((u - 0.72).powi(2) + (v - 0.28).powi(2)).sqrt() * height < height * 0.09) as u8 as f32;
+    let sun = ((((u - 0.72) * aspect).powi(2) + (v - 0.28).powi(2)).sqrt() < 0.09) as u8 as f32;
     let ridge = 0.62 + 0.06 * (u * 9.0).sin() + 0.03 * (u * 23.0 + 1.0).sin();
     let near = 0.8 + 0.04 * (u * 5.0 + 2.0).cos();
     let rgb = if v > near {
@@ -207,6 +207,21 @@ fn draw_text(picture: &mut Picture) {
                 }
             }
         }
+    }
+}
+
+pub fn pointer(kind: ToolEventKind, comp: [f64; 2]) -> ToolEvent {
+    ToolEvent {
+        kind,
+        comp,
+        layer: Some(comp),
+        layer_id: None,
+        modifiers: Default::default(),
+        pressure: 1.0,
+        scroll: [0.0; 2],
+        key: String::new(),
+        zoom: 1.0,
+        time: 0.0,
     }
 }
 
@@ -349,6 +364,12 @@ impl Host for TestHost<'_> {
 
     fn masks(&mut self) -> Vec<MaskPath> {
         self.masks.to_vec()
+    }
+
+    fn frame(&mut self, request: &FrameRequest) -> Result<Pixels, String> {
+        let scale = request.scale.clamp(1.0 / 64.0, 1.0);
+        let [width, height] = [320.0, 180.0].map(|side: f64| (side * scale).round().max(1.0) as u32);
+        Ok(Pattern::Photo.picture(width, height).pixels())
     }
 
     fn scene(&mut self) -> Option<Scene> {
@@ -607,6 +628,14 @@ impl Render<'_> {
         let layout: Layout =
             self.plugin.plugin.call(&Call::Layout { effect: self.effect.clone(), cx: cx.clone() }, None, &mut host).map_err(|e| e.to_string())?;
         Ok(Layout { padding: layout.padding.min(MAX_PADDING), ..layout })
+    }
+
+    pub fn overlay(&self) -> Result<Overlay, String> {
+        let source = self.source();
+        let spec = self.plugin.spec(&self.effect)?;
+        let cx = RenderCx { scale: 1.0, ..self.cx(spec, &source, [source.width, source.height], 0.0)? };
+        let mut host = self.host(&source, &self.layers, &self.masks, &cx);
+        self.plugin.plugin.call(&Call::Overlay { effect: self.effect.clone(), cx: cx.clone() }, None, &mut host).map_err(|e| e.to_string())
     }
 
     fn host<'h>(&'h self, source: &'h Picture, layers: &'h BTreeMap<String, Picture>, masks: &'h [MaskPath], cx: &'h RenderCx) -> TestHost<'h> {

@@ -18,13 +18,13 @@ target="$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/macos/')-$(uname
 sed "s|\"entry\": { \"wasm\": \"plugin.wasm\" }|\"entry\": { \"native\": { \"$target\": \"$lib\" } }|" "$here/plugin.json" > "$out/native/plugin.json"
 
 cargo run -j "$jobs" --release --quiet --manifest-path "$here/check/Cargo.toml" --example card -- "$out/card.png" 1920 1080
-cargo build -j "$jobs" --release --quiet --manifest-path "$root/Cargo.toml" -p craft-plugin-host --example render
-render="$CARGO_TARGET_DIR/release/examples/render"
+cargo build -j "$jobs" --release --quiet --manifest-path "$root/Cargo.toml" -p xtask
+render="$CARGO_TARGET_DIR/release/xtask"
 
 echo "1920x1080, minimum of $rounds runs each; render times exclude the copy into the frame"
 for effect in crt neon; do
   for mode in wasm native; do
-    line=$("$render" "$out/$mode" "$effect" "$out/$effect-$mode.png" --input "$out/card.png" --rounds "$rounds" --time 0.5)
+    line=$("$render" plugin render "$out/$mode" --effect "$effect" --out "$out/$effect-$mode.png" --in "$out/card.png" --rounds "$rounds" --time 0.5)
     label=$([ "$mode" = wasm ] && echo "cpu sandboxed" || echo "cpu native")
     echo "$effect $label: $line"
   done

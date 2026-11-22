@@ -3,7 +3,8 @@
   "name": "{{Title}}",
   "version": "0.1.0",
   "author": "",
-  "description": "{{Title}}, made with cargo xtask plugin new.",
+  "description": "{{description}}",
+  "license": "MIT OR Apache-2.0",
   "entry": { "wasm": "plugin.wasm" },
-  "permissions": []
+  "permissions": [{{permissions}}]
 }

@@ -28,7 +28,7 @@ pub mod prelude {
         TaskState, TaskStatus, Tool, ToolEvent, ToolEventKind, Topic, Ui, Value,
     };
     pub use crate::{log, params};
-    pub use serde_json::json;
+    pub use serde_json::{self, json};
 }
 
 #[macro_export]

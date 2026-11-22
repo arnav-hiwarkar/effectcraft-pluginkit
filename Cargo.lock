@@ -1526,6 +1526,7 @@ version = "0.24.1"
 dependencies = [
  "bytemuck",
  "craft-plugin",
+ "craft-plugin-host",
  "getrandom 0.3.4",
  "image",
  "libloading",
@@ -9141,6 +9142,8 @@ name = "xtask"
 version = "0.24.1"
 dependencies = [
  "chrono",
+ "craft-plugin",
+ "craft-plugin-host",
  "pkg-config",
  "serde_json",
  "sha2",

@@ -1,0 +1,10 @@
+{
+  "id": "org.craftkit.cookbook",
+  "name": "Cookbook",
+  "version": "1.0.0",
+  "author": "Craft Plugin Kit",
+  "description": "Every recipe of docs/plugin-cookbook.md as one plugin, built and tested so the recipes keep working.",
+  "license": "MIT OR Apache-2.0",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": ["document.read", "document.write"]
+}
