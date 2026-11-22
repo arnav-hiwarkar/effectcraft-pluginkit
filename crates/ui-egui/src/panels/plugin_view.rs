@@ -296,7 +296,11 @@ impl Renderer<'_> {
                         if let Some(decimals) = decimals {
                             drag = drag.fixed_decimals(usize::from(*decimals));
                         }
-                        ui.add(drag).labelled_by(label.id)
+                        let response = ui.add(drag).labelled_by(label.id);
+                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            response.request_focus();
+                        }
+                        response
                     })
                     .inner;
                 self.register(*id, &response, text);
@@ -778,6 +782,25 @@ mod tests {
         harness.drop_at(at + vec2(200.0, 0.0));
         harness.run();
         assert_eq!(harness.state().last().map(|event| &event.kind), Some(&UiEventKind::Number(5.0)));
+    }
+
+    #[test]
+    fn enter_in_a_number_field_commits_the_value_and_tab_then_reaches_the_next_control() {
+        let number = Widget::Number { id: 3, text: "Count".into(), value: 2.0, speed: 1.0, range: None, decimals: None };
+        let next = Widget::Button { id: 10, text: "Next".into(), enabled: true };
+        let mut harness = harness(vec![number, next]);
+        harness.run();
+        harness.get_by_role(egui::Role::SpinButton).click();
+        harness.run();
+        harness.get_by_role(egui::Role::SpinButton).type_text("4");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert_eq!(harness.state().last().map(|event| &event.kind), Some(&UiEventKind::Number(4.0)));
+        assert!(harness.get_by_role(egui::Role::SpinButton).is_focused(), "the field keeps the keyboard after Enter");
+        harness.key_press(egui::Key::Tab);
+        harness.run();
+        assert!(harness.get_by_label("Next").is_focused(), "Tab goes to the control after the field");
     }
 
     #[test]
