@@ -11,7 +11,8 @@ textures or layers runs only on the GPU.
 - On the CPU the kernels are the effect's `pass` method. The app splits each pass into horizontal bands,
   runs them on all cores, and gives each sandboxed instance only the source rows its band reads.
 - A pass can instead name a [host kernel](#host-kernels): a blur, resample, blend, curve, convolution,
-  warp or colour matrix that the app runs itself, natively on the CPU and with its own WGSL on the GPU.
+  warp, colour matrix, sRGB transfer, brightness curve, dither or light alpha that the app runs itself,
+  natively on the CPU and with its own WGSL on the GPU.
 
 The GPU runs the plan when GPU Acceleration is on (`--gpu` on the command line). Otherwise, and whenever
 the GPU declines, the app runs the plan on the CPU if the layout says it can (`Layout::passes`), and calls
@@ -64,10 +65,11 @@ The app checks every plan with `GpuPlan::validate` before running it, on the GPU
 plan that fails does not run: the effect reports the reason. The GPU then checks only what depends on the
 device and the stored bytes (image sizes the GPU holds, buffer and texture byte counts, indices):
 
-- 1 to 64 passes;
+- 1 to 128 passes;
 - at most 32 scratch images, each at least 1×1 and at most twice the padded frame in each axis, and
   together at most 8 times the padded frame's area;
-- a pass reads only `Source` or an image an earlier pass wrote, never the image it writes;
+- a pass reads only `Source` or an image an earlier pass wrote, and never the image it writes unless it
+  is a [pointwise host kernel](#host-kernels);
 - no pass writes `Source` or a texture, and some pass writes `Output`;
 - at most 96 floats and 16 uints per pass;
 - the limits of each [host kernel](#host-kernels);
@@ -216,7 +218,7 @@ around. A band gets the source rows matching its first and last output rows, wid
 band edges; when sizes are odd the matching row can be one less than `2 * y` or `y / 2` suggests, so
 allow one row more. A pass without a reach needs its whole source and runs as one call on one core.
 
-A pass never reads the image it writes: the plan is refused. A pass that returns an error fails the
+A plugin pass never reads the image it writes: the plan is refused. A pass that returns an error fails the
 render, and the layer keeps its frame. A native plugin runs the same bands directly on the app's images with no copies. The default
 `pass` returns an error naming the kernel, so an effect with `Layout::gpu` plans needs none.
 
@@ -238,6 +240,10 @@ own. Mix host kernel passes and plugin passes freely in one plan.
 | `GpuPass::convolve(src, out, Taps::Full { width, weights })` | A full kernel, odd sides up to 31, row by row. |
 | `GpuPass::warp(src, displacement, out, [ax, ay])` | Each pixel read from `src` at its position plus `ax` times the red and `ay` times the green of `displacement`, bilinear. |
 | `GpuPass::matrix(src, out, rows)` | A 4×4 colour matrix: output channel `i` is `rows[i]` dotted with the input pixel. |
+| `GpuPass::to_linear(src, out)`, `GpuPass::to_srgb(src, out)` | The sRGB transfer curve on red, green and blue as they are (no division by alpha), alpha kept. Negative values mirror around zero and values above 1 continue the curve. |
+| `GpuPass::brightness_curve(src, out, measure, curve, range)` | Each pixel's colour scaled so that its brightness `m` becomes `curve(m)`, hue and alpha kept. `measure` is `Measure::MaxChannel` (the largest of red, green and blue) or `Measure::Luma` (Rec. 709). Entry `i` of `n` holds the output for `m = range * i / (n - 1)`; past `range` the last segment continues. A pixel with no brightness becomes black. Threshold, soft knee and highlight or shadow selection are curves. |
+| `GpuPass::dither(src, out, seed, origin)` | Triangular noise of at most one 8-bit level on red, green and blue, the same for a seed and a pixel position minus `origin` on the CPU and the GPU. Values at or beyond 0 and 1 are left exact. |
+| `GpuPass::light_alpha(src, out)` | Alpha raised to the brightest colour channel, at most 1, so light added onto transparent pixels stays visible as valid premultiplied colour. |
 | `GpuPass::host(HostKernel::..., src, out)` | Any kernel with all its fields, for example `HostKernel::Resample { filter, scale: Some([2.0, 2.0]) }` to fix the source pixels per output pixel instead of taking it from the sizes. |
 
 Rules shared by all of them:
@@ -252,16 +258,26 @@ Rules shared by all of them:
   alpha it looked up. Inputs outside 0 to 1 take the end entries. `matrix` works on the premultiplied
   values as they are.
 - A pass's `floats`, `uints` and `reach` are ignored; the app knows what each kernel reads.
+- `blend_images`, `curves`, `matrix`, `to_linear`, `to_srgb`, `brightness_curve`, `dither` and
+  `light_alpha` are pointwise: each output pixel depends only on the same pixel of its inputs. A pointwise
+  pass may write the image it reads, as in `GpuPass::matrix(work, work, rows)`.
+- Consecutive pointwise passes of one size run as one loop over the frame on the CPU and one shader on the
+  GPU. An image they write that no later pass reads is never stored. The loop ends before a pass that would
+  need a third stored image, and after a pass whose image a later, non-fused pass reads. On the GPU a
+  `resample` whose image only the next such loop reads is sampled inside that loop's shader instead of
+  being stored.
 
 `plan.validate` checks each kernel's fields and names the pass and the field it refuses:
 `pass 2 (blur): `radius` is [600.0, 2.0]; each axis must be 0 to 512`.
 
-The GPU runs plans only for effects that give WGSL. An effect whose plans use only host kernels gives an
-empty shader, `.shader("")`, and the app's kernels are all it needs.
+An effect with no WGSL runs its plans on the GPU too when its layout at the default settings gives a plan
+made only of host kernels; the app asks for that layout when the plugin loads. An effect whose plans name
+its own kernels gives WGSL with `.shader(..)`.
 
-Lumen Glow (`plugins/lumen-glow`) builds its glow from host kernels: a plugin pass for the threshold and
-first halving, host `resample` passes down a pyramid, a separable `convolve`, `matrix` and `blend_images`
-per level, and a plugin pass for the final composite.
+Lumen Glow (`plugins/lumen-glow`) is made only of host kernels and has no WGSL and no `pass` method:
+`to_linear` and a `brightness_curve` soft knee, `resample` passes down a pyramid, a separable `convolve`,
+`matrix` and `blend_images` per level, and one fused composite of `to_linear`, `matrix`,
+`brightness_curve`, `blend_images`, `to_srgb`, `dither` and `light_alpha`.
 
 ## The WGSL side
 

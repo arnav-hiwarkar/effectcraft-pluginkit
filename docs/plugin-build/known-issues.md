@@ -70,15 +70,19 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **Timeout checks cost 8 to 35 % of sandboxed compute** (Plasma Beam 4.44 → 3.23 ms with them off, Halo
   25 → 17.5 ms). They are needed to stop a plugin that hangs; the options are in the study.
 
-## Found by the host kernel work, not fixed
+## Found by the second host kernel work, not fixed
 
-- **Sandboxed Lumen Glow stays about 1.7x native on the CPU.** Its blur, resample, colour mix and level
-  sums are host kernels now, but its threshold (`lumen_emit`) and composite (`lumen_composite`) passes read
-  the whole padded frame in plugin code, and before the change they were about 80 % of its native time.
-  Measured with one rayon thread and `/usr/bin/time -l`: 2,567 M against 1,512 M instructions per 1080p
-  frame (2,960 M against 1,420 M before). The same split costs native Lumen 7 % more instructions than its
-  old fused level pass, because each level is now four host passes. A kernel for a brightness knee and a
-  transfer curve on premultiplied colour would move the rest out of the sandbox.
+- **Lumen Glow on the GPU is 25 % slower than with its own shaders.** 1080p, in-process median of 21 runs
+  at load 3 to 4: 9.4 ms against 7.5 ms for the build before (`pk/kernels`). The fused pointwise loop is
+  one interpreting shader (`craft_pointwise` in `crates/gpu/src/shaders/plugin_kernels.wgsl`): its register
+  array indexed at run time costs about 0.4 ms (measured by replacing it), and the switch and per-op data
+  reads cost more. The emission is stored at full size before the first halving, where the old shader
+  thresholded each of the halving's 16 taps; running the fused program per tap instead was slower (10.0
+  ms). Generating WGSL per fused loop, or allocating its values to named registers on the host, would
+  remove the interpreter.
+- **Native Lumen Glow on all cores takes 5 % longer in wall time** (14.4 ms against 13.7 ms at 1080p, load
+  3) although it runs 3 % fewer instructions: the emission and the upsampled glow are two more
+  full-size images written and read.
 
 ## Seen in the third build
 

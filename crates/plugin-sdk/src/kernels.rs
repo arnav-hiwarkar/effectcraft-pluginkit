@@ -37,6 +37,25 @@ pub enum HostKernel {
     Matrix {
         rows: [[f32; 4]; 4],
     },
+    ToLinear,
+    ToSrgb,
+    BrightnessCurve {
+        measure: Measure,
+        curve: Vec<f32>,
+        range: f32,
+    },
+    Dither {
+        seed: u32,
+        origin: [i64; 2],
+    },
+    LightAlpha,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Measure {
+    MaxChannel,
+    Luma,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,7 +117,16 @@ impl HostKernel {
             HostKernel::Convolve { .. } => "convolve",
             HostKernel::Warp { .. } => "warp",
             HostKernel::Matrix { .. } => "matrix",
+            HostKernel::ToLinear => "to_linear",
+            HostKernel::ToSrgb => "to_srgb",
+            HostKernel::BrightnessCurve { .. } => "brightness_curve",
+            HostKernel::Dither { .. } => "dither",
+            HostKernel::LightAlpha => "light_alpha",
         }
+    }
+
+    pub fn pointwise(&self) -> bool {
+        !matches!(self, HostKernel::Blur { .. } | HostKernel::Resample { .. } | HostKernel::Convolve { .. } | HostKernel::Warp { .. })
     }
 
     pub fn check(&self, src: [u32; 2], aux: Option<[u32; 2]>, out: [u32; 2]) -> Result<(), String> {
@@ -160,6 +188,19 @@ impl HostKernel {
                 }
                 same("src", src)
             }
+            HostKernel::BrightnessCurve { curve, range, .. } => {
+                if !(2..=MAX_CURVE_POINTS).contains(&curve.len()) {
+                    return Err(format!("`curve` has {} entries; it needs 2 to {MAX_CURVE_POINTS}", curve.len()));
+                }
+                if curve.iter().any(|v| !v.is_finite()) {
+                    return Err("`curve` holds a value that is not a finite number".into());
+                }
+                if !(range.is_finite() && *range > 0.0) {
+                    return Err(format!("`range` is {range}; it must be a finite number above 0"));
+                }
+                same("src", src)
+            }
+            HostKernel::ToLinear | HostKernel::ToSrgb | HostKernel::Dither { .. } | HostKernel::LightAlpha => same("src", src),
         }
     }
 }

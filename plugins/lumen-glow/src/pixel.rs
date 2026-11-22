@@ -8,20 +8,8 @@ pub fn add(a: Pixel, b: Pixel) -> Pixel {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]]
 }
 
-pub fn scale(a: Pixel, s: f32) -> Pixel {
-    [a[0] * s, a[1] * s, a[2] * s, a[3] * s]
-}
-
-pub fn mul_add(acc: Pixel, a: Pixel, s: f32) -> Pixel {
-    [acc[0] + a[0] * s, acc[1] + a[1] * s, acc[2] + a[2] * s, acc[3] + a[3] * s]
-}
-
 pub fn luma(rgb: [f32; 3]) -> f32 {
     LUMA[0] * rgb[0] + LUMA[1] * rgb[1] + LUMA[2] * rgb[2]
-}
-
-pub fn brightest(p: Pixel) -> f32 {
-    p[0].max(p[1]).max(p[2])
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -59,23 +47,20 @@ impl Mix {
         Mix { columns: [add(a, x), add(b, y), add(c, z)] }
     }
 
-    pub fn from_floats(floats: &[f32]) -> Mix {
-        Mix { columns: std::array::from_fn(|c| std::array::from_fn(|r| floats.get(4 * c + r).copied().unwrap_or(0.0))) }
-    }
-
     pub fn columns(&self) -> [Pixel; 3] {
         self.columns
-    }
-
-    pub fn apply(&self, p: Pixel) -> Pixel {
-        let [a, b, c] = &self.columns;
-        mul_add(mul_add(scale(*a, p[0]), *b, p[1]), *c, p[2])
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl Mix {
+        fn apply(&self, p: Pixel) -> Pixel {
+            std::array::from_fn(|row| (0..3).map(|c| self.columns[c][row] * p[c]).sum())
+        }
+    }
 
     #[test]
     fn full_tint_keeps_luma_and_takes_the_colour() {

@@ -1,13 +1,11 @@
-mod dither;
+mod blur;
 mod gpu;
 mod knee;
-mod passes;
 mod pixel;
 mod plan;
 mod profile;
 mod settings;
 mod spec;
-mod transfer;
 
 use craft_plugin::prelude::*;
 
@@ -30,16 +28,6 @@ impl Effect for LumenGlow {
         }
     }
 
-    fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {
-        passes::run(&Settings::from_cx(cx), pass, out)
-    }
-
-    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
-        if frame.pixels.is_empty() {
-            return Ok(());
-        }
-        Err("Lumen Glow renders through its passes".into())
-    }
 }
 
 fn plugin() -> Plugin {

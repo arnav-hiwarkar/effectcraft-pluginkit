@@ -24,8 +24,8 @@ pub mod prelude {
     pub use crate::{
         AppEvent, AudioRequest, Bind, Blend, BlendMode, BlurShape, Camera, Canvas, Cull, Cursor, Cx, Drag, Dropped, Effect, EffectSpec, Error, FileErrorKind,
         Filter, Frame, FrameRequest, GpuData, GpuImage, GpuPass, GpuPlan, Handle, HostKernel, Image, Key, LayerParam, Layout, Light, LightKind, LogLevel, Mark,
-        MaskPath, Modifiers, Overlay, Paint, Panel, Param, Pass, PickFile, Pixel, Plugin, Pointer, PointerPhase, Rect, Result, Root, Rows, Scene, Space, Taps,
-        Task, TaskState, TaskStatus, Tool, ToolEvent, ToolEventKind, Topic, Ui, Value,
+        MaskPath, Measure, Modifiers, Overlay, Paint, Panel, Param, Pass, PickFile, Pixel, Plugin, Pointer, PointerPhase, Rect, Result, Root, Rows, Scene,
+        Space, Taps, Task, TaskState, TaskStatus, Tool, ToolEvent, ToolEventKind, Topic, Ui, Value,
     };
     pub use crate::{log, params};
     pub use serde_json::{self, json};

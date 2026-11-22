@@ -1,11 +1,15 @@
+mod fuse;
 mod gpu;
+mod pointwise;
 #[cfg(test)]
 mod tests;
 
-use craft_plugin::{BlendMode, BlurShape, Filter, HostKernel, Pixel, Taps};
+use craft_plugin::{BlurShape, Filter, HostKernel, Pixel, Taps};
 use rayon::prelude::*;
 
-pub use gpu::{GpuStep, StepImage, gpu_steps};
+pub(crate) use fuse::run as run_fused;
+pub use fuse::{Fused, Op, Ref, Step, steps};
+pub use gpu::{GpuStep, Lowered, StepImage, lower};
 
 const CLEAR: Pixel = [0.0; 4];
 const MIN_TASK_PIXELS: usize = 16 * 1024;
@@ -64,13 +68,21 @@ pub(crate) fn run(kernel: &HostKernel, src: Image, aux: Option<Image>, size: [u3
         HostKernel::Convolve { taps: Taps::Separable { x, y } } => convolve_separable(src, x, y, width, out),
         HostKernel::Convolve { taps: Taps::Full { width: side, weights } } => convolve_full(src, *side as usize, weights, width, out),
         HostKernel::Resample { filter, scale } => resample(src, *filter, resample_scale(*scale, src.size, size), size, out),
-        HostKernel::Blend { mode, amount } => each_pixel(src, out, width, |x, y, base| blend(*mode, *amount, base, top.at(x as isize, y as isize))),
-        HostKernel::Curves { table } => each_pixel(src, out, width, |_, _, p| curves(table, p)),
-        HostKernel::Matrix { rows } => each_pixel(src, out, width, |_, _, p| rows.map(|row| (0..4).map(|j| row[j] * p[j]).sum())),
         HostKernel::Warp { amount } => each_pixel(src, out, width, |x, y, _| {
             let d = top.at(x as isize, y as isize);
             bilinear(src, x as f32 + amount[0] * d[0], y as f32 + amount[1] * d[1])
         }),
+        HostKernel::Blend { .. }
+        | HostKernel::Curves { .. }
+        | HostKernel::Matrix { .. }
+        | HostKernel::ToLinear
+        | HostKernel::ToSrgb
+        | HostKernel::BrightnessCurve { .. }
+        | HostKernel::Dither { .. }
+        | HostKernel::LightAlpha => {
+            let clear = vec![CLEAR; width];
+            each_row(out, width, || (), |_, y, row| pointwise::row(kernel, src.row(y), top.pixels.get(y * width..(y + 1) * width).unwrap_or(&clear), y, row));
+        }
     }
 }
 
@@ -241,41 +253,4 @@ fn bilinear(src: Image, x: f32, y: f32) -> Pixel {
         mul_add(&mut out, &src.at(x0 + dx, y0 + dy), w);
     }
     out
-}
-
-pub(crate) fn blend_channel(mode: BlendMode, b: f32, t: f32) -> f32 {
-    match mode {
-        BlendMode::Over | BlendMode::Add => b + t,
-        BlendMode::Subtract => b - t,
-        BlendMode::Multiply => b * t,
-        BlendMode::Screen => b + t - b * t,
-        BlendMode::Overlay if b <= 0.5 => 2.0 * b * t,
-        BlendMode::Overlay => 1.0 - 2.0 * (1.0 - b) * (1.0 - t),
-        BlendMode::Darken => b.min(t),
-        BlendMode::Lighten => b.max(t),
-        BlendMode::Difference => (b - t).abs(),
-    }
-}
-
-fn blend(mode: BlendMode, amount: f32, base: Pixel, top: Pixel) -> Pixel {
-    let keep = if mode == BlendMode::Over { 1.0 - top[3] } else { 1.0 };
-    std::array::from_fn(|c| {
-        let blended = if mode == BlendMode::Over { top[c] + base[c] * keep } else { blend_channel(mode, base[c], top[c]) };
-        base[c] + amount * (blended - base[c])
-    })
-}
-
-fn curve(table: &[Pixel], channel: usize, x: f32) -> f32 {
-    let last = table.len() - 1;
-    let t = x.clamp(0.0, 1.0) * last as f32;
-    let i = (t as usize).min(last - 1);
-    let (a, b) = (table[i][channel], table[i + 1][channel]);
-    a + (b - a) * (t - i as f32)
-}
-
-fn curves(table: &[Pixel], p: Pixel) -> Pixel {
-    let alpha = curve(table, 3, p[3]);
-    let straight = |c: usize| if p[3] > 0.0 { p[c] / p[3] } else { 0.0 };
-    let colour = |c: usize| curve(table, c, straight(c)) * alpha;
-    [colour(0), colour(1), colour(2), alpha]
 }

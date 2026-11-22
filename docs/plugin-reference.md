@@ -284,10 +284,15 @@ each other. See [Host kernels](plugin-gpu.md#host-kernels) for what each compute
 | `GpuPass::convolve(src, out, taps)` | `HostKernel::Convolve { taps: Taps::Separable { x, y } | Taps::Full { width, weights } }`. Separable: odd counts up to `MAX_TAPS` (1025). Full: odd sides up to `MAX_FULL_SIDE` (31). |
 | `GpuPass::warp(src, displacement, out, amount)` | `HostKernel::Warp { amount: [f32; 2] }`, displacement as `aux`, each axis at most `MAX_WARP` (4096) pixels. |
 | `GpuPass::matrix(src, out, rows)` | `HostKernel::Matrix { rows: [[f32; 4]; 4] }`, finite. |
+| `GpuPass::to_linear(src, out)`, `GpuPass::to_srgb(src, out)` | `HostKernel::ToLinear`, `HostKernel::ToSrgb`. `src` and `out` the same size. |
+| `GpuPass::brightness_curve(src, out, measure, curve, range)` | `HostKernel::BrightnessCurve { measure: Measure::MaxChannel | Luma, curve: Vec<f32>, range: f32 }`, 2 to `MAX_CURVE_POINTS` (4096) entries, `range` above 0. |
+| `GpuPass::dither(src, out, seed, origin)` | `HostKernel::Dither { seed: u32, origin: [i64; 2] }`. |
+| `GpuPass::light_alpha(src, out)` | `HostKernel::LightAlpha`. |
 | `GpuPass::host(kernel, src, out)` | Any `HostKernel`. |
 
 Every value must be finite. `kernel.check(src_size, aux_size, out_size)` is the check `plan.validate`
-runs for one pass.
+runs for one pass. `kernel.pointwise()` is true for the kernels that may write the image
+they read and that the app fuses into one loop.
 
 `plan.validate(frame)` checks a plan against the limits in [Passes](plugin-gpu.md#limits) for a padded
 frame of that size and returns the first rule it breaks. The app runs this same check before it runs a

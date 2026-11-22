@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use craft_plugin_host::kernels::{self, StepImage};
+use craft_plugin_host::kernels::{self, Lowered, StepImage};
 use craft_plugin_host::{
     Blend, Call, Camera, Cull, Draw, EffectSpec, GpuData, GpuImage, Host, Layout, Light, LightKind, MaskPath, Param, ParamKind, ParamsAt, Pixels, Rect,
     RenderCx, Scene, Value as Wire,
@@ -17,6 +17,7 @@ use effectcraft_engine::project::ParamUi;
 use crate::manage::Loaded;
 
 const MAX_PADDING: u32 = 4096;
+const PROBE_SIDE: u32 = 256;
 const MAX_STAMPED_FILES: usize = 256;
 const STAMP_LIFETIME: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -28,7 +29,8 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
     let plugin_id = &loaded.bundle.manifest.id;
     for spec in &loaded.plugin.contributions().effects {
         let (render_plugin, render_spec) = (loaded.clone(), spec.clone());
-        let gpu = spec.shader.as_ref().map(|_| {
+        let shader = spec.shader.clone().or_else(|| plans_only_host_kernels(loaded, spec).then(String::new));
+        let gpu = shader.as_ref().map(|_| {
             let (plugin, spec) = (loaded.clone(), spec.clone());
             Box::new(move |ctx: &EffectCtx, grid: Grid| gpu_program(&plugin, &spec, ctx, grid)) as dynamic::GpuDyn
         });
@@ -39,7 +41,7 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
             category: spec.category.clone(),
             params: spec.params.iter().map(declare).collect(),
             render: Box::new(move |ctx, buf| render(&render_plugin, &render_spec, ctx, buf)),
-            shader: spec.shader.as_deref().map(Arc::from),
+            shader: shader.as_deref().map(Arc::from),
             gpu,
             time_dependent: spec.time_dependent,
             reads_other_frames: spec.reads_other_frames,
@@ -50,6 +52,18 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
             files: Some(revision_stamp(loaded.clone())),
         });
     }
+}
+
+struct Quiet;
+
+impl Host for Quiet {}
+
+fn plans_only_host_kernels(loaded: &Loaded, spec: &EffectSpec) -> bool {
+    let grid = Grid { width: PROBE_SIDE, height: PROBE_SIDE, offset: [0.0; 2], scale: 1.0 };
+    let layer_size = [f64::from(PROBE_SIDE); 2];
+    let cx = RenderCx { params: wire_params(spec, &Params::default(), layer_size, grid), scale: 1.0, layer_size, size: [PROBE_SIDE; 2], ..RenderCx::default() };
+    let layout = loaded.plugin.call::<Layout>(&Call::Layout { effect: spec.id.clone(), cx }, None, &mut Quiet);
+    layout.is_ok_and(|layout| layout.gpu.is_some_and(|plan| plan.passes.iter().all(|pass| pass.host.is_some())))
 }
 
 fn revision_stamp(loaded: Arc<Loaded>) -> dynamic::StampDyn {
@@ -362,42 +376,39 @@ fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) 
         },
         clear: draw.clear,
     };
+    let (lowered, temps) = kernels::lower(&plan, frame);
     let mut images = plan.images.clone();
-    let mut passes = Vec::with_capacity(plan.passes.len());
-    for pass in &plan.passes {
-        let Some(kernel) = &pass.host else {
-            let (f, u, draw) = (pass.f.clone(), pass.u.clone(), pass.draw.clone().map(draw));
-            passes.push(GpuPass {
+    let first_temp = images.len();
+    images.extend(temps);
+    let place = |image: StepImage| match image {
+        StepImage::Plan(image) => slot(image),
+        StepImage::Temp(index) => GpuSlot::Scratch(first_temp + index),
+    };
+    let passes = lowered
+        .into_iter()
+        .map(|step| match step {
+            Lowered::Plugin(pass) => GpuPass {
                 kernel: pass.kernel.clone(),
                 src: slot(pass.src),
                 aux: pass.aux.map(slot),
                 out: slot(pass.out),
-                f,
-                u,
+                f: pass.f.clone(),
+                u: pass.u.clone(),
                 data: Vec::new(),
-                draw,
-            });
-            continue;
-        };
-        let size = |image| plan.size_of(image, frame).unwrap_or(frame);
-        let out_size = size(pass.out);
-        let temp = GpuSlot::Scratch(images.len());
-        let steps = kernels::gpu_steps(kernel, size(pass.src), out_size);
-        if steps.iter().any(|step| step.out == StepImage::Temp) {
-            images.push(out_size);
-        }
-        let place = |image: StepImage, pass_image: GpuImage| if image == StepImage::Temp { temp } else { slot(pass_image) };
-        passes.extend(steps.into_iter().map(|step| GpuPass {
-            kernel: step.entry.to_string(),
-            src: place(step.src, pass.src),
-            aux: pass.aux.map(slot),
-            out: place(step.out, pass.out),
-            f: step.f,
-            u: step.u,
-            data: step.data,
-            draw: None,
-        }));
-    }
+                draw: pass.draw.clone().map(draw),
+            },
+            Lowered::Host(step) => GpuPass {
+                kernel: step.entry.to_string(),
+                src: place(step.src),
+                aux: step.aux.map(place),
+                out: place(step.out),
+                f: step.f,
+                u: step.u,
+                data: step.data,
+                draw: None,
+            },
+        })
+        .collect();
     let cached = |key: &str| {
         let bytes = loaded.plugin.cached(key);
         if bytes.is_none() {

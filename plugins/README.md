@@ -29,9 +29,9 @@ cancel.
 
 ## Lumen Glow
 
-One plan drives both renderers: `src/gpu.rs` builds the passes (emit, downsample, one blur-and-sum pass
-per pyramid level, composite), `src/glow.wgsl` holds their GPU kernels and `src/passes/` the same kernels
-for the CPU, which the app runs in bands on all cores.
+One plan of host kernels drives both renderers: `src/gpu.rs` builds it (a soft-knee emission and halving,
+a pyramid of resample, blur, colour mix and sums, and one fused composite). Lumen has no WGSL and no CPU
+kernels of its own; the app runs every pass natively on the CPU and with its own WGSL on the GPU.
 
 ## Halo Flares
 

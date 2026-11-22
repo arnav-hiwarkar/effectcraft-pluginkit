@@ -1,8 +1,8 @@
 use craft_plugin::Cx;
+use craft_plugin::math::srgb_to_linear;
 
 use crate::knee::Knee;
 use crate::profile::Profile;
-use crate::transfer::Transfer;
 
 const MAX_STRETCH_OCTAVES: f32 = 5.0;
 const MAX_ABERRATION_OCTAVES: f32 = 1.0;
@@ -49,19 +49,20 @@ pub struct Settings {
     pub view: View,
     pub source_opacity: f32,
     pub glow_opacity: f32,
-    pub transfer: Transfer,
+    pub gamma: bool,
     pub dither: Option<Dither>,
 }
 
 impl Settings {
     pub fn from_cx(cx: &Cx) -> Settings {
         let unit = |id: &str| (cx.f(id) / 100.0) as f32;
-        let transfer = if cx.bool("Output/gamma") { Transfer::srgb() } else { Transfer::Linear };
+        let gamma = cx.bool("Output/gamma");
+        let decode = |v: f32| if gamma { srgb_to_linear(v) } else { v };
         let colour = |id: &str| {
             let c = cx.color(id);
-            [c[0], c[1], c[2]].map(|v| transfer.decode_value(v))
+            [c[0], c[1], c[2]].map(decode)
         };
-        let threshold = transfer.decode_value(cx.f("Glow/threshold") as f32);
+        let threshold = decode(cx.f("Glow/threshold") as f32);
         Settings {
             profile: Profile { radius: cx.f("Glow/radius").max(0.0) as f32, falloff: unit("Glow/falloff") },
             scale: cx.scale.max(1e-3) as f32,
@@ -82,7 +83,7 @@ impl Settings {
             },
             source_opacity: unit("Output/source_opacity").clamp(0.0, 1.0),
             glow_opacity: unit("Output/glow_opacity").clamp(0.0, 1.0),
-            transfer,
+            gamma,
             dither: (cx.bool("Output/dither") && !cx.float)
                 .then(|| Dither { seed: (cx.instance ^ (cx.instance >> 32)) as u32, origin: [cx.offset[0].round() as i64, cx.offset[1].round() as i64] }),
         }

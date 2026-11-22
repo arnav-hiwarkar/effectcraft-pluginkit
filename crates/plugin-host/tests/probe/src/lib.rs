@@ -297,12 +297,28 @@ struct HostKernels;
 
 impl Effect for HostKernels {
     fn spec(&self) -> EffectSpec {
-        let kernels = ["blur", "box blur", "resample", "blend", "curves", "convolve", "full convolve", "warp", "matrix", "glow"];
+        let kernels = [
+            "blur",
+            "box blur",
+            "resample",
+            "blend",
+            "curves",
+            "convolve",
+            "full convolve",
+            "warp",
+            "matrix",
+            "glow",
+            "to linear",
+            "to sRGB",
+            "brightness curve",
+            "dither",
+            "light alpha",
+            "graded glow",
+        ];
         let modes = ["over", "add", "subtract", "multiply", "screen", "overlay", "darken", "lighten", "difference"];
         EffectSpec::new("host-kernels", "Host Kernels", "Probe")
             .param(Param::popup("kernel", "Kernel", &kernels, 0))
             .param(Param::popup("mode", "Mode", &modes, 0))
-            .shader("")
     }
 
     fn layout(&self, cx: &Cx) -> Layout {
@@ -326,6 +342,20 @@ impl Effect for HostKernels {
             )),
             7 => plan.pass(blurred).pass(GpuPass::warp(source, soft, output, [6.0, -4.0])),
             8 => plan.pass(GpuPass::matrix(source, output, [[0.0, 0.0, 1.0, 0.0], [0.3, 0.6, 0.1, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]])),
+            10 => plan.pass(GpuPass::to_linear(source, output)),
+            11 => plan.pass(GpuPass::to_srgb(source, output)),
+            12 => plan.pass(GpuPass::brightness_curve(source, output, Measure::MaxChannel, vec![0.0, 0.0, 0.3, 1.2], 1.5)),
+            13 => plan.pass(GpuPass::dither(source, output, 5, [-3, 9])),
+            14 => plan
+                .pass(GpuPass::matrix(source, soft, [[3.0, 0.0, 0.0, 0.0], [0.0, 3.0, 0.0, 0.0], [0.0, 0.0, 3.0, 0.0], [0.0; 4]]))
+                .pass(GpuPass::light_alpha(soft, output)),
+            15 => plan
+                .pass(blurred)
+                .pass(GpuPass::brightness_curve(soft, soft, Measure::Luma, vec![0.0, 0.1, 0.9], 1.0))
+                .pass(GpuPass::blend_images(soft, source, soft, BlendMode::Screen, 0.9))
+                .pass(GpuPass::to_srgb(soft, soft))
+                .pass(GpuPass::dither(soft, soft, 2, [0, 0]))
+                .pass(GpuPass::light_alpha(soft, output)),
             _ => {
                 let quarter = frame.map(|side| side.div_ceil(4));
                 let (small, blurred) = (plan.scratch(quarter), plan.scratch(quarter));

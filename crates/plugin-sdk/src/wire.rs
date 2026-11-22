@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 
 use serde::{Deserialize, Serialize};
 
-use crate::kernels::{BlendMode, BlurShape, Filter, HostKernel, Taps};
+use crate::kernels::{BlendMode, BlurShape, Filter, HostKernel, Measure, Taps};
 use crate::viewer::{ToolEvent, ToolSpec};
 
 pub const ABI: u32 = 1;
@@ -467,7 +467,7 @@ impl Layout {
     }
 }
 
-pub const MAX_PASSES: usize = 64;
+pub const MAX_PASSES: usize = 128;
 pub const MAX_SCRATCH_IMAGES: usize = 32;
 pub const MAX_SCRATCH_FRAMES: u64 = 8;
 pub const MAX_PASS_FLOATS: usize = 96;
@@ -664,7 +664,7 @@ impl GpuPlan {
                 if matches!(image, GpuImage::Output | GpuImage::Scratch(_)) && !written.contains(&image) {
                     return Err(format!("pass {n} reads {image:?} before a pass writes it"));
                 }
-                if image == pass.out {
+                if image == pass.out && !pass.host.as_ref().is_some_and(HostKernel::pointwise) {
                     return Err(format!("pass {n} reads the image it writes"));
                 }
             }
@@ -736,6 +736,26 @@ impl GpuPass {
 
     pub fn matrix(src: GpuImage, out: GpuImage, rows: [[f32; 4]; 4]) -> Self {
         GpuPass::host(HostKernel::Matrix { rows }, src, out)
+    }
+
+    pub fn to_linear(src: GpuImage, out: GpuImage) -> Self {
+        GpuPass::host(HostKernel::ToLinear, src, out)
+    }
+
+    pub fn to_srgb(src: GpuImage, out: GpuImage) -> Self {
+        GpuPass::host(HostKernel::ToSrgb, src, out)
+    }
+
+    pub fn brightness_curve(src: GpuImage, out: GpuImage, measure: Measure, curve: Vec<f32>, range: f32) -> Self {
+        GpuPass::host(HostKernel::BrightnessCurve { measure, curve, range }, src, out)
+    }
+
+    pub fn dither(src: GpuImage, out: GpuImage, seed: u32, origin: [i64; 2]) -> Self {
+        GpuPass::host(HostKernel::Dither { seed, origin }, src, out)
+    }
+
+    pub fn light_alpha(src: GpuImage, out: GpuImage) -> Self {
+        GpuPass::host(HostKernel::LightAlpha, src, out)
     }
 
     pub fn draw(kernel: &str, out: GpuImage) -> Self {
@@ -1446,8 +1466,8 @@ mod tests {
         let drawing_blur = plan(vec![], vec![GpuPass { draw: Some(Draw::default()), ..GpuPass::blur(source, output, [1.0; 2]) }]);
         let separable = |x: usize, y: usize| Taps::Separable { x: vec![0.5; x], y: vec![0.5; y] };
         let cases = [
-            ("no passes", plan(vec![], vec![]), "1 to 64 passes"),
-            ("65 passes", plan(vec![], vec![finish(); 65]), "1 to 64 passes"),
+            ("no passes", plan(vec![], vec![]), "1 to 128 passes"),
+            ("129 passes", plan(vec![], vec![finish(); 129]), "1 to 128 passes"),
             ("33 images", plan(vec![[8, 8]; 33], vec![finish()]), "at most 32 scratch images"),
             ("empty image", plan(vec![[0, 8]], vec![finish()]), "scratch image 0 is 0x8"),
             ("huge image", plan(vec![[2 * 53 + 1, 8]], vec![finish()]), "scratch image 0 is 107x8"),
@@ -1482,6 +1502,16 @@ mod tests {
             ("far warp", plan(vec![], vec![GpuPass::warp(source, source, output, [5000.0, 0.0])]), "`amount` is [5000.0, 0.0]"),
             ("zero scale", host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some([0.0, 1.0]) }), "`scale` is [0.0, 1.0]"),
             ("drawing blur", drawing_blur, "pass 0 (blur): a host kernel pass cannot also draw"),
+            (
+                "flat brightness range",
+                plan(vec![], vec![GpuPass::brightness_curve(source, output, Measure::Luma, vec![0.0, 1.0], 0.0)]),
+                "pass 0 (brightness_curve): `range` is 0; it must be a finite number above 0",
+            ),
+            (
+                "one point brightness curve",
+                plan(vec![], vec![GpuPass::brightness_curve(source, output, Measure::MaxChannel, vec![1.0], 1.0)]),
+                "`curve` has 1 entries",
+            ),
         ];
         for (name, plan, expected) in cases {
             let why = plan.validate(FRAME).expect_err(name);
