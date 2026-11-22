@@ -28,6 +28,10 @@ impl Engine {
         match *self {}
     }
 
+    pub fn cache_generation(&self) -> u64 {
+        match *self {}
+    }
+
     pub fn copies_pixels(&self) -> bool {
         match *self {}
     }
