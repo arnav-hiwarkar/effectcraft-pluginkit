@@ -283,7 +283,7 @@ impl Host for SessionHost<'_> {
             }
             None => self.session.render(comp, time, opts),
         };
-        Ok(Pixels { width: image.width as u32, height: image.height as u32, data: image.data })
+        Ok(Pixels { width: image.width, height: image.height, data: image.data })
     }
 
     fn audio(&mut self, request: &AudioRequest) -> Result<Samples, String> {
