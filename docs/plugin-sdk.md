@@ -196,6 +196,58 @@ host::command("engine.batch", serde_json::json!({
 
 To find a command, run `effectcraft-cli commands --filter keys.`.
 
+## Run a long task
+
+Panel and command calls must finish in 2 s and 60 s. Work that takes longer, such as analysing audio,
+tracking or exporting, is a task:
+
+```rust
+Plugin::new().task("analyse", "Analyse Audio", |task: &Task| {
+    let total = 100;
+    for done in 0..total {
+        task.progress(done as f64 / total as f64, "Analysing")?;
+    }
+    Ok(serde_json::json!({ "peaks": 3 }))
+})
+```
+
+Start it from a panel or a command, then ask for its state each frame:
+
+```rust
+let id = host::start("analyse", serde_json::json!({ "layer": "Music" }))?;
+let state = host::task(id)?;      // status, progress, message, result, error
+host::cancel(id)?;
+```
+
+`task.progress` returns an error after the user cancels, so `?` ends the task. A task runs on its own
+instance, so it shares no memory with the panel: pass what it needs in `args` and read what it found in
+`state.result`. Its edits go through the app's main thread like a command's; send them as one
+`engine.batch` to make them one undo step. Running tasks show in **Window ▸ Plug-ins ▸ Manage
+Plug-ins** with a progress bar and a Cancel button. `plugins/pulse` is a complete example.
+
+## Read frames and audio
+
+With `document.read`, a panel, command or task can render the comp, or one layer with its effects, and
+read the audio mix or one layer's audio:
+
+```rust
+let image = host::frame(FrameRequest { comp: None, layer: Some("Logo".into()), time: 1.0, scale: 0.5 })?;
+let audio = host::audio(AudioRequest { layer: None, start: 0.0, duration: 2.0, rate: 48_000 })?;
+```
+
+An effect cannot call either while it renders.
+
+## Ask the user for a file
+
+```rust
+let picked = host::pick_file(PickFile { save: false, title: "Choose a LUT".into(), extensions: vec!["cube".into()] })?;
+if let Some(path) = picked {
+    let lut = host::read_file(Root::User, &path)?;   // no files.read needed: the user chose it
+}
+```
+
+Panels and commands only. With `save: true` the path is also writable.
+
 ## Store files
 
 ```rust

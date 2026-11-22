@@ -81,9 +81,7 @@ pub fn set_file_picker(picker: FilePicker) {
 fn find_comp(session: &Session, name: Option<&str>) -> Result<ItemId, String> {
     let Some(name) = name else { return session.active_comp_id().ok_or_else(|| "there is no active composition".to_string()) };
     let by_name = session.project.items.values().find(|item| item.name == name && item.as_comp().is_some()).map(|item| item.id);
-    by_name
-        .or_else(|| name.parse().ok().map(ItemId).filter(|id| session.project.comp(*id).is_some()))
-        .ok_or_else(|| format!("no composition `{name}`"))
+    by_name.or_else(|| name.parse().ok().map(ItemId).filter(|id| session.project.comp(*id).is_some())).ok_or_else(|| format!("no composition `{name}`"))
 }
 
 fn find_layer(project: &Project, comp: ItemId, name: &str) -> Result<LayerId, String> {

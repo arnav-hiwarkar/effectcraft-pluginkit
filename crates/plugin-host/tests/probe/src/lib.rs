@@ -211,6 +211,21 @@ impl Effect for ReadInputs {
     }
 }
 
+struct Recurse;
+
+impl Effect for Recurse {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("recurse", "Recurse", "Probe")
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let request = craft_plugin::FrameRequest { time: 0.0, scale: 1.0, ..Default::default() };
+        let refused = host::frame(request).err().is_some_and(|e| e.0.contains("cannot render a frame while it renders"));
+        frame.pixels[0][0] = if refused { 1.0 } else { 2.0 };
+        Ok(())
+    }
+}
+
 struct HalfDone;
 
 impl Effect for HalfDone {
@@ -263,6 +278,7 @@ fn make() -> Plugin {
         .effect(ReadInputs)
         .effect(Spin)
         .effect(HalfDone)
+        .effect(Recurse)
         .effect(GpuInvert)
         .effect(GpuSoften)
         .effect(GpuFill)
@@ -325,6 +341,30 @@ fn make() -> Plugin {
                 task.progress(0.5, "waiting")?;
                 std::hint::black_box(0);
             }
+        })
+        .command("pick-and-read", "Pick And Read", || {
+            let request = craft_plugin::PickFile { title: "Choose".into(), ..Default::default() };
+            let path = host::pick_file(request)?.ok_or("nothing was picked")?;
+            let bytes = host::read_file(Root::User, &path)?;
+            host::write_file(Root::Data, "picked.txt", &bytes)?;
+            host::write_file(Root::User, &path, b"overwritten")
+        })
+        .task("pick", "Pick From A Task", |_task: &Task| host::pick_file(craft_plugin::PickFile::default()).map(|path| json!(path)))
+        .task("frame", "Read A Frame", |task: &Task| {
+            let args = task.args();
+            let layer = args["layer"].as_str().map(String::from);
+            let request = craft_plugin::FrameRequest { comp: None, layer, time: args["time"].as_f64().unwrap_or(0.0), scale: args["scale"].as_f64().unwrap_or(1.0) };
+            let image = host::frame(request)?;
+            let center = image.at(image.width as isize / 2, image.height as isize / 2);
+            Ok(json!({"width": image.width, "height": image.height, "center": center}))
+        })
+        .task("audio", "Read Audio", |task: &Task| {
+            let args = task.args();
+            let layer = args["layer"].as_str().map(String::from);
+            let request = craft_plugin::AudioRequest { layer, start: 0.0, duration: args["duration"].as_f64().unwrap_or(0.5), rate: 8000 };
+            let audio = host::audio(request)?;
+            let peak = audio.samples.iter().fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+            Ok(json!({"channels": audio.channels, "rate": audio.rate, "len": audio.samples.len(), "peak": peak}))
         })
         .task("edit", "Edit From A Task", |_task: &Task| host::command("layer.newNull", json!({"name": "From Task"})))
 }

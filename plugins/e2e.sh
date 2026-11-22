@@ -57,3 +57,4 @@ if [ -d "$ROOT/plugins/dist/org.craftkit.lumen-glow" ]; then
 fi
 
 "$ROOT/plugins/glide/verify.sh"
+"$ROOT/plugins/pulse/verify.sh"

@@ -68,6 +68,7 @@ fn load(kind: Kind, permissions: &[&str]) -> Loaded {
 #[derive(Default)]
 struct Recorder {
     commands: Vec<String>,
+    picked: Option<PathBuf>,
 }
 
 impl Host for Recorder {
@@ -94,6 +95,15 @@ impl Host for Recorder {
 
     fn masks(&mut self) -> Vec<MaskPath> {
         vec![MaskPath { name: "m".into(), points: vec![[0.0, 0.0], [42.0, 7.0]], closed: true, inverted: false }]
+    }
+
+    fn frame(&mut self, request: &craft_plugin::FrameRequest) -> Result<Pixels, String> {
+        let width = (4.0 * request.scale) as u32;
+        Ok(Pixels { width, height: 1, data: vec![[request.time as f32, 0.0, 0.0, 1.0]; width as usize] })
+    }
+
+    fn pick_file(&mut self, _request: &craft_plugin::PickFile) -> Result<Option<PathBuf>, String> {
+        Ok(self.picked.clone())
     }
 }
 
@@ -463,5 +473,49 @@ fn a_plugin_runs_at_most_four_tasks_at_once_and_stopping_it_cancels_them() {
         assert_eq!(states, [TaskStatus::Cancelled; 4], "{kind:?}");
         assert_eq!(loaded.plugin.running_tasks(), 0);
         loaded.plugin.start("count", json!({"steps": 1})).unwrap();
+    });
+}
+
+#[test]
+fn a_task_reads_a_frame_through_the_app_only_with_document_read() {
+    each_kind(|kind| {
+        let reader = load(kind, &["document.read"]);
+        let id = reader.plugin.start("frame", json!({"time": 0.75, "scale": 0.5})).unwrap();
+        let state = settle(&reader, id, &mut Recorder::default());
+        assert_eq!(state.result, Some(json!({"width": 2, "height": 1, "center": [0.75, 0.0, 0.0, 1.0]})), "{kind:?} {state:?}");
+
+        let blind = load(kind, &[]);
+        let id = blind.plugin.start("frame", json!({"time": 0.0})).unwrap();
+        let state = settle(&blind, id, &mut Recorder::default());
+        assert!(state.error.as_deref().unwrap_or_default().contains("document.read"), "{kind:?} {state:?}");
+    });
+}
+
+#[test]
+fn an_effect_cannot_render_a_frame_from_inside_its_own_render() {
+    each_kind(|kind| {
+        let loaded = load(kind, &["document.read"]);
+        let mut pixels: Vec<Pixel> = vec![[0.0; 4]];
+        loaded.plugin.render("recurse", &cx(1, 1), None, &mut pixels, Recorder::default).unwrap();
+        assert_eq!(pixels[0][0], 1.0, "{kind:?}");
+    });
+}
+
+#[test]
+fn a_picked_file_becomes_readable_without_the_files_permission_but_not_writable() {
+    each_kind(|kind| {
+        let outside = tempfile::tempdir().unwrap();
+        let chosen = outside.path().join("chosen.txt");
+        std::fs::write(&chosen, "chosen by the user").unwrap();
+        let loaded = load(kind, &[]);
+        let mut host = Recorder { picked: Some(chosen.clone()), ..Default::default() };
+        let error = command(&loaded, "pick-and-read", &mut host).unwrap_err();
+        assert!(error.to_string().contains("files.write"), "{kind:?} {error}");
+        assert_eq!(std::fs::read_to_string(loaded.data.path().join("data/picked.txt")).unwrap(), "chosen by the user");
+        assert_eq!(std::fs::read_to_string(&chosen).unwrap(), "chosen by the user");
+
+        let id = loaded.plugin.start("pick", json!({})).unwrap();
+        let state = settle(&loaded, id, &mut host);
+        assert!(state.error.as_deref().unwrap_or_default().contains("only from a panel or a command"), "{kind:?} {state:?}");
     });
 }
