@@ -1,5 +1,5 @@
 use crate::effect::{Cx, Image};
-use crate::wire::{Param, ParamKind, Value};
+use crate::wire::{EffectSpec, Param, ParamKind, Value};
 
 pub trait FromParam: Sized {
     fn from_param(cx: &Cx, id: &'static str) -> Self;
@@ -113,6 +113,19 @@ impl Param {
             };
             format!("parameter `{}` takes {wanted}, not {given}", self.id)
         })
+    }
+}
+
+impl EffectSpec {
+    pub fn check(&self) -> Result<(), String> {
+        for param in &self.params {
+            if let ParamKind::Slider { min, max, .. } = param.kind
+                && min.partial_cmp(&max).is_none_or(std::cmp::Ordering::is_gt)
+            {
+                return Err(format!("effect `{}`: parameter `{}` has the range {min}..={max}; give the smaller end first", self.id, param.id));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -293,6 +306,13 @@ mod tests {
             "Empty" {}
             last: bool = checkbox("Last", true),
         }
+    }
+
+    #[test]
+    fn a_reversed_hard_range_is_refused_with_the_effect_and_parameter_id() {
+        let spec = EffectSpec::new("glow", "Glow", "Stylize").param(Param::slider("gain", "Gain", 1.0, 10.0..=1.0));
+        assert_eq!(spec.check(), Err("effect `glow`: parameter `gain` has the range 10..=1; give the smaller end first".to_string()));
+        assert_eq!(EffectSpec::new("glow", "Glow", "Stylize").params(Glow::params()).check(), Ok(()));
     }
 
     #[test]

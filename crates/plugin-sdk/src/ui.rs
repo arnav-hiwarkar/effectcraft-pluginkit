@@ -148,7 +148,7 @@ impl<'a> Ui<'a> {
     pub fn number_in(&mut self, text: &str, value: &mut f64, speed: f64, range: RangeInclusive<f64>, decimals: u8) -> bool {
         let id = self.id(text);
         let before = *value;
-        self.number_event(id, value);
+        let edited = self.number_event(id, value);
         *value = value.max(*range.start()).min(*range.end());
         self.widgets.push(Widget::Number {
             id,
@@ -158,7 +158,7 @@ impl<'a> Ui<'a> {
             range: Some([*range.start(), *range.end()]),
             decimals: Some(decimals),
         });
-        *value != before
+        edited && *value != before
     }
 
     pub fn text_edit(&mut self, key: &str, value: &mut String, hint: &str) -> bool {
@@ -368,6 +368,17 @@ mod tests {
             Widget::Button { id, .. } | Widget::Slider { id, .. } | Widget::Number { id, .. } | Widget::Checkbox { id, .. } => *id,
             other => panic!("no id on {other:?}"),
         }
+    }
+
+    #[test]
+    fn number_in_clamps_a_value_outside_its_range_but_reports_a_change_only_for_an_edit() {
+        let mut value = 150.0;
+        let mut changed = Vec::new();
+        let widgets = frame(vec![], |ui| changed.push(ui.number_in("Size", &mut value, 1.0, 0.0..=100.0, 0)));
+        let id = id_of(&widgets[0]);
+        frame(vec![UiEvent { id, kind: UiEventKind::Number(40.0) }], |ui| changed.push(ui.number_in("Size", &mut value, 1.0, 0.0..=100.0, 0)));
+        frame(vec![UiEvent { id, kind: UiEventKind::Number(400.0) }], |ui| changed.push(ui.number_in("Size", &mut value, 1.0, 0.0..=100.0, 0)));
+        assert_eq!((changed, value), (vec![false, true, true], 100.0));
     }
 
     #[test]

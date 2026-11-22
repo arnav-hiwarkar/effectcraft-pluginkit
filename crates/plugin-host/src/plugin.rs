@@ -105,6 +105,9 @@ impl Plugin {
     fn described(manifest: Manifest, engine: Arc<Engine>, limits: Limits) -> Result<Plugin, PluginError> {
         let mut plugin = Plugin { manifest, engine, limits, contributions: Contributions::default() };
         plugin.contributions = plugin.call(&Call::Describe, None, &mut NoHost)?;
+        if let Some(error) = plugin.contributions.effects.iter().find_map(|effect| effect.check().err()) {
+            return Err(PluginError::Load(error));
+        }
         plugin.engine.know_tasks(plugin.contributions.tasks.iter().map(|task| task.id.clone()).collect());
         Ok(plugin)
     }

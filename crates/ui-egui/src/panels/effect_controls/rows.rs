@@ -617,6 +617,7 @@ fn gradient_at(g: &effectcraft_engine::keyframe::Gradient, f: f64) -> Color32 {
 }
 
 fn slider_fraction(value: f64, min: f64, max: f64, log: bool) -> f64 {
+    let value = value.clamp(min.min(max), max.max(min));
     if log { (value / min).ln() / (max / min).ln() } else { (value - min) / (max - min) }
 }
 
@@ -890,5 +891,13 @@ pub(super) fn group_rows(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_log_slider_puts_values_outside_its_track_at_the_ends_instead_of_nan() {
+        assert_eq!([-1.0, 0.0, 1.0, 10.0, 100.0].map(|value| super::slider_fraction(value, 1.0, 10.0, true)), [0.0, 0.0, 0.0, 1.0, 1.0]);
     }
 }

@@ -126,6 +126,8 @@ when an expression or a script pushes the value outside it. `.soft(low..=high)` 
 row shows, so a value up to 1000 can be typed while the slider covers 0.01 to 10. `.log()` spaces the slider
 by ratio, which suits gains and sizes; it needs a soft (or hard) minimum above 0 and is linear otherwise.
 `.range(min..=max)` gives a percent parameter a hard range and a slider (a percent without one has none).
+A hard range with its larger end first (`10.0..=1.0`) stops the plugin from loading with
+`effect `glow`: parameter `gain` has the range 10..=1; give the smaller end first`.
 `param.fit(value)` is the check the app applies to every value it delivers and the test kit applies to every
 `.set`: it clamps a slider to its hard range, truncates a popup or mask index, and refuses a value of the
 wrong kind with `parameter `amount` takes a number, not the text "x"`.
@@ -396,7 +398,8 @@ Widgets: `label`, `heading`, `weak`, `mono`, `error`, `button`, `button_enabled`
 `number_in`, `text_edit`, `popup`, `color`, `separator`, `space`, and the containers `row`, `column` and `group`.
 Value widgets take `&mut` state and return `true` on the frame the user changed it.
 `ui.number_in(text, &mut value, speed, min..=max, decimals)` is `number` with a range the value stays in and a
-fixed number of decimals.
+fixed number of decimals. A value that starts outside the range is clamped quietly; `number_in` returns `true`
+only when the user edited it.
 
 | Widget | Shows |
 |---|---|
