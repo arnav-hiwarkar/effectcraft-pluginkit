@@ -1,6 +1,7 @@
 pub mod abi;
 mod effect;
 pub mod host;
+mod kernels;
 mod manifest;
 pub mod math;
 mod plugin;
@@ -8,6 +9,7 @@ mod ui;
 mod wire;
 
 pub use effect::{Cx, Effect, Frame, Image, Pass, Rows};
+pub use kernels::*;
 pub use manifest::{Entry, MANIFEST_FILE, Manifest, ManifestError, Permission, RunMode, native_target};
 pub use plugin::{Error, Plugin, Result, Task};
 pub use ui::{Canvas, Panel, Ui};
@@ -16,9 +18,9 @@ pub use wire::*;
 pub mod prelude {
     pub use crate::host;
     pub use crate::{
-        AudioRequest, Blend, Camera, Canvas, Cull, Cx, Effect, EffectSpec, Error, Frame, FrameRequest, GpuData, GpuImage, GpuPass, GpuPlan, Image, Layout,
-        Light, LightKind, MaskPath, Paint, Panel, Param, Pass, PickFile, Pixel, Plugin, Pointer, PointerPhase, Result, Root, Rows, Scene, Task, TaskState,
-        TaskStatus, Ui,
+        AudioRequest, Blend, BlendMode, BlurShape, Camera, Canvas, Cull, Cx, Effect, EffectSpec, Error, Filter, Frame, FrameRequest, GpuData, GpuImage,
+        GpuPass, GpuPlan, HostKernel, Image, Layout, Light, LightKind, MaskPath, Paint, Panel, Param, Pass, PickFile, Pixel, Plugin, Pointer, PointerPhase,
+        Result, Root, Rows, Scene, Taps, Task, TaskState, TaskStatus, Ui,
     };
 }
 

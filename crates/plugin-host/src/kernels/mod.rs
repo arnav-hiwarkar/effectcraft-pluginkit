@@ -1,0 +1,281 @@
+mod gpu;
+#[cfg(test)]
+mod tests;
+
+use craft_plugin::{BlendMode, BlurShape, Filter, HostKernel, Pixel, Taps};
+use rayon::prelude::*;
+
+pub use gpu::{GpuStep, StepImage, gpu_steps};
+
+const CLEAR: Pixel = [0.0; 4];
+const MIN_TASK_PIXELS: usize = 16 * 1024;
+
+#[derive(Clone, Copy)]
+pub(crate) struct Image<'a> {
+    pub size: [u32; 2],
+    pub pixels: &'a [Pixel],
+}
+
+impl Image<'_> {
+    fn width(&self) -> usize {
+        self.size[0] as usize
+    }
+
+    fn row(&self, y: usize) -> &[Pixel] {
+        let width = self.width();
+        &self.pixels[y * width..(y + 1) * width]
+    }
+
+    fn at(&self, x: isize, y: isize) -> Pixel {
+        let [w, h] = self.size.map(|side| side as isize);
+        if x < 0 || y < 0 || x >= w || y >= h { CLEAR } else { self.pixels[y as usize * w as usize + x as usize] }
+    }
+}
+
+pub(crate) fn blur_taps(shape: BlurShape, radius: f32) -> Vec<f32> {
+    let reach = radius.ceil().max(0.0) as isize;
+    if reach == 0 {
+        return vec![1.0];
+    }
+    let weight = |i: isize| match shape {
+        BlurShape::Gaussian => {
+            let sigma = radius / 3.0;
+            (-((i * i) as f32) / (2.0 * sigma * sigma)).exp()
+        }
+        BlurShape::Box => (radius + 1.0 - i.unsigned_abs() as f32).clamp(0.0, 1.0),
+    };
+    let raw: Vec<f32> = (-reach..=reach).map(weight).collect();
+    let total: f32 = raw.iter().sum();
+    raw.iter().map(|w| w / total).collect()
+}
+
+pub(crate) fn resample_scale(scale: Option<[f32; 2]>, src: [u32; 2], out: [u32; 2]) -> [f32; 2] {
+    scale.unwrap_or([0, 1].map(|axis| src[axis] as f32 / out[axis].max(1) as f32))
+}
+
+pub(crate) fn run(kernel: &HostKernel, src: Image, aux: Option<Image>, size: [u32; 2], out: &mut [Pixel]) {
+    let top = aux.unwrap_or(Image { size, pixels: &[] });
+    let width = size[0] as usize;
+    match kernel {
+        HostKernel::Blur { shape, radius } => {
+            let [x, y] = radius.map(|r| blur_taps(*shape, r));
+            convolve_separable(src, &x, &y, width, out);
+        }
+        HostKernel::Convolve { taps: Taps::Separable { x, y } } => convolve_separable(src, x, y, width, out),
+        HostKernel::Convolve { taps: Taps::Full { width: side, weights } } => convolve_full(src, *side as usize, weights, width, out),
+        HostKernel::Resample { filter, scale } => resample(src, *filter, resample_scale(*scale, src.size, size), size, out),
+        HostKernel::Blend { mode, amount } => each_pixel(src, out, width, |x, y, base| blend(*mode, *amount, base, top.at(x as isize, y as isize))),
+        HostKernel::Curves { table } => each_pixel(src, out, width, |_, _, p| curves(table, p)),
+        HostKernel::Matrix { rows } => each_pixel(src, out, width, |_, _, p| rows.map(|row| (0..4).map(|j| row[j] * p[j]).sum())),
+        HostKernel::Warp { amount } => each_pixel(src, out, width, |x, y, _| {
+            let d = top.at(x as isize, y as isize);
+            bilinear(src, x as f32 + amount[0] * d[0], y as f32 + amount[1] * d[1])
+        }),
+    }
+}
+
+fn rows_per_task(width: usize) -> usize {
+    (MIN_TASK_PIXELS / width.max(1)).max(1)
+}
+
+fn each_row<S>(out: &mut [Pixel], width: usize, init: impl Fn() -> S + Sync + Send, f: impl Fn(&mut S, usize, &mut [Pixel]) + Sync + Send) {
+    if width == 0 {
+        return;
+    }
+    out.par_chunks_mut(width).enumerate().with_min_len(rows_per_task(width)).for_each_init(init, |state, (y, row)| f(state, y, row));
+}
+
+fn each_pixel(src: Image, out: &mut [Pixel], width: usize, f: impl Fn(usize, usize, Pixel) -> Pixel + Sync + Send) {
+    each_row(
+        out,
+        width,
+        || (),
+        |_, y, row| {
+            let held = src.row(y);
+            for (x, (o, p)) in row.iter_mut().zip(held).enumerate() {
+                *o = f(x, y, *p);
+            }
+        },
+    );
+}
+
+fn mul_add(acc: &mut Pixel, p: &Pixel, w: f32) {
+    for c in 0..4 {
+        acc[c] += p[c] * w;
+    }
+}
+
+fn convolve_row(row: &[Pixel], taps: &[f32], padded: &mut Vec<Pixel>, out: &mut [Pixel]) {
+    let reach = taps.len() / 2;
+    padded.clear();
+    padded.resize(reach, CLEAR);
+    padded.extend_from_slice(row);
+    padded.resize(row.len() + 2 * reach, CLEAR);
+    out.fill(CLEAR);
+    for (k, w) in taps.iter().enumerate() {
+        out.iter_mut().zip(&padded[k..]).for_each(|(o, p)| mul_add(o, p, *w));
+    }
+}
+
+fn convolve_separable(src: Image, x: &[f32], y: &[f32], width: usize, out: &mut [Pixel]) {
+    let mut across = vec![CLEAR; out.len()];
+    each_row(&mut across, width, Vec::new, |padded, row_y, row| convolve_row(src.row(row_y), x, padded, row));
+    let height = out.len() / width.max(1);
+    let reach = y.len() / 2;
+    each_row(
+        out,
+        width,
+        || (),
+        |_, row_y, row| {
+            row.fill(CLEAR);
+            for (k, w) in y.iter().enumerate() {
+                let Some(from) = (row_y + k).checked_sub(reach).filter(|from| *from < height) else { continue };
+                row.iter_mut().zip(&across[from * width..(from + 1) * width]).for_each(|(o, p)| mul_add(o, p, *w));
+            }
+        },
+    );
+}
+
+fn convolve_full(src: Image, side: usize, weights: &[f32], width: usize, out: &mut [Pixel]) {
+    let rows = weights.len() / side.max(1);
+    let (reach_x, reach_y) = (side / 2, rows / 2);
+    let height = src.size[1] as usize;
+    each_row(out, width, Vec::new, |padded: &mut Vec<Pixel>, row_y, row| {
+        row.fill(CLEAR);
+        for (ky, line) in weights.chunks_exact(side).enumerate() {
+            let Some(from) = (row_y + ky).checked_sub(reach_y).filter(|from| *from < height) else { continue };
+            padded.clear();
+            padded.resize(reach_x, CLEAR);
+            padded.extend_from_slice(src.row(from));
+            padded.resize(width + 2 * reach_x, CLEAR);
+            for (kx, w) in line.iter().enumerate() {
+                row.iter_mut().zip(&padded[kx..]).for_each(|(o, p)| mul_add(o, p, *w));
+            }
+        }
+    });
+}
+
+pub(crate) fn filter_weight(filter: Filter, d: f32) -> f32 {
+    let d = d.abs();
+    match filter {
+        Filter::Bilinear => (1.0 - d).max(0.0),
+        Filter::Bicubic if d < 1.0 => (1.5 * d - 2.5) * d * d + 1.0,
+        Filter::Bicubic if d < 2.0 => ((-0.5 * d + 2.5) * d - 4.0) * d + 2.0,
+        Filter::Bicubic => 0.0,
+    }
+}
+
+fn support(filter: Filter) -> f32 {
+    match filter {
+        Filter::Bilinear => 1.0,
+        Filter::Bicubic => 2.0,
+    }
+}
+
+struct AxisTaps {
+    first: isize,
+    weights: Vec<f32>,
+}
+
+fn axis_taps(filter: Filter, scale: f32, out_len: usize) -> Vec<AxisTaps> {
+    let widen = scale.max(1.0);
+    let reach = support(filter) * widen;
+    (0..out_len)
+        .map(|i| {
+            let centre = (i as f32 + 0.5) * scale - 0.5;
+            let first = (centre - reach).floor() as isize + 1;
+            let last = (centre + reach).ceil() as isize - 1;
+            let raw: Vec<f32> = (first..=last).map(|s| filter_weight(filter, (s as f32 - centre) / widen)).collect();
+            let total: f32 = raw.iter().sum();
+            AxisTaps { first, weights: raw.iter().map(|w| w / total).collect() }
+        })
+        .collect()
+}
+
+fn resample(src: Image, filter: Filter, scale: [f32; 2], size: [u32; 2], out: &mut [Pixel]) {
+    let [width, height] = size.map(|side| side as usize);
+    let [src_width, src_height] = src.size.map(|side| side as usize);
+    let (across_taps, down_taps) = (axis_taps(filter, scale[0], width), axis_taps(filter, scale[1], height));
+    let mut across = vec![CLEAR; width * src_height];
+    each_row(
+        &mut across,
+        width,
+        || (),
+        |_, y, row| {
+            let held = src.row(y);
+            for (o, taps) in row.iter_mut().zip(&across_taps) {
+                *o = CLEAR;
+                for (k, w) in taps.weights.iter().enumerate() {
+                    if let Some(p) = usize::try_from(taps.first + k as isize).ok().filter(|x| *x < src_width).map(|x| &held[x]) {
+                        mul_add(o, p, *w);
+                    }
+                }
+            }
+        },
+    );
+    let clamp = filter == Filter::Bicubic;
+    each_row(
+        out,
+        width,
+        || (),
+        |_, y, row| {
+            row.fill(CLEAR);
+            let taps = &down_taps[y];
+            for (k, w) in taps.weights.iter().enumerate() {
+                let Some(from) = usize::try_from(taps.first + k as isize).ok().filter(|from| *from < src_height) else { continue };
+                row.iter_mut().zip(&across[from * width..(from + 1) * width]).for_each(|(o, p)| mul_add(o, p, *w));
+            }
+            if clamp {
+                row.iter_mut().flatten().for_each(|v| *v = v.max(0.0));
+            }
+        },
+    );
+}
+
+fn bilinear(src: Image, x: f32, y: f32) -> Pixel {
+    let (x0, y0) = (x.floor(), y.floor());
+    let (fx, fy) = (x - x0, y - y0);
+    let (x0, y0) = (x0 as isize, y0 as isize);
+    let mut out = CLEAR;
+    for (dx, dy, w) in [(0, 0, (1.0 - fx) * (1.0 - fy)), (1, 0, fx * (1.0 - fy)), (0, 1, (1.0 - fx) * fy), (1, 1, fx * fy)] {
+        mul_add(&mut out, &src.at(x0 + dx, y0 + dy), w);
+    }
+    out
+}
+
+pub(crate) fn blend_channel(mode: BlendMode, b: f32, t: f32) -> f32 {
+    match mode {
+        BlendMode::Over | BlendMode::Add => b + t,
+        BlendMode::Subtract => b - t,
+        BlendMode::Multiply => b * t,
+        BlendMode::Screen => b + t - b * t,
+        BlendMode::Overlay if b <= 0.5 => 2.0 * b * t,
+        BlendMode::Overlay => 1.0 - 2.0 * (1.0 - b) * (1.0 - t),
+        BlendMode::Darken => b.min(t),
+        BlendMode::Lighten => b.max(t),
+        BlendMode::Difference => (b - t).abs(),
+    }
+}
+
+fn blend(mode: BlendMode, amount: f32, base: Pixel, top: Pixel) -> Pixel {
+    let keep = if mode == BlendMode::Over { 1.0 - top[3] } else { 1.0 };
+    std::array::from_fn(|c| {
+        let blended = if mode == BlendMode::Over { top[c] + base[c] * keep } else { blend_channel(mode, base[c], top[c]) };
+        base[c] + amount * (blended - base[c])
+    })
+}
+
+fn curve(table: &[Pixel], channel: usize, x: f32) -> f32 {
+    let last = table.len() - 1;
+    let t = x.clamp(0.0, 1.0) * last as f32;
+    let i = (t as usize).min(last - 1);
+    let (a, b) = (table[i][channel], table[i + 1][channel]);
+    a + (b - a) * (t - i as f32)
+}
+
+fn curves(table: &[Pixel], p: Pixel) -> Pixel {
+    let alpha = curve(table, 3, p[3]);
+    let straight = |c: usize| if p[3] > 0.0 { p[c] / p[3] } else { 0.0 };
+    let colour = |c: usize| curve(table, c, straight(c)) * alpha;
+    [colour(0), colour(1), colour(2), alpha]
+}

@@ -9,6 +9,7 @@ use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 
 use crate::host::{Host, Origin};
+use crate::kernels::{self, Image};
 use crate::registry::Bundle;
 use crate::runtime::Engine;
 
@@ -34,12 +35,7 @@ pub(crate) enum Io<'a> {
     Pass { src: &'a [Pixel], aux: &'a [Pixel], out: &'a mut [Pixel] },
 }
 
-struct PassImage<'a> {
-    size: [u32; 2],
-    pixels: &'a [Pixel],
-}
-
-impl PassImage<'_> {
+impl Image<'_> {
     fn window(&self, band: Window, reach: Option<u32>) -> Window {
         let (height, out_height) = (u64::from(self.size[1]), u64::from(band.size[1]).max(1));
         let Some(reach) = reach.map(u64::from) else { return Window { size: self.size, first_row: 0, rows: self.size[1] } };
@@ -201,10 +197,16 @@ impl Plugin {
             let Some(target) = slot(pass.out) else { continue };
             let mut out = std::mem::take(&mut written[target]);
             let read = |image: GpuImage| match slot(image) {
-                None => PassImage { size: cx.size, pixels },
-                Some(index) => PassImage { size: sizes[index], pixels: &written[index] },
+                None => Image { size: cx.size, pixels },
+                Some(index) => Image { size: sizes[index], pixels: &written[index] },
             };
-            let ran = self.run_pass(effect, cx, pass, read(pass.src), pass.aux.map(read), sizes[target], &mut out, &make_host);
+            let ran = match &pass.host {
+                Some(kernel) => {
+                    kernels::run(kernel, read(pass.src), pass.aux.map(read), sizes[target], &mut out);
+                    Ok(())
+                }
+                None => self.run_pass(effect, cx, pass, read(pass.src), pass.aux.map(read), sizes[target], &mut out, &make_host),
+            };
             written[target] = out;
             ran?;
         }
@@ -218,8 +220,8 @@ impl Plugin {
         effect: &str,
         cx: &RenderCx,
         pass: &GpuPass,
-        src: PassImage,
-        aux: Option<PassImage>,
+        src: Image,
+        aux: Option<Image>,
         size: [u32; 2],
         out: &mut [Pixel],
         make_host: &(impl Fn() -> H + Sync),
@@ -232,7 +234,7 @@ impl Plugin {
             let band = Window { size, first_row: (index * band_rows) as u32, rows: (rows.len() / width) as u32 };
             let reach = pass.reach.filter(|_| !spread);
             let src_window = src.window(band, reach);
-            let aux_window = aux.as_ref().map(|aux| aux.window(band, reach));
+            let aux_window = aux.as_ref().map(|aux| aux.window(band, pass.aux_reach.or(reach).filter(|_| !spread)));
             let (src_held, aux_held) = (src.held(src_window), aux.as_ref().zip(aux_window).map_or(&[][..], |(aux, window)| aux.held(window)));
             let call = Call::Pass {
                 effect: effect.into(),
