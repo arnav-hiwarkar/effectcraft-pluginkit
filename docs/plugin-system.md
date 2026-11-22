@@ -136,8 +136,8 @@ order. A panel or a command runs on one long-lived instance, so panel state pers
 
 A plugin effect's cache key holds the plugin's revision: a hash of its version and module, and the
 size, path and modification time of each file in the plugin's folder and its data folder (up to 256
-files). Reloading a changed plugin, or changing a file the effect reads from those folders, gives every
-layer that runs the effect a new key. The same holds for a layer that samples such a layer through a
+files). The app looks at the folders at most twice a second. Reloading a changed plugin, or changing a
+file the effect reads from those folders, gives every layer that runs the effect a new key. The same holds for a layer that samples such a layer through a
 layer parameter, and for the comp's content key, which the thumbnails and the disk frame cache use. A
 file outside those folders, read with `files.read`, is not part of the key.
 

@@ -12,6 +12,7 @@ use crate::manage::Loaded;
 
 const MAX_PADDING: u32 = 4096;
 const MAX_STAMPED_FILES: usize = 256;
+const STAMP_LIFETIME: std::time::Duration = std::time::Duration::from_millis(500);
 
 pub(crate) fn effect_id(plugin: &str, effect: &str) -> String {
     format!("{plugin}.{effect}")
@@ -44,24 +45,37 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
 }
 
 fn folders_stamp(folders: Vec<std::path::PathBuf>) -> dynamic::StampDyn {
+    let recent: std::sync::Mutex<Option<(std::time::Instant, u64)>> = std::sync::Mutex::new(None);
     Box::new(move || {
-        let mut stamps = Vec::new();
-        let mut pending = folders.clone();
-        while let Some(dir) = pending.pop() {
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            for entry in entries.flatten().take(MAX_STAMPED_FILES.saturating_sub(stamps.len())) {
-                let Ok(meta) = entry.metadata() else { continue };
-                if meta.is_dir() {
-                    pending.push(entry.path());
-                }
-                stamps.push((entry.path(), meta.len(), meta.modified().ok()));
-            }
+        let mut recent = recent.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((at, stamp)) = *recent
+            && at.elapsed() < STAMP_LIFETIME
+        {
+            return stamp;
         }
-        stamps.sort();
-        let mut hasher = std::hash::DefaultHasher::new();
-        stamps.hash(&mut hasher);
-        hasher.finish()
+        let stamp = stamp_folders(&folders);
+        *recent = Some((std::time::Instant::now(), stamp));
+        stamp
     })
+}
+
+fn stamp_folders(folders: &[std::path::PathBuf]) -> u64 {
+    let mut stamps = Vec::new();
+    let mut pending = folders.to_vec();
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten().take(MAX_STAMPED_FILES.saturating_sub(stamps.len())) {
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                pending.push(entry.path());
+            }
+            stamps.push((entry.path(), meta.len(), meta.modified().ok()));
+        }
+    }
+    stamps.sort();
+    let mut hasher = std::hash::DefaultHasher::new();
+    stamps.hash(&mut hasher);
+    hasher.finish()
 }
 
 pub(crate) fn unregister(plugin: &str) {

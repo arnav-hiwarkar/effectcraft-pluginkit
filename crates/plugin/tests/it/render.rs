@@ -114,5 +114,6 @@ fn a_plugin_effect_changes_its_cache_key_when_a_file_in_its_data_folder_changes(
     let data = app.plugins.get("test.render-data").expect("the plugin runs").data_dir.clone();
     std::fs::create_dir_all(&data).unwrap();
     std::fs::write(data.join("palette.json"), "[1, 2, 3]").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(600));
     assert_ne!(reader_key(&app).expect("the layer is cacheable"), before);
 }
