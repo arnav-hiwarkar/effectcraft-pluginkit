@@ -72,14 +72,13 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 
 ## Found by the second host kernel work, not fixed
 
-- **Lumen Glow on the GPU is 25 % slower than with its own shaders.** 1080p, in-process median of 21 runs
-  at load 3 to 4: 9.4 ms against 7.5 ms for the build before (`pk/kernels`). The fused pointwise loop is
-  one interpreting shader (`craft_pointwise` in `crates/gpu/src/shaders/plugin_kernels.wgsl`): its register
-  array indexed at run time costs about 0.4 ms (measured by replacing it), and the switch and per-op data
-  reads cost more. The emission is stored at full size before the first halving, where the old shader
-  thresholded each of the halving's 16 taps; running the fused program per tap instead was slower (10.0
-  ms). Generating WGSL per fused loop, or allocating its values to named registers on the host, would
-  remove the interpreter.
+- **Lumen Glow on the GPU is still about 7 % slower than with its own shaders.** 1080p, in-process median
+  of 21 runs, minimum of six alternating runs at load 5 to 6: 8.0 ms with each fused loop generated as
+  straight-line WGSL (`pointwise` in `crates/plugin-host/src/kernels/gpu.rs`), 9.7 ms with the interpreter
+  it replaced; the build with its own shaders (`pk/kernels`) measured 7.5 ms at load 3 to 4 and was not
+  measured again. The rest is the emission, stored at full size before the first halving. Running the
+  generated program on each of the halving's 16 taps instead removed that image and made four chained
+  Lumen effects 20 % faster, but one 1080p frame 1.7 ms slower, so it was not kept.
 - **Native Lumen Glow on all cores takes 5 % longer in wall time** (14.4 ms against 13.7 ms at 1080p, load
   3) although it runs 3 % fewer instructions: the emission and the upsampled glow are two more
   full-size images written and read.
