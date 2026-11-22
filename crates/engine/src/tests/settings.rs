@@ -1041,6 +1041,22 @@ fn a_recovered_auto_save_without_an_original_is_an_untitled_project() {
 }
 
 #[test]
+fn an_auto_save_with_every_comp_tab_closed_recovers_with_no_tab_open() {
+    let dir = tmp("recover-no-tabs");
+    let (mut s, [a, b, c]) = three_comp_session(&dir, false);
+    for id in [a, b, c] {
+        s.execute("comp.close", json!({"comp": id.0})).unwrap();
+    }
+    assert!(s.state.open_comps.is_empty());
+    let snapshot = s.autosave_now().unwrap();
+    let mut fresh = Session::default();
+    fresh.execute("file.open", json!({"path": snapshot})).unwrap();
+    assert!(fresh.state.open_comps.is_empty(), "{:?}", fresh.state.open_comps);
+    assert_eq!(fresh.state.active_comp, None);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn background_autosave_failure_retries_the_same_revision_and_retains_recovery() {
     let dir = tmp("autosave-retry");
     let (mut s, store) = background_autosave_session(&dir);

@@ -239,7 +239,12 @@ fn saved_files_reopen_in_pretty_and_compact_form() {
 #[test]
 fn project_files_save_again_byte_for_byte() {
     let (p, cid) = project_with_layer();
-    let view = crate::SavedView { active_comp: Some(cid), open_comps: vec![cid], comp_times: [(cid, effectcraft_time::Tick(4_237_833_600))].into() };
+    let view = crate::SavedView {
+        active_comp: Some(cid),
+        open_comps: Some(vec![cid]),
+        autosave_of: None,
+        comp_times: [(cid, effectcraft_time::Tick(4_237_833_600))].into(),
+    };
     for compact in [false, true] {
         let text = p.to_file_json_with_view(&view, compact).unwrap();
         let prefix = if compact { "{\"savedBy\":\"" } else { "{\n  \"savedBy\": \"" };
@@ -251,9 +256,26 @@ fn project_files_save_again_byte_for_byte() {
 }
 
 #[test]
+fn project_files_tell_no_open_tabs_from_no_recorded_tabs() {
+    let (p, cid) = project_with_layer();
+    let closed = crate::SavedView { open_comps: Some(vec![]), ..Default::default() };
+    let text = p.to_file_json_with_view(&closed, false).unwrap();
+    assert_eq!(crate::saved_view(&text).open_comps, Some(vec![]));
+    assert_eq!(crate::saved_view(&p.to_file_json().unwrap()).open_comps, None);
+    let made_from = crate::SavedView { open_comps: Some(vec![cid]), autosave_of: Some("/a/Shot.ecproj".into()), ..Default::default() };
+    let text = p.to_file_json_with_view(&made_from, true).unwrap();
+    assert_eq!(crate::saved_view(&text), made_from);
+}
+
+#[test]
 fn project_files_remember_the_open_comps() {
     let (p, cid) = project_with_layer();
-    let view = crate::SavedView { active_comp: Some(cid), open_comps: vec![cid], comp_times: [(cid, effectcraft_time::Tick(4_237_833_600))].into() };
+    let view = crate::SavedView {
+        active_comp: Some(cid),
+        open_comps: Some(vec![cid]),
+        autosave_of: None,
+        comp_times: [(cid, effectcraft_time::Tick(4_237_833_600))].into(),
+    };
     let text = p.to_file_json_with_view(&view, false).unwrap();
     assert_eq!(crate::saved_view(&text), view);
     assert_eq!(Project::from_json(&text).unwrap(), p, "the view is not part of the project");
