@@ -194,6 +194,11 @@ coordinates within this call's pixels, so subtract `frame.origin` from a full-fr
 `GpuPass::reach(n)` gives a pass the number of source rows above and below the matching source row that
 an output row reads. Without it the pass runs as one call on the CPU.
 
+`plan.validate(frame)` checks a plan against the limits in [Passes](plugin-gpu.md#limits) for a padded
+frame of that size and returns the first rule it breaks. The app runs this same check before it runs a
+plan on the GPU or the CPU, and reports the reason as the effect's error. `plan.check(frame)` also
+refuses a plan the CPU cannot run (one with draw passes, buffers, textures or layers).
+
 ## Fast maths
 
 `craft_plugin::math` holds `#[inline(always)]` `f32` functions with no tables and no library calls. Sandboxed and

@@ -45,21 +45,22 @@ A pass reads `src` and, optionally, `aux`, and writes `out`. Each names one of:
 | `GpuImage::Output` | The effect's result, the size of the frame. The last pass to write it gives the result. |
 | `plan.scratch([w, h])` | A working image of that size, declared on the plan. |
 | `plan.texture(key, [w, h])` | A picture the plugin stored with `host::cache_put(key, bytes)`: RGBA, four little-endian `f32` for each pixel, row 0 at the top. Read only. |
-| `plan.layer(param)` | The layer chosen in layer parameter `param`, resampled onto the padded frame: the same pixels `cx.layer(param)` gives `render`. The size of the frame. Transparent when no layer is chosen or it has nothing to show. Read only. |
+| `plan.layer(param)` | The layer chosen in layer parameter `param`, resampled onto the padded frame: the same pixels `cx.layer(param)` gives `render`. The size of the frame. Transparent when no layer is chosen or it has nothing to show. Read only. The app binds the texture it already keeps for that layer and resamples it on the GPU, so an unchanged layer is neither rendered nor uploaded again. |
 
 `layout` runs before the frame is padded, so there `cx.size`, `cx.offset` and point parameters describe
 the frame without padding. The passes run on the padded frame. Build the plan from `cx.padded(padding)`,
 which is the context `render` gets: its `size` includes the padding and its `offset` and points are
 moved by it. Read sizes in the kernel with `out_size()` and `src_size()` instead of assuming them.
 
-Values reach a pass through `.floats(&[..])` (up to 96) and `.uints(&[..])` (up to 16). A kernel reads
+Values reach a pass through `.floats(&[..])` (up to 96) and `.uints(&[..])` (up to 16), on the GPU and the CPU alike. A kernel reads
 value `i` with `pass_f(i)` or `pass_u(i)`; values the pass did not give read as 0. Scale distances by
 `cx.scale` as the CPU render does.
 
 ### Limits
 
-The app checks every plan before running it. A plan that fails does not run on the GPU. The CPU applies
-the same limits to the passes it runs (`GpuPlan::check`), and there the render fails with the reason:
+The app checks every plan with `GpuPlan::validate` before running it, on the GPU and on the CPU, and a
+plan that fails does not run: the effect reports the reason. The GPU then checks only what depends on the
+device and the stored bytes (image sizes the GPU holds, buffer and texture byte counts, indices):
 
 - 1 to 64 passes;
 - at most 32 scratch images, each at least 1×1 and at most twice the padded frame in each axis, and
@@ -67,8 +68,19 @@ the same limits to the passes it runs (`GpuPlan::check`), and there the render f
 - a pass reads only `Source` or an image an earlier pass wrote, never the image it writes;
 - no pass writes `Source` or a texture, and some pass writes `Output`;
 - at most 96 floats and 16 uints per pass;
-- at most 16 textures, each as many bytes as its size needs, together at most 16 777 216 pixels;
+- at most 16 textures and layers together, each texture as many bytes as its size needs, together at
+  most 16 777 216 pixels (a layer counts as one padded frame);
 - the limits on draw passes below.
+
+### Time
+
+The app runs a plan's compute passes in pieces of about 10 ms of GPU work, each a band of output rows,
+and learns from the first frames how long each kernel takes. A plan whose GPU work passes 2 seconds in
+one frame is stopped: the app logs which pass and kernel it reached, and the effect renders on the CPU
+until the plugin is reloaded. A kernel must therefore return early when `inside_out(id.xy)` is false: it
+is also false for pixels outside the band being run, and `store` ignores them. A kernel that skips the
+check computes the whole image once for every band. In the browser the app cannot wait for the GPU, so
+there the pieces run without the time limit.
 
 ## Draw passes
 
@@ -213,7 +225,7 @@ The app compiles your WGSL after a prelude that declares the bindings every kern
 | `aux` | `texture_2d<f32>` | The pass's `aux` image; a 1×1 transparent image when the pass has none. |
 | `out` | `texture_storage_2d<rgba32float, write>` | The pass's output image. |
 | `P` | uniform | The pass's values; read them with `pass_f` / `pass_u`. |
-| `data` | storage buffer | Reserved. |
+| `data` | storage buffer | Reserved: the app passes the rows of the band being run. |
 
 Do not declare these again, and declare no other bindings: the shader then fails to compile.
 
@@ -229,7 +241,7 @@ These prelude functions are stable:
 | Function | Returns |
 |---|---|
 | `out_size()`, `src_size()`, `aux_size()` | The image's size in pixels, `vec2<u32>`. |
-| `inside_out(p)` | Whether pixel `p` lies inside `out`. |
+| `inside_out(p)` | Whether pixel `p` lies inside `out` and in the band of rows being run. |
 | `pass_f(i)`, `pass_u(i)` | Value `i` of the pass's floats (0 to 95) or uints (0 to 15). |
 | `texel(t, p)` | Pixel `p: vec2<i32>` of `src` or `aux`; transparent outside the image. |
 | `out_uv(p)` | The centre of output pixel `p` in 0..1 coordinates. |
@@ -243,8 +255,8 @@ The prelude declares other helpers that may change. Prefix your own function nam
 the effect's name, so they cannot collide with them.
 
 When the WGSL fails to compile, or a kernel a pass names does not exist, the app logs the error once and
-renders the effect on the CPU until the plugin is reloaded. The log quotes line numbers in the prelude
-and your source together.
+renders the effect on the CPU until the plugin is reloaded. The log quotes line numbers of your source,
+as `wgsl:LINE:COLUMN`; a line of the prelude shows as `prelude LINE`.
 
 ## Example: tint
 
