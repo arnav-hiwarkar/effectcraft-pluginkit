@@ -445,8 +445,9 @@ help, render jobs, and plugin management. A refused or denied call returns an `E
 | Padding | 4096 pixels |
 
 A sandboxed plugin that passes a limit or panics is stopped. The next call starts a new instance, and
-panel state is lost. A file read, write or listing that a sandboxed call makes runs on a helper thread, so a
-stalled disk stops the call at its limit; the file call itself finishes in the background.
+panel state is lost. A host call is not interrupted: a file call on a stalled disk, or a slow app command, runs to
+its end, and the plugin is stopped when it returns past the limit. A write the plugin is told failed for that
+reason has still landed.
 
 ## App commands
 

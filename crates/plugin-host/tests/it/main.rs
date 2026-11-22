@@ -778,24 +778,26 @@ fn a_picked_file_replaced_by_a_link_is_refused_and_a_new_save_target_is_not_foll
 
 #[cfg(unix)]
 #[test]
-fn a_sandboxed_call_whose_file_read_stalls_fails_at_its_time_limit() {
+fn a_sandboxed_call_whose_file_write_stalls_returns_only_after_the_write_landed() {
     let outside = tempfile::tempdir().unwrap();
     let stalled = outside.path().join("stalled");
     assert!(Command::new("mkfifo").arg(&stalled).status().unwrap().success());
     let loaded = load(Kind::Wasm, &["files.read", "files.write"]);
     std::fs::write(loaded._dir.path().join("user-target.txt"), stalled.to_str().unwrap()).unwrap();
-    let (done, outcome) = std::sync::mpsc::channel();
-    let started = std::time::Instant::now();
     std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let _ = done.send(command(&loaded, "read-user", &mut Recorder::default()).map_err(|e| e.to_string()));
+        let reader = scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(700));
+            let released = std::time::Instant::now();
+            let mut written = String::new();
+            std::io::Read::read_to_string(&mut std::fs::File::open(&stalled).unwrap(), &mut written).unwrap();
+            (released, written)
         });
-        let answered = outcome.recv_timeout(Duration::from_secs(5));
-        let release = std::fs::OpenOptions::new().write(true).open(&stalled);
-        drop(release);
-        let error = answered.expect("the call returned while the read was still stalled").unwrap_err();
+        let error = command(&loaded, "write-user", &mut Recorder::default()).unwrap_err().to_string();
+        let returned = std::time::Instant::now();
+        let (released, written) = reader.join().unwrap();
         assert!(error.contains("the plugin passed its time limit while the host served a call"), "{error}");
-        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        assert!(returned > released, "the call returned {:?} before the disk let the write through", released - returned);
+        assert_eq!(written, "written by plugin");
     });
 }
 

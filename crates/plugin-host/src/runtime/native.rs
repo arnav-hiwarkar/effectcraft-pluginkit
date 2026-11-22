@@ -2,7 +2,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use craft_plugin::{ABI, Outcome, Pixel};
 use libloading::Library;
@@ -29,7 +29,7 @@ pub(crate) fn erase(cx: &mut HostCx) -> usize {
     std::ptr::from_mut(cx) as usize
 }
 
-pub(crate) fn serve_erased(ctx: usize, request: &[u8], bulk: &[u8], deadline: Option<Instant>) -> (Vec<u8>, Bulk, Duration) {
+pub(crate) fn serve_erased(ctx: usize, request: &[u8], bulk: &[u8]) -> (Vec<u8>, Bulk, Duration) {
     if ctx == 0 {
         let (reply, bulk) = refusal("host calls are only available during a call from the app");
         return (reply, bulk, Duration::ZERO);
@@ -37,7 +37,6 @@ pub(crate) fn serve_erased(ctx: usize, request: &[u8], bulk: &[u8], deadline: Op
     // SAFETY: `ctx` comes from `erase` on a `HostCx` that the caller of the plugin keeps alive and
     // exclusively borrowed for the whole plugin call; the plugin runs on that same thread.
     let cx = unsafe { &mut *(ctx as *mut HostCx) };
-    cx.deadline = deadline;
     let (reply, bulk) = guarded(cx, request, bulk);
     (reply, bulk, std::mem::take(&mut cx.paused))
 }
