@@ -108,6 +108,19 @@ impl NativeGuest {
             reply
         }
     }
+
+    pub fn render_band(&self, request: &[u8], input: &[Pixel], output: &mut [Pixel], skip: usize, cx: &mut HostCx) -> Vec<u8> {
+        if skip == 0 && input.len() == output.len() {
+            output.copy_from_slice(input);
+            return self.call(request, Some(output), cx);
+        }
+        let mut band = input.to_vec();
+        let reply = self.call(request, Some(&mut band), cx);
+        if let Some(core) = band.get(skip..skip + output.len()) {
+            output.copy_from_slice(core);
+        }
+        reply
+    }
 }
 
 unsafe extern "C" fn host_call(ctx: usize, request: *const u8, request_len: usize, bulk: *const u8, bulk_len: usize, out: *mut [usize; 4]) {

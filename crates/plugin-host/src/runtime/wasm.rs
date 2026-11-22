@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use wasmtime::{AsContextMut, Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc, UpdateDeadline};
 
-use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 
 use super::native;
@@ -125,22 +124,20 @@ impl WasmGuest {
     }
 
     fn exchange(&mut self, request: &[u8], io: Io) -> wasmtime::Result<Vec<u8>> {
-        let (inputs, blank): ([&[Pixel]; 2], usize) = match &io {
+        let (inputs, out_bytes): ([&[Pixel]; 2], usize) = match &io {
             Io::None => ([&[], &[]], 0),
             Io::InPlace(pixels) => ([pixels, &[]], 0),
             Io::Region { input, .. } => ([input, &[]], 0),
             Io::Pass { src, aux, out } => ([src, aux], size_of_val::<[Pixel]>(&**out)),
         };
         let [first, second] = inputs.map(bytemuck::cast_slice::<Pixel, u8>);
-        let pixel_bytes = first.len() + second.len() + blank;
+        let pixel_bytes = first.len() + second.len() + out_bytes;
         let pixels = self.pixel_buffer(pixel_bytes)?;
         let place = self.memory.data_mut(&mut self.store).get_mut(pixels as usize..).and_then(|tail| tail.get_mut(..pixel_bytes));
         let place = place.ok_or_else(|| wasmtime::format_err!("the frame does not fit in plugin memory"))?;
         let (first_place, rest) = place.split_at_mut(first.len());
-        let (second_place, blank_place) = rest.split_at_mut(second.len());
-        copy(first_place, first);
-        copy(second_place, second);
-        blank_place.fill(0);
+        first_place.copy_from_slice(first);
+        rest[..second.len()].copy_from_slice(second);
 
         let request_at = self.alloc.call(&mut self.store, len(request)?)?;
         if request_at == 0 {
@@ -174,7 +171,7 @@ impl WasmGuest {
         let output: &mut [u8] = bytemuck::cast_slice_mut(output);
         let from = pixels as usize + skip * size_of::<Pixel>();
         let rendered = self.memory.data(&self.store).get(from..).and_then(|tail| tail.get(..output.len()));
-        copy(output, rendered.ok_or_else(|| wasmtime::format_err!("the frame does not fit in plugin memory"))?);
+        output.copy_from_slice(rendered.ok_or_else(|| wasmtime::format_err!("the frame does not fit in plugin memory"))?);
         Ok(reply)
     }
 
@@ -266,11 +263,6 @@ fn cache_name(engine: &Engine, bytes: &[u8]) -> String {
     hasher.write(std::env::consts::OS.as_bytes());
     engine.precompile_compatibility_hash().hash(&mut hasher);
     hasher.0.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn copy(to: &mut [u8], from: &[u8]) {
-    const CHUNK: usize = 1 << 20;
-    to.par_chunks_mut(CHUNK).zip(from.par_chunks(CHUNK)).for_each(|(to, from)| to.copy_from_slice(from));
 }
 
 fn succeeded(reply: &[u8]) -> bool {

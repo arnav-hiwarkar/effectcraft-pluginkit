@@ -188,7 +188,7 @@ fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {
 |---|---|
 | `pass.kernel`, `pass.f`, `pass.u` | The pass's kernel name and numbers, as given in the plan. |
 | `pass.src`, `pass.aux` | The images the pass reads (`Rows`). `width` and `height` are the whole image; `at(x, y)` and `row(y)` take whole-image coordinates. A pixel outside the image, or in a row this call was not given, reads as transparent. |
-| `out` | The band to fill. `out.rows_mut()` yields `(y, row)` with `y` in the whole output image; `out.origin[1]` is the band's first row. |
+| `out` | The band to fill. Write every pixel: what `out` holds before the call is not defined. `out.rows_mut()` yields `(y, row)` with `y` in the whole output image; `out.origin[1]` is the band's first row. |
 | `pass.out_size` | The whole output image's width and height. |
 
 `GpuPass::reach(n)` says how many source rows above and below the matching source row an output row
@@ -200,7 +200,7 @@ band edges; when sizes are odd the matching row can be one less than `2 * y` or 
 allow one row more. A pass without a reach needs its whole source and runs as one call on one core.
 
 A pass never reads the image it writes: the plan is refused. A pass that returns an error fails the
-render. A native plugin runs the same bands directly on the app's images with no copies. The default
+render, and the layer keeps its frame. A native plugin runs the same bands directly on the app's images with no copies. The default
 `pass` returns an error naming the kernel, so an effect with `Layout::gpu` plans needs none.
 
 ## The WGSL side

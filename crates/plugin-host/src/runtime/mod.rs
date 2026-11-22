@@ -91,7 +91,8 @@ impl Engine {
             Kind::Native(guest) => match io {
                 Io::None => Ok(guest.call(request, None, &mut cx)),
                 Io::InPlace(pixels) => Ok(guest.call(request, Some(pixels), &mut cx)),
-                Io::Region { .. } | Io::Pass { .. } => Err(PluginError::Protocol("native plugins render in place".into())),
+                Io::Region { input, output, skip } => Ok(guest.render_band(request, input, output, skip, &mut cx)),
+                Io::Pass { .. } => Err(PluginError::Protocol("native plugins read pass images through their addresses".into())),
             },
             Kind::Wasm { module, main, .. } if stateful => {
                 let mut slot = main.lock().map_err(|_| PluginError::Trap("an earlier call panicked".into()))?;

@@ -399,12 +399,31 @@ fn an_empty_frame_renders_to_nothing_without_failing() {
 }
 
 #[test]
-fn a_sandboxed_effect_that_fails_leaves_the_frame_as_it_was() {
-    let loaded = load(Kind::Wasm, &[]);
-    let mut pixels: Vec<Pixel> = vec![[0.1, 0.2, 0.3, 1.0]; 4];
-    let failed = loaded.plugin.render("half-done", &cx(2, 2), None, &mut pixels, Recorder::default).unwrap_err();
-    assert!(failed.to_string().contains("gave up half way"), "{failed}");
-    assert_eq!(pixels, vec![[0.1, 0.2, 0.3, 1.0]; 4]);
+fn an_effect_whose_last_band_fails_leaves_the_frame_as_it_was() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        for (size, reach) in [([2, 2], None), ([3, 512], Some(0)), ([3, 512], Some(2))] {
+            let source: Vec<Pixel> = (0..size[0] * size[1]).map(|i| [i as f32, 0.2, 0.3, 1.0]).collect();
+            let mut pixels = source.clone();
+            let failed = pool.install(|| loaded.plugin.render("half-done", &cx(size[0], size[1]), reach, &mut pixels, Recorder::default)).unwrap_err();
+            assert!(failed.to_string().contains("gave up half way"), "{kind:?} {reach:?}: {failed}");
+            assert!(pixels == source, "{kind:?} {reach:?} changed the frame although a band failed");
+        }
+    });
+}
+
+#[test]
+fn a_neighbourhood_effect_renders_in_bands_that_hold_their_reach() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let mut pixels: Vec<Pixel> = vec![[0.0; 4]; 1024];
+        pool.install(|| loaded.plugin.render("mark-band", &cx(1, 1024), Some(2), &mut pixels, Recorder::default)).unwrap();
+        assert_eq!([pixels[0], pixels[255]], [[0.0, 258.0, 0.0, 1.0], [0.0, 258.0, 255.0, 1.0]], "{kind:?} first band");
+        assert_eq!([pixels[256], pixels[600]], [[254.0, 260.0, 256.0, 1.0], [510.0, 260.0, 600.0, 1.0]], "{kind:?} middle bands");
+        assert_eq!(pixels[1023], [766.0, 258.0, 1023.0, 1.0], "{kind:?} last band");
+    });
 }
 
 #[cfg(unix)]
