@@ -139,7 +139,7 @@ struct Renderer<'a> {
     last: Option<egui::Response>,
 }
 
-fn salt(widget: &Widget, index: usize) -> u64 {
+fn plugin_id(widget: &Widget) -> Option<u64> {
     match widget {
         Widget::Button { id, .. }
         | Widget::Checkbox { id, .. }
@@ -153,8 +153,8 @@ fn salt(widget: &Widget, index: usize) -> u64 {
         | Widget::Scroll { id, .. }
         | Widget::Collapsing { id, .. }
         | Widget::Tabs { id, .. }
-        | Widget::Grid { id, .. } => *id,
-        _ => index as u64,
+        | Widget::Grid { id, .. } => Some(*id),
+        _ => None,
     }
 }
 
@@ -172,8 +172,18 @@ fn font_size(size: f32) -> f32 {
 
 impl Renderer<'_> {
     fn all(&mut self, ui: &mut egui::Ui, widgets: &[Widget]) {
-        for (index, widget) in widgets.iter().enumerate() {
-            ui.push_id(salt(widget, index), |ui| self.widget(ui, widget));
+        for widget in widgets {
+            self.scoped(ui, widget);
+        }
+    }
+
+    fn scoped(&mut self, ui: &mut egui::Ui, widget: &Widget) {
+        match plugin_id(widget) {
+            Some(id) => {
+                let scope = egui::Id::unique(("plugin-ui", self.scope, id));
+                ui.scope_builder(UiBuilder::new().scope_id(scope), |ui| self.widget(ui, widget));
+            }
+            None => self.widget(ui, widget),
         }
     }
 
@@ -347,7 +357,7 @@ impl Renderer<'_> {
     fn grid(&mut self, ui: &mut egui::Ui, id: u64, columns: usize, children: &[Widget]) {
         egui::Grid::new(id).show(ui, |ui| {
             for (index, child) in children.iter().enumerate() {
-                ui.push_id(salt(child, index), |ui| self.widget(ui, child));
+                self.scoped(ui, child);
                 if (index + 1) % columns == 0 {
                     ui.end_row();
                 }
@@ -488,6 +498,28 @@ mod tests {
             },
             Vec::new(),
         )
+    }
+
+    #[test]
+    fn an_open_section_inside_a_row_stays_open_when_a_sibling_appears_above_the_row() {
+        let tokens = Tokens::for_kind(Default::default());
+        let section =
+            Widget::Collapsing { id: 2, title: "More".into(), open: false, children: vec![Widget::Button { id: 3, text: "Inside".into(), enabled: true }] };
+        let mut harness = Harness::new_ui_state(
+            move |ui, widgets: &mut Vec<Widget>| {
+                let mut auto = Registry::default();
+                let mut images = Images::default();
+                draw(ui, widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin: "test", images: &mut images });
+            },
+            vec![Widget::Row { children: vec![section] }],
+        );
+        harness.get_by_label("More").click();
+        harness.run();
+        assert!(harness.query_by_label("Inside").is_some());
+        harness.state_mut().insert(0, Widget::Label { text: "Name taken".into(), style: TextStyle::Error });
+        harness.run();
+        assert!(harness.query_by_label("Name taken").is_some());
+        assert!(harness.query_by_label("Inside").is_some());
     }
 
     #[test]
