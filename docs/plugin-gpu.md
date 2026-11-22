@@ -10,6 +10,8 @@ textures or layers runs only on the GPU.
   textures, and never copies the frame into the plugin's sandbox.
 - On the CPU the kernels are the effect's `pass` method. The app splits each pass into horizontal bands,
   runs them on all cores, and gives each sandboxed instance only the source rows its band reads.
+- A pass can instead name a [host kernel](#host-kernels): a blur, resample, blend, curve, convolution,
+  warp or colour matrix that the app runs itself, natively on the CPU and with its own WGSL on the GPU.
 
 The GPU runs the plan when GPU Acceleration is on (`--gpu` on the command line). Otherwise, and whenever
 the GPU declines, the app runs the plan on the CPU if the layout says it can (`Layout::passes`), and calls
@@ -68,6 +70,7 @@ device and the stored bytes (image sizes the GPU holds, buffer and texture byte 
 - a pass reads only `Source` or an image an earlier pass wrote, never the image it writes;
 - no pass writes `Source` or a texture, and some pass writes `Output`;
 - at most 96 floats and 16 uints per pass;
+- the limits of each [host kernel](#host-kernels);
 - at most 16 textures and layers together, each texture as many bytes as its size needs, together at
   most 16 777 216 pixels (a layer counts as one padded frame);
 - the limits on draw passes below.
@@ -207,7 +210,8 @@ fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {
 `GpuPass::reach(n)` says how many source rows above and below the matching source row an output row
 reads. `reach(0)` is pointwise. The source and the output of a pass may differ in size: the matching
 source row of output row `y` is `y * src_height / out_height`, rounded down, and the same reach applies
-to `aux` with its own height. A band gets the source rows matching its first and last output rows, widened
+to `aux` with its own height. `GpuPass::aux_reach(n)` gives `aux` a reach of its own, for example
+`.reach(0).aux_reach(2)` for a pass that reads its source pointwise and a half-size `aux` two rows around. A band gets the source rows matching its first and last output rows, widened
 by the reach. Rows outside that read as transparent, so a reach that is too small shows as dark lines at
 band edges; when sizes are odd the matching row can be one less than `2 * y` or `y / 2` suggests, so
 allow one row more. A pass without a reach needs its whole source and runs as one call on one core.
@@ -215,6 +219,49 @@ allow one row more. A pass without a reach needs its whole source and runs as on
 A pass never reads the image it writes: the plan is refused. A pass that returns an error fails the
 render, and the layer keeps its frame. A native plugin runs the same bands directly on the app's images with no copies. The default
 `pass` returns an error naming the kernel, so an effect with `Layout::gpu` plans needs none.
+
+## Host kernels
+
+A host kernel pass names a standard step instead of plugin code. The app runs it on its own images: on
+the CPU natively on all cores with nothing copied into the sandbox, on the GPU with the app's WGSL. Both
+give the same result within 2/255, so a plan of host kernels needs no `pass` method and no WGSL of its
+own. Mix host kernel passes and plugin passes freely in one plan.
+
+| Builder | What it computes |
+|---|---|
+| `GpuPass::blur(src, out, [rx, ry])` | Gaussian blur reaching `rx` and `ry` pixels (standard deviation a third of the radius), 0 to 512. |
+| `GpuPass::box_blur(src, out, [rx, ry])` | Box blur of that radius; a fractional radius weighs the outer pixels by its fraction. |
+| `GpuPass::resample(src, out, Filter::Bilinear)` | `src` scaled to the size of `out`, `Filter::Bilinear` or `Filter::Bicubic` (Catmull-Rom). Shrinking widens the filter, so every source pixel counts. |
+| `GpuPass::blend_images(base, top, out, mode, amount)` | `top` over `base` in a `BlendMode`, mixed by `amount` (0 keeps `base`). |
+| `GpuPass::curves(src, out, &table)` | A lookup table per channel: entry `i` of `n` holds the output for input `i / (n - 1)`, red, green, blue and alpha, 2 to 4096 entries. |
+| `GpuPass::convolve(src, out, Taps::Separable { x, y })` | A separable kernel, odd tap counts up to 1025, centred on the pixel. |
+| `GpuPass::convolve(src, out, Taps::Full { width, weights })` | A full kernel, odd sides up to 31, row by row. |
+| `GpuPass::warp(src, displacement, out, [ax, ay])` | Each pixel read from `src` at its position plus `ax` times the red and `ay` times the green of `displacement`, bilinear. |
+| `GpuPass::matrix(src, out, rows)` | A 4×4 colour matrix: output channel `i` is `rows[i]` dotted with the input pixel. |
+| `GpuPass::host(HostKernel::..., src, out)` | Any kernel with all its fields, for example `HostKernel::Resample { filter, scale: Some([2.0, 2.0]) }` to fix the source pixels per output pixel instead of taking it from the sizes. |
+
+Rules shared by all of them:
+
+- Pixels outside an image read as transparent, as for plugin passes.
+- `blur`, `convolve`, `curves`, `matrix`, `blend_images` and `warp` write an image of their source's size,
+  and `blend_images` and `warp` an `aux` of that size too. `resample` maps any size to any size, shrinking
+  at most 64 times in one pass.
+- The `BlendMode`s are `Over` (premultiplied over), `Add`, `Subtract`, `Multiply`, `Screen`, `Overlay`,
+  `Darken`, `Lighten` and `Difference`. All but `Over` work channel by channel, alpha included.
+- `curves` works on straight colour: it divides by alpha, looks the colour up, and multiplies by the
+  alpha it looked up. Inputs outside 0 to 1 take the end entries. `matrix` works on the premultiplied
+  values as they are.
+- A pass's `floats`, `uints` and `reach` are ignored; the app knows what each kernel reads.
+
+`plan.validate` checks each kernel's fields and names the pass and the field it refuses:
+`pass 2 (blur): `radius` is [600.0, 2.0]; each axis must be 0 to 512`.
+
+The GPU runs plans only for effects that give WGSL. An effect whose plans use only host kernels gives an
+empty shader, `.shader("")`, and the app's kernels are all it needs.
+
+Lumen Glow (`plugins/lumen-glow`) builds its glow from host kernels: a plugin pass for the threshold and
+first halving, host `resample` passes down a pyramid, a separable `convolve`, `matrix` and `blend_images`
+per level, and a plugin pass for the final composite.
 
 ## The WGSL side
 
@@ -252,8 +299,9 @@ These prelude functions are stable:
 0..1 coordinates name the same spot in images of any size, so `sample_uv(aux, out_uv(id.xy))` reads a
 half-size scratch image under the current output pixel.
 
-The prelude declares other helpers that may change. Prefix your own function names, for example with
-the effect's name, so they cannot collide with them.
+The prelude declares other helpers that may change, and the host kernels as entry points whose names
+start with `craft_`. Prefix your own function names, for example with the effect's name, so they cannot
+collide with them.
 
 When the WGSL fails to compile, or a kernel a pass names does not exist, the app logs the error once and
 renders the effect on the CPU until the plugin is reloaded. The log quotes line numbers of your source,

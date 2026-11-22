@@ -203,7 +203,27 @@ coordinates within this call's pixels, so subtract `frame.origin` from a full-fr
 | `.gpu(plan)` | Run these passes when the GPU renderer is active; `render` is the CPU path. |
 
 `GpuPass::reach(n)` gives a pass the number of source rows above and below the matching source row that
-an output row reads. Without it the pass runs as one call on the CPU.
+an output row reads. Without it the pass runs as one call on the CPU. `GpuPass::aux_reach(n)` sets the
+reach of `aux` alone; without it `aux` uses the pass's reach.
+
+### Host kernels
+
+Passes the app computes itself, on the CPU natively and on the GPU with its own WGSL, within 2/255 of
+each other. See [Host kernels](plugin-gpu.md#host-kernels) for what each computes.
+
+| Builder | Fields and limits |
+|---|---|
+| `GpuPass::blur(src, out, radius)`, `GpuPass::box_blur(..)` | `HostKernel::Blur { shape: BlurShape::Gaussian | Box, radius: [f32; 2] }`, each axis 0 to `MAX_BLUR_RADIUS` (512). `src` and `out` the same size. |
+| `GpuPass::resample(src, out, filter)` | `HostKernel::Resample { filter: Filter::Bilinear | Bicubic, scale: Option<[f32; 2]> }`. `scale` is source pixels per output pixel, above 0 and at most 64; `None` takes it from the sizes. |
+| `GpuPass::blend_images(base, top, out, mode, amount)` | `HostKernel::Blend { mode: BlendMode, amount: f32 }`, `top` as `aux`. All three the same size; `amount` finite. |
+| `GpuPass::curves(src, out, table)` | `HostKernel::Curves { table: Vec<Pixel> }`, 2 to `MAX_CURVE_POINTS` (4096) entries. |
+| `GpuPass::convolve(src, out, taps)` | `HostKernel::Convolve { taps: Taps::Separable { x, y } | Taps::Full { width, weights } }`. Separable: odd counts up to `MAX_TAPS` (1025). Full: odd sides up to `MAX_FULL_SIDE` (31). |
+| `GpuPass::warp(src, displacement, out, amount)` | `HostKernel::Warp { amount: [f32; 2] }`, displacement as `aux`, each axis at most `MAX_WARP` (4096) pixels. |
+| `GpuPass::matrix(src, out, rows)` | `HostKernel::Matrix { rows: [[f32; 4]; 4] }`, finite. |
+| `GpuPass::host(kernel, src, out)` | Any `HostKernel`. |
+
+Every value must be finite. `kernel.check(src_size, aux_size, out_size)` is the check `plan.validate`
+runs for one pass.
 
 `plan.validate(frame)` checks a plan against the limits in [Passes](plugin-gpu.md#limits) for a padded
 frame of that size and returns the first rule it breaks. The app runs this same check before it runs a
