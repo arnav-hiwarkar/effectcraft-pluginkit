@@ -1,34 +1,52 @@
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use craft_plugin_host::ui::{Paint, Shape};
 use craft_plugin_host::viewer::{Bind, Mark, Space, ToolEvent, ToolEventKind};
 use effectcraft_engine::render::EvalCtx;
 use effectcraft_engine::time::Tick;
-use effectcraft_plugin::viewer::{Shown, overlay, tool_event, tools};
+use effectcraft_plugin::Panels;
+use effectcraft_plugin::viewer::{Shown, tools};
 use serde_json::{Value, json};
 
 use crate::{App, app};
 
-fn aim_layer(app: &mut App) {
+pub(crate) fn aim_layer(app: &mut App) {
     app.session.execute("layer.newSolid", json!({"name": "Aim", "color": "#204060", "width": 64, "height": 36})).unwrap();
     app.session.execute("effect.apply", json!({"layer": "Aim", "effect": format!("{}.aim", app.id)})).unwrap();
 }
 
-fn shown(app: &App) -> Arc<Shown> {
-    let session = &app.session;
-    let comp = session.active_comp().unwrap();
-    let ctx = EvalCtx::new(&session.project, session.active_comp_id().unwrap(), comp, Tick::ZERO);
-    let layer = comp.layers.iter().find(|layer| layer.name == "Aim").unwrap();
-    overlay(&ctx, layer, layer.effects().unwrap().groups().next().unwrap()).expect("the effect draws an overlay")
+pub(crate) fn settle(app: &mut App, panels: &mut Panels) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !panels.idle() {
+        assert!(Instant::now() < deadline, "the plugin did not answer within 20 s");
+        panels.frame(&mut app.session, Duration::ZERO);
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
-fn drag(app: &mut App, shown: &Shown, handle: usize, delta: [f64; 2], merge: &str) {
-    let comp = app.session.active_comp().unwrap();
-    let layer = comp.layers.iter().find(|layer| layer.name == "Aim").unwrap();
-    let commands = shown.drag_commands(handle, delta, layer, layer.effects().unwrap().groups().next().unwrap(), merge).unwrap();
+pub(crate) fn try_shown(app: &mut App, panels: &mut Panels) -> Option<Arc<Shown>> {
+    let project = app.session.project.clone();
+    let comp = project.comp(app.session.active_comp_id()?)?;
+    let ctx = EvalCtx::new(&project, app.session.active_comp_id()?, comp, app.session.time_of(app.session.active_comp_id()?));
+    let layer = comp.layers.iter().find(|layer| layer.name == "Aim")?;
+    panels.overlay(&mut app.session, &ctx, layer, layer.effects()?.groups().next()?)
+}
+
+fn shown(app: &mut App, panels: &mut Panels) -> Arc<Shown> {
+    try_shown(app, panels);
+    settle(app, panels);
+    try_shown(app, panels).expect("the effect draws an overlay")
+}
+
+fn drag(app: &mut App, panels: &mut Panels, shown: &Shown, handle: usize, delta: [f64; 2], merge: &str) {
+    let project = app.session.project.clone();
+    let layer = project.comp(app.session.active_comp_id().unwrap()).unwrap().layers.iter().find(|layer| layer.name == "Aim").unwrap();
+    let commands = panels.drag(&app.session, shown, handle, delta, layer.effects().unwrap().groups().next().unwrap(), merge).unwrap();
     for (id, params) in commands {
         app.session.execute_checked(&id, params).unwrap();
     }
+    settle(app, panels);
 }
 
 fn value(app: &mut App, param: &str) -> Value {
@@ -38,8 +56,9 @@ fn value(app: &mut App, param: &str) -> Value {
 #[test]
 fn an_effect_overlay_arrives_with_its_shapes_and_handles_in_layer_space_and_is_kept_until_a_value_changes() {
     let mut app = app("test.viewer-overlay", &[]);
+    let mut panels = Panels::default();
     aim_layer(&mut app);
-    let first = shown(&app);
+    let first = shown(&mut app, &mut panels);
     let handles: Vec<([f64; 2], &Bind)> = first.overlay.handles.iter().map(|handle| (handle.at, &handle.bind)).collect();
     let point = |param: &str| Bind::Point { param: param.into() };
     assert_eq!(
@@ -64,9 +83,10 @@ fn an_effect_overlay_arrives_with_its_shapes_and_handles_in_layer_space_and_is_k
             Mark { shape: Shape::Line { points: vec![[0.0, 0.0], [4.0, 4.0]], color: Paint::Accent, width: 1.5 }, space: Space::Comp },
         ]
     );
-    assert!(Arc::ptr_eq(&first, &shown(&app)), "the same values give the retained overlay without a plugin call");
+    assert!(Arc::ptr_eq(&first, &try_shown(&mut app, &mut panels).unwrap()), "the same values give the retained overlay without a plugin call");
+    assert!(panels.idle());
     app.session.execute_checked("prop.set", json!({"layer": "Aim", "path": "effects/#1/reach", "value": 20.0})).unwrap();
-    let changed = shown(&app);
+    let changed = shown(&mut app, &mut panels);
     assert!(!Arc::ptr_eq(&first, &changed));
     assert_eq!(changed.overlay.handles[2].at, [72.0, 18.0]);
 }
@@ -74,6 +94,7 @@ fn an_effect_overlay_arrives_with_its_shapes_and_handles_in_layer_space_and_is_k
 #[test]
 fn dragging_each_kind_of_handle_sets_its_parameter_in_one_undo_step() {
     let mut app = app("test.viewer-drag", &[]);
+    let mut panels = Panels::default();
     aim_layer(&mut app);
     let cases: [(usize, [f64; 2], &[(&str, Value)]); 5] = [
         (0, [3.0, -2.0], &[("centre", json!([35.0, 16.0]))]),
@@ -84,9 +105,9 @@ fn dragging_each_kind_of_handle_sets_its_parameter_in_one_undo_step() {
     ];
     for (n, (handle, delta, expected)) in cases.into_iter().enumerate() {
         let before: Vec<Value> = expected.iter().map(|(param, _)| value(&mut app, param)).collect();
-        let start = shown(&app);
-        drag(&mut app, &start, handle, [delta[0] / 2.0, delta[1] / 2.0], &format!("gesture-{n}"));
-        drag(&mut app, &start, handle, delta, &format!("gesture-{n}"));
+        let start = shown(&mut app, &mut panels);
+        drag(&mut app, &mut panels, &start, handle, [delta[0] / 2.0, delta[1] / 2.0], &format!("gesture-{n}"));
+        drag(&mut app, &mut panels, &start, handle, delta, &format!("gesture-{n}"));
         let after: Vec<(&str, Value)> = expected.iter().map(|(param, _)| (*param, value(&mut app, param))).collect();
         assert_eq!(after, expected.to_vec(), "handle {handle}");
         app.session.execute_checked("edit.undo", json!({})).unwrap();
@@ -98,12 +119,13 @@ fn dragging_each_kind_of_handle_sets_its_parameter_in_one_undo_step() {
 #[test]
 fn a_handle_drag_on_a_keyframed_parameter_moves_the_key_at_the_current_time() {
     let mut app = app("test.viewer-keys", &[]);
+    let mut panels = Panels::default();
     aim_layer(&mut app);
     for (time, at) in [(0.0, [10.0, 10.0]), (1.0, [20.0, 20.0])] {
         app.session.execute_checked("prop.addKey", json!({"layer": "Aim", "path": "effects/#1/centre", "time": time, "value": at})).unwrap();
     }
-    let start = shown(&app);
-    drag(&mut app, &start, 0, [5.0, 0.0], "keyed");
+    let start = shown(&mut app, &mut panels);
+    drag(&mut app, &mut panels, &start, 0, [5.0, 0.0], "keyed");
     let keys = app.session.execute_checked("prop.get", json!({"layer": "Aim", "path": "effects/#1/centre"})).unwrap()["keys"].clone();
     let values: Vec<Value> = keys.as_array().unwrap().iter().map(|key| key["value"].clone()).collect();
     assert_eq!(values, vec![json!([15.0, 10.0]), json!([20.0, 20.0])]);
@@ -124,25 +146,35 @@ fn event(kind: ToolEventKind, comp: [f64; 2]) -> ToolEvent {
     }
 }
 
-#[test]
-fn a_tool_gesture_edits_the_project_through_commands_as_one_undo_step() {
-    let mut app = app("test.viewer-tool", &["document.read", "document.write"]);
-    assert!(tools().iter().any(|(plugin, spec)| *plugin == app.id && spec.id == "stamp" && spec.name == "Stamp"));
-    let steps_before = app.session.history.undo.len();
-    let mut last = None;
-    for (kind, at) in [(ToolEventKind::Down, [4.0, 5.0]), (ToolEventKind::Move, [6.0, 7.0]), (ToolEventKind::Move, [8.0, 9.0]), (ToolEventKind::Up, [8.0, 9.0])]
-    {
-        last = Some(tool_event(&mut app.session, &app.id, "stamp", &event(kind, at)).unwrap());
+fn gesture(app: &mut App, panels: &mut Panels, events: &[(ToolEventKind, [f64; 2])]) -> Vec<String> {
+    for (kind, at) in events {
+        panels.tool(&app.session, &app.id, "stamp", event(*kind, *at)).unwrap();
+        settle(app, panels);
     }
-    let texts: Vec<String> = last
-        .unwrap()
+    let overlay = panels.tool_overlay(&mut app.session).cloned().unwrap_or_default();
+    overlay
         .marks
         .into_iter()
         .filter_map(|mark| match mark.shape {
             Shape::Text { text, .. } => Some(text),
             _ => None,
         })
-        .collect();
+        .collect()
+}
+
+fn undo_labels(app: &App, steps: usize) -> Vec<String> {
+    let undo = &app.session.history.undo;
+    undo[undo.len().saturating_sub(steps)..].iter().map(|(label, _)| label.clone()).collect()
+}
+
+#[test]
+fn a_tool_gesture_edits_the_project_through_commands_as_one_undo_step() {
+    let mut app = app("test.viewer-tool", &["document.read", "document.write"]);
+    let mut panels = Panels::default();
+    assert!(tools().iter().any(|(plugin, spec)| *plugin == app.id && spec.id == "stamp" && spec.name == "Stamp"));
+    let steps_before = app.session.history.undo.len();
+    let events = [(ToolEventKind::Down, [4.0, 5.0]), (ToolEventKind::Move, [6.0, 7.0]), (ToolEventKind::Move, [8.0, 9.0]), (ToolEventKind::Up, [8.0, 9.0])];
+    let texts = gesture(&mut app, &mut panels, &events);
     assert_eq!(texts, ["Down 4.0 5.0", "Move 6.0 7.0", "Move 8.0 9.0", "Up 8.0 9.0"]);
     assert_eq!(app.layer_names(), ["Stamp"]);
     let position = app.session.execute_checked("prop.get", json!({"layer": "Stamp", "path": "transform/position"})).unwrap()["value"].clone();
@@ -151,6 +183,44 @@ fn a_tool_gesture_edits_the_project_through_commands_as_one_undo_step() {
     assert_eq!(app.session.history.undo.last().map(|(label, _)| label.as_str()), Some("Stamp"));
     app.session.execute_checked("edit.undo", json!({})).unwrap();
     assert!(app.layer_names().is_empty(), "one undo removes the whole gesture");
+}
+
+#[test]
+fn an_edit_made_between_a_tools_press_and_release_stays_its_own_undo_step() {
+    let mut app = app("test.viewer-tool-between", &["document.read", "document.write"]);
+    let mut panels = Panels::default();
+    gesture(&mut app, &mut panels, &[(ToolEventKind::Down, [4.0, 5.0])]);
+    app.session.execute_checked("layer.newSolid", json!({"name": "Between", "color": "#ffffff"})).unwrap();
+    gesture(&mut app, &mut panels, &[(ToolEventKind::Move, [6.0, 7.0]), (ToolEventKind::Up, [8.0, 9.0])]);
+    assert_eq!(undo_labels(&app, 3), ["Stamp", "New Solid", "Stamp"]);
+    app.session.execute_checked("edit.undo", json!({})).unwrap();
+    assert_eq!(app.layer_names(), ["Between", "Stamp"], "the first undo takes back only the moves after the solid");
+    app.session.execute_checked("edit.undo", json!({})).unwrap();
+    assert_eq!(app.layer_names(), ["Stamp"]);
+}
+
+#[test]
+fn a_tool_put_away_in_the_middle_of_a_gesture_folds_nothing_more_into_it() {
+    let mut app = app("test.viewer-tool-away", &["document.read", "document.write"]);
+    let mut panels = Panels::default();
+    gesture(&mut app, &mut panels, &[(ToolEventKind::Down, [4.0, 5.0])]);
+    panels.put_tool_away();
+    gesture(&mut app, &mut panels, &[(ToolEventKind::Move, [6.0, 7.0]), (ToolEventKind::Up, [8.0, 9.0])]);
+    assert_eq!(undo_labels(&app, 3), ["Stamp", "Change Property", "Change Property"]);
+}
+
+#[test]
+fn a_grab_does_not_continue_on_the_overlay_of_a_reloaded_plugin() {
+    let mut app = app("test.viewer-grab", &[]);
+    let mut panels = Panels::default();
+    aim_layer(&mut app);
+    let grabbed = shown(&mut app, &mut panels);
+    assert!(shown(&mut app, &mut panels).continues(&grabbed, 0));
+    assert!(!shown(&mut app, &mut panels).continues(&grabbed, 9), "a handle the overlay does not have");
+    app.plugins.load_for_session(app.bundle.path()).unwrap();
+    let reloaded = shown(&mut app, &mut panels);
+    assert_eq!(reloaded.overlay.handles.len(), grabbed.overlay.handles.len());
+    assert!(!reloaded.continues(&grabbed, 0));
 }
 
 #[test]
@@ -172,7 +242,7 @@ fn a_plugin_built_before_viewer_controls_loads_renders_and_keeps_the_built_in_cr
     let centre = image.data[(image.height / 2 * image.width + image.width / 2) as usize];
     assert!((centre[0] - 0.5).abs() < 0.01 && (centre[1] - 0.5).abs() < 0.01, "it renders its point parameter: {centre:?}");
 
-    let shown = shown(&app);
+    let shown = shown(&mut app, &mut Panels::default());
     assert!(shown.overlay.handles.is_empty() && shown.overlay.marks.is_empty(), "it draws no overlay of its own");
     assert!(!shown.binds("spot"), "so the viewer keeps the built-in crosshair for its point");
 }

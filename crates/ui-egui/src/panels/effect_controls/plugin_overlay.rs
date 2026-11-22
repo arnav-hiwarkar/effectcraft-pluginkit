@@ -34,16 +34,20 @@ pub(crate) fn draw_marks(t: &Tokens, painter: &egui::Painter, map: &ViewerMap, m
             let s = map.to_screen(comp);
             s.is_finite().then_some(s)
         };
-        let path = |points: Vec<[f32; 2]>| points.into_iter().map(to_screen).collect::<Option<Vec<_>>>();
+        let path = |points: Vec<[f32; 2]>, least: usize| {
+            let mut screen = points.into_iter().map(to_screen).collect::<Option<Vec<_>>>()?;
+            screen.dedup();
+            (screen.len() >= least).then_some(screen)
+        };
         let outline = |points: Vec<[f32; 2]>, fill: Option<Paint>, stroke: Option<(Paint, f32)>| {
-            let Some(points) = path(points) else { return };
+            let Some(points) = path(points, 3) else { return };
             let fill = fill.map_or(Color32::TRANSPARENT, |paint| colour(t, paint));
             let stroke = stroke.map_or(Stroke::NONE, |(paint, width)| Stroke::new(width.clamp(0.0, 16.0), colour(t, paint)));
             painter.add(egui::Shape::Path(egui::epaint::PathShape { points, closed: true, fill, stroke: stroke.into() }));
         };
         match &mark.shape {
             Shape::Line { points, color, width } => {
-                if let Some(points) = path(points.clone()) {
+                if let Some(points) = path(points.clone(), 2) {
                     painter.add(egui::Shape::line(points, Stroke::new(width.clamp(0.0, 16.0), colour(t, *color))));
                 }
             }
@@ -52,7 +56,7 @@ pub(crate) fn draw_marks(t: &Tokens, painter: &egui::Painter, map: &ViewerMap, m
                     let r = 1.0 - s;
                     std::array::from_fn(|i| r * r * r * a[i] + 3.0 * r * r * s * b[i] + 3.0 * r * s * s * c[i] + s * s * s * d[i])
                 };
-                if let Some(points) = path((0..=CURVE_STEPS).map(|i| at(i as f32 / CURVE_STEPS as f32)).collect()) {
+                if let Some(points) = path((0..=CURVE_STEPS).map(|i| at(i as f32 / CURVE_STEPS as f32)).collect(), 2) {
                     painter.add(egui::Shape::line(points, Stroke::new(width.clamp(0.0, 16.0), colour(t, *color))));
                 }
             }
@@ -65,7 +69,7 @@ pub(crate) fn draw_marks(t: &Tokens, painter: &egui::Painter, map: &ViewerMap, m
                 outline(around.collect(), *fill, *stroke)
             }
             Shape::Polygon { points, fill } => {
-                if let Some(points) = path(points.clone()) {
+                if let Some(points) = path(points.clone(), 3) {
                     painter.add(crate::panels::plugin_view::filled_polygon(points, colour(t, *fill)));
                 }
             }
@@ -79,9 +83,11 @@ pub(crate) fn draw_marks(t: &Tokens, painter: &egui::Painter, map: &ViewerMap, m
     }
 }
 
+#[derive(Clone)]
 struct Grab {
     shown: Arc<Shown>,
     from: [f64; 2],
+    pass: u64,
 }
 
 pub(super) fn effect_overlay(
@@ -93,9 +99,13 @@ pub(super) fn effect_overlay(
     g: &PropGroup,
     actions: &mut Actions,
 ) -> Option<Arc<Shown>> {
-    let shown = effectcraft_plugin::viewer::overlay(ectx, layer, g)?;
+    let shown = app.plugin_ui.panels.overlay(&mut app.session, ectx, layer, g)?;
     let t = app.tokens;
-    let (painter, fm) = (ui.painter_at(map.area), &crate::panels::viewer::fx2c(ectx, layer));
+    let fm = &match layer.switches.adjustment {
+        true => Mat3::IDENTITY,
+        false => crate::panels::viewer::fx2c(ectx, layer),
+    };
+    let painter = ui.painter_at(map.area);
     draw_marks(&t, &painter, map, &shown.overlay.marks, Some(fm));
     for (index, handle) in shown.overlay.handles.iter().enumerate() {
         let s = map.to_screen(fw::layer_to_comp(fm, handle.at));
@@ -136,22 +146,25 @@ pub(super) fn effect_overlay(
             resp.request_focus();
         }
         let pointer_in_layer = |pos: egui::Pos2| fw::comp_to_layer(fm, map.to_comp(pos));
+        let pass = ui.ctx().cumulative_pass_nr();
         if resp.drag_started()
             && let Some(from) = ui.input(|i| i.pointer.press_origin()).and_then(pointer_in_layer)
         {
             resp.request_focus();
-            ui.data_mut(|d| d.insert_temp(id, Arc::new(Grab { shown: shown.clone(), from })));
+            ui.data_mut(|d| d.insert_temp(id, Grab { shown: shown.clone(), from, pass }));
         }
-        let grab = ui.data(|d| d.get_temp::<Arc<Grab>>(id));
-        if resp.dragged()
-            && let Some(grab) = grab
-            && let Some(now) = resp.interact_pointer_pos().and_then(pointer_in_layer)
-        {
-            let key = gesture_key(ui, id, resp.drag_started());
-            push(app, actions, grab.shown.drag_commands(index, [now[0] - grab.from[0], now[1] - grab.from[1]], layer, g, &key));
-        }
-        if resp.drag_stopped() {
-            ui.data_mut(|d| d.remove::<Arc<Grab>>(id));
+        let grab = ui.data(|d| d.get_temp::<Grab>(id)).filter(|grab| resp.dragged() && grab.pass + 1 >= pass && shown.continues(&grab.shown, index));
+        match grab {
+            Some(grab) => {
+                ui.data_mut(|d| d.insert_temp(id, Grab { pass, ..grab.clone() }));
+                if let Some(now) = resp.interact_pointer_pos().and_then(pointer_in_layer) {
+                    let key = gesture_key(ui, id, resp.drag_started());
+                    let delta = [now[0] - grab.from[0], now[1] - grab.from[1]];
+                    let commands = app.plugin_ui.panels.drag(&app.session, &grab.shown, index, delta, g, &key);
+                    push(app, actions, commands);
+                }
+            }
+            None => ui.data_mut(|d| d.remove::<Grab>(id)),
         }
         if resp.has_focus() && ui.memory(|m| m.had_focus_last_frame(id)) {
             let arrows = egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() };
@@ -176,7 +189,8 @@ pub(super) fn effect_overlay(
             });
             for nudge in nudges {
                 let key = gesture_key(ui, id.with("nudge"), true);
-                push(app, actions, shown.drag_commands(index, nudge, layer, g, &key));
+                let commands = app.plugin_ui.panels.drag(&app.session, &shown, index, nudge, g, &key);
+                push(app, actions, commands);
             }
         }
     }
@@ -187,5 +201,42 @@ fn push(app: &mut EffectcraftApp, actions: &mut Actions, commands: Result<Action
     match commands {
         Ok(commands) => actions.extend(commands),
         Err(error) => app.ui.status = error,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use effectcraft_plugin::ui::{Paint, Shape};
+    use effectcraft_plugin::viewer::{Mark, Space};
+    use egui::epaint::Primitive;
+
+    use super::draw_marks;
+    use crate::panels::viewer::ViewerMap;
+    use crate::theme::Tokens;
+
+    #[test]
+    fn paths_with_repeated_points_draw_no_vertex_that_is_not_a_number() {
+        let line = |points: Vec<[f32; 2]>| Mark { shape: Shape::Line { points, color: Paint::Accent, width: 2.0 }, space: Space::Comp };
+        let marks = vec![
+            line(vec![[5.0, 5.0]; 3]),
+            line(vec![[1.0, 1.0], [1.0, 1.0], [9.0, 9.0], [9.0, 9.0]]),
+            Mark { shape: Shape::Polygon { points: vec![[2.0, 2.0], [2.0, 2.0], [8.0, 2.0]], fill: Paint::Accent }, space: Space::Comp },
+        ];
+        let tokens = Tokens::for_kind(Default::default());
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0));
+        let map = ViewerMap { origin: egui::Pos2::ZERO, zoom: 4.0, comp: [25.0; 2], area };
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| draw_marks(&tokens, ui.painter(), &map, &marks, None));
+        output.textures_delta.clear();
+        let vertices: Vec<egui::epaint::Vertex> = ctx
+            .tessellate(output.shapes, output.pixels_per_point)
+            .into_iter()
+            .flat_map(|clipped| match clipped.primitive {
+                Primitive::Mesh(mesh) => mesh.vertices,
+                Primitive::Callback(_) => Vec::new(),
+            })
+            .collect();
+        let broken = vertices.iter().filter(|vertex| !(vertex.pos.x.is_finite() && vertex.pos.y.is_finite())).count();
+        assert_eq!((broken, vertices.is_empty()), (0, false));
     }
 }

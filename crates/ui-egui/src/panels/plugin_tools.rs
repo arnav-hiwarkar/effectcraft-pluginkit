@@ -1,5 +1,5 @@
 use effectcraft_engine::render::EvalCtx;
-use effectcraft_plugin::viewer::{Cursor, Mark, Overlay, Space, ToolEvent, ToolEventKind};
+use effectcraft_plugin::viewer::{Cursor, Mark, Space, ToolEvent, ToolEventKind};
 use egui::{Pos2, Rect, Sense, pos2, vec2};
 use serde::{Deserialize, Serialize};
 
@@ -19,10 +19,6 @@ pub struct PluginTool {
 
 pub(crate) fn active(app: &EffectcraftApp) -> Option<&PluginTool> {
     app.ui.plugin_tool.as_ref().filter(|pick| pick.under == app.ui.tool)
-}
-
-fn overlay_id() -> egui::Id {
-    egui::Id::unique("viewer-plugin-tool-overlay")
 }
 
 fn pressed_id() -> egui::Id {
@@ -48,7 +44,7 @@ pub(crate) fn toolbar(app: &mut EffectcraftApp, ui: &mut egui::Ui, mut x: f32, c
         app.auto.add_response(&format!("tools.plugin.{plugin}.{}", spec.id), &resp, &spec.name);
         if resp.on_hover_text(&spec.name).clicked() {
             app.ui.plugin_tool = (!on).then_some(PluginTool { plugin, tool: spec.id, under: app.ui.tool });
-            ui.data_mut(|d| d.remove::<Overlay>(overlay_id()));
+            put_away(app, ui.ctx());
         }
         x += 28.0;
     }
@@ -65,10 +61,19 @@ fn cursor(cursor: Cursor) -> egui::CursorIcon {
     }
 }
 
+fn put_away(app: &mut EffectcraftApp, ctx: &egui::Context) {
+    app.plugin_ui.panels.put_tool_away();
+    ctx.data_mut(|d| d.remove::<bool>(pressed_id()));
+}
+
 pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx, map: &ViewerMap, painter: &egui::Painter) -> bool {
-    let Some(pick) = active(app).cloned() else { return false };
+    let Some(pick) = active(app).cloned() else {
+        put_away(app, ui.ctx());
+        return false;
+    };
     let Some((_, spec)) = effectcraft_plugin::viewer::tools().into_iter().find(|(plugin, spec)| *plugin == pick.plugin && spec.id == pick.tool) else {
         app.ui.plugin_tool = None;
+        put_away(app, ui.ctx());
         return false;
     };
     let ctx = ui.ctx().clone();
@@ -120,16 +125,14 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
         };
         let Some(mut event) = event else { continue };
         event.pressure = f32::from(u8::from(pressed));
-        match effectcraft_plugin::viewer::tool_event(&mut app.session, &pick.plugin, &pick.tool, &event) {
-            Ok(overlay) => {
-                ctx.data_mut(|d| d.insert_temp(overlay_id(), overlay));
-            }
-            Err(error) => app.ui.status = error,
+        if let Err(error) = app.plugin_ui.panels.tool(&app.session, &pick.plugin, &pick.tool, event) {
+            app.ui.status = error;
         }
     }
     ctx.data_mut(|d| d.insert_temp(pressed_id(), pressed));
-    if let Some(overlay) = ctx.data(|d| d.get_temp::<Overlay>(overlay_id())) {
-        draw_marks(&app.tokens, painter, map, &overlay.marks, l2c.as_ref());
+    let tokens = app.tokens;
+    if let Some(overlay) = app.plugin_ui.panels.tool_overlay(&mut app.session) {
+        draw_marks(&tokens, painter, map, &overlay.marks, l2c.as_ref());
     }
     if hover.is_some() {
         ctx.set_cursor_icon(cursor(spec.cursor));

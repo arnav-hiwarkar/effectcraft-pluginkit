@@ -328,8 +328,14 @@ them. Effects do not see it: they run in pooled instances.
 The app keeps the widget tree a panel returned and draws it every frame. It calls `ui` again, on a worker
 thread, only for: an event from one of the panel's widgets, an app event the panel subscribed to, a timer
 of the panel, or a new panel size. Host calls that need the project are answered on the UI thread. The
-tree on screen stays until the new one arrives. A failed call shows its error above the last tree, and
-the events it carried are delivered again with the next call. Events of a hidden tab are dropped.
+tree on screen stays until the new one arrives. A failed call shows its error above the last tree; the
+events it carried are not delivered again. Events of a hidden tab are dropped, and so is a reply that
+arrives after its tab was hidden: the panel is called again when it shows. A click, a checkbox toggle or
+a drop reaches one call, so two clicks on one button during a slow call give two calls in which
+`button` returns `true`. Pointer motion, slider, number, text and colour events made during a call
+coalesce into the latest one; presses, releases and keys stay in order. Pending `edit` events join their
+layer lists. A reply, a host call or an edit made for a project that has since closed, or by a load of
+the plugin that was reloaded or turned off, is dropped.
 
 ### App events
 
@@ -404,7 +410,10 @@ and go inside their own `row`, `column` or `group` so the others keep their iden
 ## On-viewer controls
 
 `Effect::overlay` runs while the effect is selected and **View ▸ Show Layer Controls** is on. Its `cx`
-is in layer pixels: `scale` 1, `offset` 0, `size` the layer size. It runs in the long-lived instance.
+is in layer pixels: `scale` 1, `offset` 0, `size` the layer size. On an adjustment layer the effect
+works on the comp below, so `size` is the comp size and the handles are drawn in comp pixels. It runs in
+the long-lived instance, on the plugin's worker thread like a panel; the last overlay stays on screen
+until the new one arrives.
 The app keeps the overlay and calls `overlay` again only when the request changes: a value, the time,
 or the effect being selected.
 
@@ -431,8 +440,9 @@ Handles are in layer pixels. Each is bound to what a drag changes:
 | `handle(at, Bind)` | Any of the above, from its `Bind` | |
 
 `named(text)` names the last handle for its tooltip and screen readers; the default is the parameter's
-name. Every drag of one handle is one undo step; on a keyframed parameter it sets the key at the current
-time. The focused handle moves 1 pixel per arrow key, 10 with Shift, each press one undo step. A point
+name. Every drag of one handle is one undo step; on a keyframed parameter it sets the key at the time the
+drag was made. A `custom` handle's `drag` runs on the worker; the value it returns is set when it
+arrives, and a drag of a reloaded plugin stops. The focused handle moves 1 pixel per arrow key, 10 with Shift, each press one undo step. A point
 parameter bound by no handle keeps the built-in crosshair.
 
 ## Viewer tools
@@ -446,8 +456,9 @@ pub trait Tool: Send + 'static {
 ```
 
 The tool's button follows the toolbar's tools; clicking it again, or picking another tool, puts it
-away. `event` runs in the long-lived instance, so the tool keeps its state between events. The overlay
-it draws starts in `Space::Comp` and stays on screen until the next event.
+away. `event` runs in the long-lived instance, on the plugin's worker thread, so the tool keeps its state
+between events. Events arrive in order; moves made while `event` was busy coalesce into the latest. The
+overlay it draws starts in `Space::Comp` and stays on screen until the next reply.
 
 | `ToolEvent` field | Holds |
 |---|---|
@@ -463,7 +474,9 @@ it draws starts in `Space::Comp` and stays on screen until the next event.
 
 `Move` comes while the pointer is over the viewer or the button is held. `Scroll` and `Key` come while the
 pointer is over the viewer and no text field has the keyboard. The project changes a tool makes with
-`host::command` between `Down` and `Up` are one undo step named after the tool.
+`host::command` between `Down` and `Up` are one undo step named after the tool. An edit made elsewhere in
+the meantime stays its own step, and the tool's later edits start a new one. Putting the tool away
+during a gesture ends it.
 
 ## Host calls
 

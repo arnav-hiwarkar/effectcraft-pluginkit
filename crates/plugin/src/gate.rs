@@ -309,50 +309,11 @@ impl Host for SessionHost<'_> {
     }
 
     fn frame(&mut self, request: &FrameRequest) -> Result<Pixels, String> {
-        if !(request.scale > 0.0 && request.scale <= MAX_FRAME_SCALE) || !request.time.is_finite() {
-            return Err(format!("a frame needs a scale above 0 and at most {MAX_FRAME_SCALE}, and a finite time"));
-        }
-        let comp = find_comp(self.session, request.comp.as_deref())?;
-        let size = self.session.project.comp(comp).map(|found| (found.width, found.height)).ok_or("the composition is gone")?;
-        let (width, height) = ((f64::from(size.0) * request.scale).ceil(), (f64::from(size.1) * request.scale).ceil());
-        if width > MAX_FRAME_SIDE || height > MAX_FRAME_SIDE || width * height * RGBA_F32_BYTES > MAX_FRAME_BYTES {
-            return Err(format!(
-                "a {width}×{height} frame is too large: a frame may be at most {MAX_FRAME_SIDE} pixels on a side and {} MiB as RGBA floats",
-                MAX_FRAME_BYTES / f64::from(1u32 << 20)
-            ));
-        }
-        let solo = match &request.layer {
-            Some(layer) => Some(only_layer(&self.session.project, comp, find_layer(&self.session.project, comp, layer)?, true)?),
-            None => None,
-        };
-        let opts = self.session.render_opts(RenderOpts { scale: request.scale, ..RenderOpts::default() });
-        let time = Tick::from_seconds_f64(request.time);
-        let image = match &solo {
-            Some(project) => {
-                let mut renderer = Renderer::new(project, self.session.footage.as_ref(), opts);
-                renderer.expr = self.session.expr.as_deref();
-                renderer.accel = self.session.accel.as_deref();
-                renderer.comp_frame(comp, time)
-            }
-            None => self.session.render(comp, time, opts),
-        };
-        Ok(Pixels { width: image.width, height: image.height, data: image.data })
+        self.frame_job(request).map(|render| render())
     }
 
     fn audio(&mut self, request: &AudioRequest) -> Result<Samples, String> {
-        let frames = request.duration * f64::from(request.rate);
-        if !AUDIO_RATES.contains(&request.rate) || !(request.duration >= 0.0 && frames <= MAX_AUDIO_FRAMES) || !request.start.is_finite() {
-            return Err(format!("audio needs a rate from {} to {} Hz and at most {MAX_AUDIO_FRAMES} sample frames", AUDIO_RATES.start(), AUDIO_RATES.end()));
-        }
-        let comp = find_comp(self.session, None)?;
-        let solo = match &request.layer {
-            Some(layer) => Some(only_layer(&self.session.project, comp, find_layer(&self.session.project, comp, layer)?, false)?),
-            None => None,
-        };
-        let project = solo.as_ref().unwrap_or(&self.session.project);
-        let start = Tick::from_seconds_f64(request.start);
-        let samples = audio::mix_comp(project, self.session.footage.as_ref(), self.session.expr.as_deref(), comp, start, frames.round() as usize, request.rate);
-        Ok(Samples { channels: 2, rate: request.rate, samples })
+        self.audio_job(request).map(|mix| mix())
     }
 
     fn project_closed(&self) -> Option<Arc<AtomicBool>> {
@@ -370,6 +331,58 @@ impl Host for SessionHost<'_> {
     fn pick_file(&mut self, request: &PickFile) -> Result<Option<PathBuf>, String> {
         let picker = FILE_PICKER.get().ok_or("a file dialog cannot open in a headless run")?;
         Ok(picker(request))
+    }
+}
+
+pub(crate) type Job<T> = Box<dyn FnOnce() -> T + Send>;
+
+impl SessionHost<'_> {
+    pub(crate) fn frame_job(&self, request: &FrameRequest) -> Result<Job<Pixels>, String> {
+        if !(request.scale > 0.0 && request.scale <= MAX_FRAME_SCALE) || !request.time.is_finite() {
+            return Err(format!("a frame needs a scale above 0 and at most {MAX_FRAME_SCALE}, and a finite time"));
+        }
+        let session = &*self.session;
+        let comp = find_comp(session, request.comp.as_deref())?;
+        let size = session.project.comp(comp).map(|found| (found.width, found.height)).ok_or("the composition is gone")?;
+        let (width, height) = ((f64::from(size.0) * request.scale).ceil(), (f64::from(size.1) * request.scale).ceil());
+        if width > MAX_FRAME_SIDE || height > MAX_FRAME_SIDE || width * height * RGBA_F32_BYTES > MAX_FRAME_BYTES {
+            return Err(format!(
+                "a {width}×{height} frame is too large: a frame may be at most {MAX_FRAME_SIDE} pixels on a side and {} MiB as RGBA floats",
+                MAX_FRAME_BYTES / f64::from(1u32 << 20)
+            ));
+        }
+        let (project, cache) = match &request.layer {
+            Some(layer) => (Arc::new(only_layer(&session.project, comp, find_layer(&session.project, comp, layer)?, true)?), None),
+            None => (session.project.clone(), Some(session.layer_cache.clone())),
+        };
+        let opts = session.render_opts(RenderOpts { scale: request.scale, ..RenderOpts::default() });
+        let (footage, expr, accel, time) = (session.footage.clone(), session.expr.clone(), session.accel.clone(), Tick::from_seconds_f64(request.time));
+        Ok(Box::new(move || {
+            let mut renderer = Renderer::new(&project, footage.as_ref(), opts);
+            renderer.expr = expr.as_deref();
+            renderer.accel = accel.as_deref();
+            renderer.cache = cache.as_deref();
+            let image = renderer.comp_frame(comp, time);
+            Pixels { width: image.width, height: image.height, data: image.data }
+        }))
+    }
+
+    pub(crate) fn audio_job(&self, request: &AudioRequest) -> Result<Job<Samples>, String> {
+        let frames = request.duration * f64::from(request.rate);
+        if !AUDIO_RATES.contains(&request.rate) || !(request.duration >= 0.0 && frames <= MAX_AUDIO_FRAMES) || !request.start.is_finite() {
+            return Err(format!("audio needs a rate from {} to {} Hz and at most {MAX_AUDIO_FRAMES} sample frames", AUDIO_RATES.start(), AUDIO_RATES.end()));
+        }
+        let session = &*self.session;
+        let comp = find_comp(session, None)?;
+        let project = match &request.layer {
+            Some(layer) => Arc::new(only_layer(&session.project, comp, find_layer(&session.project, comp, layer)?, false)?),
+            None => session.project.clone(),
+        };
+        let (footage, expr, start, rate) = (session.footage.clone(), session.expr.clone(), Tick::from_seconds_f64(request.start), request.rate);
+        Ok(Box::new(move || {
+            let samples = audio::mix_comp(&project, footage.as_ref(), expr.as_deref(), comp, start, frames.round() as usize, rate);
+            Samples { channels: 2, rate, samples }
+        }))
     }
 }
 

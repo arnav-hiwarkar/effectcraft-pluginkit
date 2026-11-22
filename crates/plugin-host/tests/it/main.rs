@@ -357,7 +357,7 @@ fn panel_frame(loaded: &Loaded, panel: &str, retained: &mut Retained, now: Durat
     let Some(input) = retained.start([300.0, 200.0], now) else { return false };
     let call = Call::Panel { panel: panel.into(), input: input.clone() };
     let reply = loaded.plugin.call::<craft_plugin::PanelReply>(&call, None, &mut Recorder::default()).map_err(|e| e.to_string());
-    retained.finish(input, reply, now);
+    retained.finish(reply, now);
     true
 }
 
@@ -383,6 +383,24 @@ fn a_retained_panel_is_not_called_while_nothing_happens_for_a_hundred_frames() {
         counter.push(vec![UiEvent { id, kind: UiEventKind::Click }], "");
         assert!(panel_frame(&loaded, "counter", &mut counter, Duration::from_millis(1700)));
         assert_eq!(texts(counter.widgets()), vec!["1 clicks at speed 0".to_string(), "calls 2".to_string()], "{kind:?}");
+    });
+}
+
+#[test]
+fn two_clicks_on_one_button_made_during_a_call_are_counted_twice() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let mut counter = Retained::new();
+        panel_frame(&loaded, "counter", &mut counter, Duration::ZERO);
+        let Widget::Button { id, .. } = counter.widgets()[0] else { panic!("{kind:?} button expected") };
+        counter.invalidate();
+        let slow = counter.start([300.0, 200.0], Duration::from_millis(16)).expect("an invalidated panel is called");
+        counter.push(vec![UiEvent { id, kind: UiEventKind::Click }, UiEvent { id, kind: UiEventKind::Click }], "");
+        let reply = loaded.plugin.call::<craft_plugin::PanelReply>(&Call::Panel { panel: "counter".into(), input: slow }, None, &mut Recorder::default());
+        counter.finish(reply.map_err(|e| e.to_string()), Duration::from_millis(16));
+        let called = (2..6).filter(|frame| panel_frame(&loaded, "counter", &mut counter, Duration::from_millis(16 * frame))).count();
+        assert_eq!(called, 2, "{kind:?}");
+        assert_eq!(texts(counter.widgets()), vec!["2 clicks at speed 0".to_string(), "calls 4".to_string()], "{kind:?}");
     });
 }
 

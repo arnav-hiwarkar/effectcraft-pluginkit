@@ -182,12 +182,29 @@ watchdog, if it has one, and a readback that waits longer than 10 s marks the ap
 A panel describes its widgets across the sandbox boundary, and the app keeps the last description. The
 app draws it with egui every frame and calls the plugin again only when something happened: an event from
 one of the panel's widgets, an app event the panel subscribed to (selection, current time, active comp,
-project, edits), a timer, or a new size. The call runs on a worker thread; a host call that needs the
-project waits in a queue the UI thread answers within the frame (`effectcraft_plugin::Panels`), as a
-task's do. The UI waits at most 4 ms a frame for the answer and otherwise draws the last tree, so a slow
-plugin cannot stall the app. The state machine for one panel, `craft_plugin_host::Retained`, holds no
-EffectCraft types: another Craft app reuses it with its own event source. Custom Effect Controls rows are
-retained the same way and are called again on their own widget events, a new value or a new width.
+project, edits), a timer, or a new size. The state machine for one panel, `craft_plugin_host::Retained`,
+holds no EffectCraft types: another Craft app reuses it with its own event source. Custom Effect Controls
+rows are retained the same way and are called again on their own widget events, a new value or a new
+width.
+
+### One queue per plugin
+
+Every interactive call (a panel, a custom control, a viewer overlay, a custom handle drag, a tool event)
+goes to one worker thread per loaded plugin, in order, and only that thread calls the plugin's long-lived
+instance for them (`effectcraft_plugin::Panels`). The UI thread posts requests, answers the host calls
+that need the project, and applies replies in one place; it waits at most 4 ms a frame for replies while
+it answers, never on the instance, so a slow plugin cannot stall or deadlock the app. A frame or audio a
+panel asks for is cut from the project on the UI thread and rendered on the worker.
+
+Each request carries what it is for: its surface, the plugin's load and the project's token
+(`Session::project_closed`). A reply, a host call, an edit or a task start whose plugin was reloaded or
+turned off, or whose project closed, is dropped with a log line. Each surface has one call in flight at a
+time. A click, a checkbox toggle or a drop reaches exactly one call, so two clicks during a slow call are
+two calls; pointer motion and slider values made during a call coalesce, so the backlog stays bounded. A
+failed call consumes its input, and a reply that arrives after its panel was hidden is dropped and the
+panel is called again when it shows. A custom control's or a custom handle's new value is set at the time
+and with the undo key it was made with. A tool's project edits join the gesture's undo step as they
+happen, only while nothing else changed the project in between.
 
 A plugin has no access to egui or to the app's fonts and colours. It names theme colours, and the app
 resolves them.

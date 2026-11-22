@@ -36,6 +36,9 @@ pub(crate) fn tick(app: &mut EffectcraftApp, ctx: &egui::Context) {
     if let Some(due) = panels.frame(&mut app.session, now(ctx)) {
         ctx.request_repaint_after(due);
     }
+    if let Some(notice) = panels.take_notice() {
+        app.ui.status = notice;
+    }
 }
 
 fn now(ctx: &egui::Context) -> Duration {
