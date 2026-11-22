@@ -49,7 +49,8 @@ fn a_panic_reaches_the_test_and_the_log_with_its_file_and_line() {
 
 #[test]
 fn tint_matches_its_stored_frame() {
-    assert_frame!(TestPlugin::of(crate::plugin), "tint", { "amount": 100 }, "tint");
+    let plugin = TestPlugin::of(crate::plugin);
+    assert_frame!(plugin.render("tint").set("amount", 100.0), "tint");
 }
 
 #[test]
@@ -103,7 +104,8 @@ fn matte_darkens_where_the_matte_layer_is_dark() {
 
 #[test]
 fn edges_reads_its_neighbours_within_the_reach_it_declares() {
-    assert_frame!(TestPlugin::of(crate::plugin), "edges", { "width": 3 }, "edges");
+    let plugin = TestPlugin::of(crate::plugin);
+    assert_frame!(plugin.render("edges").set("width", 3.0), "edges");
 }
 
 #[test]

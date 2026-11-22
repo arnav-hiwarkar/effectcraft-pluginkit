@@ -89,7 +89,8 @@ mod tests {
 
     #[test]
     fn full_amount_tints_the_test_image() {
-        assert_frame!(TestPlugin::of(super::plugin), "my-tint", { "amount": 100 }, "full");
+        let plugin = TestPlugin::of(super::plugin);
+        assert_frame!(plugin.render("my-tint").set("amount", 100.0), "full");
     }
 
     #[test]

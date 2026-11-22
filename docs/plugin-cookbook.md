@@ -568,7 +568,8 @@ accept the new frames.
 ```rust plugins/cookbook/src/tests.rs#tint_matches_its_stored_frame
 #[test]
 fn tint_matches_its_stored_frame() {
-    assert_frame!(TestPlugin::of(crate::plugin), "tint", { "amount": 100 }, "tint");
+    let plugin = TestPlugin::of(crate::plugin);
+    assert_frame!(plugin.render("tint").set("amount", 100.0), "tint");
 }
 ```
 

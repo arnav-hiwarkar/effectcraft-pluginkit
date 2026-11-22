@@ -16,9 +16,6 @@ const TASK_WAIT: Duration = Duration::from_secs(60);
 
 #[macro_export]
 macro_rules! assert_frame {
-    ($plugin:expr, $effect:expr, { $($params:tt)* }, $name:expr) => {
-        $crate::testing::assert_frame($name, $plugin.render($effect).with($crate::testing::json!({ $($params)* })))
-    };
     ($render:expr, $name:expr) => {
         $crate::testing::assert_frame($name, $render)
     };

@@ -84,7 +84,8 @@ mod tests {
 
     #[test]
     fn the_default_beam_matches_its_stored_frame() {
-        assert_frame!(TestPlugin::of(plugin), "beam", { "preset": 0 }, "default");
+        let plugin = TestPlugin::of(plugin);
+        assert_frame!(plugin.render("beam").set("preset", 0.0), "default");
     }
 
     #[test]

@@ -122,7 +122,8 @@ use craft_plugin_host::testing::{Pattern, TestPlugin};
 
 #[test]
 fn half_amount_matches_the_stored_frame() {
-    assert_frame!(TestPlugin::of(super::plugin), "tint", { "amount": 50 }, "half");
+    let plugin = TestPlugin::of(super::plugin);
+    assert_frame!(plugin.render("tint").set("amount", 50.0), "half");
 }
 
 #[test]
@@ -134,7 +135,9 @@ fn zero_amount_changes_nothing() {
 ```
 
 The first run stores `tests/frames/half.png`. A later run that differs fails, writes `half.actual.png` and
-`half.diff.png` under `target/frames/` and prints their paths; `UPDATE_FRAMES=1 cargo test` stores the new frames. A
+`half.diff.png` under `target/frames/` and prints their paths; `UPDATE_FRAMES=1 cargo test` stores the new frames.
+Each straight RGBA channel may differ by one level of 255; `.tolerance(0)` on the render asks for an exact
+match. A
 render in bands that differs from a whole render fails with the first pixel that changed, which catches a
 `Layout::neighbourhood` reach that is too small. Panels, commands, tasks and tools are tested the same way:
 see [Testing](plugin-reference.md#testing).
