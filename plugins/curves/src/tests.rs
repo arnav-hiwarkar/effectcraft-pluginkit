@@ -5,6 +5,8 @@ use crate::control::{self, ControlState};
 use crate::curve::{Curves, Lut, Luts, Spline, identity};
 use crate::presets::{PRESETS, THUMB, thumbnail};
 use crate::{CurvesEffect, PARAM};
+use craft_plugin_host::assert_frame;
+use craft_plugin_host::testing::TestPlugin;
 
 const S_CURVE: &[[f64; 2]] = &[[0.0, 0.0], [0.3, 0.2], [0.7, 0.8], [1.0, 1.0]];
 
@@ -180,4 +182,18 @@ fn each_instance_of_the_effect_keeps_its_own_selected_channel() {
     assert_eq!(shown_channel(&effect, 1, vec![UiEvent { id: popup, kind: UiEventKind::Number(2.0) }]).1, 2);
     assert_eq!(shown_channel(&effect, 2, vec![]).1, 0);
     assert_eq!(shown_channel(&effect, 1, vec![]).1, 2);
+}
+
+#[test]
+fn an_s_curve_on_the_master_and_a_lifted_red_channel_match_the_stored_frame() {
+    let plugin = TestPlugin::of(crate::plugin);
+    let curves = r#"{"channels":[[[0,0],[0.3,0.2],[0.7,0.8],[1,1]],[[0,0.1],[1,1]],[[0,0],[1,1]],[[0,0],[1,0.8]],[[0,0],[1,1]]]}"#;
+    assert_frame!(plugin.render("curves").set(PARAM, curves), "s-curve-red-lift");
+}
+
+#[test]
+fn the_default_curves_leave_every_pixel_as_it_was() {
+    let plugin = TestPlugin::of(crate::plugin);
+    let render = plugin.render("curves");
+    assert_eq!(render.run().unwrap(), render.source());
 }
