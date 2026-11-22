@@ -18,8 +18,9 @@ fn source() -> Vec<Pixel> {
 }
 
 fn sampled_bytes(render: impl Fn(&mut Frame)) -> Vec<u8> {
-    let mut pixels = source();
-    let mut frame = Frame { width: SIZE[0], height: SIZE[1], origin: [0, 0], pixels: &mut pixels };
+    let input = source();
+    let mut pixels = vec![[0.0; 4]; input.len()];
+    let mut frame = Frame::whole(SIZE[0], SIZE[1], &input, &mut pixels);
     render(&mut frame);
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
     (0..ROWS).flat_map(|j| (0..COLUMNS).map(move |i| (4 + 9 * j) * SIZE[0] + 6 + 12 * i)).flat_map(|at| pixels[at].into_iter().take(3).map(byte)).collect()

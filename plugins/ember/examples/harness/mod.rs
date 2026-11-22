@@ -144,7 +144,7 @@ impl Loaded<'_> {
         let [w, h] = self.scenario.size;
         let mut pixels = vec![[0.02, 0.02, 0.05, 1.0]; (w * h) as usize];
         let start = Instant::now();
-        self.plugin.render("ember", &cx, layout.reach, &mut pixels, || Inputs(self.scenario)).expect("render");
+        self.plugin.render("ember", &cx, &layout, None, &mut pixels, || Inputs(self.scenario)).expect("render");
         (pixels, [layout_ms, start.elapsed().as_secs_f64() * 1000.0])
     }
 

@@ -68,7 +68,7 @@ fn a_packed_plugin_installs_loads_and_renders_a_frame() {
     let mut cx = RenderCx { size: [2, 1], scale: 1.0, ..Default::default() };
     cx.params.insert("amount".into(), Value::Number(1.0));
     let mut pixels: Vec<Pixel> = vec![[0.25, 0.5, 1.0, 1.0], [0.0, 0.0, 0.0, 0.5]];
-    plugin.render("invert", &cx, Some(0), &mut pixels, Recorder::default).unwrap();
+    plugin.render("invert", &cx, &craft_plugin::Layout::pointwise(), None, &mut pixels, Recorder::default).unwrap();
     assert_eq!(pixels, [[0.75, 0.5, 0.0, 1.0], [1.0, 1.0, 1.0, 0.5]]);
 }
 
@@ -212,7 +212,7 @@ fn both_builds_of_a_plugin_give_the_same_picture() {
         let running = registry.running(&installed);
         let plugin = Plugin::load(&running, BTreeSet::new(), root.path().join("data"), limits).unwrap();
         let mut pixels: Vec<Pixel> = vec![[0.25, 0.5, 1.0, 1.0], [0.0, 0.0, 0.0, 0.5]];
-        plugin.render("invert", &cx, Some(0), &mut pixels, Recorder::default).unwrap();
+        plugin.render("invert", &cx, &craft_plugin::Layout::pointwise(), None, &mut pixels, Recorder::default).unwrap();
         assert_eq!(pixels, [[0.75, 0.5, 0.0, 1.0], [1.0, 1.0, 1.0, 0.5]], "unsandboxed={unsandboxed}");
     }
 }

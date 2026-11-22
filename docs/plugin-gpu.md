@@ -278,7 +278,7 @@ The app compiles your WGSL after a prelude that declares the bindings every kern
 Do not declare these again, and declare no other bindings: the shader then fails to compile.
 
 Pixels are premultiplied RGBA, 32-bit float, in the project's working colour space: the same values
-your CPU `render` sees in `frame.pixels`. Pixel `(0, 0)` is the top-left corner.
+your CPU `render` reads from `frame.input`. Pixel `(0, 0)` is the top-left corner.
 
 Each pass runs its kernel over `out` in 16×16 workgroups. Declare `@compute @workgroup_size(16, 16)`,
 and return early when `inside_out(id.xy)` is false. A pixel of `out` the kernel does not write is
@@ -338,11 +338,7 @@ impl Effect for Tint {
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let [r, g, b, _] = cx.color("color");
-        for pixel in frame.pixels.iter_mut() {
-            pixel[0] *= r;
-            pixel[1] *= g;
-            pixel[2] *= b;
-        }
+        frame.map(|p| [p[0] * r, p[1] * g, p[2] * b, p[3]]);
         Ok(())
     }
 }
@@ -394,9 +390,9 @@ impl Effect for Soften {
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let (w, h) = (frame.width, frame.height);
+        let (w, h, input) = (frame.input.width, frame.input.height, frame.input);
         let (hw, hh) = (w.div_ceil(2), h.div_ceil(2));
-        let at = |x: usize, y: usize| if x < w && y < h { frame.pixels[y * w + x] } else { [0.0; 4] };
+        let at = |x: usize, y: usize| input.at(x as isize, y as isize);
         let mut half = vec![[0.0f32; 4]; hw * hh];
         for y in 0..hh {
             for x in 0..hw {
@@ -406,18 +402,18 @@ impl Effect for Soften {
         }
         let clamped = |x: i64, y: i64| half[y.clamp(0, hh as i64 - 1) as usize * hw + x.clamp(0, hw as i64 - 1) as usize];
         let strength = cx.f("strength") as f32;
-        for y in 0..h {
-            for x in 0..w {
+        let x0 = frame.origin[0];
+        for (y, read, row) in frame.rows() {
+            for (x, (pixel, source)) in (x0..).zip(row.iter_mut().zip(read)) {
                 let fx = (x as f32 + 0.5) / w as f32 * hw as f32 - 0.5;
                 let fy = (y as f32 + 0.5) / h as f32 * hh as f32 - 0.5;
                 let (tx, ty) = (fx - fx.floor(), fy - fy.floor());
                 let (xi, yi) = (fx.floor() as i64, fy.floor() as i64);
                 let (a, b, c, d) = (clamped(xi, yi), clamped(xi + 1, yi), clamped(xi, yi + 1), clamped(xi + 1, yi + 1));
-                let pixel = &mut frame.pixels[y * w + x];
                 for k in 0..4 {
                     let top = a[k] + (b[k] - a[k]) * tx;
                     let bottom = c[k] + (d[k] - c[k]) * tx;
-                    pixel[k] += (top + (bottom - top) * ty - pixel[k]) * strength;
+                    pixel[k] = source[k] + (top + (bottom - top) * ty - source[k]) * strength;
                 }
             }
         }
@@ -426,8 +422,9 @@ impl Effect for Soften {
 }
 ```
 
-`render` gets the padded frame too. There `cx.size` already includes the padding, so `frame.width` equals
-`cx.size[0]`.
+`render` gets the padded frame too. There `cx.size` already includes the padding, so `frame.input.width`
+equals `cx.size[0]`. A whole-frame effect still reads every input row, but writes only the rectangle that
+shows, which may be smaller than the frame.
 
 The probe plugin in `crates/plugin-host/tests/probe` carries both effects with CPU renders that match
 their kernels, and `crates/plugin/tests/it/gpu.rs` checks that the two paths agree. `plugins/forge-3d` is a

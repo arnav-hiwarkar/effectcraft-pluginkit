@@ -17,6 +17,7 @@ pub enum Call {
     Describe,
     Layout { effect: String, cx: RenderCx },
     Render { effect: String, cx: RenderCx, frame: FrameDesc },
+    Input { effect: String, cx: RenderCx, out: Rect },
     Pass { effect: String, cx: RenderCx, kernel: String, f: Vec<f32>, u: Vec<u32>, src: Window, aux: Option<Window>, out: Window, spread: bool },
     Panel { panel: String, input: UiInput },
     Command { command: String },
@@ -71,6 +72,8 @@ pub struct Contributions {
     pub tasks: Vec<TaskSpec>,
     #[serde(default)]
     pub tools: Vec<ToolSpec>,
+    #[serde(default)]
+    pub separate_input: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -268,6 +271,62 @@ pub struct FrameDesc {
     pub width: u32,
     pub height: u32,
     pub origin: [u32; 2],
+    #[serde(default)]
+    pub input: Option<Window>,
+    #[serde(default)]
+    pub spread: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Rect {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+impl Rect {
+    pub fn of_size(size: [u32; 2]) -> Rect {
+        let side = |n: u32| i32::try_from(n).unwrap_or(i32::MAX);
+        Rect { left: 0, top: 0, right: side(size[0]), bottom: side(size[1]) }
+    }
+
+    pub fn width(&self) -> u32 {
+        self.right.saturating_sub(self.left).max(0) as u32
+    }
+
+    pub fn height(&self) -> u32 {
+        self.bottom.saturating_sub(self.top).max(0) as u32
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.width() == 0 || self.height() == 0
+    }
+
+    pub fn grown(self, by: u32) -> Rect {
+        let by = i32::try_from(by).unwrap_or(i32::MAX);
+        Rect {
+            left: self.left.saturating_sub(by),
+            top: self.top.saturating_sub(by),
+            right: self.right.saturating_add(by),
+            bottom: self.bottom.saturating_add(by),
+        }
+    }
+
+    pub fn clipped(self, size: [u32; 2]) -> Rect {
+        let frame = Rect::of_size(size);
+        let left = self.left.clamp(0, frame.right);
+        let top = self.top.clamp(0, frame.bottom);
+        Rect { left, top, right: self.right.clamp(left, frame.right), bottom: self.bottom.clamp(top, frame.bottom) }
+    }
+
+    pub fn union(self, other: Rect) -> Rect {
+        Rect { left: self.left.min(other.left), top: self.top.min(other.top), right: self.right.max(other.right), bottom: self.bottom.max(other.bottom) }
+    }
+
+    pub fn contains(&self, other: Rect) -> bool {
+        other.left >= self.left && other.top >= self.top && other.right <= self.right && other.bottom <= self.bottom
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
@@ -285,14 +344,29 @@ impl Window {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Layout {
-    #[serde(default)]
-    pub padding: u32,
+    #[serde(default, deserialize_with = "four_sides")]
+    pub padding: [u32; 4],
     #[serde(default)]
     pub reach: Option<u32>,
     #[serde(default)]
     pub gpu: Option<GpuPlan>,
     #[serde(default)]
     pub cpu: bool,
+    #[serde(default)]
+    pub maps_input: bool,
+}
+
+fn four_sides<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<[u32; 4], D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Sides {
+        All(u32),
+        Each([u32; 4]),
+    }
+    Ok(match Sides::deserialize(deserializer)? {
+        Sides::All(n) => [n; 4],
+        Sides::Each(sides) => sides,
+    })
 }
 
 impl Layout {
@@ -309,7 +383,17 @@ impl Layout {
     }
 
     pub fn padded(mut self, padding: u32) -> Self {
-        self.padding = padding;
+        self.padding = [padding; 4];
+        self
+    }
+
+    pub fn padded_sides(mut self, left: u32, top: u32, right: u32, bottom: u32) -> Self {
+        self.padding = [left, top, right, bottom];
+        self
+    }
+
+    pub fn maps_input(mut self) -> Self {
+        self.maps_input = true;
         self
     }
 
@@ -1245,5 +1329,14 @@ mod tests {
         let before_kernels = r#"{"passes":[{"kernel":"tint","src":"source","out":"output","f":[1.0],"reach":2}]}"#;
         let old: GpuPlan = serde_json::from_str(before_kernels).unwrap();
         assert_eq!(old.passes, vec![finish().floats(&[1.0]).reach(2)]);
+    }
+
+    #[test]
+    fn padding_from_a_plugin_built_before_four_sides_applies_to_every_side() {
+        let old: Layout = serde_json::from_str(r#"{"padding":6,"reach":0}"#).unwrap();
+        assert_eq!(old.padding, [6; 4]);
+        let sides = Layout::pointwise().padded_sides(5, 0, 2, 1);
+        let again: Layout = serde_json::from_str(&serde_json::to_string(&sides).unwrap()).unwrap();
+        assert_eq!(again.padding, [5, 0, 2, 1]);
     }
 }

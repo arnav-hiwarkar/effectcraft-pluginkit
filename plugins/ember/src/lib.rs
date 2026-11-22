@@ -366,8 +366,9 @@ mod tests {
         let settings = settings(frame);
         let view = View { projection: None, scale: 1.0, offset: [0.0, 0.0], size: [320, 180], frame_rate: 30.0 };
         let list = prepare(&Forgetful, &settings, &Still, &view, u64::MAX).expect("finishes");
-        let mut pixels = vec![[0.02, 0.02, 0.05, 1.0]; 320 * 180];
-        raster::render(&list, &mut Frame { width: 320, height: 180, origin: [0, 0], pixels: &mut pixels });
+        let background = vec![[0.02, 0.02, 0.05, 1.0]; 320 * 180];
+        let mut pixels = vec![[0.0; 4]; 320 * 180];
+        raster::render(&list, &mut Frame::whole(320, 180, &background, &mut pixels));
         let mean = |bx: usize, by: usize, channel: usize| {
             let total: f32 = (0..30).flat_map(|y| (0..40).map(move |x| (by * 30 + y) * 320 + bx * 40 + x)).map(|at| pixels[at][channel].min(1.0)).sum();
             (total / 1200.0 * 255.0 + 0.5) as u8

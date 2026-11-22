@@ -1,0 +1,7 @@
+asset:        probe-before-regions.wasm
+title:        The test probe plugin as built before frames had separate input and output rows, the reference for loading plugins built against an older SDK
+author:       EffectCraft contributors
+source:       original work (crates/plugin-host/tests/probe at commit f66e99e9, built with cargo build --release --target wasm32-unknown-unknown, opt-level z, symbols stripped)
+license:      MIT OR Apache-2.0
+added:        2026-11-22 by EffectCraft contributors
+notes:        Read by crates/plugin-host/tests/it/main.rs. Rebuild it only to replace the reference on purpose.

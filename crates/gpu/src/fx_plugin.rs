@@ -25,13 +25,14 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
         return None;
     }
     let program = plan(ctx, Grid { width: b.img.width, height: b.img.height, offset: b.offset, scale: b.scale })?;
-    let unpadded = [b.img.width, b.img.height];
-    b.pad(e, program.padding)?;
-    let frame = [b.img.width, b.img.height];
-    if frame != unpadded.map(|side| side.saturating_add(program.padding.saturating_mul(2))) {
+    let [left, top, right, bottom] = program.padding.map(f64::from);
+    let (width, height) = (b.img.width, b.img.height);
+    let budgeted = effectcraft_effects::grow_sides([-left, -top], [f64::from(width) + right, f64::from(height) + bottom], width, height).unwrap_or_default();
+    if budgeted != program.padding || b.pad_sides(e, program.padding).is_none() {
         g.plugin_declined(id, "the frame could not be padded as far as the plan asks");
         return None;
     }
+    let frame = [b.img.width, b.img.height];
     let kernels: Vec<&str> = program.passes.iter().filter(|pass| pass.draw.is_none()).map(|pass| pass.kernel.as_str()).collect();
     let pipelines = match check(&program, |w, h| g.fits(w, h)).and_then(|()| g.plugin_pipelines(id, revision, wgsl, &kernels)) {
         Ok(pipelines) => pipelines,

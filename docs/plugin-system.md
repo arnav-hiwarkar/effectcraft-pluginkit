@@ -151,6 +151,14 @@ bands on all cores, copying into each instance only the source rows its band rea
 default settings on a 1920×1080 layer (the padded frame is larger), sandboxed, on a shared ten-core
 machine, fastest of 15: 85 ms as one whole-frame call, 29 ms as banded passes; native 49 ms and 13 ms.
 
+A render call has rows to write and rows to read, and they are separate: the input is never the
+output, so a band writes only its own rows and nothing is rendered twice. The app asks an effect only
+for the part of the layer that the frame being rendered shows (`shown` on the effect host, set by the
+CPU compositor in `crates/render/src/pipeline.rs` for a top-level 2D layer whose stack has a plugin
+effect), and the layer's cache key then includes that rectangle. A native band reads the input frame
+and writes the output frame where they lie; a sandboxed band copies its input rows in and its own rows
+out.
+
 Effects are stateless. The app keeps a pool of instances and may run any frame on any of them, in any
 order. A panel or a command runs on one long-lived instance, so panel state persists between frames.
 

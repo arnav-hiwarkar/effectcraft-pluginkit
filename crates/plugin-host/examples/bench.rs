@@ -85,12 +85,13 @@ fn median_ms(rounds: usize, mut reset: impl FnMut(), mut run: impl FnMut()) -> [
     [times[rounds / 2], times[0]]
 }
 
-fn padded(pixels: &[Pixel], size: [u32; 2], padding: u32) -> Vec<Pixel> {
-    let (width, pad) = (size[0] as usize, padding as usize);
-    let wide = width + 2 * pad;
-    let mut out = vec![[0.0; 4]; wide * (size[1] as usize + 2 * pad)];
+fn padded(pixels: &[Pixel], size: [u32; 2], padding: [u32; 4]) -> Vec<Pixel> {
+    let [left, top, right, bottom] = padding.map(|side| side as usize);
+    let width = size[0] as usize;
+    let wide = left + width + right;
+    let mut out = vec![[0.0; 4]; wide * (top + size[1] as usize + bottom)];
     for (y, row) in pixels.chunks_exact(width).enumerate() {
-        let at = (y + pad) * wide + pad;
+        let at = (y + top) * wide + left;
         out[at..at + width].copy_from_slice(row);
     }
     out
@@ -101,15 +102,16 @@ fn render(plugin: &Plugin, effect: &str, size: [u32; 2], rounds: usize) -> ([f64
     cx.params = defaults(plugin, effect, size);
     let layout: Layout = plugin.call(&Call::Layout { effect: effect.into(), cx: cx.clone() }, None, &mut NoHost).unwrap();
     let original = padded(&source(size), size, layout.padding);
-    cx.size = size.map(|side| side + 2 * layout.padding);
-    cx.offset = [f64::from(layout.padding); 2];
+    let [left, top, right, bottom] = layout.padding;
+    cx.size = [size[0] + left + right, size[1] + top + bottom];
+    cx.offset = [f64::from(left), f64::from(top)];
     let pixels = std::cell::RefCell::new(original.clone());
     let ms = median_ms(
         rounds,
         || pixels.borrow_mut().copy_from_slice(&original),
         || match layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu()) {
             Some(plan) => plugin.run_passes(effect, &cx, plan, &mut pixels.borrow_mut(), || NoHost).unwrap(),
-            None => plugin.render(effect, &cx, layout.reach, &mut pixels.borrow_mut(), || NoHost).unwrap(),
+            None => plugin.render(effect, &cx, &layout, None, &mut pixels.borrow_mut(), || NoHost).map(|_| ()).unwrap(),
         },
     );
     (ms, pixels.into_inner())

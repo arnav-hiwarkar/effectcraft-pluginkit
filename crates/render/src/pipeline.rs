@@ -18,6 +18,7 @@ pub(crate) struct EffectStack {
     pub adjustment: bool,
     pub limit: usize,
     pub origin: [f64; 2],
+    pub shown: Option<[f64; 4]>,
 }
 
 /// A footage layer's source as the decoded picture itself (see [`Renderer::footage_picture`]):
@@ -810,16 +811,16 @@ impl<'a> Renderer<'a> {
     }
 
     pub(crate) fn apply_effects(&self, ctx: &EvalCtx, layer: &Layer, buf: Buf, adjustment: bool) -> Buf {
-        self.apply_effects_timed(ctx, layer, buf, adjustment, usize::MAX, None)
+        self.apply_effects_timed(ctx, layer, buf, EffectStack { adjustment, limit: usize::MAX, origin: [0.0; 2], shown: None }, None)
     }
 
     /// Run the first `limit` effects of the layer's stack (by position; disabled ones count) on
     /// `buf` (layer space, or the comp below for an adjustment layer).
-    fn apply_effects_timed(&self, ctx: &EvalCtx, layer: &Layer, mut buf: Buf, adjustment: bool, limit: usize, timing: Option<&mut Vec<(String, f64)>>) -> Buf {
+    fn apply_effects_timed(&self, ctx: &EvalCtx, layer: &Layer, mut buf: Buf, stack: EffectStack, timing: Option<&mut Vec<(String, f64)>>) -> Buf {
         // The comp below an adjustment layer is not in its layer space: it stays as it is.
-        let origin = if adjustment { [0.0; 2] } else { ctx.effect_bounds(layer).1 };
+        let origin = if stack.adjustment { [0.0; 2] } else { ctx.effect_bounds(layer).1 };
         buf.rebase(origin);
-        let mut out = self.effect_space_stack(ctx, layer, buf, EffectStack { adjustment, limit, origin }, timing);
+        let mut out = self.effect_space_stack(ctx, layer, buf, EffectStack { origin, ..stack }, timing);
         out.rebase([-origin[0], -origin[1]]);
         out
     }
@@ -844,7 +845,7 @@ impl<'a> Renderer<'a> {
         mut timing: Option<&mut Vec<(String, f64)>>,
         target: &mut dyn FxTarget,
     ) {
-        let EffectStack { adjustment, limit, origin } = stack;
+        let EffectStack { adjustment, limit, origin, shown } = stack;
         if !layer.switches.effects {
             return;
         }
@@ -898,7 +899,7 @@ impl<'a> Renderer<'a> {
                 buf
             });
         }
-        let host = FxHost { r: self, ctx, layer, origin, index: 0, original: original.as_ref() };
+        let host = FxHost { r: self, ctx, layer, origin, index: 0, original: original.as_ref(), shown: None };
         let env = EffectEnv {
             masks: &mask_shapes,
             host: Some(&host),
@@ -926,6 +927,7 @@ impl<'a> Renderer<'a> {
             })
             .filter(|(_, _, s)| !effectcraft_effects::audio_fx::is_audio_effect(s.id))
             .collect();
+        let shown_after = self.shown_after(ctx, layer, &stack, shown);
         let accel = self.active_accel();
         let mut input_quantized = false;
         let mut k = 0;
@@ -968,7 +970,7 @@ impl<'a> Renderer<'a> {
             }
             k += 1;
             let params = self.effect_params(ctx, layer, g);
-            let host = FxHost { index: i, ..host };
+            let host = FxHost { index: i, shown: shown_after[k - 1], ..host };
             let quantize_output = self.pipe.levels.filter(|_| spec.quantizes_output());
             let env = EffectEnv { host: Some(&host), effect_index: i, instance: effect_instance(layer, g), quantize_output, input_quantized, ..env };
             let ectx = EffectCtx { params: &params, time: lt.seconds(), layer_size, seed: g.uid as u32, adjustment, env };
@@ -1592,11 +1594,23 @@ impl<'a> Renderer<'a> {
         // A footage layer read in part (a region of interest, #3271) isn't kept: its key names
         // the whole layer (a whole buffer kept before is used above).
         let key = key.filter(|_| !self.reads_footage_rows(ctx, layer));
+        let shown = self.shown_part(ctx, layer);
+        let key = match shown {
+            Some(part) => {
+                let key = key.map(|key| part.iter().fold(cache::derive(key, 0x5_0e0), |key, side| cache::derive(key, side.to_bits())));
+                if let Some((b, files)) = self.cached(key) {
+                    return Some((b, key, files));
+                }
+                key
+            }
+            None => key,
+        };
         let (buf, files) = self.recorded(key, |r| {
             // (what expressions read while it is made, at shutter times too, goes to its files)
             let ctx = &r.with_reads(ctx);
             let buf = r.masked_source(ctx, layer)?;
-            Some(r.apply_effects_timed(ctx, layer, buf, false, usize::MAX, timing.map(|t| &mut t.effects)))
+            let stack = EffectStack { adjustment: false, limit: usize::MAX, origin: [0.0; 2], shown };
+            Some(r.apply_effects_timed(ctx, layer, buf, stack, timing.map(|t| &mut t.effects)))
         });
         let (buf, files) = self.keep(key, Arc::new(buf?), &files);
         Some((buf, key, files))
@@ -1625,11 +1639,67 @@ impl<'a> Renderer<'a> {
             let origin = ctx.effect_bounds(layer).1;
             buf.rebase(origin);
             if effects > 0 {
-                buf = r.effect_space_stack(ctx, layer, buf, EffectStack { adjustment: false, limit: effects, origin }, None);
+                buf = r.effect_space_stack(ctx, layer, buf, EffectStack { adjustment: false, limit: effects, origin, shown: None }, None);
             }
             Some(buf)
         });
         Some(self.keep(key, Arc::new(buf?), &files).0)
+    }
+}
+
+impl Renderer<'_> {
+    fn shown_part(&self, ctx: &EvalCtx, layer: &Layer) -> Option<[f64; 4]> {
+        let plugin_effect = layer
+            .effects()
+            .into_iter()
+            .flat_map(|fx| fx.groups())
+            .any(|g| g.enabled && matches!(&g.kind, GroupKind::Effect { effect } if effectcraft_effects::dynamic::get(effect).is_some()));
+        let whole = !plugin_effect
+            || !layer.switches.effects
+            || !self.top
+            || self.whole_raster
+            || self.depth > 0
+            || self.outer.is_some()
+            || self.collapse3d.is_some()
+            || layer.switches.adjustment
+            || layer.switches.three_d
+            || self.mb_on(ctx, layer)
+            || styles::group(layer).is_some()
+            || comp_reads_pixels(ctx);
+        if whole {
+            return None;
+        }
+        let view = self.opts.roi.unwrap_or([0.0, 0.0, f64::from(ctx.comp.width), f64::from(ctx.comp.height)]);
+        let to_effect = ctx.effect_to_comp(layer).inverse()?;
+        let corners = [[view[0], view[1]], [view[0] + view[2], view[1]], [view[0], view[1] + view[3]], [view[0] + view[2], view[1] + view[3]]]
+            .map(|[x, y]| to_effect.apply(vec2(x, y)));
+        let (lo, hi) = corners
+            .iter()
+            .fold(([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]), |(lo, hi), p| ([lo[0].min(p.x), lo[1].min(p.y)], [hi[0].max(p.x), hi[1].max(p.y)]));
+        let s = self.opts.scale.max(1e-3);
+        let k = [vec2(1.0, 0.0), vec2(0.0, 1.0)].iter().map(|v| to_effect.apply_vec(*v).length()).fold(1.0f64, f64::max);
+        let margin = 2.0 + (2.0 / s).ceil() + (2.0 * k / s).ceil();
+        let part = [lo[0] - margin, lo[1] - margin, hi[0] + margin, hi[1] + margin];
+        let size = ctx.effect_bounds(layer).0;
+        let covers = part[0] <= 0.0 && part[1] <= 0.0 && part[2] >= size[0] && part[3] >= size[1];
+        (part.iter().all(|side| side.is_finite()) && !covers).then_some(part)
+    }
+
+    fn shown_after(
+        &self,
+        ctx: &EvalCtx,
+        layer: &Layer,
+        stack: &[(usize, &effectcraft_project::PropGroup, &'static effectcraft_effects::EffectSpec)],
+        shown: Option<[f64; 4]>,
+    ) -> Vec<Option<[f64; 4]>> {
+        let mut parts = vec![None; stack.len()];
+        let mut part = shown;
+        for (slot, (_, g, spec)) in parts.iter_mut().zip(stack).rev() {
+            *slot = part;
+            let margin = part.and_then(|_| effectcraft_effects::pixel_margin(spec.id, &self.effect_params(ctx, layer, g)));
+            part = part.zip(margin).map(|(p, m)| [p[0] - m, p[1] - m, p[2] + m, p[3] + m]);
+        }
+        parts
     }
 }
 

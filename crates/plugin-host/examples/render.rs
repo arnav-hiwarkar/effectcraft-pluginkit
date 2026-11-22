@@ -181,23 +181,27 @@ fn run() -> Result<(), String> {
     };
     let layout: Layout = plugin.call(&Call::Layout { effect: effect.clone(), cx: cx.clone() }, None, &mut &unpadded).map_err(|e| e.to_string())?;
     let pad = layout.padding;
-    let shift = f64::from(pad);
-    let (padded_w, padded_h) = (width + 2 * pad, height + 2 * pad);
+    let [left, top, right, bottom] = pad;
+    let shift = [f64::from(left), f64::from(top)];
+    let (padded_w, padded_h) = (width + left + right, height + top + bottom);
     let mut padded = vec![[0.0; 4]; (padded_w * padded_h) as usize];
     for y in 0..height as usize {
-        let at = (y + pad as usize) * padded_w as usize + pad as usize;
+        let at = (y + top as usize) * padded_w as usize + left as usize;
         padded[at..at + width as usize].copy_from_slice(&unpadded.source[y * width as usize..(y + 1) * width as usize]);
     }
-    let masks =
-        unpadded.masks.iter().map(|mask| MaskPath { points: mask.points.iter().map(|p| [p[0] + shift, p[1] + shift]).collect(), ..mask.clone() }).collect();
+    let masks = unpadded
+        .masks
+        .iter()
+        .map(|mask| MaskPath { points: mask.points.iter().map(|p| [p[0] + shift[0], p[1] + shift[1]]).collect(), ..mask.clone() })
+        .collect();
     let inputs = Inputs { width: padded_w, height: padded_h, source: padded.clone(), masks };
     cx.size = [padded_w, padded_h];
-    cx.offset = [shift, shift];
+    cx.offset = shift;
     for value in cx.params.values_mut() {
         if let Value::List(point) = value
             && point.len() < 4
         {
-            point.iter_mut().take(2).for_each(|c| *c += shift);
+            point.iter_mut().zip(shift).for_each(|(c, by)| *c += by);
         }
     }
 
@@ -206,13 +210,13 @@ fn run() -> Result<(), String> {
     for _ in 0..rounds.max(1) {
         pixels = padded.clone();
         let start = Instant::now();
-        plugin.render(effect, &cx, layout.reach, &mut pixels, || &inputs).map_err(|e| e.to_string())?;
+        plugin.render(effect, &cx, &layout, None, &mut pixels, || &inputs).map_err(|e| e.to_string())?;
         best = best.min(start.elapsed().as_secs_f64() * 1000.0);
     }
     save_png(Path::new(out), padded_w, padded_h, &pixels, option("--over") != Some("none"))?;
     let kind = if bundle.mode == craft_plugin::RunMode::Sandboxed { "wasm" } else { "native" };
     println!(
-        "{effect}: {padded_w}x{padded_h} (padding {pad}, reach {:?}, gpu plan {}) best of {rounds}: {best:.2} ms [{kind}] -> {out}",
+        "{effect}: {padded_w}x{padded_h} (padding {pad:?}, reach {:?}, gpu plan {}) best of {rounds}: {best:.2} ms [{kind}] -> {out}",
         layout.reach,
         layout.gpu.is_some()
     );

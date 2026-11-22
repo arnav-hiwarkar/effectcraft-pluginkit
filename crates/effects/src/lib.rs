@@ -582,6 +582,9 @@ pub trait EffectHost: Sync {
     fn param_history(&self) -> Option<u64> {
         None
     }
+    fn shown(&self) -> Option<[f64; 4]> {
+        None
+    }
     /// Parameter `id` (a [`flatten_params`] id such as `birthRate`) of effect `effect_index` in
     /// the layer's stack (the running effect's [`EffectEnv::effect_index`]) at another **layer
     /// time**: Particle Emitter 3D samples its Birth Rate at every step it simulates (#1373).
