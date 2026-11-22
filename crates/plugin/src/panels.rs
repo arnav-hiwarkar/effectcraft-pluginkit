@@ -1,8 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use craft_plugin_host::ui::{AppEvent, ControlsReply, PanelReply, UiEvent, UiInput, Widget};
@@ -13,11 +13,12 @@ use effectcraft_engine::project::{ItemId, Project};
 use serde_json::{Value, json};
 
 use crate::gate::SessionHost;
-use crate::manage::{Loaded, plugins, running_plugins};
+use crate::manage::{Loaded, plugins, running, running_plugins};
 use crate::viewer::Shown as Drawn;
 
 const WAIT: Duration = Duration::from_millis(4);
 const POLL: Duration = Duration::from_micros(500);
+const RECHECK: Duration = Duration::from_millis(10);
 
 struct Job {
     project: Arc<AtomicBool>,
@@ -29,10 +30,9 @@ type Waker = Arc<dyn Fn() + Send + Sync>;
 struct Forwarded {
     jobs: Mutex<Vec<Job>>,
     ready: Condvar,
-    busy: Mutex<Vec<String>>,
 }
 
-static FORWARDED: Forwarded = Forwarded { jobs: Mutex::new(Vec::new()), ready: Condvar::new(), busy: Mutex::new(Vec::new()) };
+static FORWARDED: Forwarded = Forwarded { jobs: Mutex::new(Vec::new()), ready: Condvar::new() };
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -58,22 +58,20 @@ fn wait_for_work(timeout: Duration) {
     }
 }
 
-fn idle(plugin: &str) {
-    let mut busy = lock(&FORWARDED.busy);
-    if let Some(at) = busy.iter().position(|id| id == plugin) {
-        busy.swap_remove(at);
+pub(crate) fn run_command(session: &mut Session, loaded: Arc<Loaded>, command: &str) -> Result<(), String> {
+    let asking = Arc::new(());
+    let mut host = Remote { bound: Bound::of(loaded.clone(), session, Arc::downgrade(&asking)), wake: Arc::new(|| {}), gesture: None };
+    let call = Call::Command { command: command.to_string() };
+    let running = std::thread::Builder::new()
+        .name(format!("craft-plugin-command-{}", loaded.bundle.manifest.id))
+        .spawn(move || loaded.plugin.call::<()>(&call, None, &mut host).map_err(|error| error.to_string()))
+        .map_err(|error| error.to_string())?;
+    while !running.is_finished() {
+        if serve(session) == 0 {
+            wait_for_work(POLL);
+        }
     }
-}
-
-fn busy(plugin: &str) -> bool {
-    lock(&FORWARDED.busy).iter().any(|id| id == plugin)
-}
-
-pub(crate) fn settle(session: &mut Session, plugin: &str) {
-    while busy(plugin) {
-        serve(session);
-        wait_for_work(POLL);
-    }
+    running.join().map_err(|_| "the plugin's command panicked".to_string())?
 }
 
 pub trait Clipboard: Send + Sync {
@@ -95,11 +93,16 @@ pub(crate) fn clipboard() -> Result<&'static dyn Clipboard, String> {
 pub(crate) struct Bound {
     loaded: Arc<Loaded>,
     project: Arc<AtomicBool>,
+    surface: Weak<()>,
 }
 
 impl Bound {
-    pub(crate) fn of(loaded: Arc<Loaded>, session: &Session) -> Bound {
-        Bound { loaded, project: session.project_closed.clone() }
+    pub(crate) fn of(loaded: Arc<Loaded>, session: &Session, surface: Weak<()>) -> Bound {
+        Bound { loaded, project: session.project_closed.clone(), surface }
+    }
+
+    fn asked_by(&self, surface: &Arc<()>) -> bool {
+        std::ptr::eq(self.surface.as_ptr(), Arc::as_ptr(surface))
     }
 
     fn plugin(&self) -> &str {
@@ -110,6 +113,7 @@ impl Bound {
         let reloaded = || !plugins().and_then(|plugins| plugins.get(self.plugin())).is_some_and(|now| Arc::ptr_eq(&now, &self.loaded));
         let why = match () {
             _ if self.project.load(Ordering::SeqCst) => "its project closed",
+            _ if self.surface.strong_count() == 0 => "the panel, overlay, tool or menu that asked for it closed",
             _ if reloaded() => "its plugin was reloaded or turned off",
             _ => return Ok(()),
         };
@@ -154,6 +158,7 @@ struct Remote {
 
 impl Remote {
     fn on_app<T: Send + 'static>(&self, run: impl FnOnce(&mut SessionHost) -> T + Send + 'static) -> Result<T, String> {
+        self.bound.check()?;
         let (reply, answer) = channel();
         let (bound, gesture) = (self.bound.clone(), self.gesture.clone());
         let project = bound.project.clone();
@@ -174,7 +179,15 @@ impl Remote {
         lock(&FORWARDED.jobs).push(Job { project, run });
         FORWARDED.ready.notify_all();
         (self.wake)();
-        answer.recv().map_err(|_| "the app closed before it answered".to_string())?
+        let answered = loop {
+            match answer.recv_timeout(RECHECK) {
+                Ok(answered) => break answered,
+                Err(RecvTimeoutError::Timeout) => self.bound.check()?,
+                Err(RecvTimeoutError::Disconnected) => return Err("the app closed before it answered".into()),
+            }
+        };
+        self.bound.check()?;
+        answered
     }
 }
 
@@ -232,6 +245,7 @@ pub(crate) enum Key {
     Slot(String),
     Effect(String, u64),
     Tool(String, String),
+    Command(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -281,6 +295,7 @@ fn run(request: &Request, wake: &Waker) -> Result<Reply, String> {
             .map(|reply: ControlsReply| Reply::Panel(PanelReply { widgets: reply.widgets, ..Default::default() }, reply.value))
             .map_err(failed),
         Call::Drag { .. } => plugin.call(call, None, &mut host).map(Reply::Value).map_err(failed),
+        Call::Command { .. } => plugin.call(call, None, &mut host).map(|()| Reply::Value(None)).map_err(failed),
         _ => plugin.call(call, None, &mut host).map(Reply::Overlay).map_err(failed),
     }
 }
@@ -296,7 +311,6 @@ fn worker(loaded: &Arc<Loaded>, done: Sender<Done>, wake: Waker) -> std::io::Res
     std::thread::Builder::new().name(format!("craft-plugin-{plugin}")).spawn(move || {
         for request in queue {
             let reply = request.bound.check().and_then(|()| run(&request, &wake));
-            idle(&plugin);
             let _ = done.send(Done { request, reply });
             FORWARDED.ready.notify_all();
             wake();
@@ -314,13 +328,14 @@ pub enum Surface<'a> {
 struct Slot {
     retained: Retained,
     loaded: Arc<Loaded>,
+    open: Arc<()>,
     shown: bool,
     value: Option<String>,
 }
 
 impl Slot {
     fn new(loaded: &Arc<Loaded>) -> Slot {
-        Slot { retained: Retained::new(), loaded: loaded.clone(), shown: false, value: None }
+        Slot { retained: Retained::new(), loaded: loaded.clone(), open: Arc::default(), shown: false, value: None }
     }
 }
 
@@ -367,6 +382,7 @@ pub struct Panels {
     deadline: Option<Instant>,
     scheduled: Option<Duration>,
     notice: Option<String>,
+    open: Arc<()>,
 }
 
 fn find(surface: Surface) -> Result<(Arc<Loaded>, Call), String> {
@@ -455,6 +471,16 @@ impl Panels {
         self.notice.take()
     }
 
+    pub fn command(&mut self, session: &Session, plugin: &str, command: &str) -> Result<(), String> {
+        let bound = Bound::of(running(plugin)?, session, self.surface());
+        self.post(Request { key: Key::Command(plugin.to_string()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture: None });
+        Ok(())
+    }
+
+    pub(crate) fn surface(&self) -> Weak<()> {
+        Arc::downgrade(&self.open)
+    }
+
     pub fn show(&mut self, session: &mut Session, key: &str, surface: Surface, size: [f32; 2]) -> Result<Shown<'_>, String> {
         let (loaded, call) = find(surface)?;
         let slot = self.slots.entry(key.to_string()).or_insert_with(|| Slot::new(&loaded));
@@ -470,7 +496,7 @@ impl Panels {
                 slot.retained.invalidate();
             }
         }
-        let bound = Bound::of(loaded, session);
+        let bound = Bound::of(loaded, session, Arc::downgrade(&slot.open));
         while let Some(input) = self.slots.get_mut(key).and_then(|slot| slot.retained.start(size, self.now)) {
             let request =
                 Request { key: Key::Slot(key.to_string()), bound: bound.clone(), call: with_input(call.clone(), input), edit: edit.clone(), gesture: None };
@@ -508,11 +534,9 @@ impl Panels {
                 }
             }
         }
-        lock(&FORWARDED.busy).push(plugin.clone());
         if let Some(worker) = self.workers.get(&plugin)
             && let Err(unsent) = worker.requests.send(request)
         {
-            idle(&plugin);
             let _ = self.done.0.send(Done { request: unsent.0, reply: Err("the plugin's worker stopped".into()) });
         }
     }
@@ -560,7 +584,7 @@ impl Panels {
         }
         let Request { key, bound, call, edit, .. } = request;
         if let Key::Slot(slot_key) = &key {
-            let Some(slot) = self.slots.get_mut(slot_key).filter(|slot| Arc::ptr_eq(&slot.loaded, &bound.loaded)) else { return };
+            let Some(slot) = self.slots.get_mut(slot_key).filter(|slot| bound.asked_by(&slot.open)) else { return };
             match (stale, reply) {
                 (None, Ok(Reply::Panel(reply, edited))) => {
                     slot.retained.finish(Ok(reply), self.now);

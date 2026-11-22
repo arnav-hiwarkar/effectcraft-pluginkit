@@ -305,3 +305,56 @@ fn a_control_edit_keys_the_time_it_was_made_at_even_when_the_playhead_moved_mean
     let keys: Vec<Value> = level(&mut app)["keys"].as_array().unwrap().iter().map(|key| key["value"].clone()).collect();
     assert_eq!(keys, vec![json!("0.5"), json!("1")]);
 }
+
+#[test]
+fn a_menu_command_behind_a_panel_call_that_does_not_return_leaves_the_ui_at_once_and_runs_after_it() {
+    let (finished, outcome) = channel();
+    std::thread::spawn(move || {
+        let mut app = app("test.panels-menu", &["document.read", "document.write"]);
+        let (mut panels, mut frame) = (Panels::default(), 0);
+        relay(&mut app, &mut panels, &mut frame, json!({"command": "comp.info", "params": {}}), true);
+        let posted = panels.command(&app.session, &app.id, "edit");
+        let before = app.layer_names();
+        release(&app);
+        crate::viewer::settle(&mut app, &mut panels);
+        let _ = finished.send((posted, before, app.layer_names()));
+    });
+    let outcome = outcome.recv_timeout(Duration::from_secs(20)).expect("the menu returns while the panel call holds");
+    assert_eq!(outcome, (Ok(()), Vec::<String>::new(), vec!["From Plugin".to_string()]));
+}
+
+#[test]
+fn a_worker_waiting_for_the_app_is_released_when_its_panels_and_session_close() {
+    let (finished, outcome) = channel();
+    std::thread::spawn(move || {
+        let mut app = app("test.panels-strand", &["document.read"]);
+        let (mut panels, mut frame) = (Panels::default(), 0);
+        relay(&mut app, &mut panels, &mut frame, json!({"command": "comp.info", "params": {}}), true);
+        std::thread::sleep(ms(50));
+        drop(panels);
+        app.session = effectcraft_host::session();
+        effectcraft_plugin::install(&mut app.session, None);
+        release(&app);
+        let _ = finished.send(app.run("greet"));
+    });
+    assert_eq!(outcome.recv_timeout(Duration::from_secs(20)).expect("the plugin is free again"), Ok(()));
+}
+
+#[test]
+fn a_command_run_while_a_panel_call_waits_for_the_app_runs_after_it() {
+    let (finished, outcome) = channel();
+    std::thread::spawn(move || {
+        let mut app = app("test.panels-run-during", &["document.read"]);
+        let (mut panels, mut frame) = (Panels::default(), 0);
+        relay(&mut app, &mut panels, &mut frame, json!({"command": "comp.info", "params": {}}), true);
+        let hold = app.bundle.path().join("hold");
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(ms(200));
+            std::fs::remove_file(hold).expect("remove the hold file");
+        });
+        let ran = app.run("greet");
+        let _ = releaser.join();
+        let _ = finished.send((ran, relay_said(&mut app, &mut panels, &mut frame)));
+    });
+    assert_eq!(outcome.recv_timeout(Duration::from_secs(20)).expect("the command runs"), (Ok(()), "relayed".to_string()));
+}

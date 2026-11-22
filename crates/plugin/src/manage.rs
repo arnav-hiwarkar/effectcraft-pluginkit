@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use craft_plugin_host::PluginImage;
-use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Permission, Plugin, Registry, RunMode, TaskState};
+use craft_plugin_host::{Bundle, BundleError, Limits, Manifest, Permission, Plugin, Registry, RunMode, TaskState};
 use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -412,10 +412,7 @@ pub fn image(plugin: &str, key: &str) -> Option<Arc<PluginImage>> {
 }
 
 pub fn run_command(session: &mut Session, plugin: &str, command: &str) -> Result<(), String> {
-    let loaded = running(plugin)?;
-    crate::panels::settle(session, plugin);
-    let call = Call::Command { command: command.to_string() };
-    loaded.plugin.call(&call, None, &mut SessionHost::new(session, &loaded)).map_err(|e| e.to_string())
+    crate::panels::run_command(session, running(plugin)?, command)
 }
 
 pub fn pump(session: &mut Session) -> bool {

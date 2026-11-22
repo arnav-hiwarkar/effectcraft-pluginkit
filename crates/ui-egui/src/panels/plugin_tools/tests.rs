@@ -208,8 +208,7 @@ fn tool_texts(harness: &mut Harness<'_, EffectcraftApp>) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn a_plugin_tool_receives_its_gesture_in_comp_coordinates_at_half_and_double_zoom() {
+fn probe_session() -> Session {
     static PROBE: OnceLock<tempfile::TempDir> = OnceLock::new();
     let session = session();
     load(&PROBE, || {
@@ -217,7 +216,12 @@ fn a_plugin_tool_receives_its_gesture_in_comp_coordinates_at_half_and_double_zoo
         let manifest = json!({"id": "test.viewer-tool-ui", "name": "Probe", "version": "1.0.0", "entry": {"wasm": "plugin.wasm"}, "permissions": ["document.read", "document.write"]});
         bundle(&wasm(&probe, "probe"), manifest)
     });
-    let mut harness = harness(session);
+    session
+}
+
+#[test]
+fn a_plugin_tool_receives_its_gesture_in_comp_coordinates_at_half_and_double_zoom() {
+    let mut harness = harness(probe_session());
     settle(&mut harness, |h| h.state().auto.find("tools.plugin.test.viewer-tool-ui.stamp").is_some());
     let button = element(&harness, "tools.plugin.test.viewer-tool-ui.stamp").center();
     press_drag_release(&mut harness, &[button]);
@@ -234,4 +238,17 @@ fn a_plugin_tool_receives_its_gesture_in_comp_coordinates_at_half_and_double_zoo
     harness.state_mut().session.execute("edit.undo", json!({})).unwrap();
     let names: Vec<String> = harness.state().session.active_comp().unwrap().layers.iter().map(|layer| layer.name.clone()).collect();
     assert_eq!(names, ["Stamp"], "each gesture is one undo step");
+}
+
+#[test]
+fn a_plugin_menu_command_is_queued_and_the_menu_returns_before_it_runs() {
+    let mut harness = harness(probe_session());
+    harness.step();
+    let ctx = harness.ctx.clone();
+    let app = harness.state_mut();
+    let ran = crate::menus::invoke(app, &ctx, "plugin.run", json!({"plugin": "test.viewer-tool-ui", "command": "edit"}));
+    let names = |h: &Harness<'_, EffectcraftApp>| -> Vec<String> { h.state().session.active_comp().unwrap().layers.iter().map(|layer| layer.name.clone()).collect() };
+    let before = names(&harness);
+    settle(&mut harness, |h| h.state().plugin_ui.panels.idle());
+    assert_eq!((ran, before, names(&harness)), (Ok(Value::Null), vec![], vec!["From Plugin".to_string()]));
 }

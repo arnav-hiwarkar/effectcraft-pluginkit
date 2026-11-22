@@ -88,7 +88,7 @@ impl Panels {
         let lane = Key::Effect(plugin, instance);
         if slot.request != request {
             slot.request = request;
-            self.post(Request { key: lane.clone(), bound: Bound::of(loaded, session), call, edit: None, gesture: None });
+            self.post(Request { key: lane.clone(), bound: Bound::of(loaded, session, self.surface()), call, edit: None, gesture: None });
         }
         self.wait(session, |panels| !panels.lanes.contains_key(&lane));
         self.overlays.get(&key)?.shown.clone()
@@ -133,7 +133,7 @@ impl Panels {
                 let edit = Target { comp: shown.place[0], layer: shown.place[1], prop: uid(param)?, time: shown.cx.comp_time, merge: merge.to_string() };
                 let call = Call::Drag { effect: shown.effect.clone(), cx: shown.cx.clone(), key: key.clone(), to, value };
                 let lane = Key::Effect(shown.plugin.clone(), shown.cx.instance);
-                self.post(Request { key: lane, bound: Bound::of(shown.loaded.clone(), session), call, edit: Some(edit), gesture: None });
+                self.post(Request { key: lane, bound: Bound::of(shown.loaded.clone(), session, self.surface()), call, edit: Some(edit), gesture: None });
                 Ok(Vec::new())
             }
         }
@@ -162,7 +162,8 @@ impl Panels {
             _ => state.gesture.clone(),
         };
         let call = Call::Tool { tool: tool.to_string(), event };
-        self.post(Request { key, bound: Bound::of(loaded, session), call, edit: None, gesture });
+        let bound = Bound::of(loaded, session, self.surface());
+        self.post(Request { key, bound, call, edit: None, gesture });
         Ok(())
     }
 
