@@ -358,3 +358,23 @@ fn a_command_run_while_a_panel_call_waits_for_the_app_runs_after_it() {
     });
     assert_eq!(outcome.recv_timeout(Duration::from_secs(20)).expect("the command runs"), (Ok(()), "relayed".to_string()));
 }
+
+#[test]
+fn two_clicks_on_a_control_answered_in_one_frame_each_start_from_the_value_the_other_left() {
+    let mut app = app("test.panels-control-twice", &[]);
+    let target = scale_layer(&mut app);
+    let effect = format!("{}.scale", app.id);
+    let (mut panels, mut frame) = (Panels::default(), 0);
+    let surface = Surface::Control { effect: &effect, param: "level", instance: target.prop, value: "1", edit: Some(&target) };
+    let halve = button(&settled(&mut app, &mut panels, "control", surface, &mut frame), 2);
+    panels.submit("control", vec![click(halve), click(halve)], "");
+    for _ in 0..200 {
+        frame += 1;
+        panels.frame(&mut app.session, ms(16 * frame));
+        let value = level(&mut app)["value"].as_str().unwrap_or_default().to_string();
+        let surface = Surface::Control { effect: &effect, param: "level", instance: target.prop, value: &value, edit: Some(&target) };
+        panels.show(&mut app.session, "control", surface, SIZE).unwrap();
+        std::thread::sleep(ms(2));
+    }
+    assert_eq!(level(&mut app)["value"], json!("0.25"));
+}

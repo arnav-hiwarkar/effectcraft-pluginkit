@@ -513,7 +513,7 @@ impl Panels {
                 Request { key: Key::Slot(key.to_string()), bound: bound.clone(), call: with_input(call.clone(), input), edit: edit.clone(), gesture: None };
             self.send(request);
             self.wait(session, |panels| !panels.busy(key));
-            if self.busy(key) {
+            if self.busy(key) || edit.is_some() {
                 break;
             }
         }
