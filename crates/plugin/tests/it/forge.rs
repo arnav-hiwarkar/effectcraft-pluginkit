@@ -410,3 +410,34 @@ fn a_mesh_dropped_from_the_plugin_cache_is_stored_again_on_the_next_frame() {
     assert_eq!(after, before, "after its vertices left the cache the cube still draws");
     assert!(forge.plugin.cached(key).is_some(), "the vertices are back in the cache");
 }
+
+#[test]
+fn a_comp_point_light_from_the_upper_right_lights_a_row_seen_by_a_moved_camera() {
+    let Some(gpu) = gpu() else { return };
+    let mut comp = Comp::new([960, 540]);
+    comp.forge(&[
+        ("model", json!(2)),
+        ("Transform/size", json!(110.0)),
+        ("Transform/rotation_x", json!(-25.0)),
+        ("Replicator/shape", json!(1)),
+        ("Replicator/columns", json!(3.0)),
+        ("Replicator/spacing_x", json!(300.0)),
+        ("Replicator/ramp", json!(true)),
+        ("Lighting/ambient", json!(8.0)),
+        ("Material/rim", json!(0.0)),
+    ]);
+    comp.session
+        .execute("layer.newCamera", json!({"name": "Moved", "type": "twoNode", "position": [250.0, 120.0, -1100.0], "poi": [480.0, 270.0, 0.0]}))
+        .expect("layer.newCamera");
+    comp.session
+        .execute("layer.newLight", json!({"kind": "Point", "name": "Key", "position": [1100.0, -250.0, -300.0], "intensity": 130.0}))
+        .expect("layer.newLight");
+    let image = comp.frame(gpu);
+    let [left, right, top, bottom] = halves(&image);
+    assert!(right > left && top > bottom, "lit from the upper right: left {left:.3} right {right:.3} top {top:.3} bottom {bottom:.3}");
+    let Ok(path) = std::env::var("FORGE_SCENE_PNG") else { return };
+    let encode = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let rgba: Vec<u8> = image.data.iter().flat_map(|p| [encode(p[0]), encode(p[1]), encode(p[2]), 255]).collect();
+    let png = effectcraft_automation::encode_png(image.width, image.height, rgba, 0).expect("PNG encodes");
+    std::fs::write(&path, png).expect("the PNG is written");
+}
