@@ -276,3 +276,23 @@ fn a_plugin_whose_id_prefixes_another_cannot_write_text_into_the_others_custom_p
     let denied = app.relay("prop.set", json!({"path": "effects/#1/level", "value": "/Users/someone/secret"})).unwrap_err();
     assert!(denied.contains("files.read"), "{denied}");
 }
+
+#[test]
+fn keyframes_holding_text_cannot_be_pasted_without_file_permissions() {
+    let mut app = app("test.gate-paste", EDITOR);
+    let graded = app.session.execute("layer.newSolid", json!({"name": "Graded"})).unwrap()["layer"].clone();
+    app.session.execute("effect.apply", json!({"effect": "test.gate-paste.scale"})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "ec.utility.applylut"})).unwrap();
+    app.relay("prop.addKey", json!({"path": "effects/#1/level", "value": "Users/someone/look.cube", "time": 0.0}))
+        .expect("its own custom parameter is writable");
+    let lut = app.session.execute_checked("prop.get", json!({"path": "effects/#2/lut"})).unwrap()["uid"].clone();
+    app.session.execute("keys.selectAll", json!({"layers": [graded]})).unwrap();
+    app.session.execute("keys.copy", json!({})).unwrap();
+    let denied = app.relay("keys.paste", json!({"layers": [graded], "prop": lut})).unwrap_err();
+    assert!(denied.contains("files.read"), "{denied}");
+    let batch = json!({"steps": [{"command": "keys.copy", "params": {}}, {"command": "keys.paste", "params": {"prop": lut}}]});
+    let denied = app.relay("engine.batch", batch).unwrap_err();
+    assert!(denied.contains("files.read"), "batch: {denied}");
+    let value = app.session.execute_checked("prop.get", json!({"path": "effects/#2/lut"})).unwrap()["value"].clone();
+    assert_eq!(value, json!(""));
+}

@@ -187,7 +187,15 @@ impl<'a> SessionHost<'a> {
         FILE_PERMISSIONS.iter().all(|p| self.plugin.bundle.manifest.permissions.contains(p))
     }
 
+    fn copied_keys_hold_text(&self) -> bool {
+        use effectcraft_engine::project::Value as KeyValue;
+        self.session.state.key_clipboard.iter().flat_map(|clip| &clip.keys).any(|key| matches!(key.value, KeyValue::Str(_)))
+    }
+
     fn property_write_allowed(&mut self, id: &str, params: &Value, reshaped: bool) -> Result<(), String> {
+        if id == "keys.paste" && (reshaped || self.copied_keys_hold_text()) {
+            return Err(format!("`{id}`: pasting keyframes that may hold text needs the `files.read` and `files.write` permissions"));
+        }
         if !WRITES_A_PROPERTY.contains(&id) {
             return Ok(());
         }
@@ -251,7 +259,7 @@ impl<'a> SessionHost<'a> {
         let mut reshaped = false;
         for (inner, inner_params) in owned {
             self.property_write_allowed(&inner, &inner_params, reshaped)?;
-            reshaped |= !WRITES_A_PROPERTY.contains(&inner.as_str()) && commands::find(&inner).is_some_and(|spec| spec.journal);
+            reshaped |= inner.starts_with("keys.") || !WRITES_A_PROPERTY.contains(&inner.as_str()) && commands::find(&inner).is_some_and(|spec| spec.journal);
         }
         Ok(())
     }
