@@ -16,25 +16,36 @@ pub fn measure(task: &Task) -> Result<serde_json::Value> {
 pub struct Meter {
     running: Option<u64>,
     state: Option<TaskState>,
+    error: Option<String>,
 }
 
 impl Panel for Meter {
     fn ui(&mut self, ui: &mut Ui) {
         if let Some(id) = self.running
             && ui.every("progress", 100)
-            && let Ok(state) = host::task(id)
         {
-            if state.status != TaskStatus::Running {
-                self.running = None;
+            match host::task(id) {
+                Ok(state) => {
+                    if state.status != TaskStatus::Running {
+                        self.running = None;
+                    }
+                    self.state = Some(state);
+                }
+                Err(error) => (self.running, self.error) = (None, Some(error.to_string())),
             }
-            self.state = Some(state);
         }
         if let Some(state) = &self.state {
             ui.progress(state.progress as f32, &state.message);
         }
         if self.running.is_none() && ui.button("Measure") {
-            self.running = host::start("measure", json!({ "frames": 10 })).ok();
+            match host::start("measure", json!({ "frames": 10 })) {
+                Ok(id) => (self.running, self.error) = (Some(id), None),
+                Err(error) => self.error = Some(error.to_string()),
+            }
             ui.every("progress", 100);
+        }
+        if let Some(error) = &self.error {
+            ui.error(error);
         }
     }
 }

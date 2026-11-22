@@ -291,23 +291,55 @@ mod tests {
         assert_eq!((time.year(), time.month(), time.day()), (1980, 1, 1));
     }
 
-    fn rust_blocks(markdown: &str) -> Vec<String> {
-        markdown.split("```rust\n").skip(1).filter_map(|rest| rest.split("\n```").next()).map(String::from).collect()
+    fn named_rust_blocks(markdown: &str) -> Vec<(String, String)> {
+        markdown
+            .split("```rust")
+            .skip(1)
+            .filter_map(|rest| {
+                let (name, body) = rest.split_once('\n')?;
+                Some((name.trim().to_string(), body.split("\n```").next()?.to_string()))
+            })
+            .collect()
+    }
+
+    fn region(text: &str, item: Option<&str>) -> Option<String> {
+        let Some(item) = item else { return Some(text.trim_end().to_string()) };
+        let lines: Vec<&str> = text.lines().collect();
+        let at = lines.iter().position(|line| line.contains(&format!("fn {item}(")))?;
+        let indent = &lines[at][..lines[at].len() - lines[at].trim_start().len()];
+        let start = (0..at).rev().take_while(|&n| lines[n].starts_with(&format!("{indent}#["))).last().unwrap_or(at);
+        let end = (at..lines.len()).find(|&n| lines[n] == format!("{indent}}}"))?;
+        Some(lines[start..=end].join("\n"))
+    }
+
+    fn named_source(root: &Path, name: &str) -> Option<String> {
+        let (path, item) = name.split_once('#').map_or((name, None), |(path, item)| (path, Some(item)));
+        let text = match path.strip_prefix("plugins/my-tint/") {
+            Some(file) => new::generate("my-tint", &new::KINDS[0]).ok()?.into_iter().find(|(generated, _)| *generated == file)?.1,
+            None if path.starts_with("plugins/cookbook/") => std::fs::read_to_string(root.join(path)).ok()?,
+            None => return None,
+        };
+        region(&text, item)
     }
 
     #[test]
-    fn every_rust_block_of_the_quickstart_and_the_cookbook_is_copied_from_code_that_is_compiled_and_tested() {
+    fn a_region_is_a_whole_file_or_one_function_with_its_attributes() {
+        let text = "use x;\n\n#[test]\n#[ignore]\nfn a() {\n    if b {\n    }\n}\n\nfn c() {}\n";
+        assert_eq!(region(text, Some("a")).unwrap(), "#[test]\n#[ignore]\nfn a() {\n    if b {\n    }\n}");
+        assert_eq!(region(text, None).unwrap(), text.trim_end());
+        assert_eq!(region(text, Some("d")), None);
+    }
+
+    #[test]
+    fn every_rust_block_of_the_quickstart_and_the_cookbook_is_the_named_region_of_a_compiled_and_tested_file() {
         let root = crate::root();
-        let cookbook = root.join("plugins/cookbook/src");
-        let mut compiled: Vec<String> = std::fs::read_dir(&cookbook).unwrap().map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap()).collect();
-        for kind in &new::KINDS {
-            compiled.extend(new::generate("my-tint", kind).unwrap().into_iter().map(|(_, text)| text));
-        }
-        for (doc, at_least) in [("docs/plugin-quickstart.md", 3), ("docs/plugin-cookbook.md", 15)] {
-            let blocks = rust_blocks(&std::fs::read_to_string(root.join(doc)).unwrap());
+        for (doc, at_least) in [("docs/plugin-quickstart.md", 1), ("docs/plugin-cookbook.md", 15)] {
+            let blocks = named_rust_blocks(&std::fs::read_to_string(root.join(doc)).unwrap());
             assert!(blocks.len() >= at_least, "{doc} has {} rust blocks", blocks.len());
-            for block in blocks {
-                assert!(compiled.iter().any(|code| code.contains(&block)), "{doc}: this block is not in plugins/cookbook/src or the templates:\n{block}");
+            for (name, block) in blocks {
+                let source = named_source(&root, &name);
+                assert!(source.is_some(), "{doc}: a rust block names `{name}`, which is not a file under plugins/cookbook or plugins/my-tint, or a fn in one");
+                assert_eq!(block, source.unwrap(), "{doc}: the block named `{name}` differs from its source");
             }
         }
     }

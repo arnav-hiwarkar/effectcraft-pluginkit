@@ -1,14 +1,35 @@
 # Plugin cookbook
 
-Short recipes for the things plugins do most. Each one is a complete piece of the Cookbook plugin in
-`plugins/cookbook`, which is built and tested by `plugins/new-plugin-check.sh`, and a test in `xtask` checks
-that every code block on this page is copied exactly from that plugin, so the recipes cannot go stale. Start
-with the [quickstart](plugin-quickstart.md) if you have not made a plugin yet; every type and call is in the
+Short recipes for the things plugins do most. Each one is a file of the Cookbook plugin in
+`plugins/cookbook`, which is built and tested by `plugins/new-plugin-check.sh`. Every code block on this
+page names its source above the code and in its fence: a file such as `plugins/cookbook/src/tint.rs`, or
+one function in a file such as `plugins/cookbook/src/tests.rs#tint_matches_its_stored_frame`. A test in `xtask` reads that
+name and checks the block is exactly that file or function, so the recipes cannot go stale. Start with the
+[quickstart](plugin-quickstart.md) if you have not made a plugin yet; every type and call is in the
 [reference](plugin-reference.md).
 
-Every recipe starts with `use craft_plugin::prelude::*;` and is registered in `src/lib.rs`:
+The plugin's `src/lib.rs` declares each recipe's module, registers what the recipes contribute and exports
+the plugin once with `craft_plugin::export!`. The two effects under `#[cfg(test)]` exist only for its
+tests: one reads too far for its declared reach and one panics.
 
-```rust
+`plugins/cookbook/src/lib.rs`:
+
+```rust plugins/cookbook/src/lib.rs
+mod blur;
+mod edges;
+mod follow;
+mod glow;
+mod handle;
+mod kernel;
+mod matte;
+mod measure;
+mod memo;
+mod nulls;
+mod pin;
+mod tint;
+
+use craft_plugin::prelude::*;
+
 fn plugin() -> Plugin {
     let plugin = Plugin::new()
         .effect(tint::Tint)
@@ -25,6 +46,15 @@ fn plugin() -> Plugin {
         .panel("meter", "Meter", measure::Meter::default())
         .task("measure", "Measure Brightness", measure::measure)
         .tool("pin", "Pin", pin::Pin::default());
+    #[cfg(test)]
+    let plugin = plugin.effect(tests::Smear).effect(tests::Crash);
+    plugin
+}
+
+craft_plugin::export!(plugin);
+
+#[cfg(test)]
+mod tests;
 ```
 
 ## 1. Tint: a pointwise effect with typed parameters
@@ -34,7 +64,9 @@ read in one call (`Settings::read(cx)`), so a misspelt id is a compile error ins
 The field name is the parameter id. `Layout::pointwise()` tells the app each pixel needs only itself, so
 it renders bands of the frame on every core.
 
-```rust
+`plugins/cookbook/src/tint.rs`:
+
+```rust plugins/cookbook/src/tint.rs
 use craft_plugin::prelude::*;
 
 params! {
@@ -78,7 +110,9 @@ Blurs, resampling, blends, curves, convolutions, warps and colour matrices are h
 passes of a plan and the app runs them natively on the CPU and with its own shader on the GPU, with no
 pixel loop of your own. Scale distances by `cx.scale` so a half-resolution preview matches the full render.
 
-```rust
+`plugins/cookbook/src/blur.rs`:
+
+```rust plugins/cookbook/src/blur.rs
 use craft_plugin::prelude::*;
 
 params! {
@@ -107,7 +141,25 @@ impl Effect for Blur {
 Shrink, blur the small image, grow it back and screen it over the source. The effect spills past the
 layer, so `layout` pads the frame by the radius and `.padded(padding)` asks the app for that room.
 
-```rust
+`plugins/cookbook/src/glow.rs`:
+
+```rust plugins/cookbook/src/glow.rs
+use craft_plugin::prelude::*;
+
+params! {
+    struct Settings {
+        radius: f64 = slider("Radius", 24.0, 0.0..=400.0),
+        amount: f64 = slider("Amount", 1.0, 0.0..=4.0),
+    }
+}
+
+pub struct Glow;
+
+impl Effect for Glow {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("glow", "Glow", "Cookbook").params(Settings::params()).shader("")
+    }
+
     fn layout(&self, cx: &Cx) -> Layout {
         let settings = Settings::read(cx);
         let radius = ((settings.radius * cx.scale) as f32).clamp(0.0, 2048.0);
@@ -123,6 +175,7 @@ layer, so `layout` pads the frame by the radius and `.padded(padding)` asks the 
             .pass(GpuPass::blend_images(GpuImage::Source, glow, GpuImage::Output, BlendMode::Screen, settings.amount as f32));
         Layout::whole_frame().padded(padding).passes(plan)
     }
+}
 ```
 
 ## 5. Your own GPU kernel, with the same pass on the CPU
@@ -131,7 +184,9 @@ Kernels are WGSL functions in the string given to `.shader`. `Layout::passes(pla
 GPU when there is one and otherwise calls `pass` for bands of each pass on all cores, so both paths give
 the same picture. `pass.f` holds the floats the plan passed.
 
-```rust
+`plugins/cookbook/src/kernel.rs`:
+
+```rust plugins/cookbook/src/kernel.rs
 use craft_plugin::prelude::*;
 
 const KERNELS: &str = r#"
@@ -178,47 +233,94 @@ impl Effect for Posterize {
 
 ## 6. Read another layer
 
-A `layer` parameter lets the user pick a layer. `LayerParam::image` returns its pixels on the same grid as
-the frame, or `None` when no layer is picked.
+A `LayerParam` field (the `layer(name)` builder) lets the user pick a layer. `.image(cx)` returns its
+pixels on the same grid as the frame, or `None` when no layer is picked; read them with `at(x, y)` in
+whole-frame coordinates.
 
-```rust
+`plugins/cookbook/src/matte.rs`:
+
+```rust plugins/cookbook/src/matte.rs
+use craft_plugin::prelude::*;
+
+params! {
+    struct Settings {
+        matte: LayerParam = layer("Matte Layer"),
+    }
+}
+
+pub struct Matte;
+
+impl Effect for Matte {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("matte", "Luma Matte", "Cookbook").params(Settings::params())
+    }
+
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let Settings { centre, radius } = Settings::read(cx);
-        let (radius, left) = (radius * cx.scale, frame.origin[0]);
+        let Some(matte) = Settings::read(cx).matte.image(cx) else {
+            frame.map(|pixel| pixel);
+            return Ok(());
+        };
+        let left = frame.origin[0];
         for (y, read, out) in frame.rows() {
             for (x, (out, pixel)) in out.iter_mut().zip(read).enumerate() {
-                let distance = ((left + x) as f64 - centre[0]).hypot(y as f64 - centre[1]);
-                let light = (1.0 - distance / radius).clamp(0.0, 1.0) as f32;
-                *out = pixel.map(|c| c * light);
+                let [r, g, b, _] = matte.at((left + x) as isize, y as isize);
+                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                *out = pixel.map(|c| c * luma);
             }
         }
         Ok(())
     }
+}
 ```
 
 ## 7. Read neighbouring pixels
 
 Say how far each row reads with `Layout::neighbourhood(rows)`. The app gives each band that many extra
-rows above and below; `Rows::at` reads them by whole-frame coordinates and returns transparent black
-outside. A test render (recipe 13) compares a banded render with a whole one, so a reach that is too small
-fails the test with the pixel where it shows.
+rows above and below; `frame.input.at(x, y)` reads them by whole-frame coordinates and returns transparent
+black outside. A test render (recipe 13) compares a banded render with a whole one, so a reach that is too
+small fails the test with the pixel where it shows.
 
-```rust
-    fn layout(&self, cx: &Cx) -> Layout {
-        let settings = Settings::read(cx);
-        let radius = ((settings.radius * cx.scale) as f32).clamp(0.0, 2048.0);
-        let padding = radius.ceil() as u32;
-        let frame = cx.padded(padding).size;
-        let quarter = frame.map(|side| side.div_ceil(4));
-        let mut plan = GpuPlan::new();
-        let (small, blurred, glow) = (plan.scratch(quarter), plan.scratch(quarter), plan.scratch(frame));
-        let plan = plan
-            .pass(GpuPass::resample(GpuImage::Source, small, Filter::Bilinear))
-            .pass(GpuPass::blur(small, blurred, [radius / 4.0; 2]))
-            .pass(GpuPass::resample(blurred, glow, Filter::Bilinear))
-            .pass(GpuPass::blend_images(GpuImage::Source, glow, GpuImage::Output, BlendMode::Screen, settings.amount as f32));
-        Layout::whole_frame().padded(padding).passes(plan)
+`plugins/cookbook/src/edges.rs`:
+
+```rust plugins/cookbook/src/edges.rs
+use craft_plugin::prelude::*;
+
+params! {
+    struct Settings {
+        width: f64 = slider("Width", 2.0, 1.0..=20.0),
     }
+}
+
+pub struct Edges;
+
+impl Effect for Edges {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("edges", "Find Edges", "Cookbook").params(Settings::params())
+    }
+
+    fn layout(&self, cx: &Cx) -> Layout {
+        Layout::neighbourhood(step(cx) as u32)
+    }
+
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let step = step(cx) as isize;
+        let (left, input) = (frame.origin[0], frame.input);
+        for (y, row) in frame.rows_mut() {
+            for (x, pixel) in row.iter_mut().enumerate() {
+                let (x, y) = ((left + x) as isize, y as isize);
+                let dx = input.at(x + step, y)[1] - input.at(x - step, y)[1];
+                let dy = input.at(x, y + step)[1] - input.at(x, y - step)[1];
+                let edge = (dx * dx + dy * dy).sqrt().min(1.0);
+                *pixel = [edge, edge, edge, 1.0];
+            }
+        }
+        Ok(())
+    }
+}
+
+fn step(cx: &Cx) -> f64 {
+    (Settings::read(cx).width * cx.scale).round().max(1.0)
+}
 ```
 
 ## 8. Remember work between frames
@@ -227,7 +329,32 @@ fails the test with the pixel where it shows.
 back in a later frame, so work that depends only on the parameters is done once. The app may drop stored
 bytes when memory is short; always be able to compute them again.
 
-```rust
+`plugins/cookbook/src/memo.rs`:
+
+```rust plugins/cookbook/src/memo.rs
+use craft_plugin::prelude::*;
+
+params! {
+    struct Settings {
+        gamma: f64 = slider("Gamma", 2.2, 0.2..=5.0),
+    }
+}
+
+pub struct Gamma;
+
+fn table(gamma: f64) -> Vec<u8> {
+    (0..1024).flat_map(|i| ((i as f64 / 1023.0).powf(1.0 / gamma) as f32).to_le_bytes()).collect()
+}
+
+impl Effect for Gamma {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("gamma", "Gamma", "Cookbook").params(Settings::params())
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise()
+    }
+
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let gamma = Settings::read(cx).gamma;
         let key = format!("table/{gamma}");
@@ -244,6 +371,7 @@ bytes when memory is short; always be able to compute them again.
         frame.map(|[r, g, b, a]| [curve(r), curve(g), curve(b), a]);
         Ok(())
     }
+}
 ```
 
 ## 9. A handle on the viewer
@@ -252,7 +380,42 @@ bytes when memory is short; always be able to compute them again.
 point parameter a handle; `.radius(id, centre, pixels, unit)` adds a handle that sets a size by its
 distance from the centre. The app maps layer pixels through the layer's transform and the zoom.
 
-```rust
+`plugins/cookbook/src/handle.rs`:
+
+```rust plugins/cookbook/src/handle.rs
+use craft_plugin::prelude::*;
+
+params! {
+    struct Settings {
+        centre: [f64; 2] = point("Centre", [0.5, 0.5]),
+        radius: f64 = slider("Radius", 60.0, 1.0..=2000.0),
+    }
+}
+
+pub struct Spotlight;
+
+impl Effect for Spotlight {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("spotlight", "Spotlight", "Cookbook").params(Settings::params())
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise()
+    }
+
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let Settings { centre, radius } = Settings::read(cx);
+        let (radius, left) = (radius * cx.scale, frame.origin[0]);
+        for (y, read, out) in frame.rows() {
+            for (x, (out, pixel)) in out.iter_mut().zip(read).enumerate() {
+                let distance = ((left + x) as f64 - centre[0]).hypot(y as f64 - centre[1]);
+                let light = (1.0 - distance / radius).clamp(0.0, 1.0) as f32;
+                *out = pixel.map(|c| c * light);
+            }
+        }
+        Ok(())
+    }
+
     fn overlay(&self, cx: &Cx, overlay: &mut Overlay) {
         let Settings { centre, radius } = Settings::read(cx);
         overlay.point(cx, "centre").radius("radius", centre, radius, 1.0);
@@ -265,9 +428,12 @@ distance from the centre. The app maps layer pixels through the layer's transfor
 A panel draws its widgets in `ui` and the app calls it again when a widget is used. Project edits go
 through the app's own commands; `engine.batch` makes several of them one undo step. The same function can
 be a menu command. Add `document.write` to `permissions` in `plugin.json`. `log!` writes a line with the
-file and line it came from to the plugin's log, which `cargo xtask plugin dev` prints.
+file and line it came from to the plugin's log, which `cargo xtask plugin dev` prints. Show an error the
+user can act on with `ui.error`.
 
-```rust
+`plugins/cookbook/src/nulls.rs`:
+
+```rust plugins/cookbook/src/nulls.rs
 use craft_plugin::prelude::*;
 
 pub fn add_rig() -> Result<()> {
@@ -302,7 +468,17 @@ impl Panel for Rig {
 `ui.on(topic)` subscribes the panel to an app event and returns the event on the call it arrived in. Ask
 for it in every call.
 
-```rust
+`plugins/cookbook/src/follow.rs`:
+
+```rust plugins/cookbook/src/follow.rs
+use craft_plugin::prelude::*;
+
+#[derive(Default)]
+pub struct Follow {
+    layers: Vec<u64>,
+    time: f64,
+}
+
 impl Panel for Follow {
     fn ui(&mut self, ui: &mut Ui) {
         if let Some(AppEvent::Selection { layers, .. }) = ui.on(Topic::Selection) {
@@ -319,10 +495,12 @@ impl Panel for Follow {
 ## 12. A background task with progress
 
 Work longer than a panel call is a task. It runs on its own instance, reports progress (an error after the
-user cancels, so `?` ends it) and returns JSON. The panel starts it and polls it on a timer. Reading frames
-needs `document.read`.
+user cancels, so `?` ends it) and returns JSON. The panel starts it, polls it on a timer and shows an
+error when the start or a poll fails. Reading frames needs `document.read`.
 
-```rust
+`plugins/cookbook/src/measure.rs`:
+
+```rust plugins/cookbook/src/measure.rs
 use craft_plugin::prelude::*;
 
 pub fn measure(task: &Task) -> Result<serde_json::Value> {
@@ -341,25 +519,36 @@ pub fn measure(task: &Task) -> Result<serde_json::Value> {
 pub struct Meter {
     running: Option<u64>,
     state: Option<TaskState>,
+    error: Option<String>,
 }
 
 impl Panel for Meter {
     fn ui(&mut self, ui: &mut Ui) {
         if let Some(id) = self.running
             && ui.every("progress", 100)
-            && let Ok(state) = host::task(id)
         {
-            if state.status != TaskStatus::Running {
-                self.running = None;
+            match host::task(id) {
+                Ok(state) => {
+                    if state.status != TaskStatus::Running {
+                        self.running = None;
+                    }
+                    self.state = Some(state);
+                }
+                Err(error) => (self.running, self.error) = (None, Some(error.to_string())),
             }
-            self.state = Some(state);
         }
         if let Some(state) = &self.state {
             ui.progress(state.progress as f32, &state.message);
         }
         if self.running.is_none() && ui.button("Measure") {
-            self.running = host::start("measure", json!({ "frames": 10 })).ok();
+            match host::start("measure", json!({ "frames": 10 })) {
+                Ok(id) => (self.running, self.error) = (Some(id), None),
+                Err(error) => self.error = Some(error.to_string()),
+            }
             ui.every("progress", 100);
+        }
+        if let Some(error) = &self.error {
+            ui.error(error);
         }
     }
 }
@@ -374,7 +563,9 @@ When a frame differs the test fails, writes `<name>.actual.png` and `<name>.diff
 one (red marks the pixels that differ) and prints their paths. Run with `UPDATE_FRAMES=1` to accept the
 new frames.
 
-```rust
+`plugins/cookbook/src/tests.rs#tint_matches_its_stored_frame`:
+
+```rust plugins/cookbook/src/tests.rs#tint_matches_its_stored_frame
 #[test]
 fn tint_matches_its_stored_frame() {
     assert_frame!(TestPlugin::of(crate::plugin), "tint", { "amount": 100 }, "tint");
@@ -385,7 +576,9 @@ fn tint_matches_its_stored_frame() {
 `.size(w, h)`, `.layer(id, picture)`, `.mask(points, closed)`, `.time(s)`, `.scale(f)`, `.tolerance(levels)`.
 `run()` returns the picture, `layout()` the layout, `overlay()` the overlay.
 
-```rust
+`plugins/cookbook/src/tests.rs#a_test_renders_on_a_chosen_image_and_compares_with_a_stored_frame`:
+
+```rust plugins/cookbook/src/tests.rs#a_test_renders_on_a_chosen_image_and_compares_with_a_stored_frame
 #[test]
 fn a_test_renders_on_a_chosen_image_and_compares_with_a_stored_frame() {
     let plugin = TestPlugin::of(crate::plugin);
@@ -402,7 +595,9 @@ A misspelt parameter or effect id fails with the ids the effect has.
 lists what it shows. Commands the plugin runs are recorded, not run: `commands()` lists them, and
 `answer(command, json)` sets what a command returns.
 
-```rust
+`plugins/cookbook/src/tests.rs#the_rig_button_adds_two_nulls_in_one_undo_step_and_logs_where`:
+
+```rust plugins/cookbook/src/tests.rs#the_rig_button_adds_two_nulls_in_one_undo_step_and_logs_where
 #[test]
 fn the_rig_button_adds_two_nulls_in_one_undo_step_and_logs_where() {
     let plugin = TestPlugin::of(crate::plugin);
@@ -414,7 +609,10 @@ fn the_rig_button_adds_two_nulls_in_one_undo_step_and_logs_where() {
     assert_eq!(plugin.commands().len(), 2);
 }
 ```
-```rust
+
+`plugins/cookbook/src/tests.rs#a_panic_reaches_the_test_and_the_log_with_its_file_and_line`:
+
+```rust plugins/cookbook/src/tests.rs#a_panic_reaches_the_test_and_the_log_with_its_file_and_line
 #[test]
 fn a_panic_reaches_the_test_and_the_log_with_its_file_and_line() {
     let plugin = TestPlugin::of(crate::plugin);
@@ -427,9 +625,13 @@ fn a_panic_reaches_the_test_and_the_log_with_its_file_and_line() {
 ## 15. A viewer tool
 
 A tool has a toolbar button. While it is picked the plugin gets the pointer on the Composition viewer and
-draws its own overlay; `event.comp` is the pointer in comp pixels at any zoom.
+draws its own overlay; `event.comp` is the pointer in comp pixels at any zoom, which is also the position
+of a layer in the comp. The tool records a pin only after the app made the null, so a failed click leaves
+nothing behind.
 
-```rust
+`plugins/cookbook/src/pin.rs`:
+
+```rust plugins/cookbook/src/pin.rs
 use craft_plugin::prelude::*;
 
 #[derive(Default)]
@@ -437,11 +639,18 @@ pub struct Pin {
     pins: Vec<[f64; 2]>,
 }
 
+fn add_null(name: &str, at: [f64; 2]) -> Result<()> {
+    let added = host::command("layer.newNull", json!({ "name": name }))?;
+    let layer = added["layer"].as_u64().ok_or("layer.newNull did not return the new layer")?;
+    host::command("prop.set", json!({ "layer": layer, "path": "transform/position", "value": [at[0], at[1], 0.0] }))?;
+    Ok(())
+}
+
 impl Tool for Pin {
     fn event(&mut self, event: &ToolEvent, overlay: &mut Overlay) -> Result<()> {
         if event.kind == ToolEventKind::Down {
+            add_null(&format!("Pin {}", self.pins.len() + 1), event.comp)?;
             self.pins.push(event.comp);
-            host::command("layer.newNull", json!({ "name": format!("Pin {}", self.pins.len()) }))?;
         }
         for pin in &self.pins {
             overlay.circle(*pin, 4.0);
@@ -451,12 +660,17 @@ impl Tool for Pin {
     }
 }
 ```
-```rust
+
+`plugins/cookbook/src/tests.rs#the_pin_tool_adds_a_null_where_it_is_clicked_and_rings_the_pointer`:
+
+```rust plugins/cookbook/src/tests.rs#the_pin_tool_adds_a_null_where_it_is_clicked_and_rings_the_pointer
 #[test]
-fn the_pin_tool_adds_a_null_and_rings_the_pointer() {
+fn the_pin_tool_adds_a_null_where_it_is_clicked_and_rings_the_pointer() {
     let plugin = TestPlugin::of(crate::plugin);
+    plugin.answer("layer.newNull", json!({ "layer": 3 }));
     let overlay = plugin.tool("pin", pointer(ToolEventKind::Down, [10.0, 20.0])).unwrap();
-    assert_eq!(plugin.commands(), [("layer.newNull".to_string(), json!({ "name": "Pin 1" }))]);
+    let position = json!({ "layer": 3, "path": "transform/position", "value": [10.0, 20.0, 0.0] });
+    assert_eq!(plugin.commands(), [("layer.newNull".to_string(), json!({ "name": "Pin 1" })), ("prop.set".to_string(), position)]);
     let Shape::Circle { center, radius, .. } = &overlay.marks[1].shape else { panic!("{:?}", overlay.marks) };
     assert_eq!((*center, *radius), ([10.0, 20.0], 8.0));
 }

@@ -123,7 +123,9 @@ EFFECTCRAFT_PLUGIN_PATH="$PWD/plugins/dist/org.craftkit.lumen-glow:$PWD/plugins/
 To write a plugin, run `cargo xtask plugin new <name> [--kind effect|gpu-effect|panel|tool|task]`, then
 `cargo xtask plugin dev plugins/<name>` with the app running (`cargo run -p effectcraft -- --control 9877`); the
 [quickstart](../docs/plugin-quickstart.md) goes step by step. `plugins/new-plugin-check.sh` generates each kind of new
-plugin, runs its tests and builds it for WebAssembly, then runs the Cookbook's tests.
+plugin under a name that clashes with a type the templates or the SDK use (`settings`, `panel`, `tool`,
+`task`, `gpu-effect`), runs its tests and builds it for WebAssembly, then runs the Cookbook's tests. It
+stops if one of those folders already exists.
 
 `plugins/e2e.sh` builds every plugin here, installs Plasma Beam from its `.craftplugin` file, loads the other
 bundles in `effectcraft-cli`, renders a frame with each effect and runs `glide/verify.sh`.

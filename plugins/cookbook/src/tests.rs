@@ -161,10 +161,12 @@ fn the_measure_task_reports_the_average_brightness() {
 }
 
 #[test]
-fn the_pin_tool_adds_a_null_and_rings_the_pointer() {
+fn the_pin_tool_adds_a_null_where_it_is_clicked_and_rings_the_pointer() {
     let plugin = TestPlugin::of(crate::plugin);
+    plugin.answer("layer.newNull", json!({ "layer": 3 }));
     let overlay = plugin.tool("pin", pointer(ToolEventKind::Down, [10.0, 20.0])).unwrap();
-    assert_eq!(plugin.commands(), [("layer.newNull".to_string(), json!({ "name": "Pin 1" }))]);
+    let position = json!({ "layer": 3, "path": "transform/position", "value": [10.0, 20.0, 0.0] });
+    assert_eq!(plugin.commands(), [("layer.newNull".to_string(), json!({ "name": "Pin 1" })), ("prop.set".to_string(), position)]);
     let Shape::Circle { center, radius, .. } = &overlay.marks[1].shape else { panic!("{:?}", overlay.marks) };
     assert_eq!((*center, *radius), ([10.0, 20.0], 8.0));
 }
