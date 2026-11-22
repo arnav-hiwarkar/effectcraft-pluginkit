@@ -3,6 +3,7 @@ use std::ops::Deref;
 use crate::Result;
 use crate::abi::Buffer;
 use crate::host;
+use crate::ui::Ui;
 use crate::wire::{EffectSpec, HostCall, ImageDesc, Layout, MaskPath, Pixel, RenderCx, Scene, Value};
 
 pub trait Effect: Send + Sync + 'static {
@@ -15,6 +16,8 @@ pub trait Effect: Send + Sync + 'static {
     fn render(&self, _cx: &Cx, _frame: &mut Frame) -> Result<()> {
         Ok(())
     }
+
+    fn controls(&self, _param: &str, _value: &mut String, _ui: &mut Ui) {}
 }
 
 pub struct Cx(RenderCx);

@@ -18,6 +18,7 @@ use self::tasks::{Slot, Tasks};
 use self::wasm::{WasmGuest, WasmModule};
 use crate::cache::{BUDGET, Cache};
 use crate::host::{Host, Origin};
+use crate::images::{IMAGE_BUDGET, Images, PluginImage};
 use crate::plugin::{Io, PluginError};
 use crate::registry::Bundle;
 
@@ -49,12 +50,17 @@ impl Engine {
             cache: Arc::new(Cache::new(BUDGET)),
             tasks: Tasks::default(),
             picked: Mutex::new(Vec::new()),
+            images: Images::new(IMAGE_BUDGET),
         };
         Ok(Arc::new(Engine { identity, kind }))
     }
 
     pub fn cached(&self, key: &str) -> Option<Arc<[u8]>> {
         self.identity.cache.get(key)
+    }
+
+    pub fn image(&self, key: &str) -> Option<Arc<PluginImage>> {
+        self.identity.images.get(key)
     }
 
     pub fn copies_pixels(&self) -> bool {

@@ -1,0 +1,9 @@
+{
+  "id": "org.craftkit.curves",
+  "name": "Curves",
+  "version": "1.0.0",
+  "author": "Craft Kit",
+  "description": "Tone curves per channel drawn in Effect Controls, with a panel of preset curves.",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": ["document.read", "document.write"]
+}

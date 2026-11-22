@@ -55,7 +55,7 @@ pub struct HandleDrag {
 
 impl HandleDrag {
     pub fn follow(&mut self, curve: &mut Curve, pointer: Option<Pointer>, plot: &Plot) -> bool {
-        let Some(Pointer { pos, phase }) = pointer else {
+        let Some(Pointer { pos, phase, .. }) = pointer else {
             self.hovered = None;
             return false;
         };
@@ -116,7 +116,7 @@ fn thumbnail(ui: &mut Ui, key: &str, curve: Curve, current: bool) -> bool {
     let mut clicked = false;
     ui.canvas(key, [THUMB, THUMB], |c| {
         let inside = |pos: [f32; 2]| (0.0..=THUMB).contains(&pos[0]) && (0.0..=THUMB).contains(&pos[1]);
-        clicked = matches!(c.pointer, Some(Pointer { phase: PointerPhase::Up, pos }) if inside(pos));
+        clicked = matches!(c.pointer, Some(Pointer { phase: PointerPhase::Up, pos, .. }) if inside(pos));
         let border = if current || c.pointer.is_some() { (Paint::Accent, 1.5) } else { (Paint::Border, 1.0) };
         let plot = Plot::inset(c.size, THUMB_PAD);
         c.rect([0.0, 0.0], c.size, Some(Paint::Surface), Some(border), 3.0);

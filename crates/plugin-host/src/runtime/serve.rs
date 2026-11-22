@@ -9,6 +9,7 @@ use super::tasks::{Slot, Tasks};
 use super::{Engine, gate};
 use crate::cache::Cache;
 use crate::host::{Host, Origin, Pixels};
+use crate::images::Images;
 
 pub(crate) struct Identity {
     pub id: String,
@@ -18,6 +19,7 @@ pub(crate) struct Identity {
     pub cache: Arc<Cache>,
     pub tasks: Tasks,
     pub picked: Mutex<Vec<(PathBuf, bool)>>,
+    pub images: Images,
 }
 
 impl Identity {
@@ -144,6 +146,7 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             }
             plain(json!(chosen.map(|path| path.to_string_lossy().into_owned())))
         }
+        HostCall::UploadImage { key, width, height } => cx.plugin.images.put(key, width, height, bulk).map(|()| (Value::Null, Bulk::None)),
         HostCall::ListFiles { root, path } => {
             let dir = resolve(cx.plugin, root, &path)?;
             let mut names: Vec<String> =

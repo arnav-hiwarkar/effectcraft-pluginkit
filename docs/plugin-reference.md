@@ -46,6 +46,7 @@ pub trait Effect: Send + Sync + 'static {
     fn spec(&self) -> EffectSpec;
     fn layout(&self, cx: &Cx) -> Layout;                       // default: Layout::whole_frame()
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()>; // default: leaves the frame unchanged
+    fn controls(&self, param: &str, value: &mut String, ui: &mut Ui); // default: draws nothing
 }
 ```
 
@@ -81,6 +82,7 @@ The render cache uses the three declarations. An effect that omits one shows sta
 | `Param::point3(id, name, [0.5, 0.5, 0.0])` | `cx.point3(id)` | frame pixels |
 | `Param::color(id, name, [r, g, b, a])` | `cx.color(id)` | straight RGBA, 0 to 1 |
 | `Param::text(id, name, default)` | `cx.text(id)` | |
+| `Param::custom(id, name, default)` | `cx.text(id)` | text the plugin owns; `controls` draws its row |
 | `Param::layer(id, name)` | `cx.layer(id)` | another layer's pixels |
 | `Param::mask(id, name)` | `cx.index(id)` | index into `cx.masks()` |
 
@@ -171,10 +173,24 @@ Widgets: `label`, `heading`, `weak`, `mono`, `error`, `button`, `button_enabled`
 `text_edit`, `popup`, `color`, `separator`, `space`, and the containers `row`, `column` and `group`.
 Value widgets take `&mut` state and return `true` on the frame the user changed it.
 
-`ui.canvas(key, [width, height], |c| …)` gives a drawing surface with `line`, `bezier`, `rect`, `circle`
-and `text`, in canvas-local pixels. `c.pointer` is the pointer over the canvas this frame, with a phase
-of `Hover`, `Down`, `Drag` or `Up`. Colours are theme tokens (`Paint::Text`, `Paint::Accent`,
-`Paint::Weak`, `Paint::Surface`, …) or `Paint::Rgba`.
+| Widget | Shows |
+|---|---|
+| `ui.image(key, [w, h])` | An uploaded image. Returns `true` when clicked. |
+| `ui.scroll(key, height, \|ui\| …)` | Its contents in a vertical scroll area at most `height` tall. |
+| `ui.collapsing(title, open_by_default, \|ui\| …)` | A section with a twirl-down. |
+| `ui.tabs(&mut selected, &["A", "B"])` | A row of tabs. Returns `true` when another is picked. |
+| `ui.progress(fraction, text)` | A progress bar, `fraction` from 0 to 1. |
+| `ui.tooltip(text)` | A tooltip on the widget just before it. |
+| `ui.grid(columns, \|ui\| …)` | Its contents in rows of `columns` cells, such as thumbnails. |
+
+`ui.keys()` is the text typed while the pointer is over the panel and no text field has the keyboard.
+
+`ui.canvas(key, [width, height], |c| …)` gives a drawing surface with `line`, `bezier`, `rect`, `circle`,
+`polygon` (convex, filled), `image` and `text`, in canvas-local pixels. `c.pointer` is the pointer over
+the canvas this frame, with a phase of `Hover`, `Down`, `Drag` or `Up`, the `modifiers` held (`shift`,
+`alt`, `command`) and the `scroll` delta. A drag keeps reporting positions after the pointer leaves the
+canvas. Colours are theme tokens (`Paint::Text`, `Paint::Accent`, `Paint::Weak`, `Paint::Surface`, …)
+or `Paint::Rgba`.
 
 Two buttons with the same label in the same container are told apart by order. Put widgets that come
 and go inside their own `row`, `column` or `group` so the others keep their identity.
@@ -200,6 +216,7 @@ All are in `craft_plugin::host`.
 | `frame(FrameRequest { comp, layer, time, scale })`: the comp (the active one when `comp` is `None`), or one layer with its effects, as a premultiplied RGBA f32 `Image`. Refused inside an effect's `layout` or `render`. `scale` is above 0 and at most 4. | `document.read` |
 | `audio(AudioRequest { layer, start, duration, rate })`: interleaved f32 samples of the active comp's mix, or of one layer, with the channel count (2). Rates 1000 to 192000 Hz, at most 2^25 sample frames per call. Refused inside an effect. | `document.read` |
 | `pick_file(PickFile { save, title, extensions })`: the app's file dialog, `Some(path)` or `None`. The chosen path is then readable, and writable when `save` is set, through `Root::User` for the rest of the session. Panels and commands only. Refused in headless runs. | None |
+| `upload_image(key, width, height, rgba8)`: stores an image for `ui.image` and `c.image` | None |
 
 A plugin may run the document commands (`layer.*`, `comp.*`, `prop.*`, `keys.*`, `effect.*`, `mask.*`,
 `text.*`, `shape.*`, and the other families in `DOCUMENT_FAMILIES` in `crates/plugin/src/gate.rs`) and the
@@ -210,7 +227,8 @@ help, render jobs, and plugin management. A refused or denied call returns an `E
 
 | Limit | Value |
 |---|---|
-| `layout` and `panel` call | 2 s |
+| `layout`, `panel` and `controls` call | 2 s |
+| Uploaded images of one plugin | 256 MiB in all, 8192 pixels on a side |
 | `render` and `command` call | 60 s |
 | `task` | None; cancel stops it |
 | Running tasks per plugin | 4 |

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use craft_plugin_host::ui::{UiInput, Widget};
 use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Plugin, Registry, RunMode, TaskState};
+use craft_plugin_host::{ControlsReply, PluginImage};
 use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -405,6 +406,25 @@ pub fn panel_ui(session: &mut Session, plugin: &str, panel: &str, input: UiInput
     let loaded = running(plugin)?;
     let call = Call::Panel { panel: panel.to_string(), input };
     loaded.plugin.call(&call, None, &mut SessionHost::new(session, &loaded)).map_err(|e| e.to_string())
+}
+
+pub fn controls(session: &mut Session, effect_id: &str, param: &str, value: &str, input: UiInput) -> Result<(String, ControlsReply), String> {
+    let plugins = plugins().ok_or("plugins are not available")?;
+    let (owner, plugin, local) = {
+        let inner = plugins.lock();
+        inner
+            .loaded
+            .iter()
+            .find_map(|(id, loaded)| Some((id.clone(), loaded.clone(), local_effect(id, loaded, effect_id)?.to_string())))
+            .ok_or_else(|| format!("the plug-in that provides `{effect_id}` is not running"))?
+    };
+    let call = Call::Controls { effect: local, param: param.to_string(), value: value.to_string(), input };
+    let reply = plugin.plugin.call(&call, None, &mut SessionHost::new(session, &plugin)).map_err(|e| e.to_string())?;
+    Ok((owner, reply))
+}
+
+pub fn image(plugin: &str, key: &str) -> Option<Arc<PluginImage>> {
+    plugins()?.get(plugin)?.plugin.image(key)
 }
 
 pub fn run_command(session: &mut Session, plugin: &str, command: &str) -> Result<(), String> {

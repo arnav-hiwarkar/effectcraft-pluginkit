@@ -20,6 +20,10 @@ impl Engine {
         match *self {}
     }
 
+    pub fn image(&self, _: &str) -> Option<Arc<crate::images::PluginImage>> {
+        match *self {}
+    }
+
     pub fn copies_pixels(&self) -> bool {
         match *self {}
     }

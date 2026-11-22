@@ -102,6 +102,7 @@ fn declare(param: &Param) -> DynamicParam {
         ParamKind::Point3 { default } => (Value::Vec3(*default), ParamUi::Point3),
         ParamKind::Color { default } => (Value::Color(*default), ParamUi::Color),
         ParamKind::Text { default } => (Value::Str(default.clone()), ParamUi::Text),
+        ParamKind::Custom { default } => (Value::Str(default.clone()), ParamUi::Custom),
         ParamKind::Layer => (Value::Layer(None), ParamUi::Layer),
         ParamKind::Mask => (Value::Enum(0), ParamUi::Mask),
     };
@@ -145,7 +146,7 @@ fn wire_params(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> BTreeMap<Strin
                 Wire::List(vec![x, y, z * grid.scale])
             }
             ParamKind::Color { .. } => Wire::List(value.as_color().iter().map(|c| f64::from(*c)).collect()),
-            ParamKind::Text { .. } => match value {
+            ParamKind::Text { .. } | ParamKind::Custom { .. } => match value {
                 Value::Str(text) => Wire::Text(text.clone()),
                 _ => Wire::Text(String::new()),
             },

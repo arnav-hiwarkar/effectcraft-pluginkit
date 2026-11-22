@@ -179,7 +179,7 @@ fn a_panel_keeps_its_state_between_frames_and_reacts_to_events() {
     each_kind(|kind| {
         let loaded = load(kind, &[]);
         let frame = |events: Vec<UiEvent>| -> Vec<Widget> {
-            let call = Call::Panel { panel: "counter".into(), input: UiInput { events, size: [300.0, 200.0] } };
+            let call = Call::Panel { panel: "counter".into(), input: UiInput { events, size: [300.0, 200.0], ..Default::default() } };
             loaded.plugin.call(&call, None, &mut Recorder::default()).unwrap()
         };
         let first = frame(vec![]);

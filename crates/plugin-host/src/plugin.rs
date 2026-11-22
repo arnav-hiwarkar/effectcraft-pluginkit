@@ -72,6 +72,10 @@ impl Plugin {
         self.engine.cached(key)
     }
 
+    pub fn image(&self, key: &str) -> Option<std::sync::Arc<crate::images::PluginImage>> {
+        self.engine.image(key)
+    }
+
     pub fn contributions(&self) -> &Contributions {
         &self.contributions
     }
@@ -154,7 +158,7 @@ impl Plugin {
 
     fn budget(&self, call: &Call) -> Duration {
         match call {
-            Call::Describe | Call::Layout { .. } | Call::Panel { .. } => self.limits.interactive,
+            Call::Describe | Call::Layout { .. } | Call::Panel { .. } | Call::Controls { .. } => self.limits.interactive,
             Call::Render { .. } | Call::Command { .. } | Call::Task { .. } => self.limits.work,
         }
     }
@@ -175,7 +179,7 @@ impl Drop for Plugin {
 
 fn origin(call: &Call) -> Origin {
     match call {
-        Call::Describe | Call::Panel { .. } | Call::Command { .. } => Origin::Interactive,
+        Call::Describe | Call::Panel { .. } | Call::Controls { .. } | Call::Command { .. } => Origin::Interactive,
         Call::Layout { .. } | Call::Render { .. } => Origin::Render,
         Call::Task { .. } => Origin::Task,
     }

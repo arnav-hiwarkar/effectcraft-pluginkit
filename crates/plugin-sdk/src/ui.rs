@@ -9,6 +9,7 @@ pub trait Panel: Send + 'static {
 
 pub struct Ui<'a> {
     events: &'a [UiEvent],
+    keys: &'a str,
     size: [f32; 2],
     widgets: Vec<Widget>,
     seen: HashMap<u64, u32>,
@@ -24,7 +25,7 @@ fn hash(seed: u64, bytes: &[u8]) -> u64 {
 
 impl<'a> Ui<'a> {
     pub fn new(input: &'a UiInput) -> Self {
-        Ui { events: &input.events, size: input.size, widgets: Vec::new(), seen: HashMap::new(), scope: FNV_OFFSET }
+        Ui { events: &input.events, keys: &input.keys, size: input.size, widgets: Vec::new(), seen: HashMap::new(), scope: FNV_OFFSET }
     }
 
     pub fn finish(self) -> Vec<Widget> {
@@ -33,6 +34,10 @@ impl<'a> Ui<'a> {
 
     pub fn available(&self) -> [f32; 2] {
         self.size
+    }
+
+    pub fn keys(&self) -> &'a str {
+        self.keys
     }
 
     fn id(&mut self, key: &str) -> u64 {
@@ -155,11 +160,7 @@ impl<'a> Ui<'a> {
 
     fn nested(&mut self, key: &str, build: impl FnOnce(&mut Ui<'a>)) -> Vec<Widget> {
         let scope = self.id(key);
-        let outer_scope = std::mem::replace(&mut self.scope, scope);
-        let outer_widgets = std::mem::take(&mut self.widgets);
-        build(self);
-        self.scope = outer_scope;
-        std::mem::replace(&mut self.widgets, outer_widgets)
+        self.nested_in(scope, build)
     }
 
     pub fn row(&mut self, build: impl FnOnce(&mut Ui<'a>)) {
@@ -186,6 +187,57 @@ impl<'a> Ui<'a> {
         let mut canvas = Canvas { size, pointer, shapes: Vec::new() };
         draw(&mut canvas);
         self.widgets.push(Widget::Canvas { id, size, shapes: canvas.shapes });
+    }
+
+    pub fn image(&mut self, key: &str, size: [f32; 2]) -> bool {
+        let id = self.id(key);
+        self.widgets.push(Widget::Image { id, key: key.into(), size });
+        matches!(self.event(id), Some(UiEventKind::Click))
+    }
+
+    pub fn scroll(&mut self, key: &str, height: f32, build: impl FnOnce(&mut Ui<'a>)) {
+        let id = self.id(key);
+        let children = self.nested_in(id, build);
+        self.widgets.push(Widget::Scroll { id, height, children });
+    }
+
+    pub fn collapsing(&mut self, title: &str, open_by_default: bool, build: impl FnOnce(&mut Ui<'a>)) {
+        let id = self.id(title);
+        let children = self.nested_in(id, build);
+        self.widgets.push(Widget::Collapsing { id, title: title.into(), open: open_by_default, children });
+    }
+
+    pub fn tabs(&mut self, selected: &mut usize, options: &[&str]) -> bool {
+        let id = self.id(&options.join("\u{1f}"));
+        let changed = match self.event(id) {
+            Some(UiEventKind::Number(new)) => std::mem::replace(selected, *new as usize) != *new as usize,
+            _ => false,
+        };
+        let options = options.iter().map(|o| o.to_string()).collect();
+        self.widgets.push(Widget::Tabs { id, options, selected: *selected as u32 });
+        changed
+    }
+
+    pub fn progress(&mut self, fraction: f32, text: &str) {
+        self.widgets.push(Widget::Progress { fraction, text: text.into() });
+    }
+
+    pub fn tooltip(&mut self, text: &str) {
+        self.widgets.push(Widget::Tooltip { text: text.into() });
+    }
+
+    pub fn grid(&mut self, columns: u32, build: impl FnOnce(&mut Ui<'a>)) {
+        let id = self.id("grid");
+        let children = self.nested_in(id, build);
+        self.widgets.push(Widget::Grid { id, columns, children });
+    }
+
+    fn nested_in(&mut self, scope: u64, build: impl FnOnce(&mut Ui<'a>)) -> Vec<Widget> {
+        let outer_scope = std::mem::replace(&mut self.scope, scope);
+        let outer_widgets = std::mem::take(&mut self.widgets);
+        build(self);
+        self.scope = outer_scope;
+        std::mem::replace(&mut self.widgets, outer_widgets)
     }
 }
 
@@ -215,14 +267,23 @@ impl Canvas {
     pub fn text(&mut self, pos: [f32; 2], text: &str, color: Paint, size: f32) {
         self.shapes.push(Shape::Text { pos, text: text.into(), color, size });
     }
+
+    pub fn polygon(&mut self, points: &[[f32; 2]], fill: Paint) {
+        self.shapes.push(Shape::Polygon { points: points.to_vec(), fill });
+    }
+
+    pub fn image(&mut self, key: &str, min: [f32; 2], max: [f32; 2]) {
+        self.shapes.push(Shape::Image { key: key.into(), min, max });
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wire::PointerPhase;
 
     fn frame(events: Vec<UiEvent>, build: impl FnOnce(&mut Ui)) -> Vec<Widget> {
-        let input = UiInput { events, size: [200.0, 100.0] };
+        let input = UiInput { events, size: [200.0, 100.0], ..Default::default() };
         let mut ui = Ui::new(&input);
         build(&mut ui);
         ui.finish()
@@ -285,5 +346,96 @@ mod tests {
             ui.button("Delete");
         });
         assert_eq!(id_of(&after[2]), before);
+    }
+
+    #[test]
+    fn an_image_is_a_widget_with_its_key_and_size_and_a_click_on_it_returns_true() {
+        let widgets = frame(vec![], |ui| {
+            ui.image("thumb/3", [64.0, 48.0]);
+        });
+        let Widget::Image { id, key, size } = &widgets[0] else { panic!("image expected, got {widgets:?}") };
+        assert_eq!((key.as_str(), *size), ("thumb/3", [64.0, 48.0]));
+        let mut clicked = false;
+        frame(vec![UiEvent { id: *id, kind: UiEventKind::Click }], |ui| clicked = ui.image("thumb/3", [64.0, 48.0]));
+        assert!(clicked);
+    }
+
+    #[test]
+    fn scroll_collapsing_and_grid_hold_their_children_with_ids_distinct_from_the_same_widget_outside() {
+        let widgets = frame(vec![], |ui| {
+            ui.button("Go");
+            ui.scroll("list", 120.0, |ui| {
+                ui.button("Go");
+            });
+            ui.collapsing("More", false, |ui| ui.label("hidden"));
+            ui.grid(3, |ui| {
+                ui.label("a");
+                ui.label("b");
+            });
+        });
+        let Widget::Scroll { height, children, .. } = &widgets[1] else { panic!("scroll expected") };
+        assert_eq!(*height, 120.0);
+        assert_ne!(id_of(&children[0]), id_of(&widgets[0]));
+        assert!(
+            matches!(&widgets[2], Widget::Collapsing { title, open: false, children, .. } if title == "More" && children == &vec![Widget::Label { text: "hidden".into(), style: TextStyle::Body }])
+        );
+        assert!(matches!(&widgets[3], Widget::Grid { columns: 3, children, .. } if children.len() == 2));
+    }
+
+    #[test]
+    fn tabs_take_the_chosen_index_and_progress_and_tooltip_carry_their_text() {
+        let Widget::Tabs { id, .. } = frame(vec![], |ui| {
+            ui.tabs(&mut 0, &["A", "B"]);
+        })[0]
+            .clone()
+        else {
+            panic!("tabs expected")
+        };
+        let mut selected = 0;
+        let mut changed = false;
+        let widgets = frame(vec![UiEvent { id, kind: UiEventKind::Number(1.0) }], |ui| {
+            changed = ui.tabs(&mut selected, &["A", "B"]);
+            ui.progress(0.25, "1 of 4");
+            ui.tooltip("Apply the preset");
+        });
+        assert_eq!((changed, selected), (true, 1));
+        assert!(matches!(&widgets[0], Widget::Tabs { selected: 1, options, .. } if options == &vec!["A".to_string(), "B".to_string()]));
+        assert_eq!(widgets[1], Widget::Progress { fraction: 0.25, text: "1 of 4".into() });
+        assert_eq!(widgets[2], Widget::Tooltip { text: "Apply the preset".into() });
+    }
+
+    #[test]
+    fn a_canvas_gets_polygons_images_and_the_pointer_with_modifiers_and_scroll() {
+        let Widget::Canvas { id, .. } = frame(vec![], |ui| ui.canvas("graph", [100.0, 100.0], |_| {}))[0].clone() else { panic!("canvas expected") };
+        let pointer = Pointer {
+            pos: [4.0, 5.0],
+            phase: PointerPhase::Down,
+            modifiers: crate::wire::Modifiers { shift: false, alt: true, command: false },
+            scroll: [0.0, -3.0],
+        };
+        let mut seen = None;
+        let widgets = frame(vec![UiEvent { id, kind: UiEventKind::Pointer(pointer) }], |ui| {
+            ui.canvas("graph", [100.0, 100.0], |c| {
+                seen = c.pointer;
+                c.polygon(&[[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]], Paint::Accent);
+                c.image("bg", [0.0, 0.0], [100.0, 100.0]);
+            })
+        });
+        assert_eq!(seen, Some(pointer));
+        let Widget::Canvas { shapes, .. } = &widgets[0] else { panic!("canvas expected") };
+        assert_eq!(shapes[0], Shape::Polygon { points: vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]], fill: Paint::Accent });
+        assert_eq!(shapes[1], Shape::Image { key: "bg".into(), min: [0.0, 0.0], max: [100.0, 100.0] });
+    }
+
+    #[test]
+    fn a_pointer_from_an_older_host_without_modifiers_still_reads() {
+        let pointer: Pointer = serde_json::from_str(r#"{"pos":[1.0,2.0],"phase":"drag"}"#).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(pointer, Pointer::new([1.0, 2.0], PointerPhase::Drag));
+    }
+
+    #[test]
+    fn keys_typed_while_the_panel_has_focus_reach_the_ui() {
+        let input = UiInput { keys: "ab".into(), ..Default::default() };
+        assert_eq!(Ui::new(&input).keys(), "ab");
     }
 }

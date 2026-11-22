@@ -205,10 +205,25 @@ impl<'a> SessionHost<'a> {
             return Err(needs_files("writing the selected properties"));
         }
         let found = self.session.execute("prop.get", Value::Object(target)).map_err(|e| e.to_string())?;
-        if found.get("type").and_then(Value::as_str) == Some("string") {
+        if found.get("type").and_then(Value::as_str) == Some("string") && !self.plugin_owned_text(&found) {
             return Err(needs_files("writing a text-valued property, which an effect may read as a file path,"));
         }
         Ok(())
+    }
+
+    fn plugin_owned_text(&self, found: &Value) -> bool {
+        let (Some(layer), Some(uid)) = (found.get("layer").and_then(Value::as_u64), found.get("uid").and_then(Value::as_u64)) else { return false };
+        use effectcraft_engine::project::{GroupKind, LayerId, Node, ParamUi};
+        let own = format!("{}.", self.plugin.bundle.manifest.id);
+        let Some(layer) = self.session.project.comps().find_map(|(_, comp)| comp.layer(LayerId(layer))) else { return false };
+        let Some(effects) = layer.props.sub("effects") else { return false };
+        effects.children.iter().any(|node| match node {
+            Node::Group(effect) => {
+                matches!(&effect.kind, GroupKind::Effect { effect } if effect.starts_with(&own))
+                    && effect.find(uid).is_some_and(|prop| matches!(prop.ui, ParamUi::Custom))
+            }
+            Node::Prop(_) => false,
+        })
     }
 
     fn property_writes_allowed(&mut self, id: &str, params: &Value) -> Result<(), String> {

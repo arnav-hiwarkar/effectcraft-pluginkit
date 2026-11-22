@@ -17,6 +17,14 @@ pub enum Call {
     Panel { panel: String, input: UiInput },
     Command { command: String },
     Task { task: String, args: serde_json::Value },
+    Controls { effect: String, param: String, value: String, input: UiInput },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct ControlsReply {
+    pub widgets: Vec<Widget>,
+    #[serde(default)]
+    pub value: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -139,6 +147,7 @@ pub enum ParamKind {
     Point3 { default: [f64; 3] },
     Color { default: [f64; 4] },
     Text { default: String },
+    Custom { default: String },
     Layer,
     Mask,
 }
@@ -183,6 +192,10 @@ impl Param {
 
     pub fn text(id: &str, name: &str, default: &str) -> Self {
         Param::new(id, name, ParamKind::Text { default: default.into() })
+    }
+
+    pub fn custom(id: &str, name: &str, default: &str) -> Self {
+        Param::new(id, name, ParamKind::Custom { default: default.into() })
     }
 
     pub fn layer(id: &str, name: &str) -> Self {
@@ -542,6 +555,7 @@ pub enum HostCall {
     Frame { request: FrameRequest },
     Audio { request: AudioRequest },
     PickFile { request: PickFile },
+    UploadImage { key: String, width: u32, height: u32 },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -656,6 +670,8 @@ pub struct UiInput {
     #[serde(default)]
     pub events: Vec<UiEvent>,
     pub size: [f32; 2],
+    #[serde(default)]
+    pub keys: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -679,6 +695,26 @@ pub enum UiEventKind {
 pub struct Pointer {
     pub pos: [f32; 2],
     pub phase: PointerPhase,
+    #[serde(default)]
+    pub modifiers: Modifiers,
+    #[serde(default)]
+    pub scroll: [f32; 2],
+}
+
+impl Pointer {
+    pub fn new(pos: [f32; 2], phase: PointerPhase) -> Self {
+        Pointer { pos, phase, modifiers: Modifiers::default(), scroll: [0.0; 2] }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    #[serde(default)]
+    pub shift: bool,
+    #[serde(default)]
+    pub alt: bool,
+    #[serde(default)]
+    pub command: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -707,6 +743,13 @@ pub enum Widget {
     Separator,
     Space { size: f32 },
     Canvas { id: u64, size: [f32; 2], shapes: Vec<Shape> },
+    Image { id: u64, key: String, size: [f32; 2] },
+    Scroll { id: u64, height: f32, children: Vec<Widget> },
+    Collapsing { id: u64, title: String, open: bool, children: Vec<Widget> },
+    Tabs { id: u64, options: Vec<String>, selected: u32 },
+    Progress { fraction: f32, text: String },
+    Tooltip { text: String },
+    Grid { id: u64, columns: u32, children: Vec<Widget> },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -727,6 +770,8 @@ pub enum Shape {
     Rect { min: [f32; 2], max: [f32; 2], fill: Option<Paint>, stroke: Option<(Paint, f32)>, radius: f32 },
     Circle { center: [f32; 2], radius: f32, fill: Option<Paint>, stroke: Option<(Paint, f32)> },
     Text { pos: [f32; 2], text: String, color: Paint, size: f32 },
+    Polygon { points: Vec<[f32; 2]>, fill: Paint },
+    Image { key: String, min: [f32; 2], max: [f32; 2] },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]

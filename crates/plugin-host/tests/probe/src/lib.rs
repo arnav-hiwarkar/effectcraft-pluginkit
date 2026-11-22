@@ -23,6 +23,34 @@ impl Effect for Invert {
     }
 }
 
+struct Scale;
+
+impl Effect for Scale {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("scale", "Scale", "Probe").param(Param::custom("level", "Level", "1"))
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise()
+    }
+
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let level: f32 = cx.text("level").parse().map_err(|_| Error::from("the level is not a number"))?;
+        for pixel in frame.pixels.iter_mut() {
+            pixel[..3].iter_mut().for_each(|channel| *channel *= level);
+        }
+        Ok(())
+    }
+
+    fn controls(&self, _param: &str, value: &mut String, ui: &mut Ui) {
+        ui.label(&format!("Level {value}"));
+        if ui.button("Halve") {
+            let level: f64 = value.parse().unwrap_or(1.0);
+            *value = (level / 2.0).to_string();
+        }
+    }
+}
+
 const GPU_KERNELS: &str = r#"
 @compute @workgroup_size(16, 16)
 fn probe_invert(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -274,6 +302,7 @@ impl Panel for Counter {
 fn make() -> Plugin {
     Plugin::new()
         .effect(Invert)
+        .effect(Scale)
         .effect(ShiftDown)
         .effect(ReadInputs)
         .effect(Spin)
