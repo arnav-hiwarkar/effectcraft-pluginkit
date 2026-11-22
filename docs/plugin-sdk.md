@@ -190,6 +190,10 @@ fn plugin() -> Plugin {
 
 The panel appears in **Window ▸ Plug-ins**. Its tab docks like the app's own panels.
 
+A widget is known by its label and how many times that label came before it, and a click arrives on the
+next call. Draw each item of a list that can change inside `ui.keyed(item_id, |ui| …)`, so a click on
+one item's "Delete" still reaches that item when another item is added above it.
+
 ### Show images
 
 Upload RGBA pixels once under a key, then show them by key. Uploading again under the same key replaces
@@ -221,7 +225,7 @@ impl Effect for Curves {
         EffectSpec::new("curves", "Curves", "Color Correction").param(Param::custom("curve", "Curve", "[]"))
     }
 
-    fn controls(&self, param: &str, value: &mut String, ui: &mut Ui) {
+    fn controls(&self, instance: u64, param: &str, value: &mut String, ui: &mut Ui) {
         if ui.button("Reset") {
             *value = "[]".into();
         }
@@ -236,7 +240,8 @@ impl Effect for Curves {
 
 When `controls` changes `value`, the app sets the parameter. One drag is one undo step. `controls` runs
 in the long-lived instance, like a panel, so state kept in the effect (a selected channel, the point being
-dragged) lasts between frames. `render` runs in pooled instances and sees only `cx`. A project with a
+dragged) lasts between frames. Keep that state per `instance`: it is the same for one effect on one layer
+and differs between two copies of the effect. `render` runs in pooled instances and sees only `cx`. A project with a
 custom value opens without the plugin: the value is kept and the layer renders without the effect.
 
 `plugins/curves` is a complete example.

@@ -42,8 +42,9 @@ impl Effect for Scale {
         Ok(())
     }
 
-    fn controls(&self, _param: &str, value: &mut String, ui: &mut Ui) {
+    fn controls(&self, instance: u64, _param: &str, value: &mut String, ui: &mut Ui) {
         ui.label(&format!("Level {value}"));
+        ui.label(&format!("Instance {instance}"));
         if ui.button("Halve") {
             let level: f64 = value.parse().unwrap_or(1.0);
             *value = (level / 2.0).to_string();

@@ -246,7 +246,9 @@ fn newest_change(dir: &Path) -> (usize, SystemTime) {
                 if name != "target" && name != ".git" {
                     stack.push(entry.path());
                 }
-            } else if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
+            } else if name != "Cargo.lock"
+                && let Ok(modified) = entry.metadata().and_then(|m| m.modified())
+            {
                 count += 1;
                 newest = newest.max(modified);
             }
@@ -279,23 +281,37 @@ fn load_into_app(root: &Path, bundle: &Path, bridge: &str) -> Result<(), String>
 }
 
 fn dev(root: &Path, args: &[String]) -> Result<(), String> {
-    let dir = args.iter().find(|a| !a.starts_with("--") && Some(a.as_str()) != bridge_value(args)).map(PathBuf::from).ok_or(USAGE)?;
+    let given = args.iter().find(|a| !a.starts_with("--") && Some(a.as_str()) != bridge_value(args)).map(PathBuf::from).ok_or(USAGE)?;
+    let dir = if given.is_relative() && !given.exists() { root.join(&given) } else { given };
     let bridge = bridge_value(args).unwrap_or(DEFAULT_BRIDGE);
     let out = root.join("plugins/dist");
     println!("watching {} and loading into the app on port {bridge}", dir.display());
     let mut seen = None;
+    let mut unloaded: Option<(PathBuf, String, f64, bool)> = None;
     loop {
         let stamp = newest_change(&dir);
         if seen != Some(stamp) {
             seen = Some(stamp);
             let started = Instant::now();
-            let loaded = assemble(&dir, &out, false).and_then(|(bundle, manifest)| {
-                let seconds = started.elapsed().as_secs_f64();
-                load_into_app(root, &bundle, bridge).map(|()| (manifest["id"].as_str().unwrap_or_default().to_string(), seconds))
-            });
-            match loaded {
-                Ok((id, seconds)) => println!("reloaded {id}: built in {seconds:.1} s"),
-                Err(error) => println!("not reloaded: {error}"),
+            unloaded = match assemble(&dir, &out, false) {
+                Ok((bundle, manifest)) => Some((bundle, manifest["id"].as_str().unwrap_or_default().to_string(), started.elapsed().as_secs_f64(), false)),
+                Err(error) => {
+                    println!("not reloaded: {error}");
+                    None
+                }
+            };
+        }
+        if let Some((bundle, id, seconds, told)) = &mut unloaded {
+            match load_into_app(root, bundle, bridge) {
+                Ok(()) => {
+                    println!("reloaded {id}: built in {seconds:.1} s");
+                    unloaded = None;
+                }
+                Err(error) if !*told => {
+                    println!("not reloaded yet, retrying until the app answers: {error}");
+                    *told = true;
+                }
+                Err(_) => {}
             }
         }
         std::thread::sleep(POLL);
@@ -326,6 +342,18 @@ mod tests {
         std::fs::write(dir.join("plugin.wasm"), b"\0asm\x01\0\0\0").unwrap();
         std::fs::write(dir.join("assets/lut/a.cube"), "LUT").unwrap();
         std::fs::write(dir.join("assets/b.txt"), "b").unwrap();
+    }
+
+    #[test]
+    fn writing_a_lock_file_does_not_count_as_a_source_change() {
+        let work = tempfile::tempdir().unwrap();
+        folder(work.path());
+        let before = newest_change(work.path());
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(work.path().join("Cargo.lock"), "version = 4").unwrap();
+        assert_eq!(newest_change(work.path()), before);
+        std::fs::write(work.path().join("assets/b.txt"), "changed").unwrap();
+        assert_ne!(newest_change(work.path()), before);
     }
 
     #[test]

@@ -690,18 +690,22 @@ fn custom_control(
     let uid = prop.uid;
     let Value::Str(value) = ectx.value(layer, prop) else { return };
     let started = ui.input(|i| i.pointer.primary_pressed()) && ui.rect_contains_pointer(clip);
-    let merge = gesture_key(ui, egui::Id::unique(("ec-custom", uid)), started);
+    let gesture = egui::Id::unique(("ec-custom", uid));
+    let held = held_gesture(ui, gesture, started);
+    let merge = gesture_key(ui, gesture, started);
     let events = app.plugin_ui.control_events.remove(&uid).unwrap_or_default();
-    let input = effectcraft_plugin::ui::UiInput { events, size: [block.width(), block.height()], keys: String::new() };
+    let budget = ui.clip_rect().height().max(ROW);
+    let input = effectcraft_plugin::ui::UiInput { events, size: [block.width(), budget], keys: String::new() };
     let mut body = ui.new_child(egui::UiBuilder::new().id_salt(("ec-custom-body", uid)).max_rect(block));
     body.set_clip_rect(clip.intersect(ui.clip_rect()));
     let scope = format!("effectControls.prop.{uid}.control");
-    match effectcraft_plugin::controls(&mut app.session, effect, param, &value, input) {
+    match effectcraft_plugin::controls(&mut app.session, effect, param, uid, &value, input) {
         Ok((plugin, reply)) => {
             let tokens = app.tokens;
             let source = crate::panels::plugin_view::Source { plugin: &plugin, images: &mut app.plugin_ui.images };
             let events = crate::panels::plugin_view::draw(&mut body, &reply.widgets, &tokens, &mut app.auto, &scope, source);
-            if let Some(new) = reply.value.filter(|new| *new != value) {
+            if let Some(new) = reply.value.filter(|new| *new != value && !prop.has_expression()) {
+                let merge = if held { merge } else { gesture_key(ui, gesture, true) };
                 actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": uid, "value": new, "merge": merge})));
             }
             if !events.is_empty() {
@@ -710,13 +714,24 @@ fn custom_control(
             }
         }
         Err(error) => {
-            body.label(egui::RichText::new(error).font(Tokens::ui(12.0)).color(app.tokens.text_dim));
+            body.label(
+                egui::RichText::new(crate::i18n::tr_args("The plug-in control failed: {}", &[&error])).font(Tokens::ui(12.0)).color(app.tokens.text_dim),
+            );
         }
     }
     let height = body.min_rect().height().max(ROW);
     if app.plugin_ui.control_heights.insert(uid, height) != Some(height) {
         ui.ctx().request_repaint();
     }
+}
+
+fn held_gesture(ui: &egui::Ui, gesture: egui::Id, started: bool) -> bool {
+    let live = gesture.with("live");
+    let down = ui.input(|i| i.pointer.primary_down());
+    let was_live = ui.data(|d| d.get_temp::<bool>(live)).unwrap_or(false);
+    let live_now = started || (was_live && down);
+    ui.data_mut(|d| d.insert_temp(live, live_now));
+    live_now || was_live
 }
 
 /// The effect instance a row belongs to, for conditional visibility

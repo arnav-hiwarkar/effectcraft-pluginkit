@@ -4,6 +4,7 @@ mod presets;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use craft_plugin::prelude::*;
@@ -16,7 +17,7 @@ pub const PARAM: &str = "curves";
 
 #[derive(Default)]
 struct CurvesEffect {
-    control: Mutex<ControlState>,
+    controls: Mutex<HashMap<u64, ControlState>>,
 }
 
 impl Effect for CurvesEffect {
@@ -34,12 +35,12 @@ impl Effect for CurvesEffect {
         Ok(())
     }
 
-    fn controls(&self, param: &str, value: &mut String, ui: &mut Ui) {
+    fn controls(&self, instance: u64, param: &str, value: &mut String, ui: &mut Ui) {
         if param != PARAM {
             return;
         }
-        let mut state = self.control.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        control::draw(&mut state, value, ui);
+        let mut states = self.controls.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        control::draw(states.entry(instance).or_default(), value, ui);
     }
 }
 

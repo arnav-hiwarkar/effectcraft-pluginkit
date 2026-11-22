@@ -158,6 +158,13 @@ impl<'a> Ui<'a> {
         self.widgets.push(Widget::Space { size });
     }
 
+    pub fn keyed(&mut self, key: &str, build: impl FnOnce(&mut Ui<'a>)) {
+        let scope = hash(hash(self.scope, b"keyed\x1f"), key.as_bytes());
+        let outer_scope = std::mem::replace(&mut self.scope, scope);
+        build(self);
+        self.scope = outer_scope;
+    }
+
     fn nested(&mut self, key: &str, build: impl FnOnce(&mut Ui<'a>)) -> Vec<Widget> {
         let scope = self.id(key);
         self.nested_in(scope, build)
@@ -314,6 +321,33 @@ mod tests {
             ui.row(|ui| clicks.1 = ui.button("Apply"));
         });
         assert_eq!(clicks, (false, true));
+    }
+
+    fn presets(ui: &mut Ui, names: &[&str]) -> Vec<String> {
+        let mut deleted = Vec::new();
+        for name in names {
+            ui.keyed(name, |ui| {
+                ui.row(|ui| {
+                    ui.label(name);
+                    if ui.button("Delete") {
+                        deleted.push(name.to_string());
+                    }
+                });
+            });
+        }
+        deleted
+    }
+
+    #[test]
+    fn a_click_on_a_keyed_list_item_reaches_that_item_after_an_item_is_inserted_above_it() {
+        let shown = frame(vec![], |ui| {
+            presets(ui, &["warm", "cool", "dusk"]);
+        });
+        let Widget::Row { children } = &shown[2] else { panic!("row expected") };
+        let dusk = id_of(&children[1]);
+        let mut deleted = Vec::new();
+        frame(vec![UiEvent { id: dusk, kind: UiEventKind::Click }], |ui| deleted = presets(ui, &["new", "warm", "cool", "dusk"]));
+        assert_eq!(deleted, vec!["dusk".to_string()]);
     }
 
     #[test]

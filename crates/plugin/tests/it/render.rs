@@ -121,8 +121,12 @@ fn a_plugin_effect_changes_its_cache_key_when_a_file_in_its_data_folder_changes(
 }
 
 fn controls(app: &mut App, effect: &str, value: &str, events: Vec<UiEvent>) -> (Vec<Widget>, Option<String>) {
+    controls_of(app, effect, 7, value, events)
+}
+
+fn controls_of(app: &mut App, effect: &str, instance: u64, value: &str, events: Vec<UiEvent>) -> (Vec<Widget>, Option<String>) {
     let input = UiInput { events, size: [240.0, 80.0], ..Default::default() };
-    let (plugin, reply) = effectcraft_plugin::controls(&mut app.session, effect, "level", value, input).expect("the controls draw");
+    let (plugin, reply) = effectcraft_plugin::controls(&mut app.session, effect, "level", instance, value, input).expect("the controls draw");
     assert_eq!(plugin, app.id);
     (reply.widgets, reply.value)
 }
@@ -133,9 +137,18 @@ fn a_custom_control_draws_widgets_for_the_current_value_and_returns_the_edited_v
     let (widgets, value) = controls(&mut app, "test.render-controls.scale", "1", vec![]);
     assert_eq!(value, None);
     assert_eq!(widgets[0], Widget::Label { text: "Level 1".into(), style: TextStyle::Body });
-    let Widget::Button { id, .. } = widgets[1] else { panic!("a button, not {:?}", widgets[1]) };
+    let Widget::Button { id, .. } = widgets[2] else { panic!("a button, not {:?}", widgets[2]) };
     let (_, value) = controls(&mut app, "test.render-controls.scale", "1", vec![UiEvent { id, kind: UiEventKind::Click }]);
     assert_eq!(value.as_deref(), Some("0.5"));
+}
+
+#[test]
+fn a_custom_control_is_told_which_effect_instance_it_draws() {
+    let mut app = app("test.render-instances", &[]);
+    let (first, _) = controls_of(&mut app, "test.render-instances.scale", 11, "1", vec![]);
+    let (second, _) = controls_of(&mut app, "test.render-instances.scale", 12, "1", vec![]);
+    assert_eq!(first[1], Widget::Label { text: "Instance 11".into(), style: TextStyle::Body });
+    assert_eq!(second[1], Widget::Label { text: "Instance 12".into(), style: TextStyle::Body });
 }
 
 #[test]
