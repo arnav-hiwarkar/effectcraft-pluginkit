@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use effectcraft_engine::PluginItem;
-use effectcraft_plugin::ui::{Paint, Pointer, PointerPhase, Shape, TextStyle, UiEvent, UiEventKind, UiInput, Widget};
+use effectcraft_plugin::ui::{Modifiers, Paint, Pointer, PointerPhase, Shape, TextStyle, UiEvent, UiEventKind, UiInput, Widget};
 use egui::epaint::CubicBezierShape;
 use egui::{Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind, UiBuilder, vec2};
 use serde_json::json;
@@ -21,6 +21,43 @@ pub(crate) struct PluginUi {
     pub events: HashMap<u32, Vec<UiEvent>>,
     pub manager_open: bool,
     pub listed: Option<(std::time::Instant, Result<Vec<super::plugin_manager::Listed>, String>)>,
+    pub images: Images,
+    pub control_events: HashMap<u64, Vec<UiEvent>>,
+    pub control_heights: HashMap<u64, f32>,
+}
+
+#[derive(Default)]
+pub(crate) struct Images {
+    textures: HashMap<(String, String), (u64, egui::TextureHandle)>,
+}
+
+impl Images {
+    fn texture(&mut self, ctx: &egui::Context, plugin: &str, key: &str) -> Option<egui::TextureId> {
+        let Some(image) = effectcraft_plugin::image(plugin, key) else {
+            self.textures.remove(&(plugin.to_string(), key.to_string()));
+            return None;
+        };
+        let slot = (plugin.to_string(), key.to_string());
+        if let Some((generation, texture)) = self.textures.get(&slot)
+            && *generation == image.generation
+        {
+            return Some(texture.id());
+        }
+        let pixels = egui::ColorImage::from_rgba_unmultiplied([image.width as usize, image.height as usize], &image.rgba);
+        let texture = ctx.load_texture(format!("plugin.{plugin}.{key}"), pixels, egui::TextureOptions::LINEAR);
+        let id = texture.id();
+        self.textures.insert(slot, (image.generation, texture));
+        Some(id)
+    }
+
+    pub fn prune(&mut self) {
+        self.textures.retain(|(plugin, _), _| effectcraft_plugin::plugins().is_some_and(|p| p.get(plugin).is_some()));
+    }
+}
+
+pub(crate) struct Source<'a> {
+    pub plugin: &'a str,
+    pub images: &'a mut Images,
 }
 
 fn claimants(app: &EffectcraftApp, kind: PanelKind) -> impl Iterator<Item = &PluginItem> {
@@ -39,13 +76,15 @@ pub fn panel(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pane
     let scope = format!("plugin.{}.{}", item.plugin, item.id);
     app.auto.add(&scope, rect, &item.title);
     let events = app.plugin_ui.events.remove(&key).unwrap_or_default();
-    let input = UiInput { events, size: [rect.width(), rect.height()] };
+    let input = UiInput { events, size: [rect.width(), rect.height()], keys: typed(ui, rect) };
     let tokens = app.tokens;
     let mut body = ui.new_child(UiBuilder::new().max_rect(rect.shrink(8.0)));
     match effectcraft_plugin::panel_ui(&mut app.session, &item.plugin, &item.id, input) {
         Ok(widgets) => {
             let scroll = egui::ScrollArea::both().id_salt(("plugin-panel", key)).auto_shrink([false, false]);
-            let events = scroll.show(&mut body, |ui| draw(ui, &widgets, &tokens, &mut app.auto, &scope)).inner;
+            app.plugin_ui.images.prune();
+            let source = Source { plugin: &item.plugin, images: &mut app.plugin_ui.images };
+            let events = scroll.show(&mut body, |ui| draw(ui, &widgets, &tokens, &mut app.auto, &scope, source)).inner;
             if !events.is_empty() {
                 app.plugin_ui.events.insert(key, events);
                 ui.ctx().request_repaint();
@@ -56,6 +95,13 @@ pub fn panel(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pane
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
         }
     }
+}
+
+fn typed(ui: &egui::Ui, rect: Rect) -> String {
+    if ui.ctx().egui_wants_keyboard_input() || !ui.rect_contains_pointer(rect) {
+        return String::new();
+    }
+    ui.input(|i| i.events.iter().filter_map(|e| if let egui::Event::Text(text) = e { Some(text.as_str()) } else { None }).collect())
 }
 
 fn not_running(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: PanelKind) {
@@ -78,8 +124,8 @@ fn not_running(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pa
     }
 }
 
-pub(crate) fn draw(ui: &mut egui::Ui, widgets: &[Widget], tokens: &Tokens, auto: &mut Registry, scope: &str) -> Vec<UiEvent> {
-    let mut renderer = Renderer { tokens, auto, scope, events: Vec::new() };
+pub(crate) fn draw(ui: &mut egui::Ui, widgets: &[Widget], tokens: &Tokens, auto: &mut Registry, scope: &str, source: Source) -> Vec<UiEvent> {
+    let mut renderer = Renderer { tokens, auto, scope, source, events: Vec::new(), last: None };
     renderer.all(ui, widgets);
     renderer.events
 }
@@ -88,7 +134,9 @@ struct Renderer<'a> {
     tokens: &'a Tokens,
     auto: &'a mut Registry,
     scope: &'a str,
+    source: Source<'a>,
     events: Vec<UiEvent>,
+    last: Option<egui::Response>,
 }
 
 fn salt(widget: &Widget, index: usize) -> u64 {
@@ -100,7 +148,12 @@ fn salt(widget: &Widget, index: usize) -> u64 {
         | Widget::TextEdit { id, .. }
         | Widget::Popup { id, .. }
         | Widget::Color { id, .. }
-        | Widget::Canvas { id, .. } => *id,
+        | Widget::Canvas { id, .. }
+        | Widget::Image { id, .. }
+        | Widget::Scroll { id, .. }
+        | Widget::Collapsing { id, .. }
+        | Widget::Tabs { id, .. }
+        | Widget::Grid { id, .. } => *id,
         _ => index as u64,
     }
 }
@@ -130,6 +183,11 @@ impl Renderer<'_> {
 
     fn register(&mut self, id: u64, response: &egui::Response, label: &str) {
         self.auto.add_response(&format!("{}.{id}", self.scope), response, label);
+        self.last = Some(response.clone());
+    }
+
+    fn texture(&mut self, ctx: &egui::Context, key: &str) -> Option<egui::TextureId> {
+        self.source.images.texture(ctx, self.source.plugin, key)
     }
 
     fn paint(&self, paint: Paint) -> Color32 {
@@ -160,7 +218,7 @@ impl Renderer<'_> {
     fn widget(&mut self, ui: &mut egui::Ui, widget: &Widget) {
         match widget {
             Widget::Label { text, style } => {
-                ui.label(self.text(text, *style));
+                self.last = Some(ui.label(self.text(text, *style)));
             }
             Widget::Button { id, text, enabled } => {
                 let response = ui.add_enabled(*enabled, egui::Button::new(text));
@@ -235,7 +293,66 @@ impl Renderer<'_> {
             }
             Widget::Space { size } => ui.add_space(extent(*size)),
             Widget::Canvas { id, size, shapes } => self.canvas(ui, *id, *size, shapes),
+            Widget::Image { id, key, size } => self.image(ui, *id, key, *size),
+            Widget::Scroll { id, height, children } => {
+                egui::ScrollArea::vertical().id_salt(id).max_height(extent(*height)).auto_shrink([false, true]).show(ui, |ui| self.all(ui, children));
+            }
+            Widget::Collapsing { id, title, open, children } => {
+                egui::CollapsingHeader::new(title.as_str()).id_salt(id).default_open(*open).show(ui, |ui| self.all(ui, children));
+            }
+            Widget::Tabs { id, options, selected } => self.tabs(ui, *id, options, *selected as usize),
+            Widget::Progress { fraction, text } => {
+                let fraction = if fraction.is_finite() { fraction.clamp(0.0, 1.0) } else { 0.0 };
+                self.last = Some(ui.add(egui::ProgressBar::new(fraction).text(text.as_str())));
+            }
+            Widget::Tooltip { text } => {
+                if let Some(response) = self.last.take() {
+                    response.on_hover_text(text.as_str());
+                }
+            }
+            Widget::Grid { id, columns, children } => self.grid(ui, *id, (*columns).max(1) as usize, children),
         }
+    }
+
+    fn image(&mut self, ui: &mut egui::Ui, id: u64, key: &str, size: [f32; 2]) {
+        let size = vec2(extent(size[0]), extent(size[1]));
+        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, key));
+        match self.texture(ui.ctx(), key) {
+            Some(texture) => ui.painter().image(texture, rect, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE),
+            None => ui.painter().rect_filled(rect, 2.0, self.tokens.field_bg),
+        };
+        if response.hovered() {
+            ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0, self.tokens.accent), StrokeKind::Inside);
+        }
+        self.register(id, &response, key);
+        if response.clicked() {
+            self.emit(id, UiEventKind::Click);
+        }
+    }
+
+    fn tabs(&mut self, ui: &mut egui::Ui, id: u64, options: &[String], selected: usize) {
+        ui.horizontal(|ui| {
+            for (index, option) in options.iter().enumerate() {
+                let tab = ui.selectable_label(index == selected, option);
+                self.auto.add_response(&format!("{}.{id}.{index}", self.scope), &tab, option);
+                if tab.clicked() && index != selected {
+                    self.emit(id, UiEventKind::Number(index as f64));
+                }
+                self.last = Some(tab);
+            }
+        });
+    }
+
+    fn grid(&mut self, ui: &mut egui::Ui, id: u64, columns: usize, children: &[Widget]) {
+        egui::Grid::new(id).show(ui, |ui| {
+            for (index, child) in children.iter().enumerate() {
+                ui.push_id(salt(child, index), |ui| self.widget(ui, child));
+                if (index + 1) % columns == 0 {
+                    ui.end_row();
+                }
+            }
+        });
     }
 
     fn popup(&mut self, ui: &mut egui::Ui, id: u64, text: &str, options: &[String], selected: usize) {
@@ -264,12 +381,13 @@ impl Renderer<'_> {
         for shape in shapes {
             self.shape(&painter, rect.min, shape);
         }
+        self.last = Some(response.clone());
         if let Some(pointer) = pointer(ui, &response, rect.min) {
             self.emit(id, UiEventKind::Pointer(pointer));
         }
     }
 
-    fn shape(&self, painter: &egui::Painter, origin: egui::Pos2, shape: &Shape) -> Option<()> {
+    fn shape(&mut self, painter: &egui::Painter, origin: egui::Pos2, shape: &Shape) -> Option<()> {
         let at = |p: [f32; 2]| Some(origin + vec2(drawable(p[0])?, drawable(p[1])?));
         let stroke = |paint: Paint, width: f32| Stroke::new(extent(width), self.paint(paint));
         match shape {
@@ -298,6 +416,15 @@ impl Renderer<'_> {
             Shape::Text { pos, text, color, size } => {
                 painter.text(at(*pos)?, Align2::LEFT_TOP, text, Tokens::ui(font_size(*size)), self.paint(*color));
             }
+            Shape::Polygon { points, fill } => {
+                let points = points.iter().take(MAX_LINE_POINTS).copied().map(at).collect::<Option<Vec<_>>>()?;
+                painter.add(egui::Shape::convex_polygon(points, self.paint(*fill), Stroke::NONE));
+            }
+            Shape::Image { key, min, max } => {
+                let rect = Rect::from_two_pos(at(*min)?, at(*max)?);
+                let texture = self.texture(painter.ctx(), key)?;
+                painter.image(texture, rect, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+            }
         }
         Some(())
     }
@@ -309,11 +436,15 @@ fn drawable(coordinate: f32) -> Option<f32> {
 
 fn pointer(ui: &egui::Ui, response: &egui::Response, origin: egui::Pos2) -> Option<Pointer> {
     let owed_release = response.id.with("owed-release");
+    let (pressed, released, moving, at, held, scroll) = ui.input(|i| {
+        let held = Modifiers { shift: i.modifiers.shift, alt: i.modifiers.alt, command: i.modifiers.command };
+        let scroll = if response.hovered() { i.smooth_scroll_delta } else { egui::Vec2::ZERO };
+        (i.pointer.primary_pressed(), i.pointer.primary_released(), i.pointer.is_moving(), i.pointer.interact_pos(), held, scroll)
+    });
+    let make = |pos: [f32; 2], phase: PointerPhase| Pointer { pos, phase, modifiers: held, scroll: [scroll.x, scroll.y] };
     if let Some(pos) = ui.data_mut(|data| data.remove_temp::<[f32; 2]>(owed_release)) {
-        return Some(Pointer { pos, phase: PointerPhase::Up });
+        return Some(make(pos, PointerPhase::Up));
     }
-    let (pressed, released, moving, at) =
-        ui.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_released(), i.pointer.is_moving(), i.pointer.interact_pos()));
     if pressed && released && response.contains_pointer() {
         let local = at? - origin;
         ui.data_mut(|data| data.insert_temp(owed_release, [local.x, local.y]));
@@ -325,13 +456,13 @@ fn pointer(ui: &egui::Ui, response: &egui::Response, origin: egui::Pos2) -> Opti
         PointerPhase::Up
     } else if moving && response.is_pointer_button_down_on() {
         PointerPhase::Drag
-    } else if moving && response.hovered() {
+    } else if (moving || scroll != egui::Vec2::ZERO) && response.hovered() {
         PointerPhase::Hover
     } else {
         return None;
     };
     let local = at? - origin;
-    Some(Pointer { pos: [local.x, local.y], phase })
+    Some(make([local.x, local.y], phase))
 }
 
 #[cfg(test)]
@@ -345,7 +476,8 @@ mod tests {
         Harness::new_ui_state(
             move |ui, events: &mut Vec<UiEvent>| {
                 let mut auto = Registry::default();
-                events.extend(draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel"));
+                let mut images = Images::default();
+                events.extend(draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin: "test", images: &mut images }));
             },
             Vec::new(),
         )

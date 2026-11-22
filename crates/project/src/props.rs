@@ -43,6 +43,7 @@ pub enum ParamUi {
         filters: Vec<String>,
     },
     Gradient,
+    Custom,
     /// Not shown in Effect Controls / the timeline (internal data).
     Hidden,
 }

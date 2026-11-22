@@ -34,5 +34,5 @@ pub use plugin::{Limits, Plugin, PluginError};
 pub use registry::{Bundle, BundleError, Consent, Registry};
 
 pub mod ui {
-    pub use craft_plugin::{Paint, Pointer, PointerPhase, Shape, TextStyle, UiEvent, UiEventKind, UiInput, Widget};
+    pub use craft_plugin::{ControlsReply, Modifiers, Paint, Pointer, PointerPhase, Shape, TextStyle, UiEvent, UiEventKind, UiInput, Widget};
 }

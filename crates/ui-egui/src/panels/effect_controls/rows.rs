@@ -674,6 +674,51 @@ fn dial_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, layer: &Layer, prop: &P
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn custom_control(
+    app: &mut EffectcraftApp,
+    ui: &mut egui::Ui,
+    layer: &Layer,
+    prop: &Property,
+    param: &str,
+    effect: &str,
+    ectx: &EvalCtx,
+    clip: Rect,
+    block: Rect,
+    actions: &mut Actions,
+) {
+    let uid = prop.uid;
+    let Value::Str(value) = ectx.value(layer, prop) else { return };
+    let started = ui.input(|i| i.pointer.primary_pressed()) && ui.rect_contains_pointer(clip);
+    let merge = gesture_key(ui, egui::Id::unique(("ec-custom", uid)), started);
+    let events = app.plugin_ui.control_events.remove(&uid).unwrap_or_default();
+    let input = effectcraft_plugin::ui::UiInput { events, size: [block.width(), block.height()], keys: String::new() };
+    let mut body = ui.new_child(egui::UiBuilder::new().max_rect(block));
+    body.set_clip_rect(clip.intersect(ui.clip_rect()));
+    let scope = format!("effectControls.prop.{uid}.control");
+    match effectcraft_plugin::controls(&mut app.session, effect, param, &value, input) {
+        Ok((plugin, reply)) => {
+            let tokens = app.tokens;
+            let source = crate::panels::plugin_view::Source { plugin: &plugin, images: &mut app.plugin_ui.images };
+            let events = crate::panels::plugin_view::draw(&mut body, &reply.widgets, &tokens, &mut app.auto, &scope, source);
+            if let Some(new) = reply.value.filter(|new| *new != value) {
+                actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": uid, "value": new, "merge": merge})));
+            }
+            if !events.is_empty() {
+                app.plugin_ui.control_events.insert(uid, events);
+                ui.ctx().request_repaint();
+            }
+        }
+        Err(error) => {
+            body.label(egui::RichText::new(error).font(Tokens::ui(12.0)).color(app.tokens.text_dim));
+        }
+    }
+    let height = body.min_rect().height().max(ROW);
+    if app.plugin_ui.control_heights.insert(uid, height) != Some(height) {
+        ui.ctx().request_repaint();
+    }
+}
+
 /// The effect instance a row belongs to, for conditional visibility
 /// ([`effectcraft_engine::effects::catalog::param_shown`]): effect id, the instance's root
 /// group and the spec-id path of the group being drawn (`""` or `cameraPosition/`).
@@ -761,6 +806,15 @@ pub(super) fn group_rows(
                     let dims = prop_row(app, ui, p, layer, g, pr, ectx, r, indent, actions);
                     // A Timeline pick whip can be dropped here (After Effects).
                     crate::panels::timeline::whip_target(ui.ctx(), r.intersect(rect), layer.id.0, pr.uid, dims);
+                }
+                if matches!(pr.ui, ParamUi::Custom) {
+                    let height = app.plugin_ui.control_heights.get(&pr.uid).copied().unwrap_or(ROW);
+                    let block = Rect::from_min_size(pos2(rect.min.x + indent, *y), vec2((rect.width() - indent - 8.0).max(40.0), height));
+                    *y += height + 4.0;
+                    if block.max.y >= rect.min.y && block.min.y <= rect.max.y {
+                        let param = format!("{}{}", fx.path, pr.match_id);
+                        custom_control(app, ui, layer, pr, &param, fx.effect, ectx, block.intersect(rect), block, actions);
+                    }
                 }
                 if app.ui.fx_slider_open.contains(&pr.uid) {
                     if matches!(pr.ui, ParamUi::Angle) {
