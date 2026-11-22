@@ -341,7 +341,8 @@ A panel keeps its own state. The app calls `ui` once to draw the panel and keeps
 draws that tree every frame without calling the plugin. It calls `ui` again, off the UI thread, when the
 user uses one of the panel's widgets, when an app event the panel subscribed to happens, when a timer of
 the panel fires, or when the panel changes size. Until the new tree arrives the old one stays on screen,
-so a slow panel never stalls the app.
+so a slow panel never stalls the app. Each click reaches `ui` once: two clicks made while `ui` was busy
+come as two calls, so `ui.button` returns `true` twice.
 
 ```rust
 #[derive(Default)]
@@ -509,7 +510,8 @@ impl Effect for Curves {
 }
 ```
 
-When `controls` changes `value`, the app sets the parameter. One drag is one undo step. `controls` runs
+When `controls` changes `value`, the app sets the parameter at the time the user made the change, even if
+the playhead moved before the reply arrived. One drag is one undo step. `controls` runs
 in the long-lived instance, like a panel, so state kept in the effect (a selected channel, the point being
 dragged) lasts between frames. Keep that state per `instance`: it is the same for one effect on one layer
 and differs between two copies of the effect. `render` runs in pooled instances and sees only `cx`. A project with a
@@ -576,8 +578,10 @@ Plugin::new().tool("pin", "Pin", Pin::default())
 
 `event.comp` is the pointer in comp pixels at any zoom; `event.layer` is the same point in the first
 selected layer's pixels. A tool's overlay is in comp pixels unless it calls `overlay.space(Space::Layer)`.
-Everything one press-to-release gesture changes in the project is one undo step, named after the tool.
-Changing the project needs the `document.write` permission.
+Everything one press-to-release gesture changes in the project is one undo step, named after the tool;
+an edit made elsewhere during the gesture stays its own step. Changing the project needs the
+`document.write` permission. Events reach `event` in order; moves made while `event` was busy arrive as
+the latest one.
 
 ## Add a command
 

@@ -174,6 +174,27 @@ fn the_ring_and_point_handles_take_tab_focus_and_arrow_keys() {
     assert!(size > 100.0, "the arrow key moved the ring handle outwards: {size}");
 }
 
+#[test]
+fn the_handles_of_an_effect_on_a_moved_adjustment_layer_sit_where_the_effect_draws_in_comp_space() {
+    let mut session = halo_session();
+    session.execute("layer.newAdjustment", json!({"name": "Adjust"})).unwrap();
+    session.execute("effect.apply", json!({"layer": "Adjust", "effect": "org.craftkit.halo.flare"})).unwrap();
+    session.execute("prop.set", json!({"layer": "Adjust", "path": "transform/position", "value": [200.0, 110.0]})).unwrap();
+    let layer = session.active_comp().unwrap().layers[0].clone();
+    let effect = layer.effects().unwrap().groups().next().unwrap().uid;
+    session.state.selected_layers = vec![layer.id];
+    session.state.selected_props = vec![(LayerId(layer.id.0), effect)];
+    let mut harness = harness(session);
+    harness.state_mut().ui.viewer.zoom = Some(1.0);
+    settle(&mut harness, |h| shown_frame(h).is_some() && h.state().auto.find(&format!("viewer.pluginHandle.{effect}.0")).is_some());
+    stable_frame(&mut harness);
+    let centre = element(&harness, &format!("viewer.pluginHandle.{effect}.0")).center();
+    let at = harness.state_mut().session.execute("prop.get", json!({"layer": "Adjust", "path": "effects/#1/light"})).unwrap()["value"].clone();
+    let at: [f32; 2] = serde_json::from_value(at).unwrap();
+    let light = comp_point(&harness, at);
+    assert!((centre - light).length() < 0.5, "the centre handle sits on Light Position {at:?} in comp pixels, {light:?}, not at {centre:?}");
+}
+
 fn tool_texts(harness: &mut Harness<'_, EffectcraftApp>) -> Vec<String> {
     let app = harness.state_mut();
     let overlay = app.plugin_ui.panels.tool_overlay(&mut app.session).cloned().unwrap_or_default();

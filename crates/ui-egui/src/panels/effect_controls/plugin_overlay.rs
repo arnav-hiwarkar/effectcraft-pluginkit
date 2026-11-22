@@ -203,3 +203,40 @@ fn push(app: &mut EffectcraftApp, actions: &mut Actions, commands: Result<Action
         Err(error) => app.ui.status = error,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use effectcraft_plugin::ui::{Paint, Shape};
+    use effectcraft_plugin::viewer::{Mark, Space};
+    use egui::epaint::Primitive;
+
+    use super::draw_marks;
+    use crate::panels::viewer::ViewerMap;
+    use crate::theme::Tokens;
+
+    #[test]
+    fn paths_with_repeated_points_draw_no_vertex_that_is_not_a_number() {
+        let line = |points: Vec<[f32; 2]>| Mark { shape: Shape::Line { points, color: Paint::Accent, width: 2.0 }, space: Space::Comp };
+        let marks = vec![
+            line(vec![[5.0, 5.0]; 3]),
+            line(vec![[1.0, 1.0], [1.0, 1.0], [9.0, 9.0], [9.0, 9.0]]),
+            Mark { shape: Shape::Polygon { points: vec![[2.0, 2.0], [2.0, 2.0], [8.0, 2.0]], fill: Paint::Accent }, space: Space::Comp },
+        ];
+        let tokens = Tokens::for_kind(Default::default());
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0));
+        let map = ViewerMap { origin: egui::Pos2::ZERO, zoom: 4.0, comp: [25.0; 2], area };
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| draw_marks(&tokens, ui.painter(), &map, &marks, None));
+        output.textures_delta.clear();
+        let vertices: Vec<egui::epaint::Vertex> = ctx
+            .tessellate(output.shapes, output.pixels_per_point)
+            .into_iter()
+            .flat_map(|clipped| match clipped.primitive {
+                Primitive::Mesh(mesh) => mesh.vertices,
+                Primitive::Callback(_) => Vec::new(),
+            })
+            .collect();
+        let broken = vertices.iter().filter(|vertex| !(vertex.pos.x.is_finite() && vertex.pos.y.is_finite())).count();
+        assert_eq!((broken, vertices.is_empty()), (0, false));
+    }
+}

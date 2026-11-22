@@ -352,38 +352,29 @@ pub struct Shown<'a> {
     pub error: Option<&'a str>,
 }
 
+struct Inbox(Sender<Done>, Receiver<Done>);
+
+impl Default for Inbox {
+    fn default() -> Self {
+        let (sender, receiver) = channel();
+        Inbox(sender, receiver)
+    }
+}
+
+#[derive(Default)]
 pub struct Panels {
     slots: HashMap<String, Slot>,
     pub(crate) overlays: HashMap<(String, u64), Overlaid>,
     pub(crate) tool: Option<Tooling>,
     pub(crate) lanes: HashMap<Key, VecDeque<Request>>,
     workers: HashMap<String, Worker>,
-    done: (Sender<Done>, Receiver<Done>),
+    done: Inbox,
     wake: Option<Waker>,
     seen: Option<Seen>,
     now: Duration,
     deadline: Option<Instant>,
     scheduled: Option<Duration>,
     notice: Option<String>,
-}
-
-impl Default for Panels {
-    fn default() -> Self {
-        Panels {
-            slots: HashMap::new(),
-            overlays: HashMap::new(),
-            tool: None,
-            lanes: HashMap::new(),
-            workers: HashMap::new(),
-            done: channel(),
-            wake: None,
-            seen: None,
-            now: Duration::ZERO,
-            deadline: None,
-            scheduled: None,
-            notice: None,
-        }
-    }
 }
 
 fn find(surface: Surface) -> Result<(Arc<Loaded>, Call), String> {

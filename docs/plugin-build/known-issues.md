@@ -13,11 +13,14 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 - **Viewer tools from automation.** A plugin tool is picked only with its toolbar button. `ui.set` and the `tool.*` commands do not name plugin tools (`crates/ui-egui/src/panels/plugin_tools.rs`).
 - **Viewer tools get no pen pressure.** egui reports no pressure for a pen, so `ToolEvent::pressure` is 1 while the button is down and 0 otherwise.
+- **Built-in point crosshairs on an adjustment layer are drawn in layer space.** The effect works on the comp below, so a moved adjustment layer shows them off the point the effect uses. Plugin handles use comp space there (`crates/ui-egui/src/panels/effect_controls/viewer.rs`, `from_effect_space`).
+- **One slow interactive call delays the plugin's other surfaces.** Panels, custom controls, overlays and tools of one plugin share its worker queue, so a panel call that runs for a second holds back that plugin's overlay for that second (`crates/plugin/src/panels.rs`).
+- **Task host requests are answered by whichever session pumps first.** `effectcraft_plugin::pump` serves every task of a plugin; panel requests are routed by their project token, task requests only check that their project is still open (`crates/plugin/src/manage.rs`).
 - **Two copies of the theme colour mapping.** `colour` in `crates/ui-egui/src/panels/effect_controls/plugin_overlay.rs` repeats `paint` in `panels/plugin_view.rs` (owned by the panels work in the same wave). Share one after both merge.
 
 ## From the Sol review, not fixed
 
-- **A slow host call is not interrupted.** A file call on a stalled disk or a slow app command runs to its end on the calling thread; the sandboxed call fails when it returns past the limit. A file write cannot be cancelled, so it is not moved to another thread and abandoned: that let a write land after the plugin was told it failed, and stalled threads piled up. Stopping one needs the helper process (`docs/plugin-helper.md`), where the whole process can be killed. Instantiation has its own 5 s limit on top of the call limit.
+- **A slow host call is not interrupted.** A file call on a stalled disk or a slow app command runs to its end on the calling thread; the sandboxed call fails when it returns past the limit. A panel's `frame` and `audio` are cut from the project on the app's thread and rendered on the plugin's worker; a task's still render on the app's thread when the task pump answers them. A file write cannot be cancelled, so it is not moved to another thread and abandoned: that let a write land after the plugin was told it failed, and stalled threads piled up. Stopping one needs the helper process (`docs/plugin-helper.md`), where the whole process can be killed. Instantiation has its own 5 s limit on top of the call limit.
 - **A dangling link is also possible in the automation confinement.** `crates/automation/src/confine.rs` falls back to the parent folder when a path does not resolve. This is upstream code and affects agents too.
 
 ## Reported by the flagship plugin authors, not fixed
