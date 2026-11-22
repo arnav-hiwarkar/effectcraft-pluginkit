@@ -276,31 +276,62 @@ fn hmac(key: &[u8], message: &[&[u8]]) -> [u8; 32] {
 }
 
 fn install_key(cache: &Path) -> std::io::Result<[u8; 32]> {
-    let path = cache.join(KEY_FILE);
-    let owner_only = |meta: &std::fs::Metadata| {
-        #[cfg(unix)]
-        return std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o077 == 0;
-        #[cfg(not(unix))]
-        return meta.is_file();
-    };
-    if let Ok(meta) = std::fs::symlink_metadata(&path)
-        && meta.is_file()
-        && owner_only(&meta)
-        && let Ok(Ok(key)) = std::fs::read(&path).map(<[u8; 32]>::try_from)
-    {
-        return Ok(key);
-    }
-    let mut key = [0u8; 32];
-    getrandom::fill(&mut key).map_err(|e| std::io::Error::other(e.to_string()))?;
     std::fs::create_dir_all(cache)?;
-    let staged = path.with_extension(format!("{}.part", std::process::id()));
+    let path = cache.join(KEY_FILE);
+    match read_key(&path) {
+        Ok(key) => return Ok(key),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            log::warn!("{}: replacing an unusable cache key: {error}", path.display());
+            if let Err(error) = std::fs::remove_file(&path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(error);
+            }
+        }
+    }
+    publish_key(&path)?;
+    read_key(&path)
+}
+
+fn publish_key(path: &Path) -> std::io::Result<()> {
+    let (mut key, mut tag) = ([0u8; 32], [0u8; 8]);
+    getrandom::fill(&mut key).and_then(|()| getrandom::fill(&mut tag)).map_err(|e| std::io::Error::other(e.to_string()))?;
+    let staged = path.with_extension(format!("{}.{:x}.part", std::process::id(), u64::from_le_bytes(tag)));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let written = options.open(&staged).and_then(|mut file| std::io::Write::write_all(&mut file, &key));
+    let published = written.and_then(|()| match std::fs::hard_link(&staged, path) {
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        linked => linked,
+    });
     let _ = std::fs::remove_file(&staged);
-    std::io::Write::write_all(&mut options.open(&staged)?, &key)?;
-    std::fs::rename(&staged, &path)?;
+    published
+}
+
+fn read_key(path: &Path) -> std::io::Result<[u8; 32]> {
+    #[cfg(unix)]
+    let file = {
+        use rustix::fs::{Mode, OFlags};
+        std::fs::File::from(rustix::fs::open(path, OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::empty())?)
+    };
+    #[cfg(not(unix))]
+    let file = std::fs::File::open(path)?;
+    let meta = file.metadata()?;
+    #[cfg(unix)]
+    let private = {
+        use std::os::unix::fs::MetadataExt;
+        meta.uid() == rustix::process::getuid().as_raw() && meta.mode() & 0o077 == 0
+    };
+    #[cfg(not(unix))]
+    let private = true;
+    if !meta.is_file() || !private || meta.len() != 32 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "the key must be a 32-byte file only its owner can read"));
+    }
+    let mut key = [0u8; 32];
+    std::io::Read::read_exact(&mut &file, &mut key)?;
     Ok(key)
 }
 
@@ -347,7 +378,7 @@ fn missing(export: &str) -> PluginError {
 
 #[cfg(test)]
 mod tests {
-    use super::{KEY_FILE, cache_name, cached, engine, hmac};
+    use super::{KEY_FILE, cache_name, cached, engine, hmac, install_key};
 
     const EMPTY: &[u8] = &[0, 0x61, 0x73, 0x6d, 1, 0, 0, 0];
     const ONE_IMPORT: &[u8] = &[0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 1, 4, 1, 0x60, 0, 0, 2, 7, 1, 1, b'a', 1, b'b', 0, 0];
@@ -382,5 +413,42 @@ mod tests {
         assert_eq!(cached(engine, EMPTY, dir.path()).unwrap().imports().len(), 0);
         std::fs::copy(entry(ONE_IMPORT), entry(EMPTY)).unwrap();
         assert_eq!(cached(engine, EMPTY, dir.path()).unwrap().imports().len(), 0);
+    }
+
+    #[test]
+    fn processes_that_make_the_key_at_the_same_time_all_end_up_with_the_one_key_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let start = std::sync::Barrier::new(16);
+        let keys: Vec<_> = std::thread::scope(|scope| {
+            let racers: Vec<_> = (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        install_key(dir.path()).map_err(|e| e.to_string())
+                    })
+                })
+                .collect();
+            racers.into_iter().map(|racer| racer.join().unwrap()).collect()
+        });
+        let on_disk: [u8; 32] = std::fs::read(dir.path().join(KEY_FILE)).unwrap().try_into().unwrap();
+        assert_eq!(keys, vec![Ok(on_disk); 16]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_key_others_can_read_or_a_link_in_its_place_is_never_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(KEY_FILE);
+        let planted = dir.path().join("planted");
+        std::fs::write(&planted, [7u8; 32]).unwrap();
+        std::fs::set_permissions(&planted, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+        std::os::unix::fs::symlink(&planted, &path).unwrap();
+        assert_ne!(install_key(dir.path()).unwrap(), [7u8; 32]);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, [9u8; 32]).unwrap();
+        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
+        assert_ne!(install_key(dir.path()).unwrap(), [9u8; 32]);
+        let key = install_key(dir.path()).unwrap();
+        assert_eq!(install_key(dir.path()).unwrap(), key);
     }
 }
