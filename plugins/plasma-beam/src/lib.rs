@@ -36,6 +36,13 @@ impl Effect for PlasmaBeam {
         Layout::pointwise().padded(settings.padding(&sources(cx, &settings), cx.size))
     }
 
+    fn overlay(&self, cx: &Cx, overlay: &mut Overlay) {
+        if cx.index(spec::CORE_TYPE) == 0 {
+            overlay.line(&[cx.point(spec::CORE_START), cx.point(spec::CORE_END)]);
+            overlay.point(cx, spec::CORE_START).point(cx, spec::CORE_END);
+        }
+    }
+
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let settings = Settings::read(cx);
         render::render(&settings, &sources(cx, &settings), cx.size.map(|side| side as usize), frame);

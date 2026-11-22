@@ -25,6 +25,11 @@ impl Effect for Halo {
         Layout::pointwise().gpu(gpu_pass(&pack))
     }
 
+    fn overlay(&self, cx: &Cx, overlay: &mut Overlay) {
+        let unit = f64::from(looks::look(cx.index("look")).glow.size) * cx.f("scale") / 10_000.0;
+        overlay.point(cx, "light").radius("Glow/size", cx.point("light"), unit * cx.f("Glow/size"), unit.max(1e-3)).named("Glow Size");
+    }
+
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let pack = settings::pack(cx, settings::occlusion(cx));
         let ghosts = place(&pack);

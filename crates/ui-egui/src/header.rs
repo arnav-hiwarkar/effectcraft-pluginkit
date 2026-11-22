@@ -29,6 +29,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let x = rect.min.x + if app.integrated_titlebar && !app.ui.show_menu_bar { 80.0 } else { 10.0 };
     let x = brand_and_home(app, ui, &p, x, cy);
     let x = tool_slots(app, ui, &p, x, cy);
+    let x = crate::panels::plugin_tools::toolbar(app, ui, x, cy);
     let x = tool_options_bar(app, ui, &p, x + 10.0, cy);
     let x = snapping_toggle(app, ui, &p, x, cy);
     right_side(app, ui, &p, rect, x, cy);
@@ -82,7 +83,7 @@ fn tool_slots(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, mu
 fn tool_slot(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, si: usize, slot: &[Tool], r: Rect, held_id: egui::Id) {
     let t = app.tokens;
     let cur = app.ui.slot_tools.get(si).copied().unwrap_or(slot[0]);
-    let active = slot.contains(&app.ui.tool);
+    let active = slot.contains(&app.ui.tool) && crate::panels::plugin_tools::active(app).is_none();
     let id = egui::Id::unique(("tool-slot", si));
     let resp = widgets::icon_button(ui, r, cur.icon(), active, &t, id);
     if slot.len() > 1 {
@@ -141,6 +142,7 @@ fn tool_slot(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, si:
             cur
         };
         app.ui.tool = pick;
+        app.ui.plugin_tool = None;
         if let Some(saved) = app.ui.slot_tools.get_mut(si) {
             *saved = pick;
         }
@@ -196,6 +198,7 @@ fn slot_flyout(app: &mut EffectcraftApp, ui: &mut egui::Ui, si: usize, slot: &[T
             app.auto.add(&format!("tools.select.{tool:?}"), row.rect, tool.label());
             if row.clicked() {
                 app.ui.tool = *tool;
+                app.ui.plugin_tool = None;
                 if let Some(saved) = app.ui.slot_tools.get_mut(si) {
                     *saved = *tool;
                 }

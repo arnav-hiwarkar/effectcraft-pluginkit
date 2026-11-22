@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
-use craft_plugin_host::viewer::{Bind, Overlay, ToolEvent, ToolEventKind, ToolSpec};
+pub use craft_plugin_host::viewer::{Bind, Cursor, Handle, Mark, Overlay, Space, ToolEvent, ToolEventKind, ToolSpec};
 use craft_plugin_host::{Call, Host, RenderCx, Value as Wire};
 use effectcraft_engine::Session;
 use effectcraft_engine::effects::dynamic::Grid;

@@ -473,10 +473,10 @@ struct Stamp {
 impl Tool for Stamp {
     fn event(&mut self, event: &ToolEvent, overlay: &mut Overlay) -> Result<()> {
         let [x, y] = event.comp;
-        self.seen.push(format!("{:?} {x} {y}", event.kind));
+        self.seen.push(format!("{:?} {x:.1} {y:.1}", event.kind));
         match event.kind {
             ToolEventKind::Down => {
-                self.seen = vec![format!("Down {x} {y}")];
+                self.seen = vec![format!("Down {x:.1} {y:.1}")];
                 let reply = host::command("layer.newNull", json!({"name": "Stamp"}))?;
                 self.null = reply["layer"].as_u64();
             }

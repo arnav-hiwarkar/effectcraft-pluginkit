@@ -143,7 +143,7 @@ fn a_tool_gesture_edits_the_project_through_commands_as_one_undo_step() {
             _ => None,
         })
         .collect();
-    assert_eq!(texts, ["Down 4 5", "Move 6 7", "Move 8 9", "Up 8 9"]);
+    assert_eq!(texts, ["Down 4.0 5.0", "Move 6.0 7.0", "Move 8.0 9.0", "Up 8.0 9.0"]);
     assert_eq!(app.layer_names(), ["Stamp"]);
     let position = app.session.execute_checked("prop.get", json!({"layer": "Stamp", "path": "transform/position"})).unwrap()["value"].clone();
     assert_eq!(position, json!([8.0, 9.0, 0.0]));
@@ -151,4 +151,28 @@ fn a_tool_gesture_edits_the_project_through_commands_as_one_undo_step() {
     assert_eq!(app.session.history.undo.last().map(|(label, _)| label.as_str()), Some("Stamp"));
     app.session.execute_checked("edit.undo", json!({})).unwrap();
     assert!(app.layer_names().is_empty(), "one undo removes the whole gesture");
+}
+
+#[test]
+fn a_plugin_built_before_viewer_controls_loads_renders_and_keeps_the_built_in_crosshair() {
+    let mut app = app("test.viewer-before", &[]);
+    let bundle = tempfile::tempdir().unwrap();
+    std::fs::copy(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/legacy/legacy.wasm"), bundle.path().join("legacy.wasm")).unwrap();
+    let manifest = json!({"id": "test.viewer-legacy", "name": "Legacy", "version": "1.0.0", "entry": {"wasm": "legacy.wasm"}, "permissions": []});
+    std::fs::write(bundle.path().join("plugin.json"), manifest.to_string()).unwrap();
+    app.plugins.load_for_session(bundle.path()).expect("a plugin built before viewer controls loads");
+    assert!(!tools().iter().any(|(plugin, _)| plugin == "test.viewer-legacy"), "it has no tools");
+
+    app.session.execute("layer.newSolid", json!({"name": "Aim", "color": "#000000", "width": 64, "height": 36})).unwrap();
+    app.session.execute("effect.apply", json!({"layer": "Aim", "effect": "test.viewer-legacy.mark"})).unwrap();
+    let session = &app.session;
+    let comp = session.active_comp_id().unwrap();
+    let mut renderer = effectcraft_engine::render::Renderer::new(&session.project, session.footage.as_ref(), Default::default());
+    let image = renderer.comp_frame(comp, Tick::ZERO);
+    let centre = image.data[(image.height / 2 * image.width + image.width / 2) as usize];
+    assert!((centre[0] - 0.5).abs() < 0.01 && (centre[1] - 0.5).abs() < 0.01, "it renders its point parameter: {centre:?}");
+
+    let shown = shown(&app);
+    assert!(shown.overlay.handles.is_empty() && shown.overlay.marks.is_empty(), "it draws no overlay of its own");
+    assert!(!shown.binds("spot"), "so the viewer keeps the built-in crosshair for its point");
 }
