@@ -23,11 +23,8 @@ impl Effect for Tint {
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let settings = Settings::read(cx);
         let mix = (settings.amount / 100.0) as f32;
-        for pixel in frame.pixels.iter_mut() {
-            for (channel, tint) in pixel[..3].iter_mut().zip(settings.tint) {
-                *channel += (*channel * tint - *channel) * mix;
-            }
-        }
+        let gain = settings.tint.map(|tint| 1.0 + (tint - 1.0) * mix);
+        frame.map(|[r, g, b, a]| [r * gain[0], g * gain[1], b * gain[2], a]);
         Ok(())
     }
 }

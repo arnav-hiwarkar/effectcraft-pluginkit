@@ -33,11 +33,8 @@ impl Effect for Gamma {
             }
         };
         let table: Vec<f32> = bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
-        for pixel in frame.pixels.iter_mut() {
-            for channel in &mut pixel[..3] {
-                *channel = table[(channel.clamp(0.0, 1.0) * 1023.0) as usize];
-            }
-        }
+        let curve = |c: f32| table[(c.clamp(0.0, 1.0) * 1023.0) as usize];
+        frame.map(|[r, g, b, a]| [curve(r), curve(g), curve(b), a]);
         Ok(())
     }
 }

@@ -19,14 +19,12 @@ impl Effect for Edges {
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let step = step(cx) as isize;
-        let source = frame.pixels.to_vec();
-        let read = Rows { width: frame.width, height: frame.height, first_row: frame.origin[1], pixels: &source };
+        let (left, input) = (frame.origin[0], frame.input);
         for (y, row) in frame.rows_mut() {
-            let y = y as isize;
             for (x, pixel) in row.iter_mut().enumerate() {
-                let x = x as isize;
-                let dx = read.at(x + step, y)[1] - read.at(x - step, y)[1];
-                let dy = read.at(x, y + step)[1] - read.at(x, y - step)[1];
+                let (x, y) = ((left + x) as isize, y as isize);
+                let dx = input.at(x + step, y)[1] - input.at(x - step, y)[1];
+                let dy = input.at(x, y + step)[1] - input.at(x, y - step)[1];
                 let edge = (dx * dx + dy * dy).sqrt().min(1.0);
                 *pixel = [edge, edge, edge, 1.0];
             }

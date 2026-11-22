@@ -112,21 +112,24 @@ Open `plugins/my-tint/src/lib.rs` and change `render`, for example to invert bef
 
 ```rust
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let settings = Settings::read(cx);
-        let mix = (settings.amount / 100.0) as f32;
-        for pixel in frame.pixels.iter_mut() {
-            for (channel, tint) in pixel[..3].iter_mut().zip(settings.tint) {
-                *channel += (*channel * tint - *channel) * mix;
+        let Settings { centre, radius } = Settings::read(cx);
+        let (radius, left) = (radius * cx.scale, frame.origin[0]);
+        for (y, read, out) in frame.rows() {
+            for (x, (out, pixel)) in out.iter_mut().zip(read).enumerate() {
+                let distance = ((left + x) as f64 - centre[0]).hypot(y as f64 - centre[1]);
+                let light = (1.0 - distance / radius).clamp(0.0, 1.0) as f32;
+                *out = pixel.map(|c| c * light);
             }
         }
         Ok(())
     }
 ```
 
-Replace `*channel += (*channel * tint - *channel) * mix;` with
-`*channel += ((1.0 - *channel) * tint - *channel) * mix;` and run the test again. It fails, says how many
-pixels changed and by how much, and writes `full.actual.png` and `full.diff.png` (red marks every pixel
-that changed) beside the stored frame:
+Replace `[r * gain[0], g * gain[1], b * gain[2], a]` with
+`[(a - r) * gain[0], (a - g) * gain[1], (a - b) * gain[2], a]` and run the tests again. Both fail: an amount
+of 0 now changes the picture, and the frame differs from the stored one. The frame test says how many pixels
+changed and by how much, and writes `full.actual.png` and `full.diff.png` (red marks every pixel that
+changed) beside the stored frame:
 
 ```
 frame `full` differs from the stored frame: 57600 of 57600 pixels are off by more than 1/255 (largest 255/255, first at (0, 0))
@@ -142,7 +145,7 @@ A typo stops the build with the file and line:
 src/lib.rs:23:29: error[E0609]: no field `amont` on type `Settings`: unknown field
 ```
 
-If the new picture is what you want, store it:
+If the new picture is what you want, change or remove the zero-amount test and store the frame:
 
 ```sh
 UPDATE_FRAMES=1 cargo test --manifest-path plugins/my-tint/Cargo.toml

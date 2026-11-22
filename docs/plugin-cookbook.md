@@ -60,11 +60,8 @@ impl Effect for Tint {
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let settings = Settings::read(cx);
         let mix = (settings.amount / 100.0) as f32;
-        for pixel in frame.pixels.iter_mut() {
-            for (channel, tint) in pixel[..3].iter_mut().zip(settings.tint) {
-                *channel += (*channel * tint - *channel) * mix;
-            }
-        }
+        let gain = settings.tint.map(|tint| 1.0 + (tint - 1.0) * mix);
+        frame.map(|[r, g, b, a]| [r * gain[0], g * gain[1], b * gain[2], a]);
         Ok(())
     }
 }
@@ -186,12 +183,13 @@ the frame, or `None` when no layer is picked.
 
 ```rust
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let Some(matte) = Settings::read(cx).matte.image(cx) else { return Ok(()) };
-        for (y, row) in frame.rows_mut() {
-            for (x, pixel) in row.iter_mut().enumerate() {
-                let [r, g, b, _] = matte.at(x as isize, y as isize);
-                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                pixel.iter_mut().for_each(|c| *c *= luma);
+        let Settings { centre, radius } = Settings::read(cx);
+        let (radius, left) = (radius * cx.scale, frame.origin[0]);
+        for (y, read, out) in frame.rows() {
+            for (x, (out, pixel)) in out.iter_mut().zip(read).enumerate() {
+                let distance = ((left + x) as f64 - centre[0]).hypot(y as f64 - centre[1]);
+                let light = (1.0 - distance / radius).clamp(0.0, 1.0) as f32;
+                *out = pixel.map(|c| c * light);
             }
         }
         Ok(())
@@ -207,24 +205,19 @@ fails the test with the pixel where it shows.
 
 ```rust
     fn layout(&self, cx: &Cx) -> Layout {
-        Layout::neighbourhood(step(cx) as u32)
-    }
-
-    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let step = step(cx) as isize;
-        let source = frame.pixels.to_vec();
-        let read = Rows { width: frame.width, height: frame.height, first_row: frame.origin[1], pixels: &source };
-        for (y, row) in frame.rows_mut() {
-            let y = y as isize;
-            for (x, pixel) in row.iter_mut().enumerate() {
-                let x = x as isize;
-                let dx = read.at(x + step, y)[1] - read.at(x - step, y)[1];
-                let dy = read.at(x, y + step)[1] - read.at(x, y - step)[1];
-                let edge = (dx * dx + dy * dy).sqrt().min(1.0);
-                *pixel = [edge, edge, edge, 1.0];
-            }
-        }
-        Ok(())
+        let settings = Settings::read(cx);
+        let radius = ((settings.radius * cx.scale) as f32).clamp(0.0, 2048.0);
+        let padding = radius.ceil() as u32;
+        let frame = cx.padded(padding).size;
+        let quarter = frame.map(|side| side.div_ceil(4));
+        let mut plan = GpuPlan::new();
+        let (small, blurred, glow) = (plan.scratch(quarter), plan.scratch(quarter), plan.scratch(frame));
+        let plan = plan
+            .pass(GpuPass::resample(GpuImage::Source, small, Filter::Bilinear))
+            .pass(GpuPass::blur(small, blurred, [radius / 4.0; 2]))
+            .pass(GpuPass::resample(blurred, glow, Filter::Bilinear))
+            .pass(GpuPass::blend_images(GpuImage::Source, glow, GpuImage::Output, BlendMode::Screen, settings.amount as f32));
+        Layout::whole_frame().padded(padding).passes(plan)
     }
 ```
 
@@ -247,11 +240,8 @@ bytes when memory is short; always be able to compute them again.
             }
         };
         let table: Vec<f32> = bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
-        for pixel in frame.pixels.iter_mut() {
-            for channel in &mut pixel[..3] {
-                *channel = table[(channel.clamp(0.0, 1.0) * 1023.0) as usize];
-            }
-        }
+        let curve = |c: f32| table[(c.clamp(0.0, 1.0) * 1023.0) as usize];
+        frame.map(|[r, g, b, a]| [curve(r), curve(g), curve(b), a]);
         Ok(())
     }
 ```
@@ -429,7 +419,7 @@ fn the_rig_button_adds_two_nulls_in_one_undo_step_and_logs_where() {
 fn a_panic_reaches_the_test_and_the_log_with_its_file_and_line() {
     let plugin = TestPlugin::of(crate::plugin);
     let error = plugin.render("crash").size(4, 2).run().unwrap_err();
-    assert_eq!(error, "the plugin panicked at src/tests.rs:36:9: index out of bounds: the len is 8 but the index is 8");
+    assert_eq!(error, "the plugin panicked at src/tests.rs:37:9: index out of bounds: the len is 8 but the index is 8");
     assert!(plugin.logs().contains(&format!("render of effect `crash` failed: {error}")), "{:?}", plugin.logs());
 }
 ```

@@ -15,10 +15,11 @@ impl Effect for Smear {
     }
 
     fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let width = frame.width;
-        for y in (3..frame.height).rev() {
-            let (above, here) = frame.pixels.split_at_mut(y * width);
-            here[..width].copy_from_slice(&above[(y - 3) * width..(y - 2) * width]);
+        let (left, input) = (frame.origin[0], frame.input);
+        for (y, row) in frame.rows_mut() {
+            for (x, pixel) in row.iter_mut().enumerate() {
+                *pixel = input.at((left + x) as isize, y as isize - 3);
+            }
         }
         Ok(())
     }
@@ -42,7 +43,7 @@ impl Effect for Crash {
 fn a_panic_reaches_the_test_and_the_log_with_its_file_and_line() {
     let plugin = TestPlugin::of(crate::plugin);
     let error = plugin.render("crash").size(4, 2).run().unwrap_err();
-    assert_eq!(error, "the plugin panicked at src/tests.rs:36:9: index out of bounds: the len is 8 but the index is 8");
+    assert_eq!(error, "the plugin panicked at src/tests.rs:37:9: index out of bounds: the len is 8 but the index is 8");
     assert!(plugin.logs().contains(&format!("render of effect `crash` failed: {error}")), "{:?}", plugin.logs());
 }
 

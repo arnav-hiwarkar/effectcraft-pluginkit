@@ -20,12 +20,12 @@ impl Effect for Spotlight {
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let Settings { centre, radius } = Settings::read(cx);
-        let radius = radius * cx.scale;
-        for (y, row) in frame.rows_mut() {
-            for (x, pixel) in row.iter_mut().enumerate() {
-                let distance = (x as f64 - centre[0]).hypot(y as f64 - centre[1]);
+        let (radius, left) = (radius * cx.scale, frame.origin[0]);
+        for (y, read, out) in frame.rows() {
+            for (x, (out, pixel)) in out.iter_mut().zip(read).enumerate() {
+                let distance = ((left + x) as f64 - centre[0]).hypot(y as f64 - centre[1]);
                 let light = (1.0 - distance / radius).clamp(0.0, 1.0) as f32;
-                pixel.iter_mut().for_each(|c| *c *= light);
+                *out = pixel.map(|c| c * light);
             }
         }
         Ok(())

@@ -75,11 +75,11 @@ impl Picture {
         image::save_buffer(path, &self.rgba8(), self.width, self.height, image::ColorType::Rgba8).map_err(|e| format!("{}: {e}", path.display()))
     }
 
-    fn padded(&self, padding: u32) -> Picture {
-        let mut out = Picture::new(self.width + 2 * padding, self.height + 2 * padding);
-        let (width, pad) = (self.width as usize, padding as usize);
+    fn padded(&self, [left, top, right, bottom]: [u32; 4]) -> Picture {
+        let mut out = Picture::new(self.width + left + right, self.height + top + bottom);
+        let width = self.width as usize;
         for (y, row) in self.pixels.chunks_exact(width.max(1)).enumerate() {
-            let at = (y + pad) * out.width as usize + pad;
+            let at = (y + top as usize) * out.width as usize + left as usize;
             out.pixels[at..at + width].copy_from_slice(row);
         }
         out
@@ -571,7 +571,7 @@ impl Render<'_> {
         self
     }
 
-    fn cx(&self, spec: &EffectSpec, source: &Picture, size: [u32; 2], offset: f64) -> Result<RenderCx, String> {
+    fn cx(&self, spec: &EffectSpec, source: &Picture, size: [u32; 2], offset: [f64; 2]) -> Result<RenderCx, String> {
         let layer_size = [f64::from(source.width), f64::from(source.height)].map(|side| side / self.scale);
         let mut params: BTreeMap<String, Value> =
             spec.params.iter().filter_map(|param| Some((param.id.clone(), default_value(&param.kind, layer_size)?))).collect();
@@ -586,7 +586,7 @@ impl Render<'_> {
             let value = params.get_mut(&param.id);
             match (&param.kind, value) {
                 (ParamKind::Point { .. } | ParamKind::Point3 { .. }, Some(Value::List(point))) => {
-                    point.iter_mut().take(2).for_each(|c| *c = *c * self.scale + offset);
+                    point.iter_mut().zip(offset).for_each(|(c, by)| *c = *c * self.scale + by);
                     point.iter_mut().skip(2).take(1).for_each(|z| *z *= self.scale);
                 }
                 (ParamKind::Layer, Some(value)) => *value = Value::Bool(self.layers.contains_key(&param.id)),
@@ -600,7 +600,7 @@ impl Render<'_> {
             frame_rate: 30.0,
             scale: self.scale,
             layer_size,
-            offset: [offset; 2],
+            offset,
             size,
             instance: 1,
             float: self.float,
@@ -614,17 +614,17 @@ impl Render<'_> {
 
     fn layout_on(&self, source: &Picture) -> Result<Layout, String> {
         let spec = self.plugin.spec(&self.effect)?;
-        let cx = self.cx(spec, source, [source.width, source.height], 0.0)?;
+        let cx = self.cx(spec, source, [source.width, source.height], [0.0; 2])?;
         let mut host = self.host(source, &self.layers, &self.masks, &cx);
         let layout: Layout =
             self.plugin.plugin.call(&Call::Layout { effect: self.effect.clone(), cx: cx.clone() }, None, &mut host).map_err(|e| e.to_string())?;
-        Ok(Layout { padding: layout.padding.min(MAX_PADDING), ..layout })
+        Ok(Layout { padding: layout.padding.map(|side| side.min(MAX_PADDING)), ..layout })
     }
 
     pub fn overlay(&self) -> Result<Overlay, String> {
         let source = self.source();
         let spec = self.plugin.spec(&self.effect)?;
-        let cx = RenderCx { scale: 1.0, ..self.cx(spec, &source, [source.width, source.height], 0.0)? };
+        let cx = RenderCx { scale: 1.0, ..self.cx(spec, &source, [source.width, source.height], [0.0; 2])? };
         let mut host = self.host(&source, &self.layers, &self.masks, &cx);
         self.plugin.plugin.call(&Call::Overlay { effect: self.effect.clone(), cx: cx.clone() }, None, &mut host).map_err(|e| e.to_string())
     }
@@ -647,11 +647,11 @@ impl Render<'_> {
         let pad = layout.padding;
         let source = unpadded.padded(pad);
         let layers: BTreeMap<String, Picture> = self.layers.iter().map(|(id, picture)| (id.clone(), picture.padded(pad))).collect();
-        let shift = f64::from(pad);
+        let shift = [f64::from(pad[0]), f64::from(pad[1])];
         let masks: Vec<MaskPath> = self
             .masks
             .iter()
-            .map(|mask| MaskPath { points: mask.points.iter().map(|p| [p[0] * self.scale + shift, p[1] * self.scale + shift]).collect(), ..mask.clone() })
+            .map(|mask| MaskPath { points: mask.points.iter().map(|p| [p[0] * self.scale + shift[0], p[1] * self.scale + shift[1]]).collect(), ..mask.clone() })
             .collect();
         let cx = self.cx(spec, &unpadded, [source.width, source.height], shift)?;
         let host = || self.host(&source, &layers, &masks, &cx);
@@ -659,9 +659,10 @@ impl Render<'_> {
         let render = |reach: Option<u32>| {
             let mut pixels = source.pixels.clone();
             let started = Instant::now();
+            let layout = Layout { reach, ..layout.clone() };
             match plan {
                 Some(plan) => self.plugin.plugin.run_passes(&self.effect, &cx, plan, &mut pixels, host),
-                None => self.plugin.plugin.render(&self.effect, &cx, reach, &mut pixels, host),
+                None => self.plugin.plugin.render(&self.effect, &cx, &layout, None, &mut pixels, host).map(|_| ()),
             }
             .map_err(|e| e.to_string())?;
             Ok::<_, String>((Picture { width: source.width, height: source.height, pixels }, started.elapsed()))
@@ -672,6 +673,7 @@ impl Render<'_> {
             (picture, best) = (again, best.min(took));
         }
         if plan.is_none()
+            && !layout.maps_input
             && let Some(reach) = layout.reach
         {
             let (whole, _) = render(None)?;

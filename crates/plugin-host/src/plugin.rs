@@ -356,6 +356,7 @@ fn what(call: &Call) -> String {
         Call::Describe => "describing the plugin".into(),
         Call::Layout { effect, .. } => format!("layout of effect `{effect}`"),
         Call::Render { effect, .. } => format!("render of effect `{effect}`"),
+        Call::Input { effect, .. } => format!("input area of effect `{effect}`"),
         Call::Pass { effect, kernel, .. } => format!("pass `{kernel}` of effect `{effect}`"),
         Call::Panel { panel, .. } => format!("panel `{panel}`"),
         Call::Command { command } => format!("command `{command}`"),
