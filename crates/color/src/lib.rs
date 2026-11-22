@@ -89,6 +89,7 @@ pub fn luminance(r: f32, g: f32, b: f32) -> f32 {
 }
 
 /// RGB (0..1) → HSL with h in 0..1.
+#[inline]
 pub fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let max = r.max(g).max(b);
     let min = r.min(g).min(b);
@@ -110,6 +111,7 @@ pub fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     (h, s, l)
 }
 
+#[inline]
 pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
     if s <= 0.0 {
         return (l, l, l);
