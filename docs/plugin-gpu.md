@@ -38,6 +38,7 @@ A pass reads `src` and, optionally, `aux`, and writes `out`. Each names one of:
 | `GpuImage::Output` | The effect's result, the size of the frame. The last pass to write it gives the result. |
 | `plan.scratch([w, h])` | A working image of that size, declared on the plan. |
 | `plan.texture(key, [w, h])` | A picture the plugin stored with `host::cache_put(key, bytes)`: RGBA, four little-endian `f32` for each pixel, row 0 at the top. Read only. |
+| `plan.layer(param)` | The layer chosen in layer parameter `param`, resampled onto the padded frame: the same pixels `cx.layer(param)` gives `render`. The size of the frame. Transparent when no layer is chosen or it has nothing to show. Read only. |
 
 `layout` runs before the frame is padded, so there `cx.size`, `cx.offset` and point parameters describe
 the frame without padding. The passes run on the padded frame. Build the plan from `cx.padded(padding)`,
@@ -84,7 +85,7 @@ A buffer is one of:
 
 | Data | What it is |
 |---|---|
-| `GpuData::Cache(key)` | Bytes the plugin stored with `host::cache_put(key, bytes)`: little-endian `f32` for vertices and instances, `u32` for indices. Store a mesh once and name it in every frame's plan; the app uploads it to the GPU again only when the bytes change. |
+| `GpuData::Cache(key)` | Bytes the plugin stored with `host::cache_put(key, bytes)`: little-endian `f32` for vertices and instances, `u32` for indices. Store a mesh once and name it in every frame's plan; the app uploads it to the GPU again only when the bytes change. The cache drops its least recently used entries when it is full, so check with `host::cache_has(key)` while building the plan and store the bytes again when it returns `false`. |
 | `GpuData::Floats(values)` | Values sent with the plan. Right for a few hundred numbers that change each frame. |
 | `GpuData::Indices(values)` | Indices sent with the plan. |
 

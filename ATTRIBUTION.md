@@ -57,6 +57,7 @@ and licence texts are in [`NOTICE`](NOTICE).
 | `crates/lottie/tests/fixtures/shapes-gradient.json` | EffectCraft contributors | Original work: hand-written Lottie test fixture (star, rectangle, gradient fill, dashed stroke, trim paths) | MIT OR Apache-2.0 |
 | `crates/lottie/tests/fixtures/precomp-matte-text.json` | EffectCraft contributors | Original work: hand-written Lottie test fixture (precomp, track matte, parented text) | MIT OR Apache-2.0 |
 | `crates/lottie/tests/fixtures/legacy-masks.json` | EffectCraft contributors | Original work: hand-written Lottie test fixture (legacy keyframes, masks) | MIT OR Apache-2.0 |
+| `plugins/forge-3d/assets/gem.obj` | EffectCraft contributors | Original work: generated OBJ model for the Forge 3D reference plugin (an icosahedron with a raised point on each face) | MIT OR Apache-2.0 |
 | `crates/svg/tests/fixtures/basic-shapes.svg` | EffectCraft contributors | Original work: hand-written SVG test fixture (basic shapes, groups, transforms) | MIT OR Apache-2.0 |
 | `crates/svg/tests/fixtures/paths-gradients.svg` | EffectCraft contributors | Original work: hand-written SVG test fixture (path data, gradients, CSS, use) | MIT OR Apache-2.0 |
 | `crates/model/tests/fixtures/quad.gltf` | EffectCraft contributors | Original work: glTF 2.0 test fixture (textured quad, node hierarchy, translation animation; data URIs) | MIT OR Apache-2.0 |

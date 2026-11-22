@@ -3,9 +3,6 @@ pub mod mesh;
 pub mod obj;
 pub mod scene;
 
-use std::collections::HashSet;
-use std::sync::Mutex;
-
 use craft_plugin::prelude::*;
 
 use crate::mesh::Mesh;
@@ -19,16 +16,12 @@ const MAX_COPIES: f64 = 24.0;
 struct Forge;
 
 fn stored_mesh(model: usize) -> (String, String) {
-    static STORED: Mutex<Option<HashSet<usize>>> = Mutex::new(None);
     let keys = (format!("forge-3d/mesh/{model}/vertices"), format!("forge-3d/mesh/{model}/indices"));
-    let mut stored = STORED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if stored.get_or_insert_with(HashSet::new).contains(&model) {
+    if host::cache_has(&keys.0) && host::cache_has(&keys.1) {
         return keys;
     }
     let mesh = build(model);
-    if host::cache_put(&keys.0, &mesh.vertex_bytes()).and_then(|()| host::cache_put(&keys.1, &mesh.index_bytes())).is_ok() {
-        stored.get_or_insert_with(HashSet::new).insert(model);
-    }
+    let _ = host::cache_put(&keys.0, &mesh.vertex_bytes()).and_then(|()| host::cache_put(&keys.1, &mesh.index_bytes()));
     keys
 }
 
@@ -49,9 +42,9 @@ fn build(model: usize) -> Mesh {
 }
 
 fn position(cx: &Cx) -> [f32; 3] {
-    let [x, y] = cx.point("Transform/position");
+    let [x, y, z] = cx.point3("Transform/position");
     let scale = cx.scale.max(1e-9);
-    [((x - cx.offset[0]) / scale) as f32, ((y - cx.offset[1]) / scale) as f32, cx.f("Transform/depth") as f32]
+    [((x - cx.offset[0]) / scale) as f32, ((y - cx.offset[1]) / scale) as f32, (z / scale) as f32]
 }
 
 fn replicator(cx: &Cx) -> Replicator {
@@ -118,8 +111,7 @@ impl Effect for Forge {
             .group(
                 "Transform",
                 [
-                    Param::point("position", "Position", [0.5, 0.5]),
-                    Param::slider("depth", "Depth", 0.0, -8000.0..=8000.0),
+                    Param::point3("position", "Position", [0.5, 0.5, 0.0]),
                     Param::angle("rotation_x", "X Rotation", 20.0),
                     Param::angle("rotation_y", "Y Rotation", 30.0),
                     Param::angle("rotation_z", "Z Rotation", 0.0),

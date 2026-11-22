@@ -49,6 +49,10 @@ pub fn cache_put(key: &str, bytes: &[u8]) -> Result<()> {
     call::<serde_json::Value>(&HostCall::CachePut { key: key.into() }, bytes).map(|_| ())
 }
 
+pub fn cache_has(key: &str) -> bool {
+    call::<bool>(&HostCall::CacheHas { key: key.into() }, &[]).is_ok_and(|(found, _)| found)
+}
+
 pub fn cache_remove(key: &str) {
     let _ = call::<serde_json::Value>(&HostCall::CacheRemove { key: key.into() }, &[]);
 }

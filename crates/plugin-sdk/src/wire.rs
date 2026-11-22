@@ -303,6 +303,8 @@ pub struct GpuPlan {
     pub buffers: Vec<GpuData>,
     #[serde(default)]
     pub textures: Vec<GpuTexture>,
+    #[serde(default)]
+    pub layers: Vec<String>,
     pub passes: Vec<GpuPass>,
 }
 
@@ -395,6 +397,11 @@ impl GpuPlan {
         GpuImage::Texture(self.textures.len().saturating_sub(1) as u32)
     }
 
+    pub fn layer(&mut self, param: &str) -> GpuImage {
+        self.layers.push(param.to_string());
+        GpuImage::Layer(self.layers.len().saturating_sub(1) as u32)
+    }
+
     pub fn pass(mut self, pass: GpuPass) -> Self {
         self.passes.push(pass);
         self
@@ -475,6 +482,7 @@ pub enum GpuImage {
     Output,
     Scratch(u32),
     Texture(u32),
+    Layer(u32),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -578,6 +586,7 @@ pub enum HostCall {
     PickFile { request: PickFile },
     UploadImage { key: String, width: u32, height: u32 },
     ParamsAt { time: f64 },
+    CacheHas { key: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]

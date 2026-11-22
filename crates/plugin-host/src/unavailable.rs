@@ -24,6 +24,10 @@ impl Engine {
         match *self {}
     }
 
+    pub fn uncache(&self, _: &str) {
+        match *self {}
+    }
+
     pub fn copies_pixels(&self) -> bool {
         match *self {}
     }

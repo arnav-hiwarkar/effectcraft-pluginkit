@@ -76,6 +76,10 @@ impl Plugin {
         self.engine.image(key)
     }
 
+    pub fn uncache(&self, key: &str) {
+        self.engine.uncache(key);
+    }
+
     pub fn contributions(&self) -> &Contributions {
         &self.contributions
     }

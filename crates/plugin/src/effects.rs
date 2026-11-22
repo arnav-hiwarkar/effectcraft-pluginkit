@@ -293,11 +293,13 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
 fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Option<GpuProgram> {
     let layout = layout(loaded, spec, ctx, grid);
     let plan = layout.gpu?;
+    let stored_textures = plan.textures.len();
     let slot = |image: GpuImage| match image {
         GpuImage::Source => GpuSlot::Source,
         GpuImage::Output => GpuSlot::Output,
         GpuImage::Scratch(index) => GpuSlot::Scratch(index as usize),
         GpuImage::Texture(index) => GpuSlot::Texture(index as usize),
+        GpuImage::Layer(index) => GpuSlot::Texture(stored_textures + index as usize),
     };
     let cached = |key: &str| {
         let bytes = loaded.plugin.cached(key);
@@ -318,11 +320,28 @@ fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) 
             })
         })
         .collect::<Option<_>>()?;
-    let textures = plan
+    let padding = f64::from(layout.padding);
+    let frame = Grid {
+        width: grid.width.saturating_add(layout.padding.saturating_mul(2)),
+        height: grid.height.saturating_add(layout.padding.saturating_mul(2)),
+        offset: [grid.offset[0] + padding, grid.offset[1] + padding],
+        scale: grid.scale,
+    };
+    let layer_picture = |param: String| {
+        let pixels = RenderHost { ctx, grid: frame, spec }.layer(&param, None).filter(|pixels| [pixels.width, pixels.height] == [frame.width, frame.height]);
+        let texels = frame.width as usize * frame.height as usize;
+        let bytes: Vec<u8> = match pixels {
+            Some(pixels) => pixels.data.iter().flatten().flat_map(|c| c.to_le_bytes()).collect(),
+            None => vec![0; texels * 16],
+        };
+        GpuPicture { bytes: bytes.into(), name: format!("layer:{param}"), size: [frame.width, frame.height] }
+    };
+    let mut textures: Vec<GpuPicture> = plan
         .textures
         .into_iter()
         .map(|texture| Some(GpuPicture { bytes: cached(&texture.key)?, name: texture.key, size: texture.size }))
         .collect::<Option<_>>()?;
+    textures.extend(plan.layers.into_iter().map(layer_picture));
     let draw = |draw: Draw| GpuDraw {
         vertices: draw.vertices as usize,
         layout: draw.layout,
