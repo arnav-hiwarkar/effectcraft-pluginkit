@@ -387,7 +387,8 @@ mod tests {
         let Widget::Tabs { id, .. } = frame(vec![], |ui| {
             ui.tabs(&mut 0, &["A", "B"]);
         })[0]
-        .clone() else {
+            .clone()
+        else {
             panic!("tabs expected")
         };
         let mut selected = 0;
@@ -406,7 +407,12 @@ mod tests {
     #[test]
     fn a_canvas_gets_polygons_images_and_the_pointer_with_modifiers_and_scroll() {
         let Widget::Canvas { id, .. } = frame(vec![], |ui| ui.canvas("graph", [100.0, 100.0], |_| {}))[0].clone() else { panic!("canvas expected") };
-        let pointer = Pointer { pos: [4.0, 5.0], phase: PointerPhase::Down, modifiers: crate::wire::Modifiers { shift: false, alt: true, command: false }, scroll: [0.0, -3.0] };
+        let pointer = Pointer {
+            pos: [4.0, 5.0],
+            phase: PointerPhase::Down,
+            modifiers: crate::wire::Modifiers { shift: false, alt: true, command: false },
+            scroll: [0.0, -3.0],
+        };
         let mut seen = None;
         let widgets = frame(vec![UiEvent { id, kind: UiEventKind::Pointer(pointer) }], |ui| {
             ui.canvas("graph", [100.0, 100.0], |c| {

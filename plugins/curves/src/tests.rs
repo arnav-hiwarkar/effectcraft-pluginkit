@@ -122,7 +122,11 @@ fn the_control_returns_the_edited_value_and_shows_a_channel_popup_reset_button_a
     assert!(matches!(&children[1], Widget::Button { text, .. } if text == "Reset"));
     let Some(Widget::Canvas { id, size, .. }) = widgets.iter().find(|w| matches!(w, Widget::Canvas { .. })) else { panic!("canvas expected") };
     assert_eq!(*size, [252.0, 252.0]);
-    let input = UiInput { events: vec![UiEvent { id: *id, kind: UiEventKind::Pointer(pointer([126.0, 63.0], PointerPhase::Down, false)) }], size: [260.0, 200.0], ..Default::default() };
+    let input = UiInput {
+        events: vec![UiEvent { id: *id, kind: UiEventKind::Pointer(pointer([126.0, 63.0], PointerPhase::Down, false)) }],
+        size: [260.0, 200.0],
+        ..Default::default()
+    };
     let mut ui = Ui::new(&input);
     control::draw(&mut ControlState::default(), &mut value, &mut ui);
     assert_eq!(Curves::parse(&value).channels[0], vec![[0.0, 0.0], [0.5, 0.75], [1.0, 1.0]]);

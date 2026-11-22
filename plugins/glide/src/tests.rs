@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use craft_plugin::{Panel, Paint, Pointer, PointerPhase, Shape, Ui, UiEvent, UiEventKind, UiInput, Widget};
+use craft_plugin::{Paint, Panel, Pointer, PointerPhase, Shape, Ui, UiEvent, UiEventKind, UiInput, Widget};
 use serde_json::{Value, json};
 
 use crate::apply::{self, arc_length};
@@ -123,7 +123,12 @@ fn ease_steps(batch: &Value) -> Vec<(String, u64, f64, f64)> {
                 .filter(|s| s["command"] == "keys.setEase")
                 .map(|s| {
                     let p = &s["params"];
-                    (p["side"].as_str().unwrap_or("").to_string(), p["dim"].as_u64().unwrap_or(99), p["speed"].as_f64().unwrap_or(f64::NAN), p["influence"].as_f64().unwrap_or(f64::NAN))
+                    (
+                        p["side"].as_str().unwrap_or("").to_string(),
+                        p["dim"].as_u64().unwrap_or(99),
+                        p["speed"].as_f64().unwrap_or(f64::NAN),
+                        p["influence"].as_f64().unwrap_or(f64::NAN),
+                    )
                 })
                 .collect()
         })

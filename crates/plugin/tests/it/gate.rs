@@ -194,4 +194,23 @@ fn commands_that_reach_outside_the_document_need_file_permissions() {
     let font = app.relay("layer.setText", json!({"font": "Inter"})).unwrap_err();
     assert!(font.contains("files.write"), "{font}");
     app.relay("layer.setText", json!({"text": "Subtitle"})).expect("changing the text alone stays a document edit");
+
+#[test]
+fn a_plugin_may_write_text_into_its_own_custom_parameter_but_not_into_another_plugins() {
+    let mut app = app("test.gate-custom", EDITOR);
+    app.session.execute("layer.newSolid", json!({"name": "Graded"})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "test.gate-custom.scale"})).unwrap();
+    app.relay("prop.set", json!({"path": "effects/#1/level", "value": "0.5"})).expect("its own custom parameter is writable");
+    let level = app.session.execute_checked("prop.get", json!({"path": "effects/#1/level"})).unwrap()["value"].clone();
+    assert_eq!(level, json!("0.5"));
+
+    let other = tempfile::tempdir().unwrap();
+    std::fs::copy(app.bundle.path().join("probe.wasm"), other.path().join("probe.wasm")).unwrap();
+    let manifest = json!({"id": "test.gate-other", "name": "Other", "version": "1.0.0", "entry": {"wasm": "probe.wasm"}, "permissions": EDITOR});
+    std::fs::write(other.path().join("plugin.json"), manifest.to_string()).unwrap();
+    app.plugins.load_for_session(other.path()).unwrap();
+    let request = json!({"command": "prop.set", "params": {"path": "effects/#1/level", "value": "/Users/someone/secret"}});
+    std::fs::write(other.path().join("relay.json"), request.to_string()).unwrap();
+    let denied = effectcraft_plugin::run_command(&mut app.session, "test.gate-other", "relay").unwrap_err();
+    assert!(denied.contains("files.read"), "{denied}");
 }

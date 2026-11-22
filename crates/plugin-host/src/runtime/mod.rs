@@ -39,7 +39,14 @@ impl Engine {
         } else {
             Kind::Native(NativeGuest::load(&entry)?)
         };
-        let identity = Identity { id: bundle.manifest.id.clone(), dir: bundle.dir.clone(), data_dir, grants, cache: Arc::new(Cache::new(BUDGET)), images: Images::new(IMAGE_BUDGET) };
+        let identity = Identity {
+            id: bundle.manifest.id.clone(),
+            dir: bundle.dir.clone(),
+            data_dir,
+            grants,
+            cache: Arc::new(Cache::new(BUDGET)),
+            images: Images::new(IMAGE_BUDGET),
+        };
         Ok(Engine { identity, kind })
     }
 

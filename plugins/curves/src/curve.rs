@@ -39,7 +39,8 @@ impl Curves {
 }
 
 pub fn tidy(points: Vec<Point>) -> Vec<Point> {
-    let mut points: Vec<Point> = points.into_iter().filter(|p| p[0].is_finite() && p[1].is_finite()).map(|p| [p[0].clamp(0.0, 1.0), p[1].clamp(0.0, 1.0)]).collect();
+    let mut points: Vec<Point> =
+        points.into_iter().filter(|p| p[0].is_finite() && p[1].is_finite()).map(|p| [p[0].clamp(0.0, 1.0), p[1].clamp(0.0, 1.0)]).collect();
     points.sort_by(|a, b| a[0].total_cmp(&b[0]));
     points.dedup_by(|a, b| (a[0] - b[0]).abs() < 1e-6);
     if points.len() < 2 { identity() } else { points }

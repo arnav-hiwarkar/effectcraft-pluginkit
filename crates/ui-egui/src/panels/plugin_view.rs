@@ -439,7 +439,14 @@ fn pointer(ui: &egui::Ui, response: &egui::Response, origin: egui::Pos2) -> Opti
     let (pressed, released, moving, at, held, scroll) = ui.input(|i| {
         let held = Modifiers { shift: i.modifiers.shift, alt: i.modifiers.alt, command: i.modifiers.command };
         let scroll = if response.hovered() { i.smooth_scroll_delta } else { egui::Vec2::ZERO };
-        (i.pointer.primary_pressed(), i.pointer.primary_released(), i.pointer.is_moving(), i.pointer.interact_pos(), held, scroll)
+        (
+            i.pointer.primary_pressed(),
+            i.pointer.primary_released(),
+            i.pointer.delta() != egui::Vec2::ZERO || i.pointer.is_moving(),
+            i.pointer.interact_pos(),
+            held,
+            scroll,
+        )
     });
     let make = |pos: [f32; 2], phase: PointerPhase| Pointer { pos, phase, modifiers: held, scroll: [scroll.x, scroll.y] };
     if let Some(pos) = ui.data_mut(|data| data.remove_temp::<[f32; 2]>(owed_release)) {
@@ -526,7 +533,11 @@ mod tests {
 
     #[test]
     fn clicking_an_image_with_no_upload_yet_still_sends_a_click_with_its_id() {
-        let mut harness = harness(vec![Widget::Image { id: 9, key: "thumb/0".into(), size: [40.0, 30.0] }]);
+        let image = Widget::Image { id: 9, key: "thumb/0".into(), size: [40.0, 30.0] };
+        let tip = Widget::Tooltip { text: "Linear".into() };
+        let cell = Widget::Column { children: vec![image, tip] };
+        let grid = Widget::Grid { id: 8, columns: 3, children: vec![cell] };
+        let mut harness = harness(vec![Widget::Scroll { id: 7, height: 100.0, children: vec![grid] }]);
         harness.get_by_label("thumb/0").click();
         harness.run();
         assert_eq!(harness.state(), &vec![UiEvent { id: 9, kind: UiEventKind::Click }]);
@@ -552,5 +563,31 @@ mod tests {
         harness.run();
         harness.run();
         assert!(harness.query_by_label("Inside").is_some());
+    }
+
+    #[test]
+    fn dragging_on_a_canvas_sends_down_then_drags_then_up_with_the_held_modifiers() {
+        let mut harness = harness(vec![Widget::Canvas { id: 11, size: [100.0, 100.0], shapes: vec![] }]);
+        harness.run();
+        let rect = harness.get_by_label("Plug-in drawing").rect();
+        harness.drag_at(rect.center());
+        harness.run();
+        harness.hover_at(rect.center() + vec2(10.0, 0.0));
+        harness.run();
+        harness.hover_at(rect.center() + vec2(20.0, 0.0));
+        harness.run();
+        harness.drop_at(rect.center() + vec2(20.0, 0.0));
+        harness.run();
+        let phases: Vec<PointerPhase> = harness
+            .state()
+            .iter()
+            .filter_map(|event| match event.kind {
+                UiEventKind::Pointer(pointer) if event.id == 11 => Some(pointer.phase),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(phases.first(), Some(&PointerPhase::Down), "{phases:?}");
+        assert!(phases.contains(&PointerPhase::Drag), "{phases:?}");
+        assert_eq!(phases.last(), Some(&PointerPhase::Up), "{phases:?}");
     }
 }

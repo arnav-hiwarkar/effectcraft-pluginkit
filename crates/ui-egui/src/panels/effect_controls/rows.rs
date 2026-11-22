@@ -693,7 +693,7 @@ fn custom_control(
     let merge = gesture_key(ui, egui::Id::unique(("ec-custom", uid)), started);
     let events = app.plugin_ui.control_events.remove(&uid).unwrap_or_default();
     let input = effectcraft_plugin::ui::UiInput { events, size: [block.width(), block.height()], keys: String::new() };
-    let mut body = ui.new_child(egui::UiBuilder::new().max_rect(block));
+    let mut body = ui.new_child(egui::UiBuilder::new().id_salt(("ec-custom-body", uid)).max_rect(block));
     body.set_clip_rect(clip.intersect(ui.clip_rect()));
     let scope = format!("effectControls.prop.{uid}.control");
     match effectcraft_plugin::controls(&mut app.session, effect, param, &value, input) {
