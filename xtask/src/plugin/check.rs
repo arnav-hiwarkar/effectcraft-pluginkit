@@ -7,7 +7,7 @@ use craft_plugin_host::{Bundle, PACKAGE_MAX_BYTES, PACKAGE_MAX_ENTRIES};
 use serde_json::Value;
 
 use super::look::layers_from_source;
-use super::{Messages, USAGE, WASM_FLAGS, assemble, json_file, pack_folder, package_file, plugin_dir, positional};
+use super::{Flags, Messages, WASM_FLAGS, assemble, json_file, pack_folder, package_file, plugin_dir};
 
 const PACKAGE_BUDGET: u64 = 32 << 20;
 
@@ -261,7 +261,7 @@ fn check(root: &Path, dir: &Path) -> Result<Report, String> {
 }
 
 pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
-    let dir = plugin_dir(root, positional(args, &[]).ok_or(USAGE)?);
+    let dir = plugin_dir(root, Flags::parse(args, &[], &[])?.positional);
     let report = check(root, &dir)?;
     for finding in &report.0 {
         let level = if finding.level == Level::Error { "error" } else { "warning" };

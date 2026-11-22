@@ -1,8 +1,5 @@
 use std::path::Path;
 
-use super::USAGE;
-
-
 const TEMPLATE_CARGO: &str = include_str!("../../templates/Cargo.toml");
 const TEMPLATE_MANIFEST: &str = include_str!("../../templates/plugin.json");
 
@@ -111,8 +108,9 @@ pub(super) fn generate(name: &str, kind: &Kind) -> Result<Vec<(&'static str, Str
 }
 
 pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
-    let name = super::positional(args, &["--kind"]).ok_or(USAGE)?;
-    let kind = kind(super::option(args, "--kind").unwrap_or("effect"))?;
+    let flags = super::Flags::parse(args, &["--kind"], &[])?;
+    let name = flags.positional;
+    let kind = kind(flags.one("--kind").unwrap_or("effect"))?;
     let files = generate(name, kind)?;
     let dir = root.join("plugins").join(name);
     if dir.exists() {

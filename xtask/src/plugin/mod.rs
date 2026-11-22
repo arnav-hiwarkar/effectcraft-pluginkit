@@ -24,27 +24,48 @@ fn wasm_rustflags() -> String {
     format!("-C target-feature={}", WASM_FLAGS.map(|flag| format!("+{flag}")).join(","))
 }
 
-fn option<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(String::as_str)
+pub(super) struct Flags<'a> {
+    pub positional: &'a str,
+    given: Vec<(&'a str, &'a str)>,
 }
 
-fn options<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
-    args.windows(2).filter(|pair| pair[0] == name).map(|pair| pair[1].as_str()).collect()
-}
-
-fn positional<'a>(args: &'a [String], valued: &[&str]) -> Option<&'a str> {
-    let mut skip = false;
-    for arg in args {
-        if std::mem::take(&mut skip) {
-            continue;
+impl<'a> Flags<'a> {
+    pub fn parse(args: &'a [String], valued: &[&str], switches: &[&str]) -> Result<Flags<'a>, String> {
+        let valid = || valued.iter().map(|flag| format!("{flag} VALUE")).chain(switches.iter().map(|flag| flag.to_string())).collect::<Vec<_>>();
+        let valid = || match valid() {
+            flags if flags.is_empty() => "this command takes no flags".to_string(),
+            flags => format!("valid flags: {}", flags.join(", ")),
+        };
+        let (mut positional, mut given) = (None, Vec::new());
+        let mut rest = args.iter().map(String::as_str);
+        while let Some(arg) = rest.next() {
+            if valued.contains(&arg) {
+                match rest.next() {
+                    Some(value) if !value.starts_with("--") => given.push((arg, value)),
+                    _ => return Err(format!("`{arg}` needs a value; {}", valid())),
+                }
+            } else if switches.contains(&arg) {
+                given.push((arg, ""));
+            } else if arg.starts_with("--") {
+                return Err(format!("unknown flag `{arg}`; {}", valid()));
+            } else if positional.replace(arg).is_some() {
+                return Err(format!("unexpected argument `{arg}`; give one folder or name\n{USAGE}"));
+            }
         }
-        if valued.contains(&arg.as_str()) {
-            skip = true;
-        } else if !arg.starts_with("--") {
-            return Some(arg);
-        }
+        Ok(Flags { positional: positional.ok_or(USAGE)?, given })
     }
-    None
+
+    pub fn one(&self, name: &str) -> Option<&'a str> {
+        self.given.iter().rev().find(|(flag, _)| *flag == name).map(|(_, value)| *value)
+    }
+
+    pub fn all(&self, name: &str) -> Vec<&'a str> {
+        self.given.iter().filter(|(flag, _)| *flag == name).map(|(_, value)| *value).collect()
+    }
+
+    pub fn has(&self, name: &str) -> bool {
+        self.given.iter().any(|(flag, _)| *flag == name)
+    }
 }
 
 fn plugin_dir(root: &Path, given: &str) -> PathBuf {
@@ -199,9 +220,10 @@ fn package_file(out: &Path, manifest: &Value) -> Result<PathBuf, String> {
 }
 
 fn package(root: &Path, args: &[String]) -> Result<(), String> {
-    let dir = positional(args, &["--out"]).map(|dir| plugin_dir(root, dir)).ok_or(USAGE)?;
-    let native = args.iter().any(|a| a == "--native");
-    let out = option(args, "--out").map(PathBuf::from).unwrap_or_else(|| root.join("plugins/dist"));
+    let flags = Flags::parse(args, &["--out"], &["--native"])?;
+    let dir = plugin_dir(root, flags.positional);
+    let native = flags.has("--native");
+    let out = flags.one("--out").map(PathBuf::from).unwrap_or_else(|| root.join("plugins/dist"));
     let (bundle, manifest) = assemble(&dir, &out, native, Messages::Full)?;
     let file = package_file(&out, &manifest)?;
     pack_folder(&bundle, &file)?;
@@ -290,10 +312,31 @@ mod tests {
         }
     }
 
+    fn parsed(args: &[&str]) -> Result<Vec<String>, String> {
+        let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+        let flags = Flags::parse(&args, &["--effect", "--set"], &["--native"])?;
+        Ok([
+            flags.positional.to_string(),
+            flags.one("--effect").unwrap_or_default().to_string(),
+            flags.all("--set").join(" "),
+            flags.has("--native").to_string(),
+        ]
+        .to_vec())
+    }
+
     #[test]
-    fn the_plugin_folder_is_the_first_argument_that_is_not_an_option_or_its_value() {
-        let args: Vec<String> = ["--effect", "glow", "plugins/glow", "--set", "radius=2"].map(String::from).to_vec();
-        assert_eq!(positional(&args, &["--effect", "--set"]), Some("plugins/glow"));
-        assert_eq!(options(&args, "--set"), ["radius=2"]);
+    fn flags_are_read_wherever_they_stand_and_a_wrong_or_incomplete_flag_is_an_error_that_lists_the_valid_ones() {
+        assert_eq!(
+            parsed(&["--effect", "glow", "plugins/glow", "--set", "radius=2", "--native", "--set", "gain=-1"]).unwrap(),
+            ["plugins/glow", "glow", "radius=2 gain=-1", "true"]
+        );
+        assert_eq!(parsed(&["plugins/glow", "--efect", "glow"]).unwrap_err(), "unknown flag `--efect`; valid flags: --effect VALUE, --set VALUE, --native");
+        assert_eq!(parsed(&["plugins/glow", "--effect"]).unwrap_err(), "`--effect` needs a value; valid flags: --effect VALUE, --set VALUE, --native");
+        assert_eq!(
+            parsed(&["plugins/glow", "--effect", "--native"]).unwrap_err(),
+            "`--effect` needs a value; valid flags: --effect VALUE, --set VALUE, --native"
+        );
+        assert!(parsed(&["plugins/glow", "plugins/halo"]).unwrap_err().starts_with("unexpected argument `plugins/halo`"));
+        assert_eq!(parsed(&["--native"]).unwrap_err(), USAGE);
     }
 }

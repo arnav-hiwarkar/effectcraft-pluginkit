@@ -6,7 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{Value, json};
 
-use super::{Messages, USAGE, assemble, option, plugin_dir, positional};
+use super::{Flags, Messages, assemble, plugin_dir};
 
 const DEFAULT_BRIDGE: &str = "9877";
 const POLL: Duration = Duration::from_secs(1);
@@ -174,8 +174,9 @@ impl Dev {
 }
 
 pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
-    let dir = plugin_dir(root, positional(args, &["--bridge"]).ok_or(USAGE)?);
-    let port = option(args, "--bridge").unwrap_or(DEFAULT_BRIDGE);
+    let flags = Flags::parse(args, &["--bridge"], &[])?;
+    let dir = plugin_dir(root, flags.positional);
+    let port = flags.one("--bridge").unwrap_or(DEFAULT_BRIDGE);
     let out = root.join("plugins/dist");
     println!("watching {} and loading it into the app on port {port}; Ctrl-C stops", dir.display());
     let mut dev = Dev::new(port);
