@@ -429,6 +429,11 @@ fn make() -> Plugin {
             let path = String::from_utf8(host::read_file(Root::Bundle, "user-target.txt")?).map_err(|e| e.to_string())?;
             host::write_file(Root::User, path.trim(), b"written by plugin")
         })
+        .command("read-user", "Read User", || {
+            let path = String::from_utf8(host::read_file(Root::Bundle, "user-target.txt")?).map_err(|e| e.to_string())?;
+            let bytes = host::read_file(Root::User, path.trim())?;
+            host::write_file(Root::Data, "read.txt", &bytes)
+        })
         .command("approve-itself", "Approve Itself", || host::command("plugin.approve", json!({"id": "test.gate-self"})).map(|_| ()))
         .command("read-inside-edit", "Read Inside An Edit", || {
             let steps = json!([{"command": "comp.info", "params": {}}, {"command": "layer.newNull", "params": {}}]);

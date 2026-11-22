@@ -1,4 +1,4 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -9,6 +9,7 @@ use std::sync::Arc;
 use wasmtime::{Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc, UpdateDeadline};
 
 use rayon::prelude::*;
+use sha2::{Digest, Sha256};
 
 use super::native;
 use super::serve::HostCx;
@@ -225,10 +226,7 @@ fn host_call(mut caller: Caller<'_, State>, _ctx: u32, request: u32, request_len
 }
 
 fn cached(engine: &Engine, bytes: &[u8], cache: &Path) -> Result<Module, PluginError> {
-    let mut hasher = DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    engine.precompile_compatibility_hash().hash(&mut hasher);
-    let path = cache.join(format!("{:016x}.cwasm", hasher.finish()));
+    let path = cache.join(format!("{}.cwasm", cache_name(engine, bytes)));
     if let Some(module) = native::compiled_module(engine, &path) {
         return Ok(module);
     }
@@ -241,6 +239,27 @@ fn cached(engine: &Engine, bytes: &[u8], cache: &Path) -> Result<Module, PluginE
         let _ = std::fs::remove_file(&staged);
     }
     Ok(module)
+}
+
+struct DigestHasher(Sha256);
+
+impl Hasher for DigestHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    fn finish(&self) -> u64 {
+        0
+    }
+}
+
+fn cache_name(engine: &Engine, bytes: &[u8]) -> String {
+    let mut hasher = DigestHasher(Sha256::new());
+    hasher.write(bytes);
+    hasher.write(std::env::consts::ARCH.as_bytes());
+    hasher.write(std::env::consts::OS.as_bytes());
+    engine.precompile_compatibility_hash().hash(&mut hasher);
+    hasher.0.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn copy(to: &mut [u8], from: &[u8]) {

@@ -10,6 +10,10 @@ const STATE_FILE: &str = "state.json";
 const DATA_DIR: &str = ".data";
 const UNPACKING_DIR: &str = ".unpacking";
 
+pub(crate) fn install_root(data_folder: &Path) -> Option<&Path> {
+    data_folder.file_name().is_some_and(|name| name == DATA_DIR).then(|| data_folder.parent()).flatten()
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum BundleError {
     #[error("{0}: {1}")]

@@ -438,6 +438,39 @@ fn an_update_whose_entry_file_is_missing_keeps_the_working_install() {
     assert!(Plugin::load(&kept, BTreeSet::new(), data.path().join("data"), limits).is_ok());
 }
 
+#[test]
+fn a_plugin_with_file_access_cannot_touch_the_apps_plugin_folders() {
+    each_kind(|kind| {
+        let (source, _) = bundle(kind, &["files.read", "files.write"]);
+        let root = tempfile::tempdir().unwrap();
+        let mut registry = Registry::open(root.path());
+        let installed = registry.install(source.path()).unwrap();
+        registry.approve(&installed.manifest).unwrap();
+        let running = registry.running(&installed);
+        let grants = registry.grants(&running.manifest).unwrap();
+        let limits = Limits { interactive: Duration::from_millis(400), work: Duration::from_millis(400) };
+        let plugin = Plugin::load(&running, grants, registry.data_dir("test.probe"), limits).unwrap();
+        let compiled = root.path().join(".data/.compiled");
+        std::fs::create_dir_all(&compiled).unwrap();
+        let consent = root.path().join("state.json");
+        let before = std::fs::read_to_string(&consent).unwrap();
+        let entry = running.entry_path().unwrap();
+        let attempt = |command: &str, target: &Path| {
+            std::fs::write(installed.dir.join("user-target.txt"), target.to_str().unwrap()).unwrap();
+            plugin.call::<()>(&Call::Command { command: command.into() }, None, &mut Recorder::default()).unwrap_err().to_string()
+        };
+        for target in [compiled.join("planted.cwasm"), consent.clone(), entry.clone()] {
+            let error = attempt("write-user", &target);
+            assert!(error.contains("that folder belongs to the app"), "{kind:?} {target:?} {error}");
+            let error = attempt("read-user", &target);
+            assert!(error.contains("that folder belongs to the app"), "{kind:?} {target:?} {error}");
+        }
+        assert!(!compiled.join("planted.cwasm").exists(), "{kind:?}");
+        assert_eq!(std::fs::read_to_string(&consent).unwrap(), before);
+        assert!(std::fs::read(&entry).unwrap().len() > 2, "{kind:?}");
+    });
+}
+
 fn settle(loaded: &Loaded, id: u64, host: &mut Recorder) -> TaskState {
     let until = std::time::Instant::now() + Duration::from_secs(10);
     loop {

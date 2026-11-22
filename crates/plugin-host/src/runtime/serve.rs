@@ -15,6 +15,7 @@ pub(crate) struct Identity {
     pub id: String,
     pub dir: PathBuf,
     pub data_dir: PathBuf,
+    pub app_folders: Vec<PathBuf>,
     pub grants: BTreeSet<Permission>,
     pub cache: Arc<Cache>,
     pub tasks: Tasks,
@@ -164,12 +165,25 @@ fn image(pixels: Option<Pixels>) -> Result<(Value, Bulk), String> {
     Ok((json!(ImageDesc { width: pixels.width, height: pixels.height }), Bulk::Pixels(pixels.data)))
 }
 
+fn user_path(plugin: &Identity, path: &Path) -> Result<PathBuf, String> {
+    if !path.is_absolute() {
+        return Err("a user file needs an absolute path".into());
+    }
+    if path.components().any(|c| c == Component::ParentDir) {
+        return Err(format!("`{}` must not contain `..`", path.display()));
+    }
+    let existing = path.ancestors().find(|ancestor| ancestor.symlink_metadata().is_ok()).ok_or("no part of that path exists")?;
+    let real = existing.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
+    let owned = plugin.app_folders.iter().any(|folder| real.starts_with(folder.canonicalize().as_deref().unwrap_or(folder)));
+    if owned {
+        return Err("that folder belongs to the app".into());
+    }
+    Ok(path.to_path_buf())
+}
+
 fn resolve(plugin: &Identity, root: Root, path: &str) -> Result<PathBuf, String> {
     let base = match root {
-        Root::User => {
-            let path = Path::new(path);
-            return path.is_absolute().then(|| path.to_path_buf()).ok_or("a user file needs an absolute path".into());
-        }
+        Root::User => return user_path(plugin, Path::new(path)),
         Root::Bundle => &plugin.dir,
         Root::Data => {
             std::fs::create_dir_all(&plugin.data_dir).map_err(|e| e.to_string())?;

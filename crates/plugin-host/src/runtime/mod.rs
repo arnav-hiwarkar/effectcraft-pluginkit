@@ -5,7 +5,7 @@ mod tasks;
 mod wasm;
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,6 +22,13 @@ use crate::images::{IMAGE_BUDGET, Images, PluginImage};
 use crate::plugin::{Io, PluginError};
 use crate::registry::Bundle;
 
+const COMPILED_DIR: &str = ".compiled";
+
+fn app_folders(data_dir: &Path) -> Vec<PathBuf> {
+    let shared = data_dir.parent().unwrap_or(data_dir);
+    std::iter::once(shared).chain(crate::registry::install_root(shared)).map(Path::to_path_buf).collect()
+}
+
 enum Kind {
     Wasm { module: WasmModule, main: Mutex<Option<Box<WasmGuest>>>, pool: Mutex<Vec<WasmGuest>> },
     Native(NativeGuest),
@@ -37,7 +44,7 @@ impl Engine {
         let entry = bundle.entry_path().map_err(|e| PluginError::Load(e.to_string()))?;
         let kind = if bundle.mode == RunMode::Sandboxed {
             let bytes = std::fs::read(&entry).map_err(|e| PluginError::Load(format!("{}: {e}", entry.display())))?;
-            let cache = data_dir.parent().unwrap_or(&data_dir).join(".compiled");
+            let cache = data_dir.parent().unwrap_or(&data_dir).join(COMPILED_DIR);
             Kind::Wasm { module: WasmModule::compile(&bytes, &cache)?, main: Mutex::new(None), pool: Mutex::new(Vec::new()) }
         } else {
             Kind::Native(NativeGuest::load(&entry)?)
@@ -45,6 +52,7 @@ impl Engine {
         let identity = Identity {
             id: bundle.manifest.id.clone(),
             dir: bundle.dir.clone(),
+            app_folders: app_folders(&data_dir),
             data_dir,
             grants,
             cache: Arc::new(Cache::new(BUDGET)),
