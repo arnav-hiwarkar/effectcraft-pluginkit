@@ -447,9 +447,9 @@ pub fn pump(session: &mut Session) -> bool {
     running
 }
 
-const DEFAULT_WAIT: f64 = 600.0;
+pub const DEFAULT_WAIT: f64 = 600.0;
 
-fn wait_for_tasks(session: &mut Session, timeout: f64) -> bool {
+pub fn wait_for_tasks(session: &mut Session, timeout: f64) -> bool {
     let until = std::time::Instant::now() + std::time::Duration::from_secs_f64(timeout.clamp(0.0, 86_400.0));
     while pump(session) {
         if std::time::Instant::now() > until {

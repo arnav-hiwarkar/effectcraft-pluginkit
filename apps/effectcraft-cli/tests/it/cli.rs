@@ -1274,3 +1274,37 @@ fn replay_accepts_a_utf8_bom() {
     assert_eq!(code, 0, "{report}");
     assert_eq!(report["ok"], true);
 }
+
+fn probe_bundle(id: &str, permissions: &[&str]) -> PathBuf {
+    let probe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/plugin-host/tests/probe");
+    let status = Command::new(env!("CARGO"))
+        .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
+        .arg(probe.join("Cargo.toml"))
+        .status()
+        .unwrap();
+    assert!(status.success(), "the probe plugin builds");
+    let bundle = tmp(id);
+    std::fs::create_dir_all(&bundle).unwrap();
+    std::fs::copy(probe.join("target/wasm32-unknown-unknown/release/probe.wasm"), bundle.join("probe.wasm")).unwrap();
+    let manifest = json!({"id": id, "name": "Probe", "version": "1.0.0", "entry": {"wasm": "probe.wasm"}, "permissions": permissions});
+    std::fs::write(bundle.join("plugin.json"), manifest.to_string()).unwrap();
+    bundle
+}
+
+#[test]
+fn a_plugin_task_started_in_a_run_is_answered_before_the_project_is_saved() {
+    let bundle = probe_bundle("test.cli-task", &["document.write"]);
+    let proj = tmp("task.ecproj");
+    let out = bin()
+        .env("EFFECTCRAFT_PLUGIN_PATH", &bundle)
+        .env("EFFECTCRAFT_CONFIG_DIR", tmp("task-config"))
+        .args(["run", "comp.new", r#"{"name":"Main","width":32,"height":18}"#, "plugin.startTask", r#"{"plugin":"test.cli-task","task":"edit"}"#])
+        .args(["--empty", "--json", "--save-as"])
+        .arg(&proj)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let info = ok_json(&["exec", "comp.info", r#"{"comp":"Main"}"#, proj.to_str().unwrap()]);
+    let names: Vec<&str> = info["layers"].as_array().into_iter().flatten().filter_map(|layer| layer["name"].as_str()).collect();
+    assert_eq!(names, ["From Task"], "{info}");
+}

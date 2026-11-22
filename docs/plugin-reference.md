@@ -33,8 +33,9 @@ returns.
 | `task.progress(fraction, message)` | `Err` once the user cancelled, so `?` ends the task |
 
 A task runs on its own plugin instance on a background thread with no time limit. Its `command`,
-`notify`, `frame` and `audio` calls are answered by the app's main thread, once per UI frame (and in the
-`plugin.tasks` wait loop of headless runs); its log, file, cache and task calls are answered on its own
+`notify`, `frame` and `audio` calls are answered by the app's main thread, once per UI frame (in the
+CLI: after each `run` step, while `render` waits, in the `plugin.tasks` wait loop, and before `exec` or
+`run` saves and exits, which waits up to 600 s for running tasks); its log, file, cache and task calls are answered on its own
 thread. A sandboxed task that ignores cancel is stopped 0.5 s after the cancel. A native task can only
 be asked, through `progress`. A plugin runs at most 4 tasks at once. Disabling, reloading or removing a
 plugin cancels its tasks. A task belongs to the project that was open when it started: when that project
