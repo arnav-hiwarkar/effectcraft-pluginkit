@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 use craft_plugin::math::{linear_to_srgb, srgb_to_linear};
-use craft_plugin::{BlendMode, HostKernel, Measure, Pixel};
+use craft_plugin::{BlendMode, Encoding, HostKernel, Measure, Negatives, Pixel};
 
 const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
 const SEGMENT_SHIFT: u32 = 15;
@@ -16,11 +16,13 @@ pub(crate) fn row(kernel: &HostKernel, src: &[Pixel], top: &[Pixel], y: usize, o
         HostKernel::Blend { mode, amount } => pairs.zip(top).for_each(|((o, b), t)| *o = blend(*mode, *amount, *b, *t)),
         HostKernel::Curves { table } => pairs.for_each(|(o, p)| *o = curves(table, *p)),
         HostKernel::Matrix { rows } => pairs.for_each(|(o, p)| *o = rows.map(|row| row[0] * p[0] + row[1] * p[1] + row[2] * p[2] + row[3] * p[3])),
-        HostKernel::ToLinear => transfers().decode.row(src, out),
-        HostKernel::ToSrgb => transfers().encode.row(src, out),
+        HostKernel::ToLinear => transfers().decode.row(src, out, Negatives::Mirror),
+        HostKernel::ToSrgb => transfers().encode.row(src, out, Negatives::Mirror),
+        HostKernel::Transfer { to: Encoding::Linear, negatives } => transfers().decode.row(src, out, *negatives),
+        HostKernel::Transfer { to: Encoding::Srgb, negatives } => transfers().encode.row(src, out, *negatives),
         HostKernel::BrightnessCurve { measure, curve, range } => {
-            let steps_per_unit = (curve.len() - 1) as f32 / range;
-            pairs.for_each(|(o, p)| *o = brightness_curve(*measure, curve, steps_per_unit, *p));
+            let per_unit = (curve.len() - 1) as f32 / range;
+            pairs.for_each(|(o, p)| *o = brightness_curve(*measure, curve, *range, per_unit, *p));
         }
         HostKernel::Dither { seed, origin } => {
             let row_y = (y as i64).wrapping_sub(origin[1]) as u32;
@@ -42,6 +44,7 @@ pub(crate) fn blend_channel(mode: BlendMode, b: f32, t: f32) -> f32 {
         BlendMode::Darken => b.min(t),
         BlendMode::Lighten => b.max(t),
         BlendMode::Difference => (b - t).abs(),
+        BlendMode::ScreenHdr => b + t * (1.0 - b.clamp(0.0, 1.0)),
     }
 }
 
@@ -76,20 +79,24 @@ pub(crate) fn measure(measure: Measure, p: Pixel) -> f32 {
     }
 }
 
-pub(crate) fn lookup(curve: &[f32], steps_per_unit: f32, m: f32) -> f32 {
+fn lookup(curve: &[f32], range: f32, per_unit: f32, m: f32) -> f32 {
     let last = curve.len() - 1;
-    let t = m * steps_per_unit;
+    let t = if per_unit.is_finite() { m * per_unit } else { m / range * last as f32 };
+    if m > range {
+        let (a, b) = (curve[last - 1], curve[last]);
+        return if a == b { b } else { b + (b - a) * (t - last as f32) };
+    }
     let i = (t as usize).min(last - 1);
     let (a, b) = (curve[i], curve[i + 1]);
     a + (b - a) * (t - i as f32)
 }
 
-fn brightness_curve(kind: Measure, curve: &[f32], steps_per_unit: f32, p: Pixel) -> Pixel {
+fn brightness_curve(kind: Measure, curve: &[f32], range: f32, per_unit: f32, p: Pixel) -> Pixel {
     let m = measure(kind, p);
     if m <= 0.0 {
         return [0.0, 0.0, 0.0, p[3]];
     }
-    let gain = lookup(curve, steps_per_unit, m) / m;
+    let gain = lookup(curve, range, per_unit, m) / m;
     [p[0] * gain, p[1] * gain, p[2] * gain, p[3]]
 }
 
@@ -115,20 +122,26 @@ fn dither(p: Pixel, x: u32, y: u32, seed: u32) -> Pixel {
 
 struct Transfer {
     exact: fn(f32) -> f32,
+    slope_at_zero: f32,
     segments: Vec<[f32; 2]>,
 }
 
 impl Transfer {
-    fn new(exact: fn(f32) -> f32) -> Transfer {
+    fn new(exact: fn(f32) -> f32, slope_at_zero: f32) -> Transfer {
         let start = |i: u32| f32::from_bits((FIRST_SEGMENT + i) << SEGMENT_SHIFT);
         let segments = (0..SEGMENTS).map(|i| [exact(start(i)), (exact(start(i + 1)) - exact(start(i))) / (start(i + 1) - start(i))]).collect();
-        Transfer { exact, segments }
+        Transfer { exact, slope_at_zero, segments }
     }
 
-    fn row(&self, src: &[Pixel], out: &mut [Pixel]) {
-        let (segments, exact) = (&self.segments[..], self.exact);
+    fn row(&self, src: &[Pixel], out: &mut [Pixel], negatives: Negatives) {
+        let (segments, exact, slope) = (&self.segments[..], self.exact, self.slope_at_zero);
+        let linear_below_zero = negatives == Negatives::Linear;
+        let first = f32::from_bits(FIRST_SEGMENT << SEGMENT_SHIFT);
         let eval = |x: f32| {
-            let i = (x.to_bits() >> SEGMENT_SHIFT).saturating_sub(FIRST_SEGMENT);
+            if x < first {
+                return if x >= 0.0 || linear_below_zero { x * slope } else { exact(x) };
+            }
+            let i = (x.to_bits() >> SEGMENT_SHIFT) - FIRST_SEGMENT;
             match segments.get(i as usize) {
                 Some([value, slope]) => value + slope * (x - f32::from_bits((FIRST_SEGMENT + i) << SEGMENT_SHIFT)),
                 None => exact(x),
@@ -145,5 +158,5 @@ struct Transfers {
 
 fn transfers() -> &'static Transfers {
     static TRANSFERS: OnceLock<Transfers> = OnceLock::new();
-    TRANSFERS.get_or_init(|| Transfers { decode: Transfer::new(srgb_to_linear), encode: Transfer::new(linear_to_srgb) })
+    TRANSFERS.get_or_init(|| Transfers { decode: Transfer::new(srgb_to_linear, 1.0 / 12.92), encode: Transfer::new(linear_to_srgb, 12.92) })
 }

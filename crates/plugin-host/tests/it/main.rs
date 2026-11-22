@@ -1071,6 +1071,21 @@ fn host_kernel_passes_run_in_the_app_between_plugin_passes() {
 }
 
 #[test]
+fn a_native_pass_is_handed_its_target_as_the_passes_before_it_left_it() {
+    let mut plan = GpuPlan::new();
+    let (a, b) = (plan.scratch(PASS_FRAME), plan.scratch(PASS_FRAME));
+    let half = [[0.5, 0.0, 0.0, 0.0], [0.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 0.5]];
+    let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    let plan = plan
+        .pass(GpuPass::matrix(GpuImage::Source, a, half))
+        .pass(GpuPass::matrix(a, b, identity))
+        .pass(GpuPass::new("probe_nothing", b, a))
+        .pass(GpuPass::matrix(a, GpuImage::Output, identity));
+    assert_eq!(at(&run_plan(Kind::Native, &plan).unwrap(), 10, 75), [5.0, 37.5, 0.5, 0.5]);
+    assert_eq!(at(&run_plan(Kind::Wasm, &plan).unwrap(), 10, 75), [0.0; 4], "a sandboxed pass starts from a clear target");
+}
+
+#[test]
 fn a_pass_with_too_little_reach_is_missing_rows_at_band_edges() {
     let short = GpuPlan::new().pass(GpuPass::new("probe_tall", GpuImage::Source, GpuImage::Output).reach(2));
     let pixels = run_plan(Kind::Wasm, &short).unwrap();
@@ -1133,5 +1148,7 @@ fn a_panic_in_a_sandboxed_plugin_logs_its_file_and_line_before_the_trap() {
     let error = command(&loaded, "panic", &mut Recorder::default()).unwrap_err().to_string();
     assert!(error.contains("unreachable"), "{error}");
     let logs: Vec<String> = loaded.plugin.logs(0).into_iter().map(|line| line.message).collect();
-    assert_eq!(logs.first().map(String::as_str), Some("the plugin panicked at src/lib.rs:848:39: oops"), "{logs:?}");
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/probe/src/lib.rs")).unwrap();
+    let (line, column) = source.lines().enumerate().find_map(|(n, text)| Some((n + 1, text.find("panic!(\"oops\")")? + 1))).unwrap();
+    assert_eq!(logs.first().cloned(), Some(format!("the plugin panicked at src/lib.rs:{line}:{column}: oops")), "{logs:?}");
 }

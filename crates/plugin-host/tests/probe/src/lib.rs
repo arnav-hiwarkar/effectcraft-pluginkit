@@ -140,15 +140,30 @@ struct GpuFill;
 
 impl Effect for GpuFill {
     fn spec(&self) -> EffectSpec {
-        EffectSpec::new("gpu-fill", "GPU Fill", "Probe").param(Param::slider("last_index", "Last Index", 2.0, 0.0..=9.0)).shader(FILL_SHADER)
+        EffectSpec::new("gpu-fill", "GPU Fill", "Probe")
+            .param(Param::slider("last_index", "Last Index", 2.0, 0.0..=9.0))
+            .param(Param::checkbox("onto_scratch", "Onto Scratch", false))
+            .shader(FILL_SHADER)
     }
 
     fn layout(&self, cx: &Cx) -> Layout {
         let mut plan = GpuPlan::new();
         let corners = plan.buffer(GpuData::Floats(vec![-1.0, -1.0, 3.0, -1.0, -1.0, 3.0]));
         let triangle = plan.buffer(GpuData::Indices(vec![0, 1, cx.f("last_index") as u32]));
-        let fill = GpuPass::draw("probe_fill", GpuImage::Output).vertices(corners, &[2]).indices(triangle).clear().floats(&FILL);
-        Layout::pointwise().gpu(plan.pass(fill))
+        let fill = GpuPass::draw("probe_fill", GpuImage::Output).vertices(corners, &[2]).indices(triangle).floats(&FILL);
+        if !cx.bool("onto_scratch") {
+            return Layout::pointwise().gpu(plan.pass(fill.clear()));
+        }
+        let frame = cx.size;
+        let (a, b) = (plan.scratch(frame), plan.scratch(frame));
+        let from_alpha = [[0.0, 0.0, 0.0, 0.5], [0.0, 0.0, 0.0, 0.25], [0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]];
+        let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        let plan = plan
+            .pass(GpuPass::matrix(GpuImage::Source, a, from_alpha))
+            .pass(GpuPass::matrix(a, b, identity))
+            .pass(GpuPass { out: a, ..fill.count(0) })
+            .pass(GpuPass::matrix(a, GpuImage::Output, identity));
+        Layout::pointwise().gpu(plan)
     }
 
     fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
@@ -319,8 +334,13 @@ impl Effect for HostKernels {
             "bicubic zoom",
             "full over",
             "no over",
+            "tiny curve range",
+            "huge resample",
+            "huge to linear",
+            "to linear, negatives linear",
+            "to sRGB, negatives linear",
         ];
-        let modes = ["over", "add", "subtract", "multiply", "screen", "overlay", "darken", "lighten", "difference"];
+        let modes = ["over", "add", "subtract", "multiply", "screen", "overlay", "darken", "lighten", "difference", "screen hdr"];
         EffectSpec::new("host-kernels", "Host Kernels", "Probe")
             .param(Param::popup("kernel", "Kernel", &kernels, 0))
             .param(Param::popup("mode", "Mode", &modes, 0))
@@ -337,7 +357,7 @@ impl Effect for HostKernels {
             0 => plan.pass(GpuPass::blur(source, output, [4.0, 2.5])),
             1 => plan.pass(GpuPass::box_blur(source, output, [2.5, 0.0])),
             2 => plan.pass(GpuPass::resample(source, half, Filter::Bilinear)).pass(GpuPass::resample(half, output, Filter::Bicubic)),
-            3 => plan.pass(blurred).pass(GpuPass::blend_images(source, soft, output, BlendMode::ALL[cx.index("mode").min(8)], 0.8)),
+            3 => plan.pass(blurred).pass(GpuPass::blend_images(source, soft, output, BlendMode::ALL[cx.index("mode").min(9)], 0.8)),
             4 => plan.pass(GpuPass::curves(source, output, &curve)),
             5 => plan.pass(GpuPass::convolve(source, output, craft_plugin::Taps::Separable { x: vec![-0.5, 2.0, -0.5], y: vec![0.25, 0.5, 0.25] })),
             6 => plan.pass(GpuPass::convolve(
@@ -372,6 +392,14 @@ impl Effect for HostKernels {
                 let top_image = GpuPass::matrix(source, soft, [top, [0.0; 4], [0.0; 4], [0.0, 0.0, 0.0, 1.0]]);
                 plan.pass(top_image).pass(GpuPass::blend_images(source, soft, output, BlendMode::Over, amount))
             }
+            21 => {
+                let ramp = (0..4096).map(|i| i as f32 / 4095.0 * 1e-36).collect();
+                plan.pass(GpuPass::brightness_curve(source, output, Measure::MaxChannel, ramp, 1e-36))
+            }
+            22 => plan.pass(GpuPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some([2.0, 2.0]) }, source, output)),
+            23 => plan.pass(GpuPass::to_linear(source, output)),
+            24 => plan.pass(GpuPass::transfer(source, output, Encoding::Linear, Negatives::Linear)),
+            25 => plan.pass(GpuPass::transfer(source, output, Encoding::Srgb, Negatives::Linear)),
             _ => {
                 let quarter = frame.map(|side| side.div_ceil(4));
                 let (small, blurred) = (plan.scratch(quarter), plan.scratch(quarter));
@@ -433,6 +461,29 @@ impl Effect for Lift {
                 None => row.fill([0.0; 4]),
             }
         }
+        Ok(())
+    }
+}
+
+struct Swap;
+
+const SWAP: [[f32; 4]; 4] = [[0.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+
+impl Effect for Swap {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("swap", "Swap", "Probe").param(Param::checkbox("planned", "Planned", false))
+    }
+
+    fn layout(&self, cx: &Cx) -> Layout {
+        if cx.bool("planned") {
+            Layout::pointwise().passes(GpuPlan::new().pass(GpuPass::matrix(GpuImage::Source, GpuImage::Output, SWAP)))
+        } else {
+            Layout::pointwise()
+        }
+    }
+
+    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+        frame.map(|[r, g, b, a]| [b, g, r, a]);
         Ok(())
     }
 }
@@ -796,6 +847,7 @@ fn make() -> Plugin {
         .effect(GpuInvert)
         .effect(GpuSoften)
         .effect(HostKernels)
+        .effect(Swap)
         .effect(Passes)
         .effect(GpuFill)
         .effect(GpuMatte)

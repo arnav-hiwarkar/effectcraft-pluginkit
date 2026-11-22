@@ -19,10 +19,10 @@ impl Effect for LumenGlow {
     }
 
     fn layout(&self, cx: &Cx) -> Layout {
-        let settings = Settings::from_cx(cx);
-        let padding = settings.frame_padding(cx.size);
+        let padding = Settings::from_cx(cx).padding();
         let layout = Layout::whole_frame().padded(padding);
-        match gpu::plan(&settings, cx.size, padding) {
+        let padded = cx.padded(padding);
+        match gpu::plan(&Settings::from_cx(&padded), padded.size) {
             Some(plan) => layout.passes(plan),
             None => layout,
         }

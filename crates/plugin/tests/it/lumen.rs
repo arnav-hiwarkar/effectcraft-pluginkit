@@ -177,6 +177,49 @@ fn lumen_glow_on_host_kernels_matches_the_build_before_them_and_that_build_still
 }
 
 #[test]
+fn negative_colour_screens_and_encodes_as_the_build_before_host_kernels_did() {
+    let (spec, before) = (spec(), before_spec());
+    let flat = |pixel: [f32; 4]| Buf { img: Image { width: 32, height: 32, data: vec![pixel; 32 * 32] }, offset: [0.0, 0.0], scale: 1.0 };
+    let plain = [("Glow/radius", 1.0), ("Glow/threshold", 0.0), ("Output/gamma", 0.0)];
+    let screen: Vec<(&str, f64)> = plain.iter().copied().chain([("Output/blend", 1.0)]).collect();
+    let encoded = [("Glow/radius", 1.0), ("Glow/threshold", 0.0), ("Output/view", 1.0), ("Glow/exposure", 1.0)];
+    let cases = [("Screen", screen, [-0.25, 0.5, 0.0, 1.0], -0.75), ("Glow Only encoded", encoded.to_vec(), [-0.5, 0.5, 0.0, 1.0], -1.0)];
+    for (name, values, pixel, red) in cases {
+        let params = params_for(spec, [32, 32], &values);
+        let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [32.0; 2], seed: 11, adjustment: false, env: Default::default() };
+        let centre = |out: Buf| out.img.data[(out.img.width * out.img.height / 2 + out.img.width / 2) as usize][0];
+        let (new, old) = (centre(effects::apply(spec, &ctx, flat(pixel))), centre(effects::apply(before, &ctx, flat(pixel))));
+        assert!((old - red).abs() < 1e-5 && (new - old).abs() < 1e-5, "{name}: red {new}, the build before host kernels {old}, expected {red}");
+    }
+}
+
+#[test]
+fn a_frame_as_wide_as_the_app_grows_one_glows_at_the_largest_radius_on_the_cpu_and_the_gpu() {
+    let spec = spec();
+    let mut img = Image::new(16384, 1);
+    img.set(8000, 0, [4.0, 4.0, 4.0, 1.0]);
+    let params = params_for(spec, [16384, 1], &[("Glow/radius", 3000.0)]);
+    let ctx = || EffectCtx { params: &params, time: 0.0, layer_size: [16384.0, 1.0], seed: 11, adjustment: false, env: Default::default() };
+    let input = Buf { img, offset: [0.0, 0.0], scale: 1.0 };
+    let cpu = effects::apply(spec, &ctx(), input.clone());
+    assert_eq!((cpu.img.width, cpu.img.height), (16384, 1), "the app grows the frame no wider");
+    assert!(cpu.img.data[8100][0] > 1e-5 && cpu.img.data[8100][0] < 1e-3, "light spreads a hundred pixels: {:?}", cpu.img.data[8100]);
+    let Some(gpu) = gpu() else { return };
+    let out = gpu.effects(&[FxStep { spec, ctx: ctx() }], &input, None).expect("the GPU ran the plan");
+    let (mean, worst) = differences(&cpu.img, &out.img);
+    assert!(mean < MEAN_TOLERANCE && worst < WORST_TOLERANCE, "GPU and CPU differ by mean {mean}, worst {worst}");
+}
+
+#[test]
+fn a_stored_radius_of_zero_asks_for_no_padding() {
+    let spec = spec();
+    let params = params(spec, &[("Glow/radius", 0.0)]);
+    let out = effects::apply(spec, &ctx(&params), picture());
+    assert_eq!((out.offset, out.img.width, out.img.height), ([0.0, 0.0], SIZE[0], SIZE[1]));
+    assert!(out.img.data.iter().flatten().all(|v| v.is_finite()), "a zero radius renders finite pixels");
+}
+
+#[test]
 fn lumen_glow_renders_on_the_gpu_as_its_cpu_render_does() {
     let spec = spec();
     let Some(gpu) = gpu() else { return };

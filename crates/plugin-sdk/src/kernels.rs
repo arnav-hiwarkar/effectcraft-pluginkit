@@ -39,6 +39,10 @@ pub enum HostKernel {
     },
     ToLinear,
     ToSrgb,
+    Transfer {
+        to: Encoding,
+        negatives: Negatives,
+    },
     BrightnessCurve {
         measure: Measure,
         curve: Vec<f32>,
@@ -56,6 +60,20 @@ pub enum HostKernel {
 pub enum Measure {
     MaxChannel,
     Luma,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Encoding {
+    Linear,
+    Srgb,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Negatives {
+    Mirror,
+    Linear,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +102,7 @@ pub enum BlendMode {
     Darken,
     Lighten,
     Difference,
+    ScreenHdr,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -94,7 +113,7 @@ pub enum Taps {
 }
 
 impl BlendMode {
-    pub const ALL: [BlendMode; 9] = [
+    pub const ALL: [BlendMode; 10] = [
         BlendMode::Over,
         BlendMode::Add,
         BlendMode::Subtract,
@@ -104,6 +123,7 @@ impl BlendMode {
         BlendMode::Darken,
         BlendMode::Lighten,
         BlendMode::Difference,
+        BlendMode::ScreenHdr,
     ];
 }
 
@@ -119,6 +139,7 @@ impl HostKernel {
             HostKernel::Matrix { .. } => "matrix",
             HostKernel::ToLinear => "to_linear",
             HostKernel::ToSrgb => "to_srgb",
+            HostKernel::Transfer { .. } => "transfer",
             HostKernel::BrightnessCurve { .. } => "brightness_curve",
             HostKernel::Dither { .. } => "dither",
             HostKernel::LightAlpha => "light_alpha",
@@ -204,7 +225,7 @@ impl HostKernel {
                 }
                 same("src", src)
             }
-            HostKernel::ToLinear | HostKernel::ToSrgb | HostKernel::Dither { .. } | HostKernel::LightAlpha => same("src", src),
+            HostKernel::ToLinear | HostKernel::ToSrgb | HostKernel::Transfer { .. } | HostKernel::Dither { .. } | HostKernel::LightAlpha => same("src", src),
         }
     }
 }

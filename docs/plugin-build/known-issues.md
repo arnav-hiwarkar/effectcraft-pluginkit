@@ -28,8 +28,8 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **Engine: `keys.setEase` changes the side you did not set.** On a continuous key it copies the speed to the other side, and it turns off auto-Bezier so the other side falls back to a stored ease. Glide works around both. (`crates/engine/src/cmd/anim.rs`)
 - **Engine: influence cannot go below 0.1 %.** A curve handle exactly on its anchor's column is stored about 6.6e-4 of the value range off.
 - **CLI: `bench` does not load plugins**, so plugin effects are missing from its timings. (`bench_cmd` in `apps/effectcraft-cli/src/main.rs`)
-- **GPU: on WebGPU a bad plugin shader is not contained, and plugin GPU work has no time limit there**, because the browser build cannot wait for a submission (`Clock` in `crates/gpu/src/fx_plugin.rs`).
-- **GPU: a runaway plugin kernel stalls the GPU once per load.** A wgpu dispatch cannot be cancelled, so the 2 s budget is checked when a frame's plan has finished. The first frame that passes it stops the effect, which then renders on the CPU until the plugin is reloaded; that one frame still runs to its end (or until the OS GPU watchdog or the 10 s readback limit), and every other GPU effect waits for it. The error lists the plan's passes but cannot say which one was slow.
+- **GPU: on WebGPU a bad plugin shader is not contained.**
+- **GPU: a plugin kernel that runs for seconds stalls the GPU for as long as that frame takes.** A wgpu dispatch cannot be cancelled and plugin GPU work has no time limit of its own; the OS GPU watchdog and the 10 s readback deadline are the only limits, and every other GPU effect waits meanwhile. A time limit was removed on 2026-11-22 because a wall clock around a shared queue kept charging the wrong plugin. The cure is per-plan GPU timestamps where the device has them, or running plugin GPU work in the helper process.
 
 ## From the Opus review, not fixed
 
@@ -82,6 +82,9 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **Native Lumen Glow on all cores takes 5 % longer in wall time** (14.4 ms against 13.7 ms at 1080p, load
   3) although it runs 3 % fewer instructions: the emission and the upsampled glow are two more
   full-size images written and read.
+- **Lumen Glow with a negative Aspect on a frame 16384 wide and 1 tall is refused.** Its levels halve only
+  across, and the app cannot pad such a frame, so two images per level stay half a frame each and the plan
+  asks for more than 8 frames of scratch. The effect reports the refusal and leaves the frame unchanged.
 
 ## Seen in the third build
 

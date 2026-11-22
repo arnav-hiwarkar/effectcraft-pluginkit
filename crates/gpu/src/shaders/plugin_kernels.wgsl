@@ -65,17 +65,18 @@ fn craft_resampled(t: texture_2d<f32>, p: vec2<i32>, scale: vec2<f32>, bicubic: 
     for (var i = first.x; i <= last.x; i++) {
         total.x += craft_filter(bicubic, (f32(i) - centre.x) / widen.x);
     }
-    var sum = vec4<f32>(0.0);
     for (var j = first.y; j <= last.y; j++) {
-        let wy = craft_filter(bicubic, (f32(j) - centre.y) / widen.y);
-        total.y += wy;
+        total.y += craft_filter(bicubic, (f32(j) - centre.y) / widen.y);
+    }
+    let share = 1.0 / total;
+    var c = vec4<f32>(0.0);
+    for (var j = first.y; j <= last.y; j++) {
         var row = vec4<f32>(0.0);
         for (var i = first.x; i <= last.x; i++) {
-            row += texel(t, vec2<i32>(i, j)) * craft_filter(bicubic, (f32(i) - centre.x) / widen.x);
+            row += texel(t, vec2<i32>(i, j)) * (craft_filter(bicubic, (f32(i) - centre.x) / widen.x) * share.x);
         }
-        sum += row * wy;
+        c += row * (craft_filter(bicubic, (f32(j) - centre.y) / widen.y) * share.y);
     }
-    let c = sum / (total.x * total.y);
     if (bicubic) {
         return select(vec4<f32>(0.0), max(c, vec4<f32>(0.0)), c.a > 0.0);
     }
@@ -131,7 +132,7 @@ fn craft_to_linear(x: f32) -> f32 {
     let a = abs(x);
     var linear = a / 12.92;
     if (a > 0.04045) {
-        linear = pow((a + 0.055) / 1.055, 2.4);
+        linear = exp2(clamp(2.4 * log2((a + 0.055) / 1.055), -126.0, 126.0));
     }
     return select(linear, -linear, x < 0.0);
 }
@@ -140,7 +141,7 @@ fn craft_to_srgb(x: f32) -> f32 {
     let a = abs(x);
     var encoded = a * 12.92;
     if (a > 0.0031308) {
-        encoded = 1.055 * pow(a, 1.0 / 2.4) - 0.055;
+        encoded = 1.055 * exp2(clamp(log2(a) / 2.4, -126.0, 126.0)) - 0.055;
     }
     return select(encoded, -encoded, x < 0.0);
 }
@@ -153,8 +154,17 @@ fn craft_srgb(v: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(craft_to_srgb(v.r), craft_to_srgb(v.g), craft_to_srgb(v.b), v.a);
 }
 
+fn craft_linear_below_zero(v: vec4<f32>, transferred: vec4<f32>, slope: f32) -> vec4<f32> {
+    return vec4<f32>(select(transferred.rgb, v.rgb * slope, v.rgb < vec3<f32>(0.0)), v.a);
+}
+
 fn craft_light_alpha(v: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(v.rgb, max(v.a, clamp(max(max(v.r, v.g), v.b), 0.0, 1.0)));
+}
+
+fn craft_ratio(a: f32, b: f32) -> f32 {
+    let parts = frexp(b);
+    return ldexp(a, -parts.exp) / parts.fract;
 }
 
 fn craft_brightness_curve(at: u32, p: vec4<f32>) -> vec4<f32> {
@@ -166,12 +176,23 @@ fn craft_brightness_curve(at: u32, p: vec4<f32>) -> vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, p.a);
     }
     let last = u32(craft_data(at + 1u)) - 1u;
-    let t = m * craft_data(at + 2u);
+    let range = craft_data(at + 2u);
+    let parts = frexp(m);
+    let per_m = 1.0 / parts.fract;
+    if (m > range) {
+        let value = craft_data(at + 3u + last);
+        let before = craft_data(at + 2u + last);
+        var gain = ldexp(value, -parts.exp) * per_m;
+        if (value != before) {
+            gain += (gain - ldexp(before, -parts.exp) * per_m) * (craft_ratio(m - range, range) * f32(last));
+        }
+        return vec4<f32>(p.rgb * gain, p.a);
+    }
+    let t = craft_ratio(m, range) * f32(last);
     let i = min(u32(t), last - 1u);
-    let a = craft_data(at + 3u + i);
-    let b = craft_data(at + 4u + i);
-    let gain = (a + (b - a) * (t - f32(i))) / m;
-    return vec4<f32>(p.rgb * gain, p.a);
+    let a = ldexp(craft_data(at + 3u + i), -parts.exp) * per_m;
+    let b = ldexp(craft_data(at + 4u + i), -parts.exp) * per_m;
+    return vec4<f32>(p.rgb * (a + (b - a) * (t - f32(i))), p.a);
 }
 
 fn craft_word(at: u32) -> u32 {

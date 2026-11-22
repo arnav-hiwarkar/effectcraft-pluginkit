@@ -124,22 +124,21 @@ struct PluginShader {
 struct HostModule {
     module: Result<wgpu::ShaderModule, String>,
     pipelines: HashMap<String, Result<wgpu::ComputePipeline, String>>,
+    used: u64,
 }
 
 struct PluginShaders {
     shaders: HashMap<String, PluginShader>,
     host: HashMap<String, HostModule>,
+    host_clock: u64,
     generation: u64,
-    budget: std::time::Duration,
 }
 
 impl Default for PluginShaders {
     fn default() -> Self {
-        PluginShaders { shaders: HashMap::new(), host: HashMap::new(), generation: u64::MAX, budget: PLUGIN_GPU_BUDGET }
+        PluginShaders { shaders: HashMap::new(), host: HashMap::new(), host_clock: 0, generation: u64::MAX }
     }
 }
-
-const PLUGIN_GPU_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn plugin_prelude_lines() -> usize {
     PLUGIN_PRELUDE.iter().map(|part| part.lines().count()).sum()
@@ -1639,16 +1638,6 @@ impl GpuContext {
         self.plugin_shaders.lock().ok().and_then(|plugins| Some(plugins.shaders.get(effect)?.reported.iter().cloned().collect())).unwrap_or_default()
     }
 
-    pub fn set_plugin_gpu_budget(&self, budget: std::time::Duration) {
-        if let Ok(mut plugins) = self.plugin_shaders.lock() {
-            plugins.budget = budget;
-        }
-    }
-
-    pub(crate) fn plugin_gpu_budget(&self) -> std::time::Duration {
-        self.plugin_shaders.lock().map(|plugins| plugins.budget).unwrap_or(PLUGIN_GPU_BUDGET)
-    }
-
     pub(crate) fn plugin_pipelines(&self, effect: &str, revision: u64, wgsl: &str, kernels: &[&str]) -> Result<Vec<wgpu::ComputePipeline>, String> {
         self.plugin_shader(effect, revision, wgsl, |shader, module| {
             let mut built = Vec::with_capacity(kernels.len());
@@ -1664,19 +1653,29 @@ impl GpuContext {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn host_module_kept(&self, wgsl: &str) -> bool {
+        self.plugin_shaders.lock().is_ok_and(|plugins| plugins.host.contains_key(wgsl))
+    }
+
     pub(crate) fn host_pipeline(&self, wgsl: &str, entry: &str) -> Result<wgpu::ComputePipeline, String> {
         let mut plugins = self.plugin_shaders.lock().map_err(|_| "the plugin shader cache is poisoned".to_string())?;
+        plugins.host_clock += 1;
+        let clock = plugins.host_clock;
         if !plugins.host.contains_key(wgsl) {
-            if plugins.host.len() >= MAX_HOST_MODULES {
-                plugins.host.clear();
+            if plugins.host.len() >= MAX_HOST_MODULES
+                && let Some(oldest) = plugins.host.iter().min_by_key(|(_, kept)| kept.used).map(|(key, _)| key.clone())
+            {
+                plugins.host.remove(&oldest);
             }
             let source: String = PLUGIN_PRELUDE.iter().copied().chain([HOST_KERNELS, wgsl]).collect();
             let module = init_resource(&self.device, "host kernels", || {
                 self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("host kernels"), source: wgpu::ShaderSource::Wgsl(source.into()) })
             });
-            plugins.host.insert(wgsl.to_string(), HostModule { module, pipelines: HashMap::new() });
+            plugins.host.insert(wgsl.to_string(), HostModule { module, pipelines: HashMap::new(), used: clock });
         }
         let host = plugins.host.get_mut(wgsl).ok_or("the host kernel module was not kept")?;
+        host.used = clock;
         let module = host.module.clone()?;
         if let Some(built) = host.pipelines.get(entry) {
             return built.clone();
@@ -2371,16 +2370,6 @@ impl<'g> Enc<'g> {
     /// The last submission of this encoder's work (what a readback after it waits for).
     pub(crate) fn last_submission(&self) -> Option<wgpu::SubmissionIndex> {
         self.last_submit.clone()
-    }
-
-    /// Drop the work recorded since the last submission.
-    pub(crate) fn discard(&mut self) {
-        if let Some((_, id)) = self.enc.take()
-            && let Ok(mut p) = self.g.pool.lock()
-        {
-            p.close(id);
-        }
-        self.pending = 0;
     }
 
     /// Submit recorded work.

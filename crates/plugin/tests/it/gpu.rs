@@ -97,6 +97,39 @@ fn a_draw_pass_fills_the_frame_and_a_plan_with_an_index_past_its_vertices_is_dec
 }
 
 #[test]
+fn a_draw_that_keeps_its_target_draws_over_what_the_passes_before_it_wrote() {
+    let app = app("test.gpu-keep", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.gpu-fill", app.id)).expect("the probe registered its draw effect");
+    let mut keep = params(spec, &[]);
+    keep.values.insert("onto_scratch".into(), Value::Bool(true));
+    let out = gpu.effects(&[FxStep { spec, ctx: ctx(&keep) }], &picture(), None).expect("the GPU ran the plan");
+    assert_eq!(app.plugins.render_error(spec.id), None);
+    assert_eq!([out.img.data[0], out.img.data[5]], [[0.25, 0.125, 0.5, 0.5], [0.5, 0.25, 1.0, 1.0]]);
+}
+
+#[test]
+fn an_effect_without_wgsl_reaches_the_gpu_at_the_settings_its_plan_allows() {
+    let app = app("test.gpu-swap", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.swap", app.id)).expect("the probe registered its swap effect");
+    let with = |planned: bool| {
+        let mut values = params(spec, &[]);
+        values.values.insert("planned".into(), Value::Bool(planned));
+        values
+    };
+    let (planned, plain) = (with(true), with(false));
+    let first = [0.0, 0.45, 0.5, 0.5];
+    assert_eq!(effects::apply(spec, &ctx(&plain), picture()).img.data[0], [0.5, 0.45, 0.0, 0.5]);
+    assert_eq!(effects::apply(spec, &ctx(&planned), picture()).img.data[0], [0.5, 0.45, 0.0, 0.5]);
+    assert_eq!(picture().img.data[0], first);
+    assert!(spec.gpu && gpu.supports_effect(spec.id), "a frame rendered with a host kernel plan offers the effect to the GPU");
+    let out = gpu.effects(&[FxStep { spec, ctx: ctx(&planned) }], &picture(), None).expect("the plan of host kernels runs on the GPU");
+    assert_eq!(out.img.data[0], [0.5, 0.45, 0.0, 0.5]);
+    assert!(gpu.effects(&[FxStep { spec, ctx: ctx(&plain) }], &picture(), None).is_none(), "without a plan the GPU declines the frame");
+}
+
+#[test]
 fn a_gpu_pass_reads_the_layer_a_layer_parameter_names() {
     let mut app = app("test.gpu-matte", &[]);
     let Some(gpu) = gpu() else { return };
@@ -225,25 +258,12 @@ fn a_gpu_pass_reads_a_layer_whose_video_is_off_as_its_pixels() {
 }
 
 #[test]
-fn a_gpu_plan_past_its_budget_shows_why_in_the_effect_error() {
-    let app = app("test.gpu-budget", &[]);
-    let Ok(gpu) = Gpu::try_headless() else { return };
-    let spec = effects::find(&format!("{}.gpu-invert", app.id)).expect("the probe registered its GPU effects");
-    let values = params(spec, &[("amount", 0.8)]);
-    gpu.context().set_plugin_gpu_budget(std::time::Duration::ZERO);
-    assert!(gpu.effects(&[FxStep { spec, ctx: ctx(&values) }], &picture(), None).is_none(), "the plan is stopped");
-    let why = app.plugins.render_error(spec.id).expect("Effect Controls shows why the effect left the GPU");
-    assert!(why.contains(spec.id) && why.contains("past the 0 ms budget") && why.contains("until the plugin is reloaded"), "{why}");
-    assert!(!gpu.supports_effect(spec.id), "the next frame renders on the CPU");
-}
-
-#[test]
 fn every_host_kernel_renders_on_the_gpu_within_two_levels_of_the_cpu() {
     let app = app("test.gpu-kernels", &[]);
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
     assert!(spec.gpu && gpu.supports_effect(spec.id), "a plan of host kernels needs no plugin WGSL to run on the GPU");
-    let cases = (0..16).map(|kernel| (kernel, 0)).chain((1..9).map(|mode| (3, mode)));
+    let cases = (0..16).map(|kernel| (kernel, 0)).chain((1..10).map(|mode| (3, mode)));
     for (kernel, mode) in cases {
         let params = params(spec, &[("kernel", f64::from(kernel)), ("mode", f64::from(mode))]);
         let cpu = effects::apply(spec, &ctx(&params), picture());
@@ -297,4 +317,47 @@ fn host_kernel_edge_cases_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() 
         }
     }
     assert_eq!(wrong, Vec::<String>::new());
+}
+
+#[test]
+fn extreme_values_and_negative_colour_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() {
+    let app = app("test.gpu-kernel-extremes", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
+    let filled = |pixel: [f32; 4]| Buf { img: Image { width: 4, height: 4, data: vec![pixel; 16] }, offset: [0.0, 0.0], scale: 1.0 };
+    let cases = [
+        ("a curve over 0..1e-36", 21, filled([1e-36, 0.0, 0.0, 1.0]), [6, 6], [1e-36, 0.0, 0.0, 1.0]),
+        ("halving 1.25e38", 22, filled([1.25e38, 0.0, 0.0, 1.0]), [3, 3], [1.25e38 * 0.875 * 0.875, 0.0, 0.0, 0.875 * 0.875]),
+        ("decoding sRGB 1e16", 23, filled([1e16, 0.0, 0.0, 1.0]), [6, 6], [2f32.powi(126), 0.0, 0.0, 1.0]),
+        ("decoding with linear negatives", 24, filled([-0.5, 0.0, 0.0, 1.0]), [6, 6], [-0.5 / 12.92, 0.0, 0.0, 1.0]),
+        ("encoding with linear negatives", 25, filled([-0.5, 0.0, 0.0, 1.0]), [6, 6], [-6.46, 0.0, 0.0, 1.0]),
+    ];
+    let mut wrong = Vec::new();
+    for (case, kernel, input, [x, y], want) in cases {
+        let params = params(spec, &[("kernel", f64::from(kernel))]);
+        let cpu = effects::apply(spec, &ctx(&params), input.clone());
+        assert_eq!(app.plugins.render_error(spec.id), None, "{case}: the CPU render succeeded");
+        let on_gpu = gpu.effects(&[FxStep { spec, ctx: ctx(&params) }], &input, None).unwrap_or_else(|| panic!("{case}: the GPU ran the plan"));
+        for (backend, out) in [("CPU", &cpu.img), ("GPU", &on_gpu.img)] {
+            let got = out.data[(y * out.width + x) as usize];
+            if !got.iter().zip(want).all(|(g, w)| (g - w).abs() <= w.abs() * 1e-6) {
+                wrong.push(format!("{case} on the {backend}: {got:?}, not {want:?}"));
+            }
+        }
+    }
+    assert_eq!(wrong, Vec::<String>::new());
+}
+
+#[test]
+fn plugins_are_told_the_padding_the_app_applies_on_the_cpu_and_the_gpu() {
+    let sizes = [[1, 1], [7, 3000], [1920, 1080], [3840, 2160], [16000, 100], [16384, 1], [1, 16384], [4097, 4097], [9000, 9000]];
+    let paddings = [[0, 0, 0, 0], [1, 1, 1, 1], [5, 0, 2, 0], [300, 300, 300, 300], [4096, 4096, 4096, 4096], [5000, 7, 5000, 7]];
+    for size in sizes {
+        for padding in paddings {
+            let [l, t, r, b] = padding.map(|side| f64::from(side.min(4096)));
+            let grown = effects::grow_sides([-l, -t], [f64::from(size[0]) + r, f64::from(size[1]) + b], size[0], size[1]).unwrap_or_default();
+            assert_eq!(craft_plugin_host::applied_padding(padding, size), grown, "{size:?} padded by {padding:?}");
+        }
+    }
+    assert_eq!(craft_plugin_host::applied_padding([300; 4], [16384, 1]), [0; 4], "a frame as wide as the app grows one is not padded");
 }

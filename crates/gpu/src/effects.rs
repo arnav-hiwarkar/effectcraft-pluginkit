@@ -13,7 +13,8 @@ use crate::ops;
 pub fn supports(id: &str) -> bool {
     effectcraft_effects::GPU_EFFECTS.contains(&id)
         || id.starts_with("ec.control.")
-        || effectcraft_effects::dynamic::get(id).is_some_and(|r| r.effect.shader.is_some() && r.effect.gpu.is_some() && r.gpu_stopped.get().is_none())
+        || effectcraft_effects::dynamic::get(id)
+            .is_some_and(|r| r.effect.shader.is_some() && r.effect.gpu.is_some() && r.gpu_planned.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// A layer buffer on the GPU (see [`Buf`]).

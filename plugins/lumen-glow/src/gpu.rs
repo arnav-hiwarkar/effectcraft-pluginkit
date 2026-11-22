@@ -7,8 +7,7 @@ use crate::settings::{Blend, Settings, View};
 const HALF: [f32; 2] = [2.0, 2.0];
 const DOUBLE: [f32; 2] = [0.5, 0.5];
 
-pub fn plan(settings: &Settings, size: [u32; 2], padding: u32) -> Option<GpuPlan> {
-    let frame = size.map(|s| s.saturating_add(padding.saturating_mul(2)));
+pub fn plan(settings: &Settings, frame: [u32; 2]) -> Option<GpuPlan> {
     if frame.contains(&0) {
         return None;
     }
@@ -17,7 +16,7 @@ pub fn plan(settings: &Settings, size: [u32; 2], padding: u32) -> Option<GpuPlan
     let mut gpu = GpuPlan::new();
     let [work, base] = [gpu.scratch(frame), gpu.scratch(frame)];
     let glow = glow(&mut gpu, settings, &plan, &sizes, work, frame);
-    composite(&mut gpu, settings, &plan.core, glow, work, base, padding);
+    composite(&mut gpu, settings, &plan.core, glow, work, base);
     Some(gpu)
 }
 
@@ -25,7 +24,7 @@ fn linear(gpu: &mut GpuPlan, settings: &Settings, work: GpuImage) -> GpuImage {
     if !settings.gamma {
         return GpuImage::Source;
     }
-    gpu.passes.push(GpuPass::to_linear(GpuImage::Source, work));
+    gpu.passes.push(GpuPass::transfer(GpuImage::Source, work, Encoding::Linear, Negatives::Linear));
     work
 }
 
@@ -86,7 +85,7 @@ fn diagonal(colour: f32, alpha: f32) -> [[f32; 4]; 4] {
     })
 }
 
-fn composite(gpu: &mut GpuPlan, settings: &Settings, core: &Mix, glow: Option<GpuImage>, work: GpuImage, base: GpuImage, padding: u32) {
+fn composite(gpu: &mut GpuPlan, settings: &Settings, core: &Mix, glow: Option<GpuImage>, work: GpuImage, base: GpuImage) {
     let source = linear(gpu, settings, work);
     let mut pass = |pass: GpuPass| gpu.passes.push(pass);
     if settings.view == View::Final {
@@ -105,17 +104,14 @@ fn composite(gpu: &mut GpuPlan, settings: &Settings, core: &Mix, glow: Option<Gp
     if settings.view == View::Final {
         match settings.blend {
             Blend::Add => pass(GpuPass::blend_images(base, work, work, BlendMode::Add, 1.0)),
-            Blend::Screen => {
-                pass(GpuPass::blend_images(base, work, work, BlendMode::Screen, 1.0));
-                pass(GpuPass::blend_images(work, base, work, BlendMode::Lighten, 1.0));
-            }
+            Blend::Screen => pass(GpuPass::blend_images(base, work, work, BlendMode::ScreenHdr, 1.0)),
         }
     }
     if settings.gamma {
-        pass(GpuPass::to_srgb(work, work));
+        pass(GpuPass::transfer(work, work, Encoding::Srgb, Negatives::Linear));
     }
     if let Some(d) = settings.dither {
-        pass(GpuPass::dither(work, work, d.seed, d.origin.map(|o| o.wrapping_add(i64::from(padding)))));
+        pass(GpuPass::dither(work, work, d.seed, d.origin));
     }
     pass(GpuPass::light_alpha(work, GpuImage::Output));
 }
@@ -125,7 +121,15 @@ mod tests {
     use craft_plugin::Value;
 
     use super::*;
-    use crate::settings::tests::settings_with;
+    use crate::settings::tests::{cx_with, settings_with};
+
+    fn padded(overrides: &[(&str, Value)], size: [u32; 2], scale: f64) -> (Settings, [u32; 2]) {
+        let mut cx = (*cx_with(overrides, scale)).clone();
+        cx.size = size;
+        let cx = Cx::new(cx);
+        let padded = cx.padded(Settings::from_cx(&cx).padding());
+        (Settings::from_cx(&padded), padded.size)
+    }
 
     fn assert_runs_on_the_host(plan: &GpuPlan, frame: [u32; 2], case: &str) {
         assert_eq!(plan.check(frame), Ok(()), "{case}");
@@ -135,20 +139,17 @@ mod tests {
 
     #[test]
     fn every_setting_fits_the_host_limits() {
-        for radius in [1.0, 3.0, 10.0, 120.0, 600.0, 3000.0] {
+        for radius in [0.0, 1.0, 3.0, 10.0, 120.0, 600.0, 3000.0] {
             for aspect in [-1.0, -0.6, 0.0, 0.3, 1.0] {
                 for aberration in [0.0, 100.0] {
-                    for (size, scale) in [([1, 1], 1.0), ([7, 3000], 1.0), ([1920, 1080], 1.0), ([1920, 1080], 0.37), ([3840, 2160], 1.0)] {
-                        let mut settings = settings_with(&[
-                            ("Glow/radius", Value::Number(radius)),
-                            ("Glow/aspect", Value::Number(aspect)),
-                            ("Aberration/amount", Value::Number(aberration)),
-                        ]);
-                        settings.scale = scale;
-                        let padding = settings.frame_padding(size);
-                        let frame = size.map(|s| s + 2 * padding);
+                    let widest = (aspect >= 0.0).then_some(([16384, 1], 1.0));
+                    let sizes = [([1, 1], 1.0), ([7, 3000], 1.0), ([1920, 1080], 1.0), ([1920, 1080], 0.37), ([3840, 2160], 1.0)].into_iter().chain(widest);
+                    for (size, scale) in sizes {
+                        let overrides =
+                            [("Glow/radius", Value::Number(radius)), ("Glow/aspect", Value::Number(aspect)), ("Aberration/amount", Value::Number(aberration))];
+                        let (settings, frame) = padded(&overrides, size, scale);
                         let case = format!("radius {radius} aspect {aspect} aberration {aberration} size {size:?} scale {scale}");
-                        let plan = plan(&settings, size, padding).unwrap_or_else(|| panic!("{case}: no plan"));
+                        let plan = plan(&settings, frame).unwrap_or_else(|| panic!("{case}: no plan"));
                         assert_runs_on_the_host(&plan, frame, &case);
                     }
                 }
@@ -158,12 +159,12 @@ mod tests {
 
     #[test]
     fn each_level_is_blurred_mixed_and_summed_by_host_kernels() {
-        let settings = settings_with(&[("Glow/radius", Value::Number(400.0))]);
-        let plan = plan(&settings, [640, 360], settings.frame_padding([640, 360])).expect("a plan");
+        let (settings, frame) = padded(&[("Glow/radius", Value::Number(400.0))], [640, 360], 1.0);
+        let plan = plan(&settings, frame).expect("a plan");
         let levels = Plan::new(&settings).levels.len();
         let count = |kernel: &str| plan.passes.iter().filter(|p| p.kernel == kernel).count();
-        let kernels = ["resample", "convolve", "matrix", "blend", "brightness_curve", "to_linear", "to_srgb", "dither", "light_alpha"].map(count);
-        assert_eq!(kernels, [2 * levels, levels, levels + 2, levels + 1, 2, 2, 1, 1, 1]);
+        let kernels = ["resample", "convolve", "matrix", "blend", "brightness_curve", "transfer", "dither", "light_alpha"].map(count);
+        assert_eq!(kernels, [2 * levels, levels, levels + 2, levels + 1, 2, 3, 1, 1]);
         assert!(plan.images.len() <= 2 * levels + 3, "{} scratch images for {levels} levels", plan.images.len());
     }
 
@@ -171,13 +172,13 @@ mod tests {
     fn every_view_and_blend_ends_in_the_output() {
         for (view, blend) in [(0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (2.0, 0.0)] {
             let settings = settings_with(&[("Output/view", Value::Number(view)), ("Output/blend", Value::Number(blend))]);
-            let plan = plan(&settings, [64, 64], 0).expect("a plan");
+            let plan = plan(&settings, [64, 64]).expect("a plan");
             assert_runs_on_the_host(&plan, [64, 64], &format!("view {view} blend {blend}"));
         }
     }
 
     #[test]
     fn an_empty_frame_renders_on_the_cpu() {
-        assert!(plan(&settings_with(&[]), [0, 0], 0).is_none());
+        assert!(plan(&settings_with(&[]), [0, 0]).is_none());
     }
 }

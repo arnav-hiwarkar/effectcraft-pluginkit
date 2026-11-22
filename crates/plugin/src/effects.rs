@@ -16,7 +16,6 @@ use effectcraft_engine::project::ParamUi;
 
 use crate::manage::Loaded;
 
-const MAX_PADDING: u32 = 4096;
 const PROBE_SIDE: u32 = 256;
 const MAX_STAMPED_FILES: usize = 256;
 const STAMP_LIFETIME: std::time::Duration = std::time::Duration::from_millis(500);
@@ -29,20 +28,18 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
     let plugin_id = &loaded.bundle.manifest.id;
     for spec in &loaded.plugin.contributions().effects {
         let (render_plugin, render_spec) = (loaded.clone(), spec.clone());
-        let shader = spec.shader.clone().or_else(|| plans_only_host_kernels(loaded, spec).then(String::new));
-        let gpu = shader.as_ref().map(|_| {
-            let (plugin, spec) = (loaded.clone(), spec.clone());
-            Box::new(move |ctx: &EffectCtx, grid: Grid| gpu_program(&plugin, &spec, ctx, grid)) as dynamic::GpuDyn
-        });
+        let (plugin, gpu_spec) = (loaded.clone(), spec.clone());
+        let gpu: dynamic::GpuDyn = Box::new(move |ctx: &EffectCtx, grid: Grid| gpu_program(&plugin, &gpu_spec, ctx, grid));
+        let id = effect_id(plugin_id, &spec.id);
         dynamic::register(DynamicEffect {
             owner: plugin_id.clone(),
-            id: effect_id(plugin_id, &spec.id),
+            id: id.clone(),
             name: spec.name.clone(),
             category: spec.category.clone(),
             params: spec.params.iter().map(declare).collect(),
             render: Box::new(move |ctx, buf| render(&render_plugin, &render_spec, ctx, buf)),
-            shader: shader.as_deref().map(Arc::from),
-            gpu,
+            shader: Some(Arc::from(spec.shader.as_deref().unwrap_or_default())),
+            gpu: Some(gpu),
             time_dependent: spec.time_dependent,
             reads_other_frames: spec.reads_other_frames,
             reads_comp_scene: spec.reads_scene,
@@ -51,6 +48,19 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
             revision: loaded.revision,
             files: Some(revision_stamp(loaded.clone())),
         });
+        if spec.shader.is_none() && default_plan_runs_on_gpu(loaded, spec) {
+            mark_gpu_planned(&id);
+        }
+    }
+}
+
+fn plan_runs_on_gpu(spec: &EffectSpec, plan: &craft_plugin_host::GpuPlan) -> bool {
+    spec.shader.is_some() || plan.passes.iter().all(|pass| pass.host.is_some())
+}
+
+fn mark_gpu_planned(id: &str) {
+    if let Some(registered) = dynamic::get(id) {
+        registered.gpu_planned.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -58,12 +68,12 @@ struct Quiet;
 
 impl Host for Quiet {}
 
-fn plans_only_host_kernels(loaded: &Loaded, spec: &EffectSpec) -> bool {
+fn default_plan_runs_on_gpu(loaded: &Loaded, spec: &EffectSpec) -> bool {
     let grid = Grid { width: PROBE_SIDE, height: PROBE_SIDE, offset: [0.0; 2], scale: 1.0 };
     let layer_size = [f64::from(PROBE_SIDE); 2];
     let cx = RenderCx { params: wire_params(spec, &Params::default(), layer_size, grid), scale: 1.0, layer_size, size: [PROBE_SIDE; 2], ..RenderCx::default() };
     let layout = loaded.plugin.call::<Layout>(&Call::Layout { effect: spec.id.clone(), cx }, None, &mut Quiet);
-    layout.is_ok_and(|layout| layout.gpu.is_some_and(|plan| plan.passes.iter().all(|pass| pass.host.is_some())))
+    layout.is_ok_and(|layout| layout.gpu.is_some_and(|plan| plan_runs_on_gpu(spec, &plan)))
 }
 
 fn revision_stamp(loaded: Arc<Loaded>) -> dynamic::StampDyn {
@@ -289,14 +299,8 @@ impl Host for RenderHost<'_, '_> {
 fn layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Layout {
     let call = Call::Layout { effect: spec.id.clone(), cx: render_cx(spec, ctx, grid) };
     let mut layout: Layout = loaded.plugin.call(&call, None, &mut RenderHost { ctx, grid, spec }).unwrap_or_default();
-    layout.padding = layout.padding.map(|side| side.min(MAX_PADDING));
+    layout.padding = craft_plugin_host::applied_padding(layout.padding, [grid.width, grid.height]);
     layout
-}
-
-fn padding(buf: &Buf, padding: [u32; 4]) -> [u32; 4] {
-    let (width, height) = (buf.img.width, buf.img.height);
-    let [left, top, right, bottom] = padding.map(f64::from);
-    effectcraft_engine::effects::grow_sides([-left, -top], [f64::from(width) + right, f64::from(height) + bottom], width, height).unwrap_or_default()
 }
 
 fn shown_area(ctx: &EffectCtx, grid: Grid) -> Option<Rect> {
@@ -308,7 +312,10 @@ fn shown_area(ctx: &EffectCtx, grid: Grid) -> Option<Rect> {
 
 fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> Buf {
     let layout = layout(loaded, spec, ctx, grid_of(&buf));
-    buf.pad_sides(padding(&buf, layout.padding));
+    if spec.shader.is_none() && layout.gpu.as_ref().is_some_and(|plan| plan_runs_on_gpu(spec, plan)) {
+        mark_gpu_planned(&effect_id(&loaded.bundle.manifest.id, &spec.id));
+    }
+    buf.pad_sides(layout.padding);
     let grid = grid_of(&buf);
     let cx = render_cx(spec, ctx, grid);
     let host = || RenderHost { ctx, grid, spec };
@@ -329,7 +336,7 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
 
 fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Option<GpuProgram> {
     let layout = layout(loaded, spec, ctx, grid);
-    let plan = layout.gpu?;
+    let plan = layout.gpu.filter(|plan| plan_runs_on_gpu(spec, plan))?;
     let [left, top, right, bottom] = layout.padding;
     let frame = [grid.width.saturating_add(left).saturating_add(right), grid.height.saturating_add(top).saturating_add(bottom)];
     if let Err(why) = plan.validate(frame) {

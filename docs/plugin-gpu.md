@@ -52,8 +52,8 @@ A pass reads `src` and, optionally, `aux`, and writes `out`. Each names one of:
 
 `layout` runs before the frame is padded, so there `cx.size`, `cx.offset` and point parameters describe
 the frame without padding. The passes run on the padded frame. Build the plan from `cx.padded(padding)`,
-which is the context `render` gets: its `size` includes the padding and its `offset` and points are
-moved by it. Read sizes in the kernel with `out_size()` and `src_size()` instead of assuming them.
+which is the context `render` gets: its `size` includes the padding the app really applies (less than
+asked for near the app's size limits) and its `offset` and points are moved by it. Read sizes in the kernel with `out_size()` and `src_size()` instead of assuming them.
 
 Values reach a pass through `.floats(&[..])` (up to 96) and `.uints(&[..])` (up to 16), on the GPU and the CPU alike. A kernel reads
 value `i` with `pass_f(i)` or `pass_u(i)`; values the pass did not give read as 0. Scale distances by
@@ -67,8 +67,10 @@ device and the stored bytes (image sizes the GPU holds, buffer and texture byte 
 
 - 1 to 128 passes;
 - at most 32 scratch images, each at least 1×1 and at most twice the padded frame in each axis, and
-  together at most 8 times the padded frame's area, counting one more image for each size that a blur
-  or separable convolve writes (its intermediate pass);
+  together at most 8 times the padded frame's memory, counting the images the passes work in: one
+  for each size that a blur or separable convolve writes, one for each size of a resample's
+  intermediate (the output's width by the source's height), and for each size a draw writes a colour
+  target of half an image and, with depth, a depth buffer of a quarter;
 - a pass reads only `Source` or an image an earlier pass wrote, and never the image it writes unless it
   is a [pointwise host kernel](#host-kernels);
 - no pass writes `Source` or a texture, and some pass writes `Output`;
@@ -80,15 +82,9 @@ device and the stored bytes (image sizes the GPU holds, buffer and texture byte 
 
 ### Time
 
-The app first builds every pipeline the plan needs and waits for all GPU work queued before the effect,
-so neither is counted; when that earlier work does not finish within 10 seconds, the frame is not timed.
-It then submits the plan's passes together and waits for them. When one frame of the effect takes more than
-2 seconds of GPU time, the effect is stopped: Effect Controls shows an error that names the effect, its
-passes and the budget, and the effect renders on the CPU until the plugin is reloaded.
-
-A GPU dispatch cannot be cancelled. A runaway kernel therefore stalls the GPU once per load of the
-plugin, for as long as that one frame takes, and every other effect waits for it. In the browser the app
-cannot wait for the GPU, so there plugin GPU work has no time limit.
+A plugin's GPU work has no time limit of its own. A GPU dispatch cannot be cancelled, so a kernel that runs
+for seconds stalls the GPU for as long as that frame takes, and every other effect waits for it. The
+operating system's GPU watchdog and the app's 10 second readback deadline are the only limits.
 
 ## Draw passes
 
@@ -242,7 +238,8 @@ own. Mix host kernel passes and plugin passes freely in one plan.
 | `GpuPass::convolve(src, out, Taps::Full { width, weights })` | A full kernel, odd sides up to 31, row by row. |
 | `GpuPass::warp(src, displacement, out, [ax, ay])` | Each pixel read from `src` at its position plus `ax` times the red and `ay` times the green of `displacement`, bilinear. |
 | `GpuPass::matrix(src, out, rows)` | A 4×4 colour matrix: output channel `i` is `rows[i]` dotted with the input pixel. |
-| `GpuPass::to_linear(src, out)`, `GpuPass::to_srgb(src, out)` | The sRGB transfer curve on red, green and blue as they are (no division by alpha), alpha kept. Negative values mirror around zero and values above 1 continue the curve. |
+| `GpuPass::to_linear(src, out)`, `GpuPass::to_srgb(src, out)` | The sRGB transfer curve on red, green and blue as they are (no division by alpha), alpha kept. Negative values mirror around zero and values above 1 continue the curve; results saturate at 2^126. |
+| `GpuPass::transfer(src, out, to, negatives)` | The same curve towards `Encoding::Linear` or `Encoding::Srgb`, with `Negatives::Mirror` as above or `Negatives::Linear`, which continues the straight segment through zero (`x / 12.92`, `x * 12.92`). |
 | `GpuPass::brightness_curve(src, out, measure, curve, range)` | Each pixel's colour scaled so that its brightness `m` becomes `curve(m)`, hue and alpha kept. `measure` is `Measure::MaxChannel` (the largest of red, green and blue) or `Measure::Luma` (Rec. 709). Entry `i` of `n` holds the output for `m = range * i / (n - 1)`; past `range` the last segment continues. A pixel with no brightness becomes black. Threshold, soft knee and highlight or shadow selection are curves. |
 | `GpuPass::dither(src, out, seed, origin)` | Triangular noise of at most one 8-bit level on red, green and blue, the same for a seed and a pixel position minus `origin` on the CPU and the GPU. Values at or beyond 0 and 1 are left exact. |
 | `GpuPass::light_alpha(src, out)` | Alpha raised to the brightest colour channel, at most 1, so light added onto transparent pixels stays visible as valid premultiplied colour. |
@@ -255,13 +252,14 @@ Rules shared by all of them:
   and `blend_images` and `warp` an `aux` of that size too. `resample` maps any size to any size, shrinking
   at most 64 times in one pass.
 - The `BlendMode`s are `Over` (premultiplied over), `Add`, `Subtract`, `Multiply`, `Screen`, `Overlay`,
-  `Darken`, `Lighten` and `Difference`. All but `Over` work channel by channel, alpha included.
+  `Darken`, `Lighten`, `Difference` and `ScreenHdr` (`base + top * (1 - clamp(base, 0, 1))`). All but
+  `Over` work channel by channel, alpha included.
 - `curves` works on straight colour: it divides by alpha, looks the colour up, and multiplies by the
   alpha it looked up. Inputs outside 0 to 1 take the end entries. `matrix` works on the premultiplied
   values as they are.
 - A pass's `floats`, `uints` and `reach` are ignored; the app knows what each kernel reads.
-- `blend_images`, `curves`, `matrix`, `to_linear`, `to_srgb`, `brightness_curve`, `dither` and
-  `light_alpha` are pointwise: each output pixel depends only on the same pixel of its inputs. A pointwise
+- `blend_images`, `curves`, `matrix`, `to_linear`, `to_srgb`, `transfer`, `brightness_curve`, `dither`
+  and `light_alpha` are pointwise: each output pixel depends only on the same pixel of its inputs. A pointwise
   pass may write the image it reads, as in `GpuPass::matrix(work, work, rows)`.
 - Consecutive pointwise passes of one size run as one loop over the frame on the CPU and one shader on the
   GPU. An image they write that no later pass reads is never stored. The loop ends before a pass that would
@@ -272,14 +270,17 @@ Rules shared by all of them:
 `plan.validate` checks each kernel's fields and names the pass and the field it refuses:
 `pass 2 (blur): `radius` is [600.0, 2.0]; each axis must be 0 to 512`.
 
-An effect with no WGSL runs its plans on the GPU too when its layout at the default settings gives a plan
-made only of host kernels; the app asks for that layout when the plugin loads. An effect whose plans name
-its own kernels gives WGSL with `.shader(..)`.
+An effect with no WGSL runs a plan on the GPU too when that plan is made only of host kernels. The app
+decides per frame: at settings where the layout gives no plan, or a plan naming the effect's own kernels,
+the frame renders on the CPU. Once the effect has given such a plan (at the default settings when the
+plugin loads, or at any later frame), the app offers it to the GPU; until then it renders on the CPU, so
+when the defaults give no such plan, the first frame at settings that do renders on the CPU. An effect
+whose plans name its own kernels gives WGSL with `.shader(..)`.
 
 Lumen Glow (`plugins/lumen-glow`) is made only of host kernels and has no WGSL and no `pass` method:
-`to_linear` and a `brightness_curve` soft knee, `resample` passes down a pyramid, a separable `convolve`,
-`matrix` and `blend_images` per level, and one fused composite of `to_linear`, `matrix`,
-`brightness_curve`, `blend_images`, `to_srgb`, `dither` and `light_alpha`.
+`transfer` to linear and a `brightness_curve` soft knee, `resample` passes down a pyramid, a separable
+`convolve`, `matrix` and `blend_images` per level, and one fused composite of `transfer`, `matrix`,
+`brightness_curve`, `blend_images`, `transfer` back to sRGB, `dither` and `light_alpha`.
 
 ## The WGSL side
 
