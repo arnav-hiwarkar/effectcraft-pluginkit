@@ -1,12 +1,13 @@
 use craft_plugin::prelude::*;
 
 #[derive(Default)]
-struct {{Ident}} {
+struct NullPanel {
     added: u32,
     selected: usize,
+    error: Option<String>,
 }
 
-impl Panel for {{Ident}} {
+impl Panel for NullPanel {
     fn ui(&mut self, ui: &mut Ui) {
         if let Some(AppEvent::Selection { layers, .. }) = ui.on(Topic::Selection) {
             self.selected = layers.len();
@@ -14,18 +15,21 @@ impl Panel for {{Ident}} {
         ui.heading("{{Title}}");
         ui.label(&format!("{} layers selected", self.selected));
         if ui.button("Add Null") {
-            self.added += 1;
-            match host::command("layer.newNull", json!({ "name": format!("{{Title}} {}", self.added) })) {
-                Ok(_) => {}
-                Err(error) => log!(error, "could not add a null: {error}"),
+            let name = format!("{{Title}} {}", self.added + 1);
+            match host::command("layer.newNull", json!({ "name": name })) {
+                Ok(_) => (self.added, self.error) = (self.added + 1, None),
+                Err(error) => self.error = Some(format!("Could not add a null: {error}")),
             }
         }
         ui.label(&format!("{} nulls added", self.added));
+        if let Some(error) = &self.error {
+            ui.error(error);
+        }
     }
 }
 
 fn plugin() -> Plugin {
-    Plugin::new().panel("{{name}}", "{{Title}}", {{Ident}}::default())
+    Plugin::new().panel("{{name}}", "{{Title}}", NullPanel::default())
 }
 
 craft_plugin::export!(plugin);

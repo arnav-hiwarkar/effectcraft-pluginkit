@@ -11,12 +11,26 @@ use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 
 use crate::host::{Host, Origin};
-use crate::journal::LogLine;
+use crate::journal::{LogLine, LogPage};
 use crate::kernels::{self, Image, Step};
 use crate::registry::Bundle;
 use crate::runtime::Engine;
 
 const MIN_BAND_ROWS: usize = 64;
+
+fn plain_id(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+pub fn validate(manifest: &Manifest, contributions: &Contributions) -> Result<(), String> {
+    if manifest.id.starts_with("ec.") {
+        return Err("plugin ids starting with `ec.` are reserved for built-in effects".into());
+    }
+    match contributions.effects.iter().find(|e| !plain_id(&e.id)) {
+        Some(effect) => Err(format!("effect id `{}` may only use lower case letters, digits, `-` and `_`", effect.id)),
+        None => Ok(()),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum PluginError {
@@ -341,7 +355,11 @@ impl Plugin {
     }
 
     pub fn logs(&self, after: u64) -> Vec<LogLine> {
-        self.engine.journal().after(after)
+        self.engine.journal().page(after, None).lines
+    }
+
+    pub fn log_page(&self, after: u64, load: Option<u64>) -> LogPage {
+        self.engine.journal().page(after, load)
     }
 
     fn exchange<R: DeserializeOwned>(&self, call: &Call, io: Io, host: &mut dyn Host) -> Result<R, PluginError> {

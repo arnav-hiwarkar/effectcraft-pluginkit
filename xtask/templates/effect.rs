@@ -7,9 +7,9 @@ params! {
     }
 }
 
-struct {{Ident}};
+struct Tint;
 
-impl Effect for {{Ident}} {
+impl Effect for Tint {
     fn spec(&self) -> EffectSpec {
         EffectSpec::new("{{name}}", "{{Title}}", "Color Correction").params(Settings::params())
     }
@@ -28,7 +28,7 @@ impl Effect for {{Ident}} {
 }
 
 fn plugin() -> Plugin {
-    Plugin::new().effect({{Ident}})
+    Plugin::new().effect(Tint)
 }
 
 craft_plugin::export!(plugin);
@@ -47,6 +47,6 @@ mod tests {
     fn zero_amount_leaves_every_pixel_as_it_was() {
         let plugin = TestPlugin::of(super::plugin);
         let render = plugin.render("{{name}}").set("amount", 0.0);
-        assert_eq!(render.run().unwrap(), render.source());
+        assert!(render.run().unwrap() == render.source(), "an amount of 0 changed the picture");
     }
 }

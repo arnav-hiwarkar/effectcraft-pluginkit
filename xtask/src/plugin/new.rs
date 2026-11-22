@@ -1,7 +1,5 @@
 use std::path::Path;
 
-use super::USAGE;
-
 const TEMPLATE_CARGO: &str = include_str!("../../templates/Cargo.toml");
 const TEMPLATE_MANIFEST: &str = include_str!("../../templates/plugin.json");
 
@@ -10,12 +8,14 @@ pub(super) struct Kind {
     lib: &'static str,
     permissions: &'static [&'static str],
     description: &'static str,
+    renders: bool,
     next: &'static str,
 }
 
 pub(super) const KINDS: [Kind; 5] = [
     Kind {
         name: "effect",
+        renders: true,
         lib: include_str!("../../templates/effect.rs"),
         permissions: &[],
         description: "tints the layer",
@@ -23,6 +23,7 @@ pub(super) const KINDS: [Kind; 5] = [
     },
     Kind {
         name: "gpu-effect",
+        renders: true,
         lib: include_str!("../../templates/gpu-effect.rs"),
         permissions: &[],
         description: "tints the layer with a GPU kernel and the same pass on the CPU",
@@ -30,6 +31,7 @@ pub(super) const KINDS: [Kind; 5] = [
     },
     Kind {
         name: "panel",
+        renders: false,
         lib: include_str!("../../templates/panel.rs"),
         permissions: &["document.write"],
         description: "a panel that follows the selection and adds nulls",
@@ -37,6 +39,7 @@ pub(super) const KINDS: [Kind; 5] = [
     },
     Kind {
         name: "tool",
+        renders: false,
         lib: include_str!("../../templates/tool.rs"),
         permissions: &["document.write"],
         description: "a viewer tool that drops a null where you click",
@@ -44,6 +47,7 @@ pub(super) const KINDS: [Kind; 5] = [
     },
     Kind {
         name: "task",
+        renders: false,
         lib: include_str!("../../templates/task.rs"),
         permissions: &["document.read"],
         description: "measures the comp's brightness in a background task with progress",
@@ -87,17 +91,26 @@ pub(super) fn generate(name: &str, kind: &Kind) -> Result<Vec<(&'static str, Str
         ("{{name}}", name.to_string()),
         ("{{snake}}", name.replace('-', "_")),
         ("{{Title}}", title.clone()),
-        ("{{Ident}}", words.concat()),
         ("{{permissions}}", permissions),
         ("{{description}}", format!("{title}: {}.", kind.description)),
     ];
     let fill = |template: &str| substitutions.iter().fold(template.to_string(), |text, (key, value)| text.replace(key, value));
-    Ok(vec![("Cargo.toml", fill(TEMPLATE_CARGO)), ("plugin.json", fill(TEMPLATE_MANIFEST)), ("src/lib.rs", fill(kind.lib)), ("next", fill(kind.next))])
+    let mut next = vec!["  test it:      cargo test --manifest-path plugins/{{name}}/Cargo.toml"];
+    if kind.renders {
+        next.push("  look at it:   cargo xtask plugin render plugins/{{name}}");
+    }
+    next.extend([
+        "  check it:     cargo xtask plugin check plugins/{{name}}",
+        "  run it live:  cargo xtask plugin dev plugins/{{name}}   (in a second terminal; start the app in the first with: cargo run -p effectcraft -- --control 9877)",
+    ]);
+    let next = format!("{}\n  then {}", next.join("\n"), kind.next);
+    Ok(vec![("Cargo.toml", fill(TEMPLATE_CARGO)), ("plugin.json", fill(TEMPLATE_MANIFEST)), ("src/lib.rs", fill(kind.lib)), ("next", fill(&next))])
 }
 
 pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
-    let name = super::positional(args, &["--kind"]).ok_or(USAGE)?;
-    let kind = kind(super::option(args, "--kind").unwrap_or("effect"))?;
+    let flags = super::Flags::parse(args, &["--kind"], &[])?;
+    let name = flags.positional;
+    let kind = kind(flags.one("--kind").unwrap_or("effect"))?;
     let files = generate(name, kind)?;
     let dir = root.join("plugins").join(name);
     if dir.exists() {
@@ -115,10 +128,7 @@ pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
         std::fs::write(&target, text).map_err(io)?;
     }
     println!("made plugins/{name} from the {} template", kind.name);
-    println!("  test it:      cargo test --manifest-path plugins/{name}/Cargo.toml");
-    println!("  look at it:   cargo xtask plugin render plugins/{name}");
-    println!("  run it live:  cargo xtask plugin dev plugins/{name}   (with the app started by: cargo run -p effectcraft -- --control 9877)");
-    println!("  then {next}");
+    println!("{next}");
     Ok(())
 }
 
@@ -138,10 +148,37 @@ mod tests {
             let manifest: serde_json::Value = serde_json::from_str(&files["plugin.json"]).unwrap();
             assert_eq!(manifest["permissions"], serde_json::json!(kind.permissions), "{}", kind.name);
         }
-        let effect: BTreeMap<_, _> = generate("soft-glow", kind("effect").unwrap()).unwrap().into_iter().collect();
-        assert!(effect["src/lib.rs"].contains("struct SoftGlow;"));
         let gpu: BTreeMap<_, _> = generate("soft-glow", kind("gpu-effect").unwrap()).unwrap().into_iter().collect();
         assert!(gpu["src/lib.rs"].contains("fn soft_glow_tint("));
+    }
+
+    fn type_names(lib: &str) -> Vec<String> {
+        lib.split("struct ").skip(1).map(|rest| rest.split(|c: char| !c.is_alphanumeric()).next().unwrap_or_default().to_string()).collect()
+    }
+
+    #[test]
+    fn the_types_a_template_declares_do_not_depend_on_the_plugin_name() {
+        for kind in &KINDS {
+            let lib = |name: &str| generate(name, kind).unwrap().into_iter().find(|(path, _)| *path == "src/lib.rs").unwrap().1;
+            for name in ["settings", "panel", "plugin", "tint", "null-panel"] {
+                assert_eq!(type_names(&lib(name)), type_names(&lib("a")), "{} {name}", kind.name);
+            }
+        }
+    }
+
+    #[test]
+    fn only_an_effect_offers_to_render_and_every_kind_offers_to_test_check_and_run_live() {
+        for kind in &KINDS {
+            let next = generate("soft-glow", kind).unwrap().into_iter().find(|(path, _)| *path == "next").unwrap().1;
+            assert_eq!(next.contains("cargo xtask plugin render plugins/soft-glow"), kind.name.ends_with("effect"), "{}", kind.name);
+            for command in [
+                "cargo test --manifest-path plugins/soft-glow/Cargo.toml",
+                "cargo xtask plugin check plugins/soft-glow",
+                "cargo xtask plugin dev plugins/soft-glow",
+            ] {
+                assert!(next.contains(command), "{}: {next}", kind.name);
+            }
+        }
     }
 
     #[test]

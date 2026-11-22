@@ -101,9 +101,7 @@ fn load(bundle: &Bundle, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Res
     let mut hasher = DefaultHasher::new();
     (&bundle.manifest.version, &bytes).hash(&mut hasher);
     let plugin = Plugin::load(bundle, grants, data_dir.clone(), Limits::default()).map_err(|e| e.to_string())?;
-    if let Some(effect) = plugin.contributions().effects.iter().find(|e| !plain_id(&e.id)) {
-        return Err(format!("effect id `{}` may only use lower case letters, digits, `-` and `_`", effect.id));
-    }
+    craft_plugin_host::validate(&bundle.manifest, plugin.contributions())?;
     let loaded = Loaded { bundle: bundle.clone(), plugin, data_dir, revision: hasher.finish(), render_errors: Mutex::new(BTreeMap::new()) };
     Ok(Arc::new(loaded))
 }
@@ -210,19 +208,8 @@ fn local_effect<'a>(plugin: &str, loaded: &'a Loaded, effect_id: &str) -> Option
     loaded.plugin.contributions().effects.iter().map(|e| e.id.as_str()).find(|local| effects::effect_id(plugin, local) == effect_id)
 }
 
-fn plain_id(id: &str) -> bool {
-    !id.is_empty() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
-}
-
 fn covers(consent: &craft_plugin_host::Consent, manifest: &Manifest) -> bool {
     manifest.permissions.is_subset(&consent.granted) && (manifest.has_wasm() || consent.unsandboxed.as_ref() == Some(&manifest.version))
-}
-
-fn reserved(manifest: &Manifest) -> Result<(), String> {
-    if manifest.id.starts_with("ec.") {
-        return Err("plugin ids starting with `ec.` are reserved for built-in effects".into());
-    }
-    Ok(())
 }
 
 impl Plugins {
@@ -284,7 +271,7 @@ impl Plugins {
 
     pub fn install(&self, source: &Path) -> Result<PluginInfo, String> {
         let incoming = Bundle::manifest_of(source).map_err(|e| e.to_string())?;
-        reserved(&incoming)?;
+        craft_plugin_host::validate(&incoming, &Default::default())?;
         let mut inner = self.lock();
         inner.stop(&incoming.id);
         inner.session_only.retain(|b| b.manifest.id != incoming.id);
@@ -336,7 +323,7 @@ impl Plugins {
 
     pub fn load_for_session(&self, dir: &Path) -> Result<PluginInfo, String> {
         let bundle = Bundle::open(dir).map_err(|e| e.to_string())?;
-        reserved(&bundle.manifest)?;
+        craft_plugin_host::validate(&bundle.manifest, &Default::default())?;
         if !bundle.manifest.has_wasm() {
             return Err("a native plugin runs only after it is installed and approved".into());
         }
@@ -499,7 +486,8 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
         }
         "plugin.log" => {
             let after = params.get("after").and_then(Value::as_u64).unwrap_or(0);
-            running(text("id")?).map(|loaded| json!(loaded.plugin.logs(after))).map_err(failed)
+            let load = params.get("load").and_then(Value::as_u64);
+            running(text("id")?).map(|loaded| json!(loaded.plugin.log_page(after, load))).map_err(failed)
         }
         "plugin.tasks" => {
             let waited = params.get("wait").and_then(Value::as_bool) == Some(true);

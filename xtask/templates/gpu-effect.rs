@@ -17,9 +17,9 @@ params! {
     }
 }
 
-struct {{Ident}};
+struct Tint;
 
-impl Effect for {{Ident}} {
+impl Effect for Tint {
     fn spec(&self) -> EffectSpec {
         EffectSpec::new("{{name}}", "{{Title}}", "Color Correction").params(Settings::params()).shader(KERNELS)
     }
@@ -45,7 +45,7 @@ impl Effect for {{Ident}} {
 }
 
 fn plugin() -> Plugin {
-    Plugin::new().effect({{Ident}})
+    Plugin::new().effect(Tint)
 }
 
 craft_plugin::export!(plugin);
