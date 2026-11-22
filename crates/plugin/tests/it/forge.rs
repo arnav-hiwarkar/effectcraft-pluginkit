@@ -191,3 +191,132 @@ fn a_comp_light_replaces_the_key_light_in_a_rendered_composition() {
     let comp_lit = frame(&session).data[brightest];
     assert!(comp_lit[2] > comp_lit[0] && comp_lit[2] > 0.1, "under a blue ambient comp light the same spot is blue: {comp_lit:?}");
 }
+
+struct Comp {
+    session: effectcraft_engine::Session,
+    layer: u64,
+}
+
+impl Comp {
+    fn new(size: [u32; 2]) -> Comp {
+        spec();
+        let mut session = effectcraft_host::session();
+        session.execute("comp.new", json!({"name": "Scene", "width": size[0], "height": size[1], "frameRate": 24, "duration": 2})).expect("comp.new");
+        let solid =
+            session.execute("layer.newSolid", json!({"name": "Black", "color": "#000000", "width": size[0], "height": size[1]})).expect("layer.newSolid");
+        let layer = solid["layer"].as_u64().expect("a layer id");
+        Comp { session, layer }
+    }
+
+    fn forge(&mut self, values: &[(&str, serde_json::Value)]) {
+        self.session.execute("effect.apply", json!({"layer": self.layer, "effect": EFFECT})).expect("effect.apply");
+        for (id, value) in values {
+            self.session.execute("prop.set", json!({"layer": self.layer, "path": format!("effects/#1/{id}"), "value": value})).expect("prop.set");
+        }
+    }
+
+    fn white_sphere(&mut self, size: f64) {
+        self.forge(&[
+            ("model", json!(1)),
+            ("Transform/size", json!(size)),
+            ("Material/colour", json!([1.0, 1.0, 1.0, 1.0])),
+            ("Material/specular", json!(0.0)),
+            ("Material/rim", json!(0.0)),
+            ("Lighting/ambient", json!(0.0)),
+            ("smooth", json!(false)),
+        ]);
+    }
+
+    fn frame(&self, gpu: &'static effectcraft_gpu::Gpu) -> Image {
+        let comp = self.session.active_comp_id().expect("an active comp");
+        let renderer = Renderer::new(&self.session.project, self.session.footage.as_ref(), RenderOpts { backend: Backend::Gpu, ..Default::default() });
+        renderer.with_accel(Some(gpu)).comp_frame(comp, Tick::from_seconds_f64(0.0))
+    }
+}
+
+fn luminance(pixel: &[f32; 4]) -> f64 {
+    f64::from(0.2126 * pixel[0] + 0.7152 * pixel[1] + 0.0722 * pixel[2])
+}
+
+fn mean_luminance(image: &Image, inside: impl Fn(u32, u32) -> bool) -> f64 {
+    let (mut sum, mut count) = (0.0, 0usize);
+    for y in 0..image.height {
+        for x in 0..image.width {
+            if inside(x, y) {
+                sum += luminance(&image.data[(y * image.width + x) as usize]);
+                count += 1;
+            }
+        }
+    }
+    sum / count.max(1) as f64
+}
+
+fn sphere_lit_by(light: serde_json::Value) -> Option<Image> {
+    let gpu = gpu()?;
+    let mut comp = Comp::new([160, 160]);
+    comp.white_sphere(50.0);
+    comp.session.execute("layer.newLight", light).expect("layer.newLight");
+    Some(comp.frame(gpu))
+}
+
+fn halves(image: &Image) -> [f64; 4] {
+    let (w, h) = (image.width, image.height);
+    [
+        mean_luminance(image, |x, _| x < w / 2),
+        mean_luminance(image, |x, _| x >= w / 2),
+        mean_luminance(image, |_, y| y < h / 2),
+        mean_luminance(image, |_, y| y >= h / 2),
+    ]
+}
+
+#[test]
+fn a_point_light_on_the_right_lights_the_right_half() {
+    let Some(image) = sphere_lit_by(json!({"kind": "Point", "name": "Right", "position": [400.0, 80.0, 0.0]})) else { return };
+    let [left, right, _, _] = halves(&image);
+    assert!(right > left + 0.05, "right {right:.3} against left {left:.3}");
+}
+
+#[test]
+fn a_point_light_above_lights_the_top_half() {
+    let Some(image) = sphere_lit_by(json!({"kind": "Point", "name": "Above", "position": [80.0, -240.0, 0.0]})) else { return };
+    let [_, _, top, bottom] = halves(&image);
+    assert!(top > bottom + 0.05, "top {top:.3} against bottom {bottom:.3}");
+}
+
+#[test]
+fn a_point_light_in_front_lights_the_sphere_and_one_behind_does_not() {
+    let in_front = sphere_lit_by(json!({"kind": "Point", "name": "Front", "position": [80.0, 80.0, -400.0]}));
+    let behind = sphere_lit_by(json!({"kind": "Point", "name": "Behind", "position": [80.0, 80.0, 400.0]}));
+    let (Some(in_front), Some(behind)) = (in_front, behind) else { return };
+    let disc = |x: u32, y: u32| (f64::from(x) - 80.0).powi(2) + (f64::from(y) - 80.0).powi(2) < 40.0f64.powi(2);
+    let (front, back) = (mean_luminance(&in_front, disc), mean_luminance(&behind, disc));
+    assert!(front > 0.5 && front > back + 0.4, "front {front:.3} against behind {back:.3}");
+}
+
+#[test]
+fn a_spot_light_lights_only_where_it_points_and_inside_its_cone() {
+    let at_sphere = sphere_lit_by(json!({"kind": "Spot", "name": "At", "position": [400.0, 80.0, 0.0], "poi": [80.0, 80.0, 0.0], "coneAngle": 60.0}));
+    let away = sphere_lit_by(json!({"kind": "Spot", "name": "Away", "position": [400.0, 80.0, 0.0], "poi": [800.0, 80.0, 0.0], "coneAngle": 60.0}));
+    let narrow = sphere_lit_by(
+        json!({"kind": "Spot", "name": "Narrow", "position": [80.0, 80.0, -400.0], "poi": [80.0, 80.0, 0.0], "coneAngle": 6.0, "coneFeather": 0.0}),
+    );
+    let (Some(at_sphere), Some(away), Some(narrow)) = (at_sphere, away, narrow) else { return };
+    let [left, right, _, _] = halves(&at_sphere);
+    assert!(right > left + 0.05, "aimed at the sphere from the right: right {right:.3} against left {left:.3}");
+    let everything = mean_luminance(&away, |_, _| true);
+    assert!(everything < 0.002, "aimed away from the sphere it is dark: {everything:.4}");
+    let distance = |x: u32, y: u32| ((f64::from(x) - 80.0).powi(2) + (f64::from(y) - 80.0).powi(2)).sqrt();
+    let (centre, edge) = (mean_luminance(&narrow, |x, y| distance(x, y) < 8.0), mean_luminance(&narrow, |x, y| (34.0..44.0).contains(&distance(x, y))));
+    assert!(centre > 0.5 && edge < 0.01, "a 6 degree cone lights the centre {centre:.3} and not the rim {edge:.3}");
+}
+
+#[test]
+fn a_parallel_light_shines_along_its_direction() {
+    let from_right = sphere_lit_by(json!({"kind": "Parallel", "name": "Right", "position": [400.0, 80.0, 0.0], "poi": [80.0, 80.0, 0.0]}));
+    let from_below = sphere_lit_by(json!({"kind": "Parallel", "name": "Below", "position": [80.0, 400.0, 0.0], "poi": [80.0, 80.0, 0.0]}));
+    let (Some(from_right), Some(from_below)) = (from_right, from_below) else { return };
+    let [left, right, _, _] = halves(&from_right);
+    assert!(right > left + 0.05, "from the right: right {right:.3} against left {left:.3}");
+    let [_, _, top, bottom] = halves(&from_below);
+    assert!(bottom > top + 0.05, "from below: bottom {bottom:.3} against top {top:.3}");
+}
