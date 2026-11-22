@@ -110,3 +110,7 @@ pub fn upload_image(key: &str, width: u32, height: u32, rgba8: &[u8]) -> Result<
     }
     call::<serde_json::Value>(&HostCall::UploadImage { key: key.into(), width, height }, rgba8).map(|_| ())
 }
+
+pub fn remove_image(key: &str) -> Result<()> {
+    call::<serde_json::Value>(&HostCall::RemoveImage { key: key.into() }, &[]).map(|_| ())
+}

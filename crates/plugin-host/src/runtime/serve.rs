@@ -163,6 +163,7 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
             plain(json!(chosen.map(|path| path.to_string_lossy().into_owned())))
         }
         HostCall::UploadImage { key, width, height } => cx.plugin.images.put(key, width, height, bulk).map(|()| (Value::Null, Bulk::None)),
+        HostCall::RemoveImage { key } => plain(json!(cx.plugin.images.remove(&key))),
         HostCall::ListFiles { root, path } => {
             let dir = resolve(cx.plugin, root, &path)?;
             let mut names: Vec<String> =

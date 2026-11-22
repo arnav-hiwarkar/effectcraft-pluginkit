@@ -39,6 +39,13 @@ impl Images {
         self.lock().images.get(key).cloned()
     }
 
+    pub fn remove(&self, key: &str) -> bool {
+        let mut inner = self.lock();
+        let Some(old) = inner.images.remove(key) else { return false };
+        inner.bytes -= old.rgba.len();
+        true
+    }
+
     pub fn put(&self, key: String, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
         if width == 0 || height == 0 || width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE {
             return Err(format!("an image is 1 to {MAX_IMAGE_SIDE} pixels on a side, not {width}x{height}"));
@@ -63,6 +70,18 @@ impl Images {
 #[cfg(test)]
 mod tests {
     use super::Images;
+
+    #[test]
+    fn removing_an_image_frees_its_bytes_for_new_uploads() {
+        let images = Images::new(32);
+        assert_eq!(images.put("a".into(), 2, 2, &[1; 16]), Ok(()));
+        assert_eq!(images.put("b".into(), 2, 2, &[2; 16]), Ok(()));
+        assert!(images.put("c".into(), 2, 2, &[3; 16]).is_err());
+        assert!(images.remove("a"));
+        assert!(!images.remove("a"));
+        assert!(images.get("a").is_none());
+        assert_eq!(images.put("c".into(), 2, 2, &[3; 16]), Ok(()));
+    }
 
     #[test]
     fn the_same_key_replaces_and_the_budget_counts_the_replacement_once() {

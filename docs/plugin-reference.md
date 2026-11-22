@@ -253,6 +253,7 @@ All are in `craft_plugin::host`.
 | `audio(AudioRequest { layer, start, duration, rate })`: interleaved f32 samples of the active comp's mix, or of one layer, with the channel count (2). Rates 1000 to 192000 Hz, at most 2^25 sample frames per call. Refused inside an effect. | `document.read` |
 | `pick_file(PickFile { save, title, extensions })`: the app's file dialog, `Some(path)` or `None`. The chosen path is then readable, and writable when `save` is set, through `Root::User` for the rest of the session. Panels and commands only. Refused in headless runs. | None |
 | `upload_image(key, width, height, rgba8)`: stores an image for `ui.image` and `c.image` | None |
+| `remove_image(key)`: removes an uploaded image and frees its share of the 256 MiB image budget | None |
 
 A plugin may run the document commands (`layer.*`, `comp.*`, `prop.*`, `keys.*`, `effect.*`, `mask.*`,
 `text.*`, `shape.*`, and the other families in `DOCUMENT_FAMILIES` in `crates/plugin/src/gate.rs`) and the

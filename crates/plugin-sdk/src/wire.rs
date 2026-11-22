@@ -687,6 +687,7 @@ pub enum HostCall {
     UploadImage { key: String, width: u32, height: u32 },
     ParamsAt { time: f64 },
     CacheHas { key: String },
+    RemoveImage { key: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
