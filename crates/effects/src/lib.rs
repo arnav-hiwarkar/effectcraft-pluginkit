@@ -881,6 +881,7 @@ pub fn lookup(name_or_id: &str) -> Option<&'static EffectSpec> {
 pub fn default_value(ps: &ParamSpec, layer_size: [f64; 2]) -> Value {
     match (&ps.ui, &ps.default) {
         (ParamUi::Point, Value::Vec2(f)) => Value::Vec2([f[0] * layer_size[0], f[1] * layer_size[1]]),
+        (ParamUi::Point3, Value::Vec3(f)) => Value::Vec3([f[0] * layer_size[0], f[1] * layer_size[1], f[2]]),
         _ => ps.default.clone(),
     }
 }

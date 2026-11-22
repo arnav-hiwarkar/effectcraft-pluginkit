@@ -49,9 +49,9 @@ fn build(model: usize) -> Mesh {
 }
 
 fn position(cx: &Cx) -> [f32; 3] {
-    let [x, y] = cx.point("Transform/position");
+    let [x, y, z] = cx.point3("Transform/position");
     let scale = cx.scale.max(1e-9);
-    [((x - cx.offset[0]) / scale) as f32, ((y - cx.offset[1]) / scale) as f32, cx.f("Transform/depth") as f32]
+    [((x - cx.offset[0]) / scale) as f32, ((y - cx.offset[1]) / scale) as f32, (z / scale) as f32]
 }
 
 fn replicator(cx: &Cx) -> Replicator {
@@ -118,8 +118,7 @@ impl Effect for Forge {
             .group(
                 "Transform",
                 [
-                    Param::point("position", "Position", [0.5, 0.5]),
-                    Param::slider("depth", "Depth", 0.0, -8000.0..=8000.0),
+                    Param::point3("position", "Position", [0.5, 0.5, 0.0]),
                     Param::angle("rotation_x", "X Rotation", 20.0),
                     Param::angle("rotation_y", "Y Rotation", 30.0),
                     Param::angle("rotation_z", "Z Rotation", 0.0),

@@ -360,8 +360,7 @@ fn aligned_centres(camera: Option<serde_json::Value>, at: [f64; 3]) -> Option<([
     plugin.forge(&[
         ("model", json!(1)),
         ("Transform/size", json!(3.0)),
-        ("Transform/position", json!([at[0], at[1]])),
-        ("Transform/depth", json!(at[2])),
+        ("Transform/position", json!(at)),
         ("Lighting/ambient", json!(100.0)),
         ("show_layer", json!(false)),
     ]);
@@ -378,6 +377,15 @@ fn forge_3d_lines_up_with_a_3d_layer_under_a_moved_camera() {
     let camera = json!({"name": "Off axis", "type": "twoNode", "position": [60.0, 20.0, -450.0], "poi": [190.0, 110.0, 80.0], "zoom": 400.0});
     let Some(centres) = aligned_centres(Some(camera), [210.0, 70.0, 140.0]) else { return };
     assert_within_two_pixels(centres, "a moved and rotated camera");
+}
+
+#[test]
+fn forge_3d_starts_at_the_centre_of_its_layer() {
+    let Some(gpu) = gpu() else { return };
+    let mut comp = Comp::new([120, 80]);
+    comp.forge(&[("model", json!(1)), ("Transform/size", json!(10.0)), ("show_layer", json!(false))]);
+    let [x, y] = centre_of_coverage(&comp.frame(gpu));
+    assert!((x - 60.0).abs() < 0.5 && (y - 40.0).abs() < 0.5, "the default position draws at ({x:.2}, {y:.2}), the layer centre is (60, 40)");
 }
 
 #[test]
