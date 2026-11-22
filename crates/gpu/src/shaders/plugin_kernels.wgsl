@@ -75,9 +75,9 @@ fn craft_resampled(t: texture_2d<f32>, p: vec2<i32>, scale: vec2<f32>, bicubic: 
         }
         sum += row * wy;
     }
-    var c = sum / (total.x * total.y);
+    let c = sum / (total.x * total.y);
     if (bicubic) {
-        c = max(c, vec4<f32>(0.0));
+        return select(vec4<f32>(0.0), max(c, vec4<f32>(0.0)), c.a > 0.0);
     }
     return c;
 }

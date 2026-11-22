@@ -125,7 +125,11 @@ fn reference_resample(src: &[Pixel], src_size: [u32; 2], filter: Filter, scale: 
                     (0..4).for_each(|c| sum[c] += p[c] * wx * wy);
                 }
             }
-            out.push(if filter == Filter::Bicubic { sum.map(|v| v.max(0.0)) } else { sum });
+            out.push(match filter {
+                Filter::Bicubic if sum[3] <= 0.0 => [0.0; 4],
+                Filter::Bicubic => sum.map(|v| v.max(0.0)),
+                Filter::Bilinear => sum,
+            });
         }
     }
     out
@@ -431,4 +435,12 @@ fn a_warp_that_lands_outside_the_image_or_overflows_reads_clear() {
     assert_eq!(warp([f32::NAN, 0.0, 0.0, 0.0]), [0.0; 4]);
     assert_eq!(warp([-0.5, 0.0, 0.0, 0.0]), [0.0; 4]);
     assert_eq!(warp([0.25, 0.0, 0.0, 0.0]), [0.25, 0.125, 0.0625, 0.5]);
+}
+
+#[test]
+fn bicubic_resampling_clears_a_pixel_whose_alpha_filters_to_nothing() {
+    let src = [[0.0; 4], [1.0 / 16.0, 0.0, 0.0, 1.0 / 16.0], [0.0, 0.0, 0.0, 1.0]];
+    let got = host(HostKernel::Resample { filter: Filter::Bicubic, scale: Some([0.5, 1.0]) }, &src, [3, 1], None, [6, 1]);
+    assert_eq!(got[1], [0.0; 4]);
+    assert!(got.iter().all(|p| p[3] > 0.0 || *p == [0.0; 4]), "{got:?}");
 }

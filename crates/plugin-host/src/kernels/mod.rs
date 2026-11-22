@@ -239,7 +239,7 @@ fn resample(src: Image, filter: Filter, scale: [f32; 2], size: [u32; 2], out: &m
                 row.iter_mut().zip(&across[from * width..(from + 1) * width]).for_each(|(o, p)| mul_add(o, p, *w));
             }
             if clamp {
-                row.iter_mut().flatten().for_each(|v| *v = v.max(0.0));
+                row.iter_mut().for_each(|p| *p = if p[3] > 0.0 { p.map(|v| v.max(0.0)) } else { CLEAR });
             }
         },
     );
