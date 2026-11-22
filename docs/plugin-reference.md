@@ -415,7 +415,7 @@ only when the user edited it.
 
 `ui.canvas(key, [width, height], |c| …)` gives a drawing surface with `line`, `bezier`, `rect`, `circle`,
 `polygon` (filled; concave shapes fill correctly, up to 2048 points, and more points are filled as a convex
-shape), `image` and `text`, in canvas-local pixels. A pointer event has a phase of
+shape; repeated points count once, and an outline that crosses itself draws nothing), `image` and `text`, in canvas-local pixels. A pointer event has a phase of
 `Hover`, `Down`, `Drag` or `Up`, the `modifiers` held (`shift`, `alt`, `command`) and the `scroll` delta. A drag keeps reporting positions after the pointer leaves the
 canvas. Colours are theme tokens (`Paint::Text`, `Paint::Accent`, `Paint::Weak`, `Paint::Surface`, …)
 or `Paint::Rgba`.
