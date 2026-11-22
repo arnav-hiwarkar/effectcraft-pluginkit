@@ -49,7 +49,8 @@ pub enum Permission {
 }
 
 impl Permission {
-    pub const ALL: [Permission; 5] = [Permission::DocumentRead, Permission::DocumentWrite, Permission::FilesRead, Permission::FilesWrite, Permission::Clipboard];
+    pub const ALL: [Permission; 5] =
+        [Permission::DocumentRead, Permission::DocumentWrite, Permission::FilesRead, Permission::FilesWrite, Permission::Clipboard];
 
     pub fn name(self) -> &'static str {
         match self {

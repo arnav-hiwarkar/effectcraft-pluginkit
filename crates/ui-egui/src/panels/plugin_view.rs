@@ -148,7 +148,7 @@ fn not_running(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pa
 }
 
 pub(crate) fn draw(ui: &mut egui::Ui, widgets: &[Widget], tokens: &Tokens, auto: &mut Registry, scope: &str, source: Source) -> Vec<UiEvent> {
-    let mut renderer = Renderer { tokens, auto, scope, source, events: Vec::new(), last: None };
+    let mut renderer = Renderer { tokens, auto, scope, source, events: Vec::new(), last: None, labels: 0 };
     renderer.all(ui, widgets);
     renderer.events
 }
@@ -160,6 +160,7 @@ struct Renderer<'a> {
     source: Source<'a>,
     events: Vec<UiEvent>,
     last: Option<egui::Response>,
+    labels: u32,
 }
 
 fn plugin_id(widget: &Widget) -> Option<u64> {
@@ -250,11 +251,10 @@ impl Renderer<'_> {
 
     fn widget(&mut self, ui: &mut egui::Ui, widget: &Widget) {
         match widget {
-            Widget::Label { id, text, style } => {
+            Widget::Label { text, style } => {
                 let response = ui.label(self.text(text, *style));
-                if *id != 0 {
-                    self.auto.add_response(&format!("{}.{id}", self.scope), &response, text);
-                }
+                self.auto.add_response(&format!("{}.label.{}", self.scope, self.labels), &response, text);
+                self.labels += 1;
                 self.last = Some(response);
             }
             Widget::Button { id, text, enabled } => {
@@ -368,7 +368,8 @@ impl Renderer<'_> {
         if !hovered {
             return;
         }
-        let files: Vec<String> = ui.input(|i| i.raw.dropped_files.iter().map(|file| file.path().to_string_lossy().into_owned()).filter(|path| !path.is_empty()).collect());
+        let files: Vec<String> =
+            ui.input(|i| i.raw.dropped_files.iter().map(|file| file.path().to_string_lossy().into_owned()).filter(|path| !path.is_empty()).collect());
         if !files.is_empty() {
             self.emit(id, UiEventKind::Drop(Dropped::Files { paths: files }));
         }
@@ -577,7 +578,8 @@ fn pointers(ui: &egui::Ui, response: &egui::Response, rect: Rect) -> Vec<Pointer
                 _ => {}
             }
         }
-        if over && i.smooth_scroll_delta != egui::Vec2::ZERO
+        if over
+            && i.smooth_scroll_delta != egui::Vec2::ZERO
             && let Some(pos) = i.pointer.latest_pos()
         {
             out.push(make(pos, PointerPhase::Hover, i.smooth_scroll_delta));
@@ -624,7 +626,7 @@ mod tests {
         harness.get_by_label("More").click();
         harness.run();
         assert!(harness.query_by_label("Inside").is_some());
-        harness.state_mut().insert(0, Widget::Label { id: 0, text: "Name taken".into(), style: TextStyle::Error });
+        harness.state_mut().insert(0, Widget::Label { text: "Name taken".into(), style: TextStyle::Error });
         harness.run();
         assert!(harness.query_by_label("Name taken").is_some());
         assert!(harness.query_by_label("Inside").is_some());
@@ -784,7 +786,7 @@ mod tests {
 
     #[test]
     fn dropping_project_files_on_a_drop_target_sends_their_paths_with_its_id() {
-        let target = Widget::DropTarget { id: 12, children: vec![Widget::Label { id: 13, text: "Drop footage here".into(), style: TextStyle::Body }] };
+        let target = Widget::DropTarget { id: 12, children: vec![Widget::Label { text: "Drop footage here".into(), style: TextStyle::Body }] };
         let mut harness = harness(vec![target]);
         harness.run();
         let at = harness.get_all_by_value("Drop footage here").next().map(|node| node.rect().center()).unwrap_or_default();
@@ -794,5 +796,28 @@ mod tests {
         harness.drop_at(at);
         harness.run();
         assert_eq!(harness.state(), &vec![UiEvent { id: 12, kind: UiEventKind::Drop(Dropped::Files { paths: vec!["/footage/a.mov".into()] }) }]);
+    }
+
+    #[test]
+    fn plugin_labels_get_automation_ids_in_draw_order_that_hold_their_text() {
+        let tokens = Tokens::for_kind(Default::default());
+        let widgets = vec![
+            Widget::Label { text: "Ready".into(), style: TextStyle::Body },
+            Widget::Row { children: vec![Widget::Label { text: "3 keys".into(), style: TextStyle::Weak }] },
+        ];
+        let mut harness = Harness::new_ui_state(
+            move |ui, labels: &mut Vec<String>| {
+                let mut auto = Registry::default();
+                let mut images = Images::default();
+                draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin: "test", images: &mut images });
+                *labels = (0..3)
+                    .filter_map(|n| auto.find(&format!("plugin.test.panel.label.{n}")))
+                    .map(|element| format!("{} {}", element.id, element.label))
+                    .collect();
+            },
+            Vec::new(),
+        );
+        harness.run();
+        assert_eq!(harness.state(), &vec!["plugin.test.panel.label.0 Ready".to_string(), "plugin.test.panel.label.1 3 keys".to_string()]);
     }
 }

@@ -80,7 +80,11 @@ fn a_panel_gets_each_app_event_it_subscribed_to_once_with_its_contents_and_key_e
     let after_project = lines(&show(&mut app, &mut panels, &mut frame));
     assert_eq!(
         after_comp[5..],
-        [format!(r#"{{"topic":"time","comp":{second},"time":0.0}}"#), format!(r#"{{"topic":"comp","comp":{second}}}"#), r#"{"topic":"edit","layers":[]}"#.to_string()]
+        [
+            format!(r#"{{"topic":"time","comp":{second},"time":0.0}}"#),
+            format!(r#"{{"topic":"comp","comp":{second}}}"#),
+            r#"{"topic":"edit","layers":[]}"#.to_string()
+        ]
     );
     assert_eq!(after_project[8..], [r#"{"topic":"comp","comp":null}"#.to_string(), r#"{"topic":"project","path":null}"#.to_string()]);
 }

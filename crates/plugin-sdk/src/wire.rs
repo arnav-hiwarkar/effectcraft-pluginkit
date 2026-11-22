@@ -1073,12 +1073,7 @@ pub enum PointerPhase {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "w", rename_all = "snake_case")]
 pub enum Widget {
-    Label {
-        #[serde(default)]
-        id: u64,
-        text: String,
-        style: TextStyle,
-    },
+    Label { text: String, style: TextStyle },
     Button { id: u64, text: String, enabled: bool },
     Checkbox { id: u64, text: String, value: bool },
     Slider { id: u64, text: String, value: f64, min: f64, max: f64 },

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -428,7 +428,9 @@ pub fn drag_path(plugin: &str, root: craft_plugin_host::ui::Root, path: &str) ->
     let full = match root {
         Root::Bundle if plain => loaded.bundle.dir.join(relative),
         Root::Data if plain => loaded.data_dir.join(relative),
-        Root::User if relative.is_absolute() && loaded.bundle.manifest.permissions.contains(&craft_plugin_host::Permission::FilesRead) => relative.to_path_buf(),
+        Root::User if relative.is_absolute() && loaded.bundle.manifest.permissions.contains(&craft_plugin_host::Permission::FilesRead) => {
+            relative.to_path_buf()
+        }
         _ => return None,
     };
     full.is_file().then(|| full.to_string_lossy().into_owned())

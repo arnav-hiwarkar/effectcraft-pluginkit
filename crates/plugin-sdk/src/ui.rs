@@ -81,8 +81,7 @@ impl<'a> Ui<'a> {
     }
 
     fn text(&mut self, text: &str, style: TextStyle) {
-        let id = self.id(text);
-        self.widgets.push(Widget::Label { id, text: text.into(), style });
+        self.widgets.push(Widget::Label { text: text.into(), style });
     }
 
     pub fn label(&mut self, text: &str) {
@@ -563,19 +562,16 @@ mod tests {
         assert!(!ui.after("hide", 2000));
         let reply = ui.reply();
         assert_eq!(reply.topics, vec![Topic::Selection, Topic::Time]);
-        assert_eq!(
-            reply.timers,
-            vec![Timer { name: "tick".into(), ms: MIN_TIMER_MS, repeat: true }, Timer { name: "hide".into(), ms: 2000, repeat: false }]
-        );
+        assert_eq!(reply.timers, vec![Timer { name: "tick".into(), ms: MIN_TIMER_MS, repeat: true }, Timer { name: "hide".into(), ms: 2000, repeat: false }]);
     }
 
     #[test]
-    fn a_drop_target_returns_what_was_dropped_on_it_and_a_label_has_a_stable_id() {
+    fn a_drop_target_returns_what_was_dropped_on_it() {
         let widgets = frame(vec![], |ui| {
             ui.drop_target("bin", |ui| ui.label("Drop here"));
         });
         let Widget::DropTarget { id, children } = &widgets[0] else { panic!("drop target expected, got {widgets:?}") };
-        assert!(matches!(&children[0], Widget::Label { id: label, .. } if *label != 0));
+        assert_eq!(children, &vec![Widget::Label { text: "Drop here".into(), style: TextStyle::Body }]);
         let dropped = Dropped::Files { paths: vec!["/tmp/a.png".into()] };
         let mut got = None;
         frame(vec![UiEvent { id: *id, kind: UiEventKind::Drop(dropped.clone()) }], |ui| got = ui.drop_target("bin", |ui| ui.label("Drop here")).cloned());
@@ -586,7 +582,7 @@ mod tests {
     fn a_reply_from_an_older_sdk_is_a_bare_widget_list_and_reads_as_a_legacy_reply() {
         let old: PanelReply = serde_json::from_str(r#"[{"w":"label","text":"hi","style":"body"}]"#).unwrap_or_else(|e| panic!("{e}"));
         assert!(old.legacy);
-        assert_eq!(old.widgets, vec![Widget::Label { id: 0, text: "hi".into(), style: TextStyle::Body }]);
+        assert_eq!(old.widgets, vec![Widget::Label { text: "hi".into(), style: TextStyle::Body }]);
         let new: PanelReply = serde_json::from_value(serde_json::to_value(PanelReply { topics: vec![Topic::Time], ..Default::default() }).unwrap_or_default())
             .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!((new.legacy, new.topics), (false, vec![Topic::Time]));

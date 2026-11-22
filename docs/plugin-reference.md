@@ -303,6 +303,9 @@ A timer the next reply does not ask for is stopped.
 | `ui.drop_target(key, \|ui\| …) -> Option<&Dropped>` | `Dropped::Files { paths }`, `Dropped::Items { ids }` (project items) or `Dropped::Data { plugin, data }` |
 | `ui.drag_source(key, drag, \|ui\| …)` | Lets the user drag its contents. `Drag::File { root, path }` drags a file from `Root::Bundle` or `Root::Data` (or `Root::User` with `files.read`); `Drag::Data { data }` drags text to a plugin drop target |
 
+A panel's widgets have the automation ids `plugin.<plugin>.<panel>.<widget id>`, and its labels
+`plugin.<plugin>.<panel>.label.<n>` in drawing order, so the control channel can read a panel's text.
+
 Every widget takes the focus with Tab. A canvas also takes it on a click, keeps the arrow keys while it
 has it, and shows a focus ring.
 

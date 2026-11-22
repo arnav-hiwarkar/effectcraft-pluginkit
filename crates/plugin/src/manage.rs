@@ -3,8 +3,8 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Permission, Plugin, Registry, RunMode, TaskState};
 use craft_plugin_host::PluginImage;
+use craft_plugin_host::{Bundle, BundleError, Call, Limits, Manifest, Permission, Plugin, Registry, RunMode, TaskState};
 use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
 use serde_json::{Value, json};

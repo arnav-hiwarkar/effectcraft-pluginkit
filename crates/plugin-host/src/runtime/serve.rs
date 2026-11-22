@@ -109,7 +109,12 @@ impl Bulk {
 fn needs_the_app(call: &HostCall) -> bool {
     matches!(
         call,
-        HostCall::Command { .. } | HostCall::Notify { .. } | HostCall::Frame { .. } | HostCall::Audio { .. } | HostCall::ClipboardRead | HostCall::ClipboardWrite { .. }
+        HostCall::Command { .. }
+            | HostCall::Notify { .. }
+            | HostCall::Frame { .. }
+            | HostCall::Audio { .. }
+            | HostCall::ClipboardRead
+            | HostCall::ClipboardWrite { .. }
     )
 }
 

@@ -701,7 +701,9 @@ fn custom_control(
     let events = match app.plugin_ui.panels.show(&mut app.session, &scope, surface, [block.width(), budget]) {
         Ok(shown) => {
             if let Some(error) = shown.error {
-                body.label(egui::RichText::new(crate::i18n::tr_args("The plug-in control failed: {}", &[&error])).font(Tokens::ui(12.0)).color(app.tokens.text_dim));
+                body.label(
+                    egui::RichText::new(crate::i18n::tr_args("The plug-in control failed: {}", &[&error])).font(Tokens::ui(12.0)).color(app.tokens.text_dim),
+                );
             }
             if let Some(new) = shown.edited.filter(|new| *new != value && !prop.has_expression()) {
                 let merge = if held { merge } else { gesture_key(ui, gesture, true) };

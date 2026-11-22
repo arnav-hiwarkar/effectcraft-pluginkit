@@ -163,7 +163,7 @@ mod tests {
     }
 
     fn label(text: &str) -> Widget {
-        Widget::Label { id: 1, text: text.into(), style: TextStyle::Body }
+        Widget::Label { text: text.into(), style: TextStyle::Body }
     }
 
     fn reply(timers: Vec<Timer>, topics: Vec<Topic>) -> Result<PanelReply, String> {
