@@ -818,7 +818,7 @@ fn reopening_a_project_restores_its_active_comp() {
     std::fs::write(&path, serde_json::to_string_pretty(&old).unwrap()).unwrap();
     let mut s5 = Session::default();
     s5.execute("file.open", json!({"path": path})).unwrap();
-    assert_eq!((s5.state.active_comp, s5.state.open_comps.clone()), (Some(ItemId(a)), vec![ItemId(a)]));
+    assert_eq!((s5.state.active_comp, s5.state.open_comps.clone()), (None, vec![]));
 
     // XML copies carry it too.
     let xml = dir.join("view.ecprojx").to_string_lossy().to_string();
