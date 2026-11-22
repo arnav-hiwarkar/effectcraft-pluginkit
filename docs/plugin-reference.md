@@ -194,6 +194,26 @@ coordinates within this call's pixels, so subtract `frame.origin` from a full-fr
 `GpuPass::reach(n)` gives a pass the number of source rows above and below the matching source row that
 an output row reads. Without it the pass runs as one call on the CPU.
 
+## Fast maths
+
+`craft_plugin::math` holds `#[inline(always)]` `f32` functions with no tables and no library calls. Sandboxed and
+native plugins compute identical bits. Each error is the largest found by a test that sweeps the range against
+`std` in `f64`.
+
+| Function | Valid range | Largest error |
+|---|---|---|
+| `exp2(x)` | `-126..=126`, clamped | 3e-7 relative |
+| `exp(x)` | `-87..=88`, clamped | 5e-7 relative |
+| `log2(x)`, `ln(x)` | finite `x > 0`; zero, negative and subnormal give `-126` and `-87.3` | 2e-7 and 3e-7 times `max(1, abs(result))` |
+| `pow(x, y)` | finite `x >= 0`, result in `1e-37..=1e37`; `pow(0, y)` is `0` for `y > 0` | 2e-5 relative |
+| `sin(x)`, `cos(x)`, `sin_cos(x)` | `abs(x) <= 1000` | 2e-6 absolute (3e-7 within 20 radians) |
+| `atan2(y, x)` | any; `atan2(0, 0)` is `0` | 5e-6 absolute |
+| `hypot(x, y)` | `abs(x)`, `abs(y)` up to `1e18` | 1.5e-7 relative |
+| `smoothstep(e0, e1, x)` | `e0 != e1` | exact |
+| `lerp(a, b, t)` | any | exact |
+| `saturate(x)` | any; NaN stays NaN | exact |
+| `srgb_to_linear(v)`, `linear_to_srgb(v)` | any; negatives mirror around 0, values above 1 continue the curve | 3e-6 absolute over `-2..=2` |
+
 ## Panel
 
 ```rust
