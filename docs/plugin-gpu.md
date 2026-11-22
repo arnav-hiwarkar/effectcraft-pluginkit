@@ -75,12 +75,12 @@ device and the stored bytes (image sizes the GPU holds, buffer and texture byte 
 ### Time
 
 The app first waits for the GPU work queued before the effect, so that time is not counted. It then
-submits each pass of the plan on its own and waits for it. When one frame of the effect has taken more
-than 2 seconds of GPU time, the effect is stopped: Effect Controls shows an error that names the effect,
-the pass and the budget, and the effect renders on the CPU until the plugin is reloaded.
+submits the plan's passes together and waits for them. When one frame of the effect takes more than
+2 seconds of GPU time, the effect is stopped: Effect Controls shows an error that names the effect, its
+passes and the budget, and the effect renders on the CPU until the plugin is reloaded.
 
 A GPU dispatch cannot be cancelled. A runaway kernel therefore stalls the GPU once per load of the
-plugin, for as long as that one pass takes, and every other effect waits for it. In the browser the app
+plugin, for as long as that one frame takes, and every other effect waits for it. In the browser the app
 cannot wait for the GPU, so there plugin GPU work has no time limit.
 
 ## Draw passes

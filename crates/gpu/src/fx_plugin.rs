@@ -87,15 +87,15 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
                 }
             }
         };
-        if let Err(why) = clock.ran(e, id, n, &pass.kernel) {
-            if registered.gpu_stopped.set(why.clone()).is_ok() {
-                g.plugin_declined(id, &why);
-            }
-            return None;
-        }
         if let Some(out) = out {
             *images.get_mut(target)? = Some(out);
         }
+    }
+    if let Err(why) = clock.ran(e, id, &program) {
+        if registered.gpu_stopped.set(why.clone()).is_ok() {
+            g.plugin_declined(id, &why);
+        }
+        return None;
     }
     b.img = images.get_mut(OUTPUT)?.take()?;
     log::debug!("gpu {}: plugin effect {id} ran {} passes at {}x{}", g.name, program.passes.len(), frame[0], frame[1]);
@@ -135,7 +135,7 @@ impl Clock {
         Clock { budget, start: Instant::now() }
     }
 
-    fn ran(&self, e: &mut Enc, effect: &str, pass: usize, kernel: &str) -> Result<(), String> {
+    fn ran(&self, e: &mut Enc, effect: &str, program: &GpuProgram) -> Result<(), String> {
         let Some(budget) = self.budget else { return Ok(()) };
         e.submit();
         if let Some(submission) = e.last_submission() {
@@ -143,8 +143,9 @@ impl Clock {
         }
         let spent = self.start.elapsed();
         if spent > budget {
+            let kernels: Vec<&str> = program.passes.iter().map(|pass| pass.kernel.as_str()).collect();
             return Err(format!(
-                "the plugin effect {effect} stopped at pass {pass} (`{kernel}`): its GPU work took {} ms, past the {} ms budget for one frame. It renders on the CPU until the plugin is reloaded",
+                "the plugin effect {effect} was stopped: the GPU work of one frame, passes {kernels:?}, took {} ms, past the {} ms budget. It renders on the CPU until the plugin is reloaded",
                 spent.as_millis(),
                 budget.as_millis()
             ));

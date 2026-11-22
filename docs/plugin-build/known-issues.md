@@ -30,7 +30,7 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **SDK: pointer events carry no modifier keys**, and only the last pointer event per frame reaches a canvas.
 - **SDK: `read_file` cannot tell a missing file from a failed read.**
 - **GPU: on WebGPU a bad plugin shader is not contained, and plugin GPU work has no time limit there**, because the browser build cannot wait for a submission (`Clock` in `crates/gpu/src/fx_plugin.rs`).
-- **GPU: a runaway plugin kernel stalls the GPU once per load.** A wgpu dispatch cannot be cancelled, so the 2 s budget is checked after each pass finishes. The first frame that passes it stops the effect, which then renders on the CPU until the plugin is reloaded; that one pass still runs to its end (or until the OS GPU watchdog or the 10 s readback limit), and every other GPU effect waits for it.
+- **GPU: a runaway plugin kernel stalls the GPU once per load.** A wgpu dispatch cannot be cancelled, so the 2 s budget is checked when a frame's plan has finished. The first frame that passes it stops the effect, which then renders on the CPU until the plugin is reloaded; that one frame still runs to its end (or until the OS GPU watchdog or the 10 s readback limit), and every other GPU effect waits for it. The error lists the plan's passes but cannot say which one was slow.
 - **UI: plugin labels have no automation id**, so the control channel cannot read a panel's text. A click made just before a tab is hidden is delivered when it reopens.
 
 ## From the Opus review, not fixed

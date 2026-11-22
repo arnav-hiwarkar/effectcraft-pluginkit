@@ -201,7 +201,7 @@ fn a_frame_past_the_budget_stops_the_registration_until_it_is_registered_again()
     g.ctx.set_plugin_gpu_budget(std::time::Duration::ZERO);
     assert!(run_sized(id, [64, 64]).is_none(), "a 64x64 pass past a zero budget is stopped");
     let stopped = dynamic::get(id).and_then(|r| r.gpu_stopped.get().cloned()).expect("the registration is stopped");
-    assert!(stopped.contains(id) && stopped.contains("pass 0 (`tint`)") && stopped.contains("past the 0 ms budget"), "{stopped}");
+    assert!(stopped.contains(id) && stopped.contains(r#"passes ["tint"]"#) && stopped.contains("past the 0 ms budget"), "{stopped}");
     assert_eq!(g.ctx.plugin_reports(id), vec![stopped]);
     g.ctx.set_plugin_gpu_budget(std::time::Duration::from_secs(2));
     assert!(!g.supports_effect(id), "the next frame is rendered on the CPU");
