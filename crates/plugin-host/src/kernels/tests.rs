@@ -125,7 +125,11 @@ fn reference_resample(src: &[Pixel], src_size: [u32; 2], filter: Filter, scale: 
                     (0..4).for_each(|c| sum[c] += p[c] * wx * wy);
                 }
             }
-            out.push(if filter == Filter::Bicubic { sum.map(|v| v.max(0.0)) } else { sum });
+            out.push(match filter {
+                Filter::Bicubic if sum[3] <= 0.0 => [0.0; 4],
+                Filter::Bicubic => sum.map(|v| v.max(0.0)),
+                Filter::Bilinear => sum,
+            });
         }
     }
     out
@@ -397,19 +401,107 @@ fn on_the_gpu_a_resample_read_only_by_the_next_fused_loop_is_sampled_inside_it()
         .pass(GpuPass::resample(half, up, Filter::Bicubic))
         .pass(GpuPass::blend_images(GpuImage::Source, up, GpuImage::Output, BlendMode::Screen, 1.0));
     let (lowered, temps) = lower(&plan, SIZE);
-    let steps: Vec<(&str, StepImage, Option<StepImage>, Vec<u32>)> = lowered
+    let steps: Vec<(&str, StepImage, Option<StepImage>, Vec<u32>, bool)> = lowered
         .iter()
         .map(|step| match step {
-            Lowered::Host(step) => (step.entry, step.src, step.aux, step.u.clone()),
+            Lowered::Host(step) => {
+                (step.entry, step.src, step.aux, step.u.clone(), step.wgsl.contains("craft_resampled(aux, p, vec2<f32>(pass_f(0u), pass_f(1u)), true)"))
+            }
             Lowered::Plugin(pass) => panic!("no plugin pass in this plan: {pass:?}"),
         })
         .collect();
     assert_eq!(
         steps,
         [
-            ("craft_resample", StepImage::Plan(GpuImage::Source), None, vec![0]),
-            ("craft_pointwise", StepImage::Plan(GpuImage::Source), Some(StepImage::Plan(half)), vec![2, 1]),
+            ("craft_resample", StepImage::Plan(GpuImage::Source), None, vec![0], false),
+            ("craft_pointwise", StepImage::Plan(GpuImage::Source), Some(StepImage::Plan(half)), vec![], true),
         ]
     );
     assert!(temps.is_empty());
+}
+
+#[test]
+fn a_gaussian_too_small_to_matter_keeps_the_image() {
+    assert_eq!(blur_taps(BlurShape::Gaussian, 1e-30), vec![0.0, 1.0, 0.0]);
+    let src = [[0.5, 0.25, 0.125, 1.0]];
+    let got = host(HostKernel::Blur { shape: BlurShape::Gaussian, radius: [1e-30, 0.0] }, &src, [1, 1], None, [1, 1]);
+    assert_eq!(got, src);
+}
+
+#[test]
+fn a_warp_that_lands_outside_the_image_or_overflows_reads_clear() {
+    let src = [[0.5, 0.25, 0.125, 1.0]];
+    let warp = |displacement: Pixel| host(HostKernel::Warp { amount: [2.0, 0.0] }, &src, [1, 1], Some(&[displacement]), [1, 1])[0];
+    assert_eq!(warp([f32::MAX, 0.0, 0.0, 0.0]), [0.0; 4]);
+    assert_eq!(warp([-f32::MAX, 0.0, 0.0, 0.0]), [0.0; 4]);
+    assert_eq!(warp([f32::NAN, 0.0, 0.0, 0.0]), [0.0; 4]);
+    assert_eq!(warp([-0.5, 0.0, 0.0, 0.0]), [0.0; 4]);
+    assert_eq!(warp([0.25, 0.0, 0.0, 0.0]), [0.25, 0.125, 0.0625, 0.5]);
+}
+
+#[test]
+fn bicubic_resampling_clears_a_pixel_whose_alpha_filters_to_nothing() {
+    let src = [[0.0; 4], [1.0 / 16.0, 0.0, 0.0, 1.0 / 16.0], [0.0, 0.0, 0.0, 1.0]];
+    let got = host(HostKernel::Resample { filter: Filter::Bicubic, scale: Some([0.5, 1.0]) }, &src, [3, 1], None, [6, 1]);
+    assert_eq!(got[1], [0.0; 4]);
+    assert!(got.iter().all(|p| p[3] > 0.0 || *p == [0.0; 4]), "{got:?}");
+}
+
+#[test]
+fn a_blend_at_full_amount_is_the_blend_and_at_none_the_base() {
+    let base = [16_777_216.0, 0.5, 0.25, 1.0];
+    let blend = |mode, amount, top: Pixel| host(HostKernel::Blend { mode, amount }, &[base], [1, 1], Some(&[top]), [1, 1])[0];
+    assert_eq!(blend(BlendMode::Over, 1.0, [0.25, 0.0, 0.0, 1.0]), [0.25, 0.0, 0.0, 1.0]);
+    assert_eq!(blend(BlendMode::Over, 0.0, [f32::INFINITY, 0.0, 0.0, 1.0]), base);
+    assert_eq!(blend(BlendMode::Add, 0.0, [f32::INFINITY, 0.0, 0.0, 1.0]), base);
+}
+
+#[test]
+fn on_the_gpu_blurs_of_one_size_share_one_temporary() {
+    let mut plan = GpuPlan::new();
+    let (soft, small, smaller) = (plan.scratch(SIZE), plan.scratch([5, 4]), plan.scratch([5, 4]));
+    let mut plan = plan.pass(GpuPass::blur(GpuImage::Source, soft, [2.0; 2]));
+    for k in 0..62 {
+        let (src, out) = if k % 2 == 0 { (soft, GpuImage::Output) } else { (GpuImage::Output, soft) };
+        plan = plan.pass(GpuPass::blur(src, out, [2.0; 2]));
+    }
+    let plan = plan.pass(GpuPass::resample(soft, small, Filter::Bilinear)).pass(GpuPass::blur(small, smaller, [1.0; 2]));
+    assert_eq!(plan.validate(SIZE), Ok(()));
+    let (lowered, temps) = lower(&plan, SIZE);
+    assert_eq!(lowered.len(), 2 * 64 + 1);
+    assert_eq!(temps, vec![SIZE, [5, 4]]);
+}
+
+#[test]
+fn on_the_gpu_a_fused_loop_is_straight_line_code_whose_numbers_stay_in_its_data() {
+    let plan = |amount: f32, mode: BlendMode, curve: Vec<f32>| {
+        let mut plan = GpuPlan::new();
+        let soft = plan.scratch(SIZE);
+        plan.pass(GpuPass::brightness_curve(GpuImage::Source, soft, Measure::Luma, curve, 2.0))
+            .pass(GpuPass::blend_images(soft, GpuImage::Source, soft, mode, amount))
+            .pass(GpuPass::light_alpha(soft, GpuImage::Output))
+    };
+    let step = |plan: &GpuPlan| match lower(plan, SIZE).0.as_slice() {
+        [Lowered::Host(step)] => step.clone(),
+        other => panic!("one fused step: {other:?}"),
+    };
+    let screen = step(&plan(0.5, BlendMode::Screen, vec![0.0, 0.25, 2.0]));
+    assert_eq!(
+        screen.wgsl,
+        "@compute @workgroup_size(16, 16)
+fn craft_pointwise(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    let p = vec2<i32>(id.xy);
+    let i0 = texel(src, p);
+    let v0 = craft_brightness_curve(0u, i0);
+    let v1 = craft_amount(v0, v0 + i0 - v0 * i0, craft_data(6u));
+    let v2 = craft_light_alpha(v1);
+    store(id.xy, v2);
+}
+"
+    );
+    assert_eq!(screen.data, [1.0, 3.0, 1.0, 0.0, 0.25, 2.0, 0.5]);
+    let other_numbers = step(&plan(0.75, BlendMode::Screen, vec![0.0, 0.5, 1.0]));
+    assert_eq!((other_numbers.wgsl == screen.wgsl, other_numbers.data[6]), (true, 0.75));
+    assert!(step(&plan(0.5, BlendMode::Multiply, vec![0.0, 0.25, 2.0])).wgsl.contains("craft_amount(v0, v0 * i0, craft_data(6u))"));
 }

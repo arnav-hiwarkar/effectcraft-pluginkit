@@ -39,7 +39,11 @@ const EXT_ENTRIES: &[&str] = &["classic3d"];
 /// (the compositor's kernels, which declare `out` and helpers the effect files use).
 const BASE_WGSL: [&str; 2] = [include_str!("shaders/common.wgsl"), include_str!("shaders/kernels.wgsl")];
 
-const PLUGIN_PRELUDE: [&str; 3] = [include_str!("shaders/common.wgsl"), include_str!("shaders/plugin.wgsl"), include_str!("shaders/plugin_kernels.wgsl")];
+const PLUGIN_PRELUDE: [&str; 2] = [include_str!("shaders/common.wgsl"), include_str!("shaders/plugin.wgsl")];
+
+const HOST_KERNELS: &str = include_str!("shaders/plugin_kernels.wgsl");
+
+const MAX_HOST_MODULES: usize = 64;
 
 const MAX_PLUGIN_KERNELS: usize = 256;
 
@@ -117,15 +121,21 @@ struct PluginShader {
     reported: BTreeSet<String>,
 }
 
+struct HostModule {
+    module: Result<wgpu::ShaderModule, String>,
+    pipelines: HashMap<String, Result<wgpu::ComputePipeline, String>>,
+}
+
 struct PluginShaders {
     shaders: HashMap<String, PluginShader>,
+    host: HashMap<String, HostModule>,
     generation: u64,
     budget: std::time::Duration,
 }
 
 impl Default for PluginShaders {
     fn default() -> Self {
-        PluginShaders { shaders: HashMap::new(), generation: u64::MAX, budget: PLUGIN_GPU_BUDGET }
+        PluginShaders { shaders: HashMap::new(), host: HashMap::new(), generation: u64::MAX, budget: PLUGIN_GPU_BUDGET }
     }
 }
 
@@ -1176,10 +1186,11 @@ impl GpuContext {
     /// Waits on `submission_index` up to `timeout` in [`Self::POLL_SLICE`] increments so wgpu
     /// frees resources dropped before that submission without holding `poll_lock` for seconds at a
     /// time. A timeout simply moves on without retiring the context or its readbacks; any other
-    /// poll error retires the readbacks through the failure path.
-    pub(crate) fn poll_wait(&self, submission_index: wgpu::SubmissionIndex, timeout: std::time::Duration) {
+    /// poll error retires the readbacks through the failure path. Returns whether the wait ended
+    /// before `timeout`.
+    pub(crate) fn poll_wait(&self, submission_index: wgpu::SubmissionIndex, timeout: std::time::Duration) -> bool {
         if self.readbacks.check().is_err() {
-            return;
+            return true;
         }
         let deadline = web_time::Instant::now() + timeout;
         loop {
@@ -1199,8 +1210,11 @@ impl GpuContext {
                     true
                 }
             };
-            if done || remaining <= slice {
-                break;
+            if done {
+                return true;
+            }
+            if remaining <= slice {
+                return false;
             }
         }
     }
@@ -1648,6 +1662,28 @@ impl GpuContext {
             }
             Ok(built)
         })
+    }
+
+    pub(crate) fn host_pipeline(&self, wgsl: &str, entry: &str) -> Result<wgpu::ComputePipeline, String> {
+        let mut plugins = self.plugin_shaders.lock().map_err(|_| "the plugin shader cache is poisoned".to_string())?;
+        if !plugins.host.contains_key(wgsl) {
+            if plugins.host.len() >= MAX_HOST_MODULES {
+                plugins.host.clear();
+            }
+            let source: String = PLUGIN_PRELUDE.iter().copied().chain([HOST_KERNELS, wgsl]).collect();
+            let module = init_resource(&self.device, "host kernels", || {
+                self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("host kernels"), source: wgpu::ShaderSource::Wgsl(source.into()) })
+            });
+            plugins.host.insert(wgsl.to_string(), HostModule { module, pipelines: HashMap::new() });
+        }
+        let host = plugins.host.get_mut(wgsl).ok_or("the host kernel module was not kept")?;
+        let module = host.module.clone()?;
+        if let Some(built) = host.pipelines.get(entry) {
+            return built.clone();
+        }
+        let built = build_pipeline(&self.device, &module, &self.layout, entry);
+        host.pipelines.insert(entry.to_string(), built.clone());
+        built
     }
 
     pub(crate) fn plugin_draw_pipeline(
@@ -2327,9 +2363,24 @@ impl<'g> Enc<'g> {
         dst
     }
 
+    #[cfg(test)]
+    pub(crate) fn recorded(&self) -> usize {
+        self.pending
+    }
+
     /// The last submission of this encoder's work (what a readback after it waits for).
     pub(crate) fn last_submission(&self) -> Option<wgpu::SubmissionIndex> {
         self.last_submit.clone()
+    }
+
+    /// Drop the work recorded since the last submission.
+    pub(crate) fn discard(&mut self) {
+        if let Some((_, id)) = self.enc.take()
+            && let Ok(mut p) = self.g.pool.lock()
+        {
+            p.close(id);
+        }
+        self.pending = 0;
     }
 
     /// Submit recorded work.

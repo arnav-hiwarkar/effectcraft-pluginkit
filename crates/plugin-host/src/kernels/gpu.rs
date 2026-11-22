@@ -1,10 +1,9 @@
+use std::fmt::Write;
+
 use craft_plugin::{BlendMode, Filter, GpuImage, GpuPass, GpuPlan, HostKernel, Measure, Taps};
 
 use super::fuse::{Fused, Op, Ref, Step, live_after, steps};
 use super::{blur_taps, resample_scale};
-
-const FIRST_REGISTER: f32 = 2.0;
-const OP_HEADER: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StepImage {
@@ -21,6 +20,7 @@ pub struct GpuStep {
     pub f: Vec<f32>,
     pub u: Vec<u32>,
     pub data: Vec<f32>,
+    pub wgsl: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,7 +46,7 @@ pub fn lower(plan: &GpuPlan, frame: [u32; 2]) -> (Vec<Lowered<'_>>, Vec<[u32; 2]
         let step = &steps[at];
         at += 1;
         match step {
-            Step::Fused(fused) => lowered.push(Lowered::Host(pointwise(fused, "craft_pointwise", Vec::new()))),
+            Step::Fused(fused) => lowered.push(Lowered::Host(pointwise(fused, None, Vec::new()))),
             Step::Single(index) => {
                 let index = *index;
                 let pass = &plan.passes[index];
@@ -56,10 +56,13 @@ pub fn lower(plan: &GpuPlan, frame: [u32; 2]) -> (Vec<Lowered<'_>>, Vec<[u32; 2]
                 };
                 let (src, out) = (StepImage::Plan(pass.src), StepImage::Plan(pass.out));
                 let aux = pass.aux.map(StepImage::Plan);
-                let step = |entry, f, u, data| GpuStep { entry, src, aux, out, f, u, data };
+                let step = |entry, f, u, data| GpuStep { entry, src, aux, out, f, u, data, wgsl: String::new() };
                 let mut separable = |x: Vec<f32>, y: Vec<f32>| {
-                    let temp = StepImage::Temp(temps.len());
-                    temps.push(size(pass.out));
+                    let out_size = size(pass.out);
+                    let temp = StepImage::Temp(temps.iter().position(|known| *known == out_size).unwrap_or_else(|| {
+                        temps.push(out_size);
+                        temps.len() - 1
+                    }));
                     [
                         GpuStep { out: temp, ..step("craft_convolve_x", Vec::new(), vec![x.len() as u32], x) },
                         GpuStep { src: temp, ..step("craft_convolve_y", Vec::new(), vec![y.len() as u32], y) },
@@ -81,9 +84,10 @@ pub fn lower(plan: &GpuPlan, frame: [u32; 2]) -> (Vec<Lowered<'_>>, Vec<[u32; 2]
                     }
                     HostKernel::Warp { amount } => vec![step("craft_warp", amount.to_vec(), Vec::new(), Vec::new())],
                     pointwise_kernel => {
-                        let aux_ref = pass.aux.map(|_| Ref::Input(1));
-                        let op = Op { kernel: pointwise_kernel, src: Ref::Input(0), aux: aux_ref };
-                        vec![GpuStep { data: program(std::slice::from_ref(&op)), ..step("craft_pointwise", Vec::new(), Vec::new(), Vec::new()) }]
+                        let op = Op { kernel: pointwise_kernel, src: Ref::Input(0), aux: pass.aux.map(|_| Ref::Input(1)) };
+                        let single =
+                            Fused { passes: index..index + 1, inputs: std::iter::once(pass.src).chain(pass.aux).collect(), out: pass.out, ops: vec![op] };
+                        vec![pointwise(&single, None, Vec::new())]
                     }
                 };
                 lowered.extend(steps.into_iter().map(Lowered::Host));
@@ -99,8 +103,7 @@ fn resampled_input(plan: &GpuPlan, resample: &GpuPass, fused: &Fused, size: impl
     if live_after(&plan.passes[fused.passes.end..], resample.out) {
         return None;
     }
-    let mut step = pointwise(fused, "craft_pointwise", resample_scale(*scale, size(resample.src), size(resample.out)).to_vec());
-    step.u = vec![slot as u32 + 1, u32::from(*filter == Filter::Bicubic)];
+    let mut step = pointwise(fused, Some((slot, *filter)), resample_scale(*scale, size(resample.src), size(resample.out)).to_vec());
     if slot == 0 {
         step.src = StepImage::Plan(resample.src);
     } else {
@@ -109,50 +112,86 @@ fn resampled_input(plan: &GpuPlan, resample: &GpuPass, fused: &Fused, size: impl
     Some(step)
 }
 
-fn pointwise(fused: &Fused, entry: &'static str, f: Vec<f32>) -> GpuStep {
+fn pointwise(fused: &Fused, resampled: Option<(usize, Filter)>, f: Vec<f32>) -> GpuStep {
+    let mut wgsl = String::from("@compute @workgroup_size(16, 16)\nfn craft_pointwise(@builtin(global_invocation_id) id: vec3<u32>) {\n");
+    wgsl.push_str("    if (!inside_out(id.xy)) { return; }\n    let p = vec2<i32>(id.xy);\n");
+    for (slot, texture) in ["src", "aux"].into_iter().enumerate().take(fused.inputs.len()) {
+        let _ = match resampled {
+            Some((at, filter)) if at == slot => {
+                let bicubic = filter == Filter::Bicubic;
+                writeln!(wgsl, "    let i{slot} = craft_resampled({texture}, p, vec2<f32>(pass_f(0u), pass_f(1u)), {bicubic});")
+            }
+            _ => writeln!(wgsl, "    let i{slot} = texel({texture}, p);"),
+        };
+    }
+    let mut data = Vec::new();
+    for (k, op) in fused.ops.iter().enumerate() {
+        let (v, t) = (value(op.src), op.aux.map_or_else(|| "vec4<f32>(0.0)".to_string(), value));
+        let at = data.len();
+        let expr = match op.kernel {
+            HostKernel::Blend { mode, amount } => {
+                data.push(*amount);
+                format!("craft_amount({v}, {}, craft_data({at}u))", blended(*mode, &v, &t))
+            }
+            HostKernel::Curves { table } => {
+                data.push(table.len() as f32);
+                data.extend(table.iter().flatten());
+                format!("craft_curves({at}u, {v})")
+            }
+            HostKernel::Matrix { rows } => {
+                data.extend(rows.iter().flatten());
+                format!("craft_matrix({at}u, {v})")
+            }
+            HostKernel::ToLinear => format!("craft_linear({v})"),
+            HostKernel::ToSrgb => format!("craft_srgb({v})"),
+            HostKernel::BrightnessCurve { measure, curve, range } => {
+                let steps_per_unit = (curve.len() - 1) as f32 / range;
+                data.extend([f32::from(*measure == Measure::Luma), curve.len() as f32, steps_per_unit].into_iter().chain(curve.iter().copied()));
+                format!("craft_brightness_curve({at}u, {v})")
+            }
+            HostKernel::Dither { seed, origin } => {
+                data.extend([*seed, origin[0] as u32, origin[1] as u32].into_iter().flat_map(halves));
+                format!("craft_dither({at}u, {v}, id.xy)")
+            }
+            HostKernel::LightAlpha => format!("craft_light_alpha({v})"),
+            HostKernel::Blur { .. } | HostKernel::Resample { .. } | HostKernel::Convolve { .. } | HostKernel::Warp { .. } => v,
+        };
+        let _ = writeln!(wgsl, "    let v{k} = {expr};");
+    }
+    let _ = writeln!(wgsl, "    store(id.xy, v{});\n}}", fused.ops.len() - 1);
     GpuStep {
-        entry,
+        entry: "craft_pointwise",
         src: StepImage::Plan(fused.inputs[0]),
         aux: fused.inputs.get(1).copied().map(StepImage::Plan),
         out: StepImage::Plan(fused.out),
         f,
         u: Vec::new(),
-        data: program(&fused.ops),
+        data,
+        wgsl,
     }
 }
 
-fn register(r: Ref) -> f32 {
+fn value(r: Ref) -> String {
     match r {
-        Ref::Input(i) => i as f32,
-        Ref::Pass(j) => FIRST_REGISTER + j as f32,
+        Ref::Input(i) => format!("i{i}"),
+        Ref::Pass(j) => format!("v{j}"),
+    }
+}
+
+fn blended(mode: BlendMode, b: &str, t: &str) -> String {
+    match mode {
+        BlendMode::Over => format!("{t} + {b} * (1.0 - {t}.a)"),
+        BlendMode::Add => format!("{b} + {t}"),
+        BlendMode::Subtract => format!("{b} - {t}"),
+        BlendMode::Multiply => format!("{b} * {t}"),
+        BlendMode::Screen => format!("{b} + {t} - {b} * {t}"),
+        BlendMode::Overlay => format!("select(1.0 - 2.0 * (1.0 - {b}) * (1.0 - {t}), 2.0 * {b} * {t}, {b} <= vec4<f32>(0.5))"),
+        BlendMode::Darken => format!("min({b}, {t})"),
+        BlendMode::Lighten => format!("max({b}, {t})"),
+        BlendMode::Difference => format!("abs({b} - {t})"),
     }
 }
 
 fn halves(value: u32) -> [f32; 2] {
     [(value & 0xffff) as f32, (value >> 16) as f32]
-}
-
-fn program(ops: &[Op]) -> Vec<f32> {
-    let mut data = vec![ops.len() as f32];
-    data.resize(1 + OP_HEADER * ops.len(), 0.0);
-    for (k, op) in ops.iter().enumerate() {
-        let (code, params): (f32, Vec<f32>) = match op.kernel {
-            HostKernel::Blend { mode, amount } => (0.0, vec![BlendMode::ALL.iter().position(|m| m == mode).unwrap_or(0) as f32, *amount]),
-            HostKernel::Curves { table } => (1.0, std::iter::once(table.len() as f32).chain(table.iter().flatten().copied()).collect()),
-            HostKernel::Matrix { rows } => (2.0, rows.iter().flatten().copied().collect()),
-            HostKernel::ToLinear => (3.0, Vec::new()),
-            HostKernel::ToSrgb => (4.0, Vec::new()),
-            HostKernel::BrightnessCurve { measure, curve, range } => {
-                let steps_per_unit = (curve.len() - 1) as f32 / range;
-                (5.0, [f32::from(*measure == Measure::Luma), curve.len() as f32, steps_per_unit].into_iter().chain(curve.iter().copied()).collect())
-            }
-            HostKernel::Dither { seed, origin } => (6.0, [*seed, origin[0] as u32, origin[1] as u32].into_iter().flat_map(halves).collect()),
-            HostKernel::LightAlpha => (7.0, Vec::new()),
-            HostKernel::Blur { .. } | HostKernel::Resample { .. } | HostKernel::Convolve { .. } | HostKernel::Warp { .. } => (-1.0, Vec::new()),
-        };
-        let header = [code, register(op.src), op.aux.map_or(1.0, register), data.len() as f32];
-        data[1 + OP_HEADER * k..1 + OP_HEADER * (k + 1)].copy_from_slice(&header);
-        data.extend(params);
-    }
-    data
 }

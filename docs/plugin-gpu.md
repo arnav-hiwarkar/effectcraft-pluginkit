@@ -67,7 +67,8 @@ device and the stored bytes (image sizes the GPU holds, buffer and texture byte 
 
 - 1 to 128 passes;
 - at most 32 scratch images, each at least 1×1 and at most twice the padded frame in each axis, and
-  together at most 8 times the padded frame's area;
+  together at most 8 times the padded frame's area, counting one more image for each size that a blur
+  or separable convolve writes (its intermediate pass);
 - a pass reads only `Source` or an image an earlier pass wrote, and never the image it writes unless it
   is a [pointwise host kernel](#host-kernels);
 - no pass writes `Source` or a texture, and some pass writes `Output`;
@@ -79,8 +80,9 @@ device and the stored bytes (image sizes the GPU holds, buffer and texture byte 
 
 ### Time
 
-The app first waits for the GPU work queued before the effect, so that time is not counted. It then
-submits the plan's passes together and waits for them. When one frame of the effect takes more than
+The app first builds every pipeline the plan needs and waits for all GPU work queued before the effect,
+so neither is counted; when that earlier work does not finish within 10 seconds, the frame is not timed.
+It then submits the plan's passes together and waits for them. When one frame of the effect takes more than
 2 seconds of GPU time, the effect is stopped: Effect Controls shows an error that names the effect, its
 passes and the budget, and the effect renders on the CPU until the plugin is reloaded.
 
@@ -315,9 +317,10 @@ These prelude functions are stable:
 0..1 coordinates name the same spot in images of any size, so `sample_uv(aux, out_uv(id.xy))` reads a
 half-size scratch image under the current output pixel.
 
-The prelude declares other helpers that may change, and the host kernels as entry points whose names
-start with `craft_`. Prefix your own function names, for example with the effect's name, so they cannot
-collide with them.
+The prelude declares other helpers that may change, with names that start with `craft_`. Prefix your own
+function names, for example with the effect's name, so they cannot collide with them. The host kernels are
+compiled in a module of their own, so a plain pass cannot name one; use the [host kernel](#host-kernels)
+builders instead.
 
 When the WGSL fails to compile, or a kernel a pass names does not exist, the app logs the error once and
 renders the effect on the CPU until the plugin is reloaded. The log quotes line numbers of your source,

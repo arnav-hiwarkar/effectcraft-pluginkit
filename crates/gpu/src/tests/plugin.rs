@@ -16,7 +16,7 @@ fn tint(@builtin(global_invocation_id) id: vec3<u32>) {
 "#;
 
 fn pass(kernel: &str, src: GpuSlot, out: GpuSlot) -> GpuPass {
-    GpuPass { kernel: kernel.into(), src, aux: None, out, f: TINT.to_vec(), u: Vec::new(), data: Vec::new(), draw: None }
+    GpuPass { kernel: kernel.into(), src, aux: None, out, f: TINT.to_vec(), u: Vec::new(), data: Vec::new(), draw: None, host: None }
 }
 
 fn tint_program() -> GpuProgram {
@@ -108,6 +108,17 @@ fn a_plugin_shader_that_does_not_compile_declines_to_the_cpu() {
 }
 
 #[test]
+fn a_plain_pass_cannot_run_a_built_in_kernel() {
+    let Some(g) = gpu() else { return };
+    let mut raw = pass("craft_convolve_x", GpuSlot::Source, GpuSlot::Output);
+    raw.u = vec![1025];
+    register("test.gpu.raw-host", TINT_WGSL, GpuProgram { passes: vec![raw], ..Default::default() });
+    assert!(run("test.gpu.raw-host").is_none(), "a plain pass naming a built-in kernel declines");
+    let reports = g.ctx.plugin_reports("test.gpu.raw-host");
+    assert!(reports.iter().any(|why| why.contains("craft_convolve_x")), "{reports:?}");
+}
+
+#[test]
 fn plans_the_gpu_cannot_hold_are_declined() {
     let Some(g) = gpu() else { return };
     let finish = pass("tint", GpuSlot::Source, GpuSlot::Output);
@@ -166,8 +177,7 @@ fn flip(@builtin(global_invocation_id) id: vec3<u32>) {
 #[test]
 fn a_kernel_may_store_each_pixel_anywhere_in_the_output() {
     let Some(g) = gpu() else { return };
-    let flip =
-        GpuPass { kernel: "flip".into(), src: GpuSlot::Source, aux: None, out: GpuSlot::Output, f: Vec::new(), u: Vec::new(), data: Vec::new(), draw: None };
+    let flip = GpuPass { f: Vec::new(), ..pass("flip", GpuSlot::Source, GpuSlot::Output) };
     register("test.gpu.flip", FLIP_WGSL, GpuProgram { passes: vec![flip], ..Default::default() });
     let spec = effectcraft_effects::find("test.gpu.flip").expect("registered");
     let params = Params::default();
@@ -258,6 +268,33 @@ fn work_queued_before_a_plugin_is_not_charged_to_it() {
     let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [53.0, 37.0], seed: 1, adjustment: false, env: Default::default() };
     assert!(crate::fx_plugin::apply(&mut e, &cheap, &ctx, frame).is_some(), "the cheap plugin runs");
     assert_eq!(cheap.gpu_stopped.get(), None, "the slow work queued before it is not charged to the cheap plugin");
+    register("test.gpu.cheap-unpadded", TINT_WGSL, GpuProgram { passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Output)], ..Default::default() });
+    let unpadded = dynamic::get("test.gpu.cheap-unpadded").expect("registered");
+    let frame = crate::effects::GBuf { img: g.ctx.upload_image(&pattern(5, 53, 37)).expect("uploads"), offset: [0.0, 0.0], scale: 1.0 };
+    let mut other = crate::context::Enc::new(&g.ctx);
+    queue_spin(&mut other);
+    other.submit();
+    let mut e = crate::context::Enc::new(&g.ctx);
+    assert!(crate::fx_plugin::apply(&mut e, &unpadded, &ctx, frame).is_some(), "the cheap plugin runs on a fresh encoder");
+    assert_eq!(unpadded.gpu_stopped.get(), None, "the slow work another encoder submitted is not charged to the cheap plugin");
+}
+
+#[test]
+fn a_plan_that_fails_part_way_leaves_no_recorded_work_behind() {
+    let Some(g) = gpu() else { return };
+    let broken = pass("tint", GpuSlot::Scratch(3), GpuSlot::Output);
+    register(
+        "test.gpu.part-way",
+        TINT_WGSL,
+        GpuProgram { images: vec![[53, 37]], passes: vec![pass("tint", GpuSlot::Source, GpuSlot::Scratch(0)), broken], ..Default::default() },
+    );
+    let registered = dynamic::get("test.gpu.part-way").expect("registered");
+    let mut e = crate::context::Enc::new(&g.ctx);
+    let frame = crate::effects::GBuf { img: g.ctx.upload_image(&pattern(5, 53, 37)).expect("uploads"), offset: [0.0, 0.0], scale: 1.0 };
+    let params = Params::default();
+    let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [53.0, 37.0], seed: 1, adjustment: false, env: Default::default() };
+    assert!(crate::fx_plugin::apply(&mut e, &registered, &ctx, frame).is_none(), "a pass reading an image the plan lacks declines");
+    assert_eq!(e.recorded(), 0, "the first pass's dispatch is not left for the CPU fallback to submit");
 }
 
 fn run_sized(id: &str, size: [u32; 2]) -> Option<Buf> {

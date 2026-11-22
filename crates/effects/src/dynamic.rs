@@ -50,6 +50,7 @@ pub struct GpuPass {
     pub u: Vec<u32>,
     pub data: Vec<f32>,
     pub draw: Option<GpuDraw>,
+    pub host: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]

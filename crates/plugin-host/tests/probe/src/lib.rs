@@ -314,6 +314,11 @@ impl Effect for HostKernels {
             "dither",
             "light alpha",
             "graded glow",
+            "tiny blur",
+            "far warp",
+            "bicubic zoom",
+            "full over",
+            "no over",
         ];
         let modes = ["over", "add", "subtract", "multiply", "screen", "overlay", "darken", "lighten", "difference"];
         EffectSpec::new("host-kernels", "Host Kernels", "Probe")
@@ -356,6 +361,17 @@ impl Effect for HostKernels {
                 .pass(GpuPass::to_srgb(soft, soft))
                 .pass(GpuPass::dither(soft, soft, 2, [0, 0]))
                 .pass(GpuPass::light_alpha(soft, output)),
+            16 => plan.pass(GpuPass::blur(source, output, [1e-30, 0.0])),
+            17 => {
+                let far = GpuPass::matrix(source, soft, [[1e33, 0.0, 0.0, 1e33], [0.0; 4], [0.0; 4], [0.0; 4]]);
+                plan.pass(far).pass(GpuPass::warp(source, soft, output, [4096.0, 0.0]))
+            }
+            18 => plan.pass(GpuPass::host(HostKernel::Resample { filter: Filter::Bicubic, scale: Some([0.5, 1.0]) }, source, output)),
+            19 | 20 => {
+                let (top, amount) = if cx.index("kernel") == 19 { ([0.0, 0.0, 1.0, 0.0], 1.0) } else { ([1e38, 0.0, 0.0, 0.0], 0.0) };
+                let top_image = GpuPass::matrix(source, soft, [top, [0.0; 4], [0.0; 4], [0.0, 0.0, 0.0, 1.0]]);
+                plan.pass(top_image).pass(GpuPass::blend_images(source, soft, output, BlendMode::Over, amount))
+            }
             _ => {
                 let quarter = frame.map(|side| side.div_ceil(4));
                 let (small, blurred) = (plan.scratch(quarter), plan.scratch(quarter));

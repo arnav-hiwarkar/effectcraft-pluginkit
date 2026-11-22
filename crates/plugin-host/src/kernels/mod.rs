@@ -42,6 +42,7 @@ pub(crate) fn blur_taps(shape: BlurShape, radius: f32) -> Vec<f32> {
         return vec![1.0];
     }
     let weight = |i: isize| match shape {
+        BlurShape::Gaussian if i == 0 => 1.0,
         BlurShape::Gaussian => {
             let sigma = radius / 3.0;
             (-((i * i) as f32) / (2.0 * sigma * sigma)).exp()
@@ -238,13 +239,17 @@ fn resample(src: Image, filter: Filter, scale: [f32; 2], size: [u32; 2], out: &m
                 row.iter_mut().zip(&across[from * width..(from + 1) * width]).for_each(|(o, p)| mul_add(o, p, *w));
             }
             if clamp {
-                row.iter_mut().flatten().for_each(|v| *v = v.max(0.0));
+                row.iter_mut().for_each(|p| *p = if p[3] > 0.0 { p.map(|v| v.max(0.0)) } else { CLEAR });
             }
         },
     );
 }
 
 fn bilinear(src: Image, x: f32, y: f32) -> Pixel {
+    let [w, h] = src.size.map(|side| side as f32);
+    if !(x > -1.0 && y > -1.0 && x < w && y < h) {
+        return CLEAR;
+    }
     let (x0, y0) = (x.floor(), y.floor());
     let (fx, fy) = (x - x0, y - y0);
     let (x0, y0) = (x0 as isize, y0 as isize);

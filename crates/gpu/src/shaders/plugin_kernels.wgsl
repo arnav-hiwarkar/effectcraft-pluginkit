@@ -75,9 +75,9 @@ fn craft_resampled(t: texture_2d<f32>, p: vec2<i32>, scale: vec2<f32>, bicubic: 
         }
         sum += row * wy;
     }
-    var c = sum / (total.x * total.y);
+    let c = sum / (total.x * total.y);
     if (bicubic) {
-        c = max(c, vec4<f32>(0.0));
+        return select(vec4<f32>(0.0), max(c, vec4<f32>(0.0)), c.a > 0.0);
     }
     return c;
 }
@@ -89,17 +89,14 @@ fn craft_resample(@builtin(global_invocation_id) id: vec3<u32>) {
     store(id.xy, craft_resampled(src, vec2<i32>(id.xy), scale, pass_u(0u) == 1u));
 }
 
-fn craft_blend_channel(mode: u32, b: f32, t: f32) -> f32 {
-    switch mode {
-        case 2u: { return b - t; }
-        case 3u: { return b * t; }
-        case 4u: { return b + t - b * t; }
-        case 5u: { return select(1.0 - 2.0 * (1.0 - b) * (1.0 - t), 2.0 * b * t, b <= 0.5); }
-        case 6u: { return min(b, t); }
-        case 7u: { return max(b, t); }
-        case 8u: { return abs(b - t); }
-        default: { return b + t; }
+fn craft_amount(base: vec4<f32>, blended: vec4<f32>, amount: f32) -> vec4<f32> {
+    if (amount == 0.0) {
+        return base;
     }
+    if (amount == 1.0) {
+        return blended;
+    }
+    return base + (blended - base) * amount;
 }
 
 fn craft_curve(at: u32, n: u32, channel: u32, x: f32) -> f32 {
@@ -120,20 +117,6 @@ fn craft_curves(at: u32, p: vec4<f32>) -> vec4<f32> {
     }
     let colour = vec3<f32>(craft_curve(at + 1u, n, 0u, straight.r), craft_curve(at + 1u, n, 1u, straight.g), craft_curve(at + 1u, n, 2u, straight.b));
     return vec4<f32>(colour * alpha, alpha);
-}
-
-fn craft_blend(at: u32, base: vec4<f32>, top: vec4<f32>) -> vec4<f32> {
-    let mode = u32(craft_data(at));
-    var blended = top + base * (1.0 - top.a);
-    if (mode != 0u) {
-        blended = vec4<f32>(
-            craft_blend_channel(mode, base.r, top.r),
-            craft_blend_channel(mode, base.g, top.g),
-            craft_blend_channel(mode, base.b, top.b),
-            craft_blend_channel(mode, base.a, top.a),
-        );
-    }
-    return base + (blended - base) * craft_data(at + 1u);
 }
 
 fn craft_matrix(at: u32, p: vec4<f32>) -> vec4<f32> {
@@ -160,6 +143,18 @@ fn craft_to_srgb(x: f32) -> f32 {
         encoded = 1.055 * pow(a, 1.0 / 2.4) - 0.055;
     }
     return select(encoded, -encoded, x < 0.0);
+}
+
+fn craft_linear(v: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(craft_to_linear(v.r), craft_to_linear(v.g), craft_to_linear(v.b), v.a);
+}
+
+fn craft_srgb(v: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(craft_to_srgb(v.r), craft_to_srgb(v.g), craft_to_srgb(v.b), v.a);
+}
+
+fn craft_light_alpha(v: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(v.rgb, max(v.a, clamp(max(max(v.r, v.g), v.b), 0.0, 1.0)));
 }
 
 fn craft_brightness_curve(at: u32, p: vec4<f32>) -> vec4<f32> {
@@ -202,57 +197,15 @@ fn craft_dither(at: u32, p: vec4<f32>, at_pixel: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(p.rgb + n * room, p.a);
 }
 
-fn craft_program(s0: vec4<f32>, s1: vec4<f32>, at_pixel: vec2<u32>) -> vec4<f32> {
-    var held: array<vec4<f32>, 16>;
-    held[0] = s0;
-    held[1] = s1;
-    let n = u32(craft_data(0u));
-    for (var k = 0u; k < n; k++) {
-        let head = 1u + k * 4u;
-        let code = u32(craft_data(head));
-        let v = held[u32(craft_data(head + 1u))];
-        let top = held[u32(craft_data(head + 2u))];
-        let at = u32(craft_data(head + 3u));
-        var r = v;
-        switch code {
-            case 0u: { r = craft_blend(at, v, top); }
-            case 1u: { r = craft_curves(at, v); }
-            case 2u: { r = craft_matrix(at, v); }
-            case 3u: { r = vec4<f32>(craft_to_linear(v.r), craft_to_linear(v.g), craft_to_linear(v.b), v.a); }
-            case 4u: { r = vec4<f32>(craft_to_srgb(v.r), craft_to_srgb(v.g), craft_to_srgb(v.b), v.a); }
-            case 5u: { r = craft_brightness_curve(at, v); }
-            case 6u: { r = craft_dither(at, v, at_pixel); }
-            case 7u: { r = vec4<f32>(v.rgb, max(v.a, clamp(max(max(v.r, v.g), v.b), 0.0, 1.0))); }
-            default: {}
-        }
-        held[2u + k] = r;
-    }
-    return held[1u + n];
-}
-
-@compute @workgroup_size(16, 16)
-fn craft_pointwise(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (!inside_out(id.xy)) { return; }
-    let p = vec2<i32>(id.xy);
-    let resampled = pass_u(0u);
-    let scale = vec2<f32>(pass_f(0u), pass_f(1u));
-    let bicubic = pass_u(1u) == 1u;
-    var s0 = texel(src, p);
-    var s1 = texel(aux, p);
-    if (resampled == 1u) {
-        s0 = craft_resampled(src, p, scale, bicubic);
-    }
-    if (resampled == 2u) {
-        s1 = craft_resampled(aux, p, scale, bicubic);
-    }
-    store(id.xy, craft_program(s0, s1, id.xy));
-}
-
 @compute @workgroup_size(16, 16)
 fn craft_warp(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!inside_out(id.xy)) { return; }
     let d = texel(aux, vec2<i32>(id.xy));
     let at = vec2<f32>(id.xy) + vec2<f32>(pass_f(0u) * d.r, pass_f(1u) * d.g);
+    if (!(all(at > vec2<f32>(-1.0)) && all(at < vec2<f32>(src_size())))) {
+        store(id.xy, vec4<f32>(0.0));
+        return;
+    }
     let base = floor(at);
     let f = at - base;
     let b = vec2<i32>(base);
