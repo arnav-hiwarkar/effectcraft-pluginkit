@@ -245,7 +245,7 @@ impl Panels {
             }
         }
         self.seen = Some(seen);
-        self.deadline = Some(Instant::now() + WAIT);
+        self.deadline = None;
         self.slots.values().filter_map(|slot| slot.retained.next_due()).min().map(|due| due.saturating_sub(now))
     }
 
@@ -336,8 +336,8 @@ impl Panels {
     }
 
     fn wait(&mut self, session: &mut Session, key: &str) {
-        let Some(deadline) = self.deadline else { return };
         while self.slots.get(key).is_some_and(|slot| slot.retained.in_flight()) {
+            let deadline = *self.deadline.get_or_insert_with(|| Instant::now() + WAIT);
             serve(session);
             if self.collect() {
                 continue;
