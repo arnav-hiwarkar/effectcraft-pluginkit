@@ -701,7 +701,7 @@ fn custom_control(
             let tokens = app.tokens;
             let source = crate::panels::plugin_view::Source { plugin: &plugin, images: &mut app.plugin_ui.images };
             let events = crate::panels::plugin_view::draw(&mut body, &reply.widgets, &tokens, &mut app.auto, &scope, source);
-            if let Some(new) = reply.value.filter(|new| *new != value) {
+            if let Some(new) = reply.value.filter(|new| *new != value && !prop.has_expression()) {
                 actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": uid, "value": new, "merge": merge})));
             }
             if !events.is_empty() {
