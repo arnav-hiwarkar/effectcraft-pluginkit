@@ -368,6 +368,18 @@ fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
 }
 ```
 
+An effect that calls several of them for every pixel can take the cheaper forms in `math::fast`, whose
+errors (2e-6 to 1.2e-5) are still far below one level of a 16-bit image. Halo Flares uses them:
+
+```rust
+use craft_plugin::math::fast::{exp, ln};
+
+fn glow(r: f32, radius: f32, falloff: f32) -> f32 {
+    let q = (r / radius) * (r / radius);
+    exp(-falloff * ln(1.0 + q))
+}
+```
+
 Use them in the loop that runs for every pixel, and keep `std` for work done once per frame. `sqrt`, `abs`,
 `floor`, `min` and `max` are single instructions already; keep calling those on `f32`.
 

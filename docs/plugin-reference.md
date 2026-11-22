@@ -346,6 +346,16 @@ native plugins compute identical bits. Each error is the largest found by a test
 | `saturate(x)` | any; NaN stays NaN | exact |
 | `srgb_to_linear(v)`, `linear_to_srgb(v)` | any; negatives mirror around 0, values above 1 continue the curve; `srgb_to_linear` saturates at `8.5e37` past `6e15` | 3e-6 absolute over `-2..=2` (`srgb_to_linear` 3e-6 relative up to `1e15`) |
 
+`craft_plugin::math::fast` has cheaper forms for loops that call several of these per pixel: shorter
+polynomials, a one-step range reduction and no guards, so fewer instructions. Their errors are still far below
+one level of a 16-bit channel.
+
+| Function | Valid range | Largest error |
+|---|---|---|
+| `fast::sin(x)`, `fast::cos(x)` | any; the error grows with `abs(x)` | 2e-6 absolute within 20 radians, 7e-6 within 100, 6e-5 within 1000 |
+| `fast::exp(x)` | `-87..=88`, clamped | 9e-6 relative within `-20..=20`, 1.2e-5 over the range |
+| `fast::ln(x)` | normal `x > 0`; zero gives `-127 * LN_2`, a negative `x` gives `ln(-x)`, a subnormal one a wrong value near `-88` | 1.2e-7 times `max(1, abs(result))` |
+
 ## Panel
 
 ```rust

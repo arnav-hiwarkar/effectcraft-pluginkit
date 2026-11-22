@@ -202,6 +202,31 @@ fn fast_maths_gives_the_same_bits_sandboxed_and_native_and_stays_within_its_boun
 }
 
 #[test]
+fn the_cheaper_fast_maths_gives_the_same_bits_sandboxed_and_native_and_stays_within_its_bounds() {
+    let source: Vec<Pixel> = (0..4096).map(|i| [-3.0 + i as f32 * (6.0 / 4096.0) + 1e-3, 0.0, 0.0, 1.0]).collect();
+    let render = |kind: Kind| {
+        let loaded = load(kind, &[]);
+        let mut cx = cx(4096, 1);
+        cx.params.insert("cheaper".into(), craft_plugin::Value::Bool(true));
+        let mut pixels = source.clone();
+        loaded.plugin.render("fast-maths", &cx, &Layout::neighbourhood(0), None, &mut pixels, Recorder::default).unwrap();
+        pixels
+    };
+    let (wasm, native) = (render(Kind::Wasm), render(Kind::Native));
+    assert!(wasm == native, "the sandboxed and the native render differ");
+    let mut worst = [0.0f64; 4];
+    for (input, out) in source.iter().zip(&wasm) {
+        let x = f64::from(input[0]);
+        let exact = [x.exp(), x.sin(), x.cos(), x.abs().ln()];
+        let scale = [exact[0], 1.0, 1.0, exact[3].abs().max(1.0)];
+        for c in 0..4 {
+            worst[c] = worst[c].max((f64::from(out[c]) - exact[c]).abs() / scale[c]);
+        }
+    }
+    assert!(worst[0] < 9e-6 && worst[1] < 2e-6 && worst[2] < 2e-6 && worst[3] < 1.2e-7, "{worst:?}");
+}
+
+#[test]
 fn rendering_in_parallel_bands_gives_the_same_picture_as_one_pass() {
     each_kind(|kind| {
         let loaded = load(kind, &[]);

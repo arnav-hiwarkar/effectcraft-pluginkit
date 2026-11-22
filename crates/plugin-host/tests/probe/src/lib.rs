@@ -27,14 +27,21 @@ struct FastMaths;
 
 impl Effect for FastMaths {
     fn spec(&self) -> EffectSpec {
-        EffectSpec::new("fast-maths", "Fast Maths", "Probe")
+        EffectSpec::new("fast-maths", "Fast Maths", "Probe").param(Param::checkbox("cheaper", "Cheaper", false))
     }
 
     fn layout(&self, _cx: &Cx) -> Layout {
         Layout::pointwise()
     }
 
-    fn render(&self, _cx: &Cx, frame: &mut Frame) -> Result<()> {
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        if cx.bool("cheaper") {
+            frame.map(|pixel| {
+                let x = pixel[0];
+                [math::fast::exp(x), math::fast::sin(x), math::fast::cos(x), math::fast::ln(x.abs())]
+            });
+            return Ok(());
+        }
         frame.map(|pixel| {
             let x = pixel[0];
             [math::exp(x), math::sin(x), math::atan2(x, 2.0 - x), math::pow(x.abs(), 2.4)]
