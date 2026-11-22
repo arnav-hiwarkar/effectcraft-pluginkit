@@ -288,21 +288,38 @@ impl Plugin {
         }
         plan.check(cx.size).map_err(PluginError::Failed)?;
         let sizes: Vec<[u32; 2]> = [cx.size].into_iter().chain(plan.images.iter().copied()).collect();
-        let mut written: Vec<Vec<Pixel>> = sizes.iter().map(|size| vec![[0.0; 4]; area(*size)]).collect();
+        let mut written: Vec<Vec<Pixel>> = vec![Vec::new(); sizes.len()];
         let slot = |image: GpuImage| match image {
             GpuImage::Source => None,
             GpuImage::Output => Some(0),
             GpuImage::Scratch(index) => Some(index as usize + 1),
             GpuImage::Texture(_) | GpuImage::Layer(_) => None,
         };
+        let mut spare: Vec<Vec<Pixel>> = Vec::new();
         for step in kernels::steps(plan, cx.size) {
-            let out_image = match &step {
-                Step::Single(index) => plan.passes[*index].out,
-                Step::Fused(fused) => fused.out,
+            let (out_image, inputs, end) = match &step {
+                Step::Single(index) => {
+                    let pass = &plan.passes[*index];
+                    (pass.out, [Some(pass.src), pass.aux].into_iter().flatten().collect(), index + 1)
+                }
+                Step::Fused(fused) => (fused.out, fused.inputs.clone(), fused.passes.end),
             };
             let Some(target) = slot(out_image) else { continue };
-            let reads_target = matches!(&step, Step::Fused(fused) if fused.inputs.contains(&out_image));
-            let mut out = if reads_target { vec![[0.0; 4]; area(sizes[target])] } else { std::mem::take(&mut written[target]) };
+            for index in inputs.iter().filter_map(|image| slot(*image)) {
+                if written[index].is_empty() {
+                    written[index] = vec![[0.0; 4]; area(sizes[index])];
+                }
+            }
+            let writes_every_pixel = !matches!(&step, Step::Single(index) if plan.passes[*index].host.is_none());
+            let mut out = if inputs.contains(&out_image) || written[target].is_empty() {
+                let size = area(sizes[target]);
+                match spare.iter().position(|buffer| writes_every_pixel && buffer.len() == size) {
+                    Some(at) => spare.swap_remove(at),
+                    None => vec![[0.0; 4]; size],
+                }
+            } else {
+                std::mem::take(&mut written[target])
+            };
             let read = |image: GpuImage| match slot(image) {
                 None => Image { size: cx.size, pixels },
                 Some(index) => Image { size: sizes[index], pixels: &written[index] },
@@ -326,8 +343,16 @@ impl Plugin {
             };
             written[target] = out;
             ran?;
+            for (index, buffer) in written.iter_mut().enumerate().skip(1) {
+                if !buffer.is_empty() && !kernels::live_after(&plan.passes[end..], GpuImage::Scratch(index as u32 - 1)) {
+                    spare.push(std::mem::take(buffer));
+                }
+            }
         }
-        *pixels = std::mem::take(&mut written[0]);
+        *pixels = match std::mem::take(&mut written[0]) {
+            unwritten if unwritten.is_empty() => vec![[0.0; 4]; pixels.len()],
+            output => output,
+        };
         Ok(())
     }
 

@@ -5,8 +5,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use craft_plugin::{
-    Call, FrameDesc, GpuImage, GpuPass, GpuPlan, Layout, MaskPath, ParamsAt, Permission, Pixel, RenderCx, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput,
-    Widget, native_target,
+    BlendMode, Call, FrameDesc, GpuImage, GpuPass, GpuPlan, Layout, MaskPath, ParamsAt, Permission, Pixel, RenderCx, Taps, TaskState, TaskStatus, UiEvent,
+    UiEventKind, UiInput, Widget, native_target,
 };
 use craft_plugin_host::{Access, Bundle, Host, Limits, Pixels, Plugin, PluginError, Rect, Registry, Retained};
 use serde_json::{Value, json};
@@ -1141,6 +1141,21 @@ fn a_native_pass_is_handed_its_target_as_the_passes_before_it_left_it() {
         .pass(GpuPass::matrix(a, GpuImage::Output, identity));
     assert_eq!(at(&run_plan(Kind::Native, &plan).unwrap(), 10, 75), [5.0, 37.5, 0.5, 0.5]);
     assert_eq!(at(&run_plan(Kind::Wasm, &plan).unwrap(), 10, 75), [0.0; 4], "a sandboxed pass starts from a clear target");
+}
+
+#[test]
+fn a_plugin_pass_on_a_new_image_starts_clear_although_an_image_of_its_size_is_no_longer_needed() {
+    each_kind(|kind| {
+        let mut plan = GpuPlan::new();
+        let (a, b) = (plan.scratch(PASS_FRAME), plan.scratch(PASS_FRAME));
+        let half = [[0.5, 0.0, 0.0, 0.0], [0.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 0.5]];
+        let plan = plan
+            .pass(GpuPass::matrix(GpuImage::Source, a, half))
+            .pass(GpuPass::convolve(a, GpuImage::Output, Taps::Separable { x: vec![1.0], y: vec![1.0] }))
+            .pass(GpuPass::new("probe_nothing", GpuImage::Source, b))
+            .pass(GpuPass::blend_images(GpuImage::Output, b, GpuImage::Output, BlendMode::Add, 1.0));
+        assert_eq!(at(&run_plan(kind, &plan).unwrap(), 10, 75), [5.0, 37.5, 0.5, 0.5], "{kind:?}");
+    });
 }
 
 #[test]

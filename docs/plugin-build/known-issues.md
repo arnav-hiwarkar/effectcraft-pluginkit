@@ -80,9 +80,15 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
   measured again. The rest is the emission, stored at full size before the first halving. Running the
   generated program on each of the halving's 16 taps instead removed that image and made four chained
   Lumen effects 20 % faster, but one 1080p frame 1.7 ms slower, so it was not kept.
-- **Native Lumen Glow on all cores takes 5 % longer in wall time** (14.4 ms against 13.7 ms at 1080p, load
-  3) although it runs 3 % fewer instructions: the emission and the upsampled glow are two more
-  full-size images written and read.
+- **Native Lumen Glow at 1080p takes 5 % longer than at the start of the third build** (13.35 ms against
+  12.66 ms, minimum of four alternating runs at load 4 to 6; 4K 41.6 against 41.2 ms). Pass images are now
+  allocated when first used and a dead one is reused, which removed 0.6 ms of single-threaded zeroing. What
+  is left: the emission and the upsampled glow are two more full-size images written and read, and the
+  resample and convolve kernels zero a temporary of their own on every call (`crates/plugin-host/src/kernels/mod.rs`).
+- **Native and sandboxed Lumen Glow give different pixels.** Its plan's blur taps and level gains use
+  `f32::exp`, `exp2` and `log2`, which differ in the last bits between the native and the WebAssembly
+  standard library (`plugins/lumen-glow/src/blur.rs`, `settings.rs`, `profile.rs`). `craft_plugin::math`
+  would make them equal but changes the pixels slightly.
 - **Lumen Glow with a negative Aspect on a frame 16384 wide and 1 tall is refused.** Its levels halve only
   across, and the app cannot pad such a frame, so two images per level stay half a frame each and the plan
   asks for more than 8 frames of scratch. The effect reports the refusal and leaves the frame unchanged.

@@ -7,8 +7,8 @@ mod tests;
 use craft_plugin::{BlurShape, Filter, HostKernel, Pixel, Taps};
 use rayon::prelude::*;
 
-pub(crate) use fuse::run as run_fused;
 pub use fuse::{Fused, Op, Ref, Step, steps};
+pub(crate) use fuse::{live_after, run as run_fused};
 pub use gpu::{GpuStep, Lowered, StepImage, lower};
 
 const CLEAR: Pixel = [0.0; 4];
