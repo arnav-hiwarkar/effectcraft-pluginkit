@@ -44,7 +44,7 @@ struct Upload {
 
 #[derive(Default)]
 struct Uploads {
-    entries: HashMap<(String, String, bool), Upload>,
+    entries: HashMap<(String, String, Option<[u32; 2]>), Upload>,
     clock: u64,
 }
 
@@ -90,7 +90,7 @@ impl Store {
         })
     }
 
-    fn kept(&self, effect: &str, name: &str, picture: bool, bytes: &Arc<[u8]>, upload: impl FnOnce() -> Kept) -> Option<Kept> {
+    fn kept(&self, effect: &str, name: &str, picture: Option<[u32; 2]>, bytes: &Arc<[u8]>, upload: impl FnOnce() -> Kept) -> Option<Kept> {
         let mut uploads = self.uploads.lock().ok()?;
         uploads.clock += 1;
         let clock = uploads.clock;
@@ -309,7 +309,7 @@ impl<'a> Stage<'a> {
             );
             Kept::Image(image)
         };
-        match g.plugin_draw.kept(self.effect, &picture.name, true, &picture.bytes, upload)? {
+        match g.plugin_draw.kept(self.effect, &picture.name, Some(picture.size), &picture.bytes, upload)? {
             Kept::Image(image) => Some(image),
             Kept::Buffer(_) => None,
         }
@@ -318,7 +318,7 @@ impl<'a> Stage<'a> {
     fn buffer(&self, g: &GpuContext, index: usize) -> Option<wgpu::Buffer> {
         let data = self.program.buffers.get(index)?;
         let upload = || Kept::Buffer(g.buffer_init(Some(&data.name), &data.bytes, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX));
-        match g.plugin_draw.kept(self.effect, &data.name, false, &data.bytes, upload)? {
+        match g.plugin_draw.kept(self.effect, &data.name, None, &data.bytes, upload)? {
             Kept::Buffer(buffer) => Some(buffer),
             Kept::Image(_) => None,
         }
