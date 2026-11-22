@@ -444,3 +444,12 @@ fn bicubic_resampling_clears_a_pixel_whose_alpha_filters_to_nothing() {
     assert_eq!(got[1], [0.0; 4]);
     assert!(got.iter().all(|p| p[3] > 0.0 || *p == [0.0; 4]), "{got:?}");
 }
+
+#[test]
+fn a_blend_at_full_amount_is_the_blend_and_at_none_the_base() {
+    let base = [16_777_216.0, 0.5, 0.25, 1.0];
+    let blend = |mode, amount, top: Pixel| host(HostKernel::Blend { mode, amount }, &[base], [1, 1], Some(&[top]), [1, 1])[0];
+    assert_eq!(blend(BlendMode::Over, 1.0, [0.25, 0.0, 0.0, 1.0]), [0.25, 0.0, 0.0, 1.0]);
+    assert_eq!(blend(BlendMode::Over, 0.0, [f32::INFINITY, 0.0, 0.0, 1.0]), base);
+    assert_eq!(blend(BlendMode::Add, 0.0, [f32::INFINITY, 0.0, 0.0, 1.0]), base);
+}

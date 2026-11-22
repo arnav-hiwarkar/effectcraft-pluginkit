@@ -133,7 +133,14 @@ fn craft_blend(at: u32, base: vec4<f32>, top: vec4<f32>) -> vec4<f32> {
             craft_blend_channel(mode, base.a, top.a),
         );
     }
-    return base + (blended - base) * craft_data(at + 1u);
+    let amount = craft_data(at + 1u);
+    if (amount == 0.0) {
+        return base;
+    }
+    if (amount == 1.0) {
+        return blended;
+    }
+    return base + (blended - base) * amount;
 }
 
 fn craft_matrix(at: u32, p: vec4<f32>) -> vec4<f32> {

@@ -46,11 +46,12 @@ pub(crate) fn blend_channel(mode: BlendMode, b: f32, t: f32) -> f32 {
 }
 
 fn blend(mode: BlendMode, amount: f32, base: Pixel, top: Pixel) -> Pixel {
+    if amount == 0.0 {
+        return base;
+    }
     let keep = if mode == BlendMode::Over { 1.0 - top[3] } else { 1.0 };
-    std::array::from_fn(|c| {
-        let blended = if mode == BlendMode::Over { top[c] + base[c] * keep } else { blend_channel(mode, base[c], top[c]) };
-        base[c] + amount * (blended - base[c])
-    })
+    let blended: Pixel = std::array::from_fn(|c| if mode == BlendMode::Over { top[c] + base[c] * keep } else { blend_channel(mode, base[c], top[c]) });
+    if amount == 1.0 { blended } else { std::array::from_fn(|c| base[c] + amount * (blended[c] - base[c])) }
 }
 
 fn curve(table: &[Pixel], channel: usize, x: f32) -> f32 {
