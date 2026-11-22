@@ -2,8 +2,6 @@ mod dither;
 mod gpu;
 mod knee;
 mod passes;
-#[cfg(test)]
-mod pipeline;
 mod pixel;
 mod plan;
 mod profile;

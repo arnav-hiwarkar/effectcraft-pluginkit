@@ -44,8 +44,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **A native task that ignores cancel keeps its thread.** Only a sandboxed task can be interrupted.
 - **Effects cannot read audio.** The render path reaches footage audio, not the comp mix.
 - **Plugin panels and custom controls cannot be fully used from the keyboard.** A canvas cannot take focus and custom controls get no key events. House rule 21 asks for this. (`crates/ui-egui/src/panels/plugin_view.rs`, Opus finding 8)
-- **One `reach` covers a pass's `src` and `aux`.**
-- **Lumen Glow has no CPU fallback for a level that needs more than 48 floats**; its `render` returns an error there.
 - **Forge 3D draws only on the GPU.** Draw passes render to an `Rgba16Float` target that is created per frame and copied.
 - **Ember simulates from frame 0 on every render when a parameter has an expression**, because the history cannot be hashed. It reads the masks at the current time for every step.
 - **A Halo preset sets the look and resets the element controls.** It does not write absolute slider values.

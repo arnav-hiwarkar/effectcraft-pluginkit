@@ -16,7 +16,7 @@ fn tint(@builtin(global_invocation_id) id: vec3<u32>) {
 "#;
 
 fn pass(kernel: &str, src: GpuSlot, out: GpuSlot) -> GpuPass {
-    GpuPass { kernel: kernel.into(), src, aux: None, out, f: TINT.to_vec(), u: Vec::new(), draw: None }
+    GpuPass { kernel: kernel.into(), src, aux: None, out, f: TINT.to_vec(), u: Vec::new(), data: Vec::new(), draw: None }
 }
 
 fn tint_program() -> GpuProgram {
@@ -166,7 +166,7 @@ fn flip(@builtin(global_invocation_id) id: vec3<u32>) {
 #[test]
 fn a_kernel_may_store_each_pixel_anywhere_in_the_output() {
     let Some(g) = gpu() else { return };
-    let flip = GpuPass { kernel: "flip".into(), src: GpuSlot::Source, aux: None, out: GpuSlot::Output, f: Vec::new(), u: Vec::new(), draw: None };
+    let flip = GpuPass { kernel: "flip".into(), src: GpuSlot::Source, aux: None, out: GpuSlot::Output, f: Vec::new(), u: Vec::new(), data: Vec::new(), draw: None };
     register("test.gpu.flip", FLIP_WGSL, GpuProgram { passes: vec![flip], ..Default::default() });
     let spec = effectcraft_effects::find("test.gpu.flip").expect("registered");
     let params = Params::default();

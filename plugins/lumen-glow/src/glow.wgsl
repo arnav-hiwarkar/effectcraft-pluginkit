@@ -88,58 +88,6 @@ fn lumen_emit(@builtin(global_invocation_id) id: vec3<u32>) {
     store(id.xy, sum);
 }
 
-// Pass::Downsample (passes/resample.rs downsample): 4-tap on each halved axis, a copy on the others.
-// The level is pass_u(2..4) wide and high; the rest of `out` is cleared.
-@compute @workgroup_size(16, 16)
-fn lumen_downsample(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (!inside_out(id.xy)) {
-        return;
-    }
-    if (any(id.xy >= vec2<u32>(pass_u(2u), pass_u(3u)))) {
-        store(id.xy, vec4<f32>(0.0));
-        return;
-    }
-    let p = vec2<i32>(id.xy);
-    let halve = vec2<bool>(pass_u(0u) != 0u, pass_u(1u) != 0u);
-    let taps = select(vec2<i32>(1), vec2<i32>(4), halve);
-    let base = select(p, p * 2 - 1, halve);
-    var sum = vec4<f32>(0.0);
-    for (var ky = 0; ky < taps.y; ky++) {
-        var row = vec4<f32>(0.0);
-        for (var kx = 0; kx < taps.x; kx++) {
-            row += texel(src, base + vec2<i32>(kx, ky)) * select(1.0, lumen_down_tap(kx), halve.x);
-        }
-        sum += row * select(1.0, lumen_down_tap(ky), halve.y);
-    }
-    store(id.xy, sum);
-}
-
-// Pass::Blur then Pass::Accumulate for one level: the separable kernels of Level::kernels applied
-// as one 2-D sum (rows, then columns), the level's Mix, plus the coarser accumulated level (aux)
-// upsampled. Floats 12.. hold the row kernel from its centre out, then the column kernel.
-@compute @workgroup_size(16, 16)
-fn lumen_level(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (!inside_out(id.xy)) {
-        return;
-    }
-    let p = vec2<i32>(id.xy);
-    let r = vec2<i32>(i32(pass_u(0u)), i32(pass_u(1u)));
-    let column = 13u + pass_u(0u);
-    var blurred = vec4<f32>(0.0);
-    for (var dy = -r.y; dy <= r.y; dy++) {
-        var row = vec4<f32>(0.0);
-        for (var dx = -r.x; dx <= r.x; dx++) {
-            row += texel(src, p + vec2<i32>(dx, dy)) * pass_f(12u + u32(abs(dx)));
-        }
-        blurred += row * pass_f(column + u32(abs(dy)));
-    }
-    var acc = lumen_mix(blurred);
-    if (pass_u(2u) != 0u) {
-        acc += lumen_upsample(aux, p, vec2<bool>(pass_u(3u) != 0u, pass_u(4u) != 0u));
-    }
-    store(id.xy, acc);
-}
-
 // dither.rs: hash, triangular_noise and Dither::apply.
 fn lumen_hash(x: u32, y: u32, seed: u32) -> u32 {
     var h = (x * 0x8da6b343u) ^ (y * 0xd8163841u) ^ (seed * 0xcb1ab31fu);

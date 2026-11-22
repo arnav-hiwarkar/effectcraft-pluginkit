@@ -787,6 +787,30 @@ fn a_pass_reads_its_reach_across_band_edges() {
 }
 
 #[test]
+fn aux_reads_its_own_reach_across_band_edges() {
+    let plan = |pass: GpuPass| GpuPlan::new().pass(pass);
+    let tall_aux = GpuPass::new("probe_tall_aux", GpuImage::Source, GpuImage::Output).aux(GpuImage::Source);
+    each_kind(|kind| {
+        let banded = run_plan(kind, &plan(tall_aux.clone().reach(0).aux_reach(3))).unwrap();
+        assert_eq!(banded, run_plan(kind, &plan(tall_aux.clone())).unwrap(), "{kind:?}");
+        assert_eq!(at(&banded, 10, 75), [290.0, 2203.0, 71.0, 29.0], "{kind:?}");
+    });
+    let short = run_plan(Kind::Wasm, &plan(tall_aux.reach(0))).unwrap();
+    assert_eq!(at(&short, 10, 75)[..2], [110.0, 815.0]);
+}
+
+#[test]
+fn host_kernel_passes_run_in_the_app_between_plugin_passes() {
+    each_kind(|kind| {
+        let mut plan = GpuPlan::new();
+        let tall = plan.scratch(PASS_FRAME);
+        let swizzle = [[0.5, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        let plan = plan.pass(GpuPass::new("probe_tall", GpuImage::Source, tall).reach(3)).pass(GpuPass::matrix(tall, GpuImage::Output, swizzle));
+        assert_eq!(at(&run_plan(kind, &plan).unwrap(), 10, 75), [140.0, 28.0, 70.0, 28.0], "{kind:?}");
+    });
+}
+
+#[test]
 fn a_pass_with_too_little_reach_is_missing_rows_at_band_edges() {
     let short = GpuPlan::new().pass(GpuPass::new("probe_tall", GpuImage::Source, GpuImage::Output).reach(2));
     let pixels = run_plan(Kind::Wasm, &short).unwrap();

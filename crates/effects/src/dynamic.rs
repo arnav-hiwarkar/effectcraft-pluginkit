@@ -48,6 +48,7 @@ pub struct GpuPass {
     pub out: GpuSlot,
     pub f: Vec<f32>,
     pub u: Vec<u32>,
+    pub data: Vec<f32>,
     pub draw: Option<GpuDraw>,
 }
 

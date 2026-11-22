@@ -1,10 +1,9 @@
 use craft_plugin::prelude::*;
 
 use crate::pixel::Mix;
-use crate::plan::{Level, Plan};
+use crate::plan::Plan;
 use crate::settings::{Blend, Settings, View};
 
-const MAX_FLOATS: usize = 48;
 const MIX_FLOATS: usize = 12;
 const HALVING_REACH: u32 = 3;
 const UPSAMPLE_REACH: u32 = 2;
@@ -17,48 +16,49 @@ pub fn plan(settings: &Settings, size: [u32; 2], padding: u32) -> Option<GpuPlan
     let plan = Plan::new(settings);
     let sizes: Vec<[u32; 2]> = plan.sizes(frame.map(|s| s as usize)).into_iter().map(|s| s.map(|v| v as u32)).collect();
     let mut gpu = GpuPlan::new();
-    let glow = if sizes.is_empty() { None } else { Some(glow(&mut gpu, settings, &plan, &sizes)?) };
+    let glow = glow(&mut gpu, settings, &plan, &sizes);
     gpu.passes.push(composite(settings, &plan.core, glow, padding));
     Some(gpu)
 }
 
 fn glow(gpu: &mut GpuPlan, settings: &Settings, plan: &Plan, sizes: &[[u32; 2]]) -> Option<GpuImage> {
-    let pyramid: Vec<GpuImage> = sizes.iter().map(|&size| gpu.scratch(size)).collect();
-    let summed: Vec<GpuImage> = sizes.iter().map(|&size| gpu.scratch(size)).collect();
+    let images: Vec<([GpuImage; 2], [u32; 2])> = sizes.iter().map(|&size| ([gpu.scratch(size), gpu.scratch(size)], size)).collect();
     gpu.passes.push(
-        GpuPass::new("lumen_emit", GpuImage::Source, *pyramid.first()?)
+        GpuPass::new("lumen_emit", GpuImage::Source, images.first()?.0[0])
             .floats(&settings.knee.shape())
             .uints(&[u32::from(settings.transfer.is_srgb())])
             .reach(HALVING_REACH),
     );
-    for ((pair, level), &[w, h]) in pyramid.windows(2).zip(plan.levels.iter().skip(1)).zip(sizes.iter().skip(1)) {
-        let [hx, hy] = level.halve.map(u32::from);
-        gpu.passes.push(GpuPass::new("lumen_downsample", pair[0], pair[1]).uints(&[hx, hy, w, h]).reach(HALVING_REACH));
+    for (pair, level) in images.windows(2).zip(plan.levels.iter().skip(1)) {
+        gpu.passes.push(GpuPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some(level.halve.map(factor)) }, pair[0].0[0], pair[1].0[0]));
     }
     let mut coarser: Option<(GpuImage, [bool; 2])> = None;
-    for ((level, &src), &out) in plan.levels.iter().zip(&pyramid).zip(&summed).rev() {
-        gpu.passes.push(level_pass(level, src, out, coarser)?);
-        coarser = Some((out, level.halve));
+    for (level, &([pyramid, scratch], size)) in plan.levels.iter().zip(&images).rev() {
+        let [x, y] = level.kernels();
+        gpu.passes.push(GpuPass::convolve(pyramid, scratch, Taps::Separable { x, y }));
+        gpu.passes.push(GpuPass::matrix(scratch, pyramid, mix_rows(&level.mix)));
+        let summed = match coarser {
+            None => pyramid,
+            Some((image, halve)) => {
+                let summed = gpu.scratch(size);
+                let scale = halve.map(|halved| 1.0 / factor(halved));
+                gpu.passes.push(GpuPass::host(HostKernel::Resample { filter: Filter::Bilinear, scale: Some(scale) }, image, scratch));
+                gpu.passes.push(GpuPass::blend_images(pyramid, scratch, summed, BlendMode::Add, 1.0));
+                summed
+            }
+        };
+        coarser = Some((summed, level.halve));
     }
-    summed.first().copied()
+    coarser.map(|(image, _)| image)
 }
 
-pub fn level_pass(level: &Level, src: GpuImage, out: GpuImage, coarser: Option<(GpuImage, [bool; 2])>) -> Option<GpuPass> {
-    let [rows, columns] = level.kernels().map(|k| k[k.len() / 2..].to_vec());
-    let floats: Vec<f32> = mix_floats(&level.mix).into_iter().chain(rows.iter().copied()).chain(columns.iter().copied()).collect();
-    if floats.len() > MAX_FLOATS {
-        return None;
-    }
-    let reach = [rows.len(), columns.len()].map(|n| n.saturating_sub(1) as u32);
-    let halve = coarser.map_or([0, 0], |(_, halve)| halve.map(u32::from));
-    let pass = GpuPass::new("lumen_level", src, out)
-        .floats(&floats)
-        .uints(&[reach[0], reach[1], u32::from(coarser.is_some()), halve[0], halve[1]])
-        .reach(reach[1].max(UPSAMPLE_REACH));
-    Some(match coarser {
-        Some((image, _)) => pass.aux(image),
-        None => pass,
-    })
+fn factor(halved: bool) -> f32 {
+    if halved { 2.0 } else { 1.0 }
+}
+
+fn mix_rows(mix: &Mix) -> [[f32; 4]; 4] {
+    let columns = mix.columns();
+    std::array::from_fn(|row| [columns[0][row], columns[1][row], columns[2][row], 0.0])
 }
 
 fn composite(settings: &Settings, core: &Mix, glow: Option<GpuImage>, padding: u32) -> GpuPass {
@@ -81,7 +81,7 @@ fn composite(settings: &Settings, core: &Mix, glow: Option<GpuImage>, padding: u
         None => [0; 4],
     };
     let uints = [view, blend, u32::from(settings.transfer.is_srgb()), dither, seed, x, y, u32::from(glow.is_some())];
-    let pass = GpuPass::new("lumen_composite", GpuImage::Source, GpuImage::Output).floats(&floats).uints(&uints).reach(UPSAMPLE_REACH);
+    let pass = GpuPass::new("lumen_composite", GpuImage::Source, GpuImage::Output).floats(&floats).uints(&uints).reach(0).aux_reach(UPSAMPLE_REACH);
     match glow {
         Some(image) => pass.aux(image),
         None => pass,
@@ -103,7 +103,7 @@ mod tests {
     fn assert_runs_on_the_host(plan: &GpuPlan, frame: [u32; 2], case: &str) {
         assert_eq!(plan.check(frame), Ok(()), "{case}");
         assert_eq!(plan.passes.last().map(|p| p.out), Some(GpuImage::Output), "{case}");
-        assert!(plan.passes.iter().all(|p| p.reach.is_some()), "{case}");
+        assert!(plan.passes.iter().all(|p| p.reach.is_some() || p.host.is_some()), "{case}");
     }
 
     #[test]
@@ -130,12 +130,13 @@ mod tests {
     }
 
     #[test]
-    fn the_plan_has_a_level_pass_per_cpu_level() {
+    fn each_level_is_blurred_mixed_and_summed_by_host_kernels() {
         let settings = settings_with(&[("Glow/radius", Value::Number(400.0))]);
         let plan = plan(&settings, [640, 360], settings.frame_padding([640, 360])).expect("a plan");
         let levels = Plan::new(&settings).levels.len();
         let count = |kernel: &str| plan.passes.iter().filter(|p| p.kernel == kernel).count();
-        assert_eq!([count("lumen_emit"), count("lumen_downsample"), count("lumen_level"), count("lumen_composite")], [1, levels - 1, levels, 1]);
+        let kernels = ["lumen_emit", "resample", "convolve", "matrix", "blend", "lumen_composite"].map(count);
+        assert_eq!(kernels, [1, 2 * (levels - 1), levels, levels, levels - 1, 1]);
     }
 
     #[test]

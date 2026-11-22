@@ -14,6 +14,7 @@ use effectcraft_engine::keyframe::Value;
 use effectcraft_engine::project::ParamUi;
 
 use crate::manage::Loaded;
+use craft_plugin_host::kernels::{self, StepImage};
 
 const MAX_PADDING: u32 = 4096;
 const MAX_STAMPED_FILES: usize = 256;
@@ -315,6 +316,62 @@ fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) 
         GpuImage::Texture(index) => GpuSlot::Texture(index as usize),
         GpuImage::Layer(index) => GpuSlot::Layer(index as usize),
     };
+    let draw = |draw: Draw| GpuDraw {
+        vertices: draw.vertices as usize,
+        layout: draw.layout,
+        indices: draw.indices.map(|index| index as usize),
+        instances: draw.instances.map(|index| index as usize),
+        instance_layout: draw.instance_layout,
+        count: draw.count,
+        depth: draw.depth,
+        blend: match draw.blend {
+            Blend::Replace => GpuBlend::Replace,
+            Blend::Over => GpuBlend::Over,
+            Blend::Add => GpuBlend::Add,
+        },
+        cull: match draw.cull {
+            Cull::None => GpuCull::None,
+            Cull::Back => GpuCull::Back,
+            Cull::Front => GpuCull::Front,
+        },
+        clear: draw.clear,
+    };
+    let mut images = plan.images.clone();
+    let mut passes = Vec::with_capacity(plan.passes.len());
+    for pass in &plan.passes {
+        let Some(kernel) = &pass.host else {
+            let (f, u, draw) = (pass.f.clone(), pass.u.clone(), pass.draw.clone().map(draw));
+            passes.push(GpuPass {
+                kernel: pass.kernel.clone(),
+                src: slot(pass.src),
+                aux: pass.aux.map(slot),
+                out: slot(pass.out),
+                f,
+                u,
+                data: Vec::new(),
+                draw,
+            });
+            continue;
+        };
+        let size = |image| plan.size_of(image, frame).unwrap_or(frame);
+        let out_size = size(pass.out);
+        let temp = GpuSlot::Scratch(images.len());
+        let steps = kernels::gpu_steps(kernel, size(pass.src), out_size);
+        if steps.iter().any(|step| step.out == StepImage::Temp) {
+            images.push(out_size);
+        }
+        let place = |image: StepImage, pass_image: GpuImage| if image == StepImage::Temp { temp } else { slot(pass_image) };
+        passes.extend(steps.into_iter().map(|step| GpuPass {
+            kernel: step.entry.to_string(),
+            src: place(step.src, pass.src),
+            aux: pass.aux.map(slot),
+            out: place(step.out, pass.out),
+            f: step.f,
+            u: step.u,
+            data: step.data,
+            draw: None,
+        }));
+    }
     let cached = |key: &str| {
         let bytes = loaded.plugin.cached(key);
         if bytes.is_none() {
@@ -339,38 +396,5 @@ fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) 
         .into_iter()
         .map(|texture| Some(GpuPicture { bytes: cached(&texture.key)?, name: texture.key, size: texture.size }))
         .collect::<Option<_>>()?;
-    let draw = |draw: Draw| GpuDraw {
-        vertices: draw.vertices as usize,
-        layout: draw.layout,
-        indices: draw.indices.map(|index| index as usize),
-        instances: draw.instances.map(|index| index as usize),
-        instance_layout: draw.instance_layout,
-        count: draw.count,
-        depth: draw.depth,
-        blend: match draw.blend {
-            Blend::Replace => GpuBlend::Replace,
-            Blend::Over => GpuBlend::Over,
-            Blend::Add => GpuBlend::Add,
-        },
-        cull: match draw.cull {
-            Cull::None => GpuCull::None,
-            Cull::Back => GpuCull::Back,
-            Cull::Front => GpuCull::Front,
-        },
-        clear: draw.clear,
-    };
-    let passes = plan
-        .passes
-        .into_iter()
-        .map(|pass| GpuPass {
-            kernel: pass.kernel,
-            src: slot(pass.src),
-            aux: pass.aux.map(slot),
-            out: slot(pass.out),
-            f: pass.f,
-            u: pass.u,
-            draw: pass.draw.map(draw),
-        })
-        .collect();
-    Some(GpuProgram { padding: layout.padding, images: plan.images, buffers, textures, layers: plan.layers, passes })
+    Some(GpuProgram { padding: layout.padding, images, buffers, textures, layers: plan.layers, passes })
 }
