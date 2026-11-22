@@ -1,5 +1,7 @@
 mod beam;
 mod glow;
+#[cfg(test)]
+mod golden;
 mod image;
 mod look;
 mod noise;
