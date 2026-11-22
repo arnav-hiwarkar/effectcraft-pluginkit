@@ -697,29 +697,26 @@ fn custom_control(
     ectx: &EvalCtx,
     clip: Rect,
     block: Rect,
-    actions: &mut Actions,
 ) {
     let uid = prop.uid;
     let Value::Str(value) = ectx.value(layer, prop) else { return };
     let started = ui.input(|i| i.pointer.primary_pressed()) && ui.rect_contains_pointer(clip);
     let gesture = egui::Id::unique(("ec-custom", uid));
     let held = held_gesture(ui, gesture, started);
-    let merge = gesture_key(ui, gesture, started);
+    let merge = gesture_key(ui, gesture, started || !held);
+    let edit =
+        (!prop.has_expression()).then(|| effectcraft_plugin::Target { comp: ectx.comp_id.0, layer: layer.id.0, prop: uid, time: ectx.time.seconds(), merge });
     let budget = ui.clip_rect().height().max(ROW);
     let mut body = ui.new_child(egui::UiBuilder::new().id_salt(("ec-custom-body", uid)).max_rect(block));
     body.set_clip_rect(clip.intersect(ui.clip_rect()));
     let scope = format!("effectControls.prop.{uid}.control");
-    let surface = effectcraft_plugin::Surface::Control { effect, param, instance: uid, value: &value };
+    let surface = effectcraft_plugin::Surface::Control { effect, param, instance: uid, value: &value, edit: edit.as_ref() };
     let events = match app.plugin_ui.panels.show(&mut app.session, &scope, surface, [block.width(), budget]) {
         Ok(shown) => {
             if let Some(error) = shown.error {
                 body.label(
                     egui::RichText::new(crate::i18n::tr_args("The plug-in control failed: {}", &[&error])).font(Tokens::ui(12.0)).color(app.tokens.text_dim),
                 );
-            }
-            if let Some(new) = shown.edited.filter(|new| *new != value && !prop.has_expression()) {
-                let merge = if held { merge } else { gesture_key(ui, gesture, true) };
-                actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": uid, "value": new, "merge": merge})));
             }
             let tokens = app.tokens;
             let source = crate::panels::plugin_view::Source { plugin: shown.plugin, images: &mut app.plugin_ui.images };
@@ -842,7 +839,7 @@ pub(super) fn group_rows(
                     *y += height + 4.0;
                     if block.max.y >= rect.min.y && block.min.y <= rect.max.y {
                         let param = format!("{}{}", fx.path, pr.match_id);
-                        custom_control(app, ui, layer, pr, &param, fx.effect, ectx, block.intersect(rect), block, actions);
+                        custom_control(app, ui, layer, pr, &param, fx.effect, ectx, block.intersect(rect), block);
                     }
                 }
                 if app.ui.fx_slider_open.contains(&pr.uid) {

@@ -10,4 +10,4 @@ pub use gate::{FilePicker, set_file_picker};
 pub use manage::{
     DEFAULT_WAIT, Loaded, PluginInfo, PluginState, PluginTask, Plugins, cancel_task, image, install, plugins, pump, run_command, start_task, wait_for_tasks,
 };
-pub use panels::{Clipboard, Panels, Shown, Surface, accept_drop, drag_path, set_clipboard};
+pub use panels::{Clipboard, Panels, Shown, Surface, Target, accept_drop, drag_path, set_clipboard};

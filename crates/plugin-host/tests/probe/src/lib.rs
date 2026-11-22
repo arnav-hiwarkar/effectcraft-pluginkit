@@ -64,6 +64,7 @@ impl Effect for Scale {
     }
 
     fn controls(&self, instance: u64, _param: &str, value: &mut String, ui: &mut Ui) {
+        wait_while_held();
         ui.label(&format!("Level {value}"));
         ui.label(&format!("Instance {instance}"));
         if ui.button("Halve") {
@@ -672,6 +673,40 @@ impl Panel for Watch {
     }
 }
 
+fn wait_while_held() {
+    while host::read_file(Root::Bundle, "hold").is_ok() {
+        host::notify("held");
+    }
+}
+
+fn relayed() -> Result<String> {
+    let request: serde_json::Value = serde_json::from_slice(&host::read_file(Root::Bundle, "relay.json")?)?;
+    if request["frame"].is_object() {
+        let image = host::frame(craft_plugin::FrameRequest { comp: None, layer: None, time: 0.0, scale: 1.0 })?;
+        return Ok(format!("{}x{}", image.width, image.height));
+    }
+    match request["task"].as_str() {
+        Some(task) => host::start(task, request["args"].clone()).map(drop)?,
+        None => host::command(request["command"].as_str().ok_or("relay.json names no command")?, request["params"].clone()).map(drop)?,
+    };
+    Ok("relayed".into())
+}
+
+#[derive(Default)]
+struct Relay {
+    said: String,
+}
+
+impl Panel for Relay {
+    fn ui(&mut self, ui: &mut Ui) {
+        if ui.button("Relay") {
+            wait_while_held();
+            self.said = relayed().unwrap_or_else(|error| error.to_string());
+        }
+        ui.label(&self.said);
+    }
+}
+
 #[derive(Default)]
 struct Ticker {
     ticks: u32,
@@ -720,6 +755,7 @@ fn make() -> Plugin {
         .panel("counter", "Counter", Counter::default())
         .panel("watch", "Watch", Watch::default())
         .panel("ticker", "Ticker", Ticker::default())
+        .panel("relay", "Relay", Relay::default())
         .command("edit", "Edit Document", || {
             let reply = host::command("layer.newNull", json!({"name": "From Plugin"}))?;
             host::write_file(Root::Data, "last-reply.json", reply.to_string().as_bytes())

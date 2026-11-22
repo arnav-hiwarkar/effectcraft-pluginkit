@@ -8,7 +8,6 @@ use egui::{Pos2, Vec2, pos2};
 use egui_kittest::Harness;
 use serde_json::{Value, json};
 
-use super::{Overlay, overlay_id};
 use crate::EffectcraftApp;
 
 fn wasm(crate_dir: &Path, name: &str) -> PathBuf {
@@ -72,16 +71,13 @@ fn element(harness: &Harness<'_, EffectcraftApp>, id: &str) -> egui::Rect {
 fn press_drag_release(harness: &mut Harness<'_, EffectcraftApp>, path: &[Pos2]) {
     let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
     let (first, last) = (path[0], path[path.len() - 1]);
-    harness.input_mut().events.push(egui::Event::PointerMoved(first));
-    harness.step();
-    harness.input_mut().events.push(button(first, true));
-    harness.step();
-    for at in &path[1..] {
-        harness.input_mut().events.push(egui::Event::PointerMoved(*at));
-        harness.step();
+    let mut events = vec![egui::Event::PointerMoved(first), button(first, true)];
+    events.extend(path[1..].iter().map(|at| egui::Event::PointerMoved(*at)));
+    events.push(button(last, false));
+    for event in events {
+        harness.input_mut().events.push(event);
+        settle(harness, |h| h.state().plugin_ui.panels.idle());
     }
-    harness.input_mut().events.push(button(last, false));
-    harness.step();
 }
 
 fn shown_frame(harness: &Harness<'_, EffectcraftApp>) -> Option<Vec<u8>> {
@@ -178,8 +174,9 @@ fn the_ring_and_point_handles_take_tab_focus_and_arrow_keys() {
     assert!(size > 100.0, "the arrow key moved the ring handle outwards: {size}");
 }
 
-fn tool_texts(harness: &Harness<'_, EffectcraftApp>) -> Vec<String> {
-    let overlay = harness.ctx.data(|d| d.get_temp::<Overlay>(overlay_id())).unwrap_or_default();
+fn tool_texts(harness: &mut Harness<'_, EffectcraftApp>) -> Vec<String> {
+    let app = harness.state_mut();
+    let overlay = app.plugin_ui.panels.tool_overlay(&mut app.session).cloned().unwrap_or_default();
     overlay
         .marks
         .into_iter()
@@ -210,7 +207,8 @@ fn a_plugin_tool_receives_its_gesture_in_comp_coordinates_at_half_and_double_zoo
         harness.step();
         let path = [comp_point(&harness, [40.0, 30.0]), comp_point(&harness, [50.0, 35.0]), comp_point(&harness, [60.0, 45.0])];
         press_drag_release(&mut harness, &path);
-        assert_eq!(tool_texts(&harness), ["Down 40.0 30.0", "Move 50.0 35.0", "Move 60.0 45.0", "Up 60.0 45.0"], "at {zoom}x");
+        settle(&mut harness, |h| h.state().plugin_ui.panels.idle());
+        assert_eq!(tool_texts(&mut harness), ["Down 40.0 30.0", "Move 50.0 35.0", "Move 60.0 45.0", "Up 60.0 45.0"], "at {zoom}x");
     }
     harness.state_mut().session.execute("edit.undo", json!({})).unwrap();
     let names: Vec<String> = harness.state().session.active_comp().unwrap().layers.iter().map(|layer| layer.name.clone()).collect();

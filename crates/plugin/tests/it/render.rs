@@ -120,38 +120,39 @@ fn a_plugin_effect_changes_its_cache_key_when_a_file_in_its_data_folder_changes(
     assert_ne!(reader_key(&app).expect("the layer is cacheable"), before);
 }
 
-fn controls(app: &mut App, effect: &str, value: &str, events: Vec<UiEvent>) -> (Vec<Widget>, Option<String>) {
-    controls_of(app, effect, 7, value, events)
-}
-
-fn controls_of(app: &mut App, effect: &str, instance: u64, value: &str, events: Vec<UiEvent>) -> (Vec<Widget>, Option<String>) {
+fn controls_of(app: &mut App, effect: &str, instance: u64, value: &str) -> Vec<Widget> {
     let mut panels = effectcraft_plugin::Panels::default();
-    let surface = effectcraft_plugin::Surface::Control { effect, param: "level", instance, value };
-    let mut frame = 0;
-    let drawn = crate::panels::settled(app, &mut panels, "control", surface, &mut frame);
-    if events.is_empty() {
-        return drawn;
-    }
-    panels.submit("control", events, "");
-    crate::panels::settled(app, &mut panels, "control", surface, &mut frame)
+    let surface = effectcraft_plugin::Surface::Control { effect, param: "level", instance, value, edit: None };
+    crate::panels::settled(app, &mut panels, "control", surface, &mut 0)
 }
 
 #[test]
-fn a_custom_control_draws_widgets_for_the_current_value_and_returns_the_edited_value() {
+fn a_custom_control_draws_widgets_for_the_current_value_and_sets_the_edited_value() {
     let mut app = app("test.render-controls", &[]);
-    let (widgets, value) = controls(&mut app, "test.render-controls.scale", "1", vec![]);
-    assert_eq!(value, None);
+    app.session.execute("layer.newSolid", json!({"name": "Scaled", "color": "#ffffff", "width": 64, "height": 36})).unwrap();
+    app.session.execute("effect.apply", json!({"layer": "Scaled", "effect": "test.render-controls.scale"})).unwrap();
+    let found = app.session.execute("prop.get", json!({"layer": "Scaled", "path": "effects/#1/level"})).unwrap();
+    let comp = app.session.active_comp_id().unwrap().0;
+    let target =
+        effectcraft_plugin::Target { comp, layer: found["layer"].as_u64().unwrap(), prop: found["uid"].as_u64().unwrap(), time: 0.0, merge: "m".into() };
+    let mut panels = effectcraft_plugin::Panels::default();
+    let surface =
+        effectcraft_plugin::Surface::Control { effect: "test.render-controls.scale", param: "level", instance: target.prop, value: "1", edit: Some(&target) };
+    let mut frame = 0;
+    let widgets = crate::panels::settled(&mut app, &mut panels, "control", surface, &mut frame);
     assert!(matches!(&widgets[0], Widget::Label { text, style: TextStyle::Body, .. } if text == "Level 1"), "{:?}", widgets[0]);
     let Widget::Button { id, .. } = widgets[2] else { panic!("a button, not {:?}", widgets[2]) };
-    let (_, value) = controls(&mut app, "test.render-controls.scale", "1", vec![UiEvent { id, kind: UiEventKind::Click }]);
-    assert_eq!(value.as_deref(), Some("0.5"));
+    panels.submit("control", vec![UiEvent { id, kind: UiEventKind::Click }], "");
+    crate::panels::settled(&mut app, &mut panels, "control", surface, &mut frame);
+    let level = app.session.execute("prop.get", json!({"layer": "Scaled", "path": "effects/#1/level"})).unwrap()["value"].clone();
+    assert_eq!(level, json!("0.5"));
 }
 
 #[test]
 fn a_custom_control_is_told_which_effect_instance_it_draws() {
     let mut app = app("test.render-instances", &[]);
-    let (first, _) = controls_of(&mut app, "test.render-instances.scale", 11, "1", vec![]);
-    let (second, _) = controls_of(&mut app, "test.render-instances.scale", 12, "1", vec![]);
+    let first = controls_of(&mut app, "test.render-instances.scale", 11, "1");
+    let second = controls_of(&mut app, "test.render-instances.scale", 12, "1");
     let text = |widget: &Widget| match widget {
         Widget::Label { text, .. } => text.clone(),
         other => format!("{other:?}"),
