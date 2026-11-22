@@ -114,7 +114,7 @@ pub(super) fn run(root: &Path, args: &[String]) -> Result<(), String> {
         std::fs::create_dir_all(target.parent().unwrap_or(&dir)).map_err(io)?;
         std::fs::write(&target, text).map_err(io)?;
     }
-    println!("made {} from the {} template", dir.display(), kind.name);
+    println!("made plugins/{name} from the {} template", kind.name);
     println!("  test it:      cargo test --manifest-path plugins/{name}/Cargo.toml");
     println!("  look at it:   cargo xtask plugin render plugins/{name}");
     println!("  run it live:  cargo xtask plugin dev plugins/{name}   (with the app started by: cargo run -p effectcraft -- --control 9877)");

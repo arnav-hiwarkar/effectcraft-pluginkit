@@ -352,6 +352,7 @@ mod tests {
             tasks: Default::default(),
             picked: Mutex::new(Vec::new()),
             images: Images::new(IMAGE_BUDGET),
+            journal: Default::default(),
         }
     }
 

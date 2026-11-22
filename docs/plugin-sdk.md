@@ -23,8 +23,9 @@ does something you can see. In the app, apply **Tint** from Effects & Presets, C
 prints one line per reload, and the plugin's `log!` lines, panics and failed calls with their file and line:
 
 ```
-reloaded com.example.tint: built in 3.1 s
-[error] render of effect `tint` failed: the plugin panicked at src/lib.rs:27:17: index out of bounds: the len is 4 but the index is 4
+reloaded com.example.tint: built in <seconds> s
+[error] the plugin panicked at src/lib.rs:27:17: index out of bounds: the len is 4 but the index is 4
+[error] render of effect `tint` failed: the plugin stopped: …
 ```
 
 The [cookbook](plugin-cookbook.md) has short recipes for the common jobs.
@@ -128,7 +129,8 @@ in tests, `plugin.logs()`:
 
 ```
 [warn] src/lib.rs:31: radius 900 is larger than the layer
-[error] render of effect `glow` failed: the plugin panicked at src/lib.rs:44:21: attempt to divide by zero
+[error] the plugin panicked at src/lib.rs:44:21: attempt to divide by zero
+[error] render of effect `glow` failed: the plugin stopped: …
 ```
 
 ## Check, render and benchmark

@@ -17,7 +17,7 @@ cargo xtask plugin new my-tint
 ```
 
 ```
-made a effect plugin in plugins/my-tint
+made plugins/my-tint from the effect template
   test it:      cargo test --manifest-path plugins/my-tint/Cargo.toml
   look at it:   cargo xtask plugin render plugins/my-tint
   run it live:  cargo xtask plugin dev plugins/my-tint   (with the app started by: cargo run -p effectcraft -- --control 9877)
@@ -64,7 +64,7 @@ cargo xtask plugin render plugins/my-tint
 ```
 
 ```
-rendered `my-tint` at 320x180 in 0.31 ms (sandboxed): plugins/my-tint/target/my-tint.png
+rendered `my-tint` at 320x180 in 0.27 ms (sandboxed): plugins/my-tint/target/my-tint.png
 ```
 
 It builds the sandboxed module and renders the effect on a built-in test image. Set parameters, the image
@@ -126,7 +126,23 @@ Open `plugins/my-tint/src/lib.rs` and change `render`, for example to invert bef
 Replace `*channel += (*channel * tint - *channel) * mix;` with
 `*channel += ((1.0 - *channel) * tint - *channel) * mix;` and run the test again. It fails, says how many
 pixels changed and by how much, and writes `full.actual.png` and `full.diff.png` (red marks every pixel
-that changed) beside the stored frame. If the new picture is what you want, store it:
+that changed) beside the stored frame:
+
+```
+frame `full` differs from the stored frame: 57600 of 57600 pixels are off by more than 1/255 (largest 255/255, first at (0, 0))
+  expected:   …/plugins/my-tint/tests/frames/full.png
+  actual:     …/plugins/my-tint/tests/frames/full.actual.png
+  difference: …/plugins/my-tint/tests/frames/full.diff.png (red marks the pixels that differ)
+If the new frame is right, run again with UPDATE_FRAMES=1.
+```
+
+A typo stops the build with the file and line:
+
+```
+src/lib.rs:23:29: error[E0609]: no field `amont` on type `Settings`: unknown field
+```
+
+If the new picture is what you want, store it:
 
 ```sh
 UPDATE_FRAMES=1 cargo test --manifest-path plugins/my-tint/Cargo.toml
@@ -136,6 +152,10 @@ UPDATE_FRAMES=1 cargo test --manifest-path plugins/my-tint/Cargo.toml
 
 ```sh
 cargo xtask plugin check plugins/my-tint
+```
+
+```
+checked plugins/my-tint: 0 errors, 0 warnings
 ```
 
 `check` builds the plugin and reports, each with its fix: unknown permissions, permissions the code never
@@ -156,14 +176,15 @@ Apply **My Tint** from Effects & Presets, Color Correction. Each save prints one
 app changes:
 
 ```
-reloaded com.example.my-tint: built in 3.1 s
+reloaded com.example.my-tint: built in <seconds> s
 ```
 
 Compile errors print with their file and line, and so do the plugin's own `log!` lines, panics and failed
 calls while the app runs it:
 
 ```
-[error] render of effect `my-tint` failed: the plugin panicked at src/lib.rs:27:17: index out of bounds: the len is 4 but the index is 4
+[error] the plugin panicked at src/lib.rs:27:17: index out of bounds: the len is 4 but the index is 4
+[error] render of effect `my-tint` failed: the plugin stopped: …
 ```
 
 ## 7. Share it
