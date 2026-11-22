@@ -192,9 +192,9 @@ width.
 Every interactive call (a panel, a custom control, a viewer overlay, a custom handle drag, a tool event,
 a command chosen from the menu) goes to one worker thread per loaded plugin, in order, and only that
 thread calls the plugin's long-lived instance for them (`effectcraft_plugin::Panels`). The UI thread posts
-requests, answers the host calls that need the project, and applies replies in one place; it waits at
-most 4 ms a frame for replies while it answers, never on the instance and never on a menu command, so a
-slow plugin cannot stall or deadlock the app. A frame or audio a panel asks for is cut from the project on
+requests, answers the host calls that need the project, and applies replies in one place; it spends at
+most 4 ms a frame on them, checked after each host call it answers and each reply it applies, never waits
+on the instance and never on a menu command, so a slow plugin cannot stall or deadlock the app. A frame or audio a panel asks for is cut from the project on
 the UI thread and rendered on the worker. A synchronous `plugin.run` (CLI, scripts) runs the command on a
 thread of its own and answers its host calls until it returns.
 
@@ -207,7 +207,8 @@ waiting for the app on such a request is released with an error. Each surface ha
 time. A click, a checkbox toggle or a drop reaches exactly one call, so two clicks during a slow call are
 two calls; pointer motion and slider values made during a call coalesce with the latest event of the same
 widget unless a click, toggle, key, press or drop came after it, so a value stays with the click it
-followed. A
+followed. A surface's backlog past 64 events drops its oldest pointer motion (a drag or a tool move for
+the viewer), never a click, key or drop. A
 failed call consumes its input, and a reply that arrives after its panel was hidden is dropped and the
 panel is called again when it shows. A custom control's or a custom handle's new value is set at the time
 and with the undo key it was made with. A tool's project edits join the gesture's undo step as they

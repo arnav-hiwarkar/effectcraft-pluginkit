@@ -416,7 +416,6 @@ pub fn run_command(session: &mut Session, plugin: &str, command: &str) -> Result
 }
 
 pub fn pump(session: &mut Session) -> bool {
-    crate::panels::serve(session);
     let Some(plugins) = plugins() else { return false };
     let mut running = false;
     for loaded in plugins.running_plugins() {

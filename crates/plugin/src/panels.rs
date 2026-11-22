@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use craft_plugin_host::ui::{AppEvent, ControlsReply, PanelReply, UiEvent, UiInput, Widget};
 use craft_plugin_host::viewer::{Overlay, ToolEventKind};
-use craft_plugin_host::{Access, AudioRequest, Call, FrameRequest, Host, PickFile, Pixels, PluginError, Retained, Samples};
+use craft_plugin_host::{Access, AudioRequest, Call, FrameRequest, Host, MAX_BACKLOG, PickFile, Pixels, PluginError, Retained, Samples};
 use effectcraft_engine::Session;
 use effectcraft_engine::project::{ItemId, Project};
 use serde_json::{Value, json};
@@ -39,17 +39,13 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-pub fn serve(session: &mut Session) -> usize {
-    let answers = |job: &Job| Arc::ptr_eq(&job.project, &session.project_closed) || job.project.load(Ordering::SeqCst);
-    let jobs: Vec<Job> = {
-        let mut queued = lock(&FORWARDED.jobs);
-        let (mine, others) = std::mem::take(&mut *queued).into_iter().partition(answers);
-        *queued = others;
-        mine
+fn serve_one(session: &mut Session) -> bool {
+    let job = {
+        let mut jobs = lock(&FORWARDED.jobs);
+        let mine = jobs.iter().position(|job| Arc::ptr_eq(&job.project, &session.project_closed) || job.project.load(Ordering::SeqCst));
+        mine.map(|at| jobs.remove(at))
     };
-    let served = jobs.len();
-    jobs.into_iter().for_each(|job| (job.run)(session));
-    served
+    job.map(|job| (job.run)(session)).is_some()
 }
 
 fn wait_for_work(timeout: Duration) {
@@ -68,7 +64,7 @@ pub(crate) fn run_command(session: &mut Session, loaded: Arc<Loaded>, command: &
         .spawn(move || loaded.plugin.call::<()>(&call, None, &mut host).map_err(|error| error.to_string()))
         .map_err(|error| error.to_string())?;
     while !running.is_finished() {
-        if serve(session) == 0 {
+        if !serve_one(session) {
             wait_for_work(POLL);
         }
     }
@@ -433,7 +429,8 @@ impl Panels {
 
     pub fn frame(&mut self, session: &mut Session, now: Duration) -> Option<Duration> {
         self.now = now;
-        serve(session);
+        self.deadline = Some(Instant::now() + WAIT);
+        self.serve(session);
         self.collect(session);
         let live = running_plugins();
         let current = |loaded: &Arc<Loaded>| live.iter().any(|running| Arc::ptr_eq(running, loaded));
@@ -455,7 +452,6 @@ impl Panels {
             }
         }
         self.seen = Some(seen);
-        self.deadline = None;
         self.scheduled = self.slots.values().filter_map(|slot| slot.retained.next_due()).min();
         self.scheduled.map(|due| due.saturating_sub(now))
     }
@@ -513,7 +509,7 @@ impl Panels {
                 Request { key: Key::Slot(key.to_string()), bound: bound.clone(), call: with_input(call.clone(), input), edit: edit.clone(), gesture: None };
             self.send(request);
             self.wait(session, |panels| !panels.busy(key));
-            if self.busy(key) || edit.is_some() {
+            if self.busy(key) || edit.is_some() || self.spent() {
                 break;
             }
         }
@@ -571,6 +567,16 @@ impl Panels {
             Some(at) => waiting[at] = request,
             None => waiting.push_back(request),
         }
+        let motion = |queued: &Request| match &queued.call {
+            Call::Tool { event, .. } => event.kind == ToolEventKind::Move,
+            Call::Drag { .. } => true,
+            _ => false,
+        };
+        while waiting.len() > MAX_BACKLOG
+            && let Some(oldest) = waiting.iter().position(motion)
+        {
+            waiting.remove(oldest);
+        }
     }
 
     fn advance(&mut self, key: &Key) {
@@ -582,11 +588,31 @@ impl Panels {
         }
     }
 
+    fn spent(&mut self) -> bool {
+        Instant::now() >= *self.deadline.get_or_insert_with(|| Instant::now() + WAIT)
+    }
+
+    fn serve(&mut self, session: &mut Session) -> bool {
+        let mut any = false;
+        while serve_one(session) {
+            any = true;
+            if self.spent() {
+                self.waker()();
+                break;
+            }
+        }
+        any
+    }
+
     fn collect(&mut self, session: &mut Session) -> bool {
         let mut any = false;
         while let Ok(done) = self.done.1.try_recv() {
             any = true;
             self.apply(session, done);
+            if self.spent() {
+                self.waker()();
+                break;
+            }
         }
         any
     }
@@ -653,17 +679,11 @@ impl Panels {
     }
 
     pub(crate) fn wait(&mut self, session: &mut Session, done: impl Fn(&Panels) -> bool) {
-        while !done(self) {
-            let deadline = *self.deadline.get_or_insert_with(|| Instant::now() + WAIT);
-            serve(session);
-            if self.collect(session) {
-                continue;
+        while !done(self) && !self.spent() {
+            let served = self.serve(session);
+            if !(self.collect(session) || served) {
+                wait_for_work(POLL);
             }
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return;
-            }
-            wait_for_work(left.min(POLL));
         }
     }
 }
@@ -760,6 +780,10 @@ pub fn drag_path(plugin: &str, root: craft_plugin_host::ui::Root, path: &str) ->
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use craft_plugin_host::viewer::ToolEvent;
+
     use super::*;
 
     fn legacy(session: &mut Session, id: &str) -> (tempfile::TempDir, Arc<Loaded>) {
@@ -806,5 +830,69 @@ mod tests {
         panels.post(new);
         idle(&mut panels, &mut session);
         assert!(Arc::ptr_eq(&panels.workers[RELOADED].loaded, &second));
+    }
+
+    fn tool(kind: ToolEventKind, x: f64) -> Call {
+        let event = ToolEvent {
+            kind,
+            comp: [x, 0.0],
+            layer: None,
+            layer_id: None,
+            modifiers: Default::default(),
+            pressure: 0.0,
+            scroll: [0.0; 2],
+            key: String::new(),
+            zoom: 1.0,
+            time: 0.0,
+        };
+        Call::Tool { tool: "t".into(), event }
+    }
+
+    #[test]
+    fn a_frame_answers_queued_app_requests_only_until_its_budget_is_spent() {
+        let mut session = effectcraft_host::session();
+        let served = Arc::new(AtomicUsize::new(0));
+        for _ in 0..2 {
+            let counted = served.clone();
+            let run = Box::new(move |_: &mut Session| {
+                std::thread::sleep(Duration::from_millis(20));
+                counted.fetch_add(1, Ordering::SeqCst);
+            });
+            lock(&FORWARDED.jobs).push(Job { project: session.project_closed.clone(), run });
+        }
+        let mut panels = Panels::default();
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let woken = wakes.clone();
+        panels.set_waker(move || {
+            woken.fetch_add(1, Ordering::SeqCst);
+        });
+        panels.frame(&mut session, Duration::ZERO);
+        let first = (served.load(Ordering::SeqCst), wakes.load(Ordering::SeqCst));
+        panels.frame(&mut session, Duration::ZERO);
+        assert_eq!((first, served.load(Ordering::SeqCst)), ((1, 1), 2));
+    }
+
+    #[test]
+    fn a_tool_lane_past_its_bound_drops_its_oldest_moves_and_keeps_every_key() {
+        let mut session = effectcraft_host::session();
+        let (_bundle, loaded) = legacy(&mut session, "test.queue-lane");
+        let mut panels = Panels::default();
+        let lane = Key::Tool("test.queue-lane".into(), "t".into());
+        for (kind, x) in
+            [(ToolEventKind::Down, 0.0)].into_iter().chain((0..50).flat_map(|x| [(ToolEventKind::Move, f64::from(x)), (ToolEventKind::Key, f64::from(x))]))
+        {
+            let posted = request(&panels, &session, lane.clone(), &loaded, tool(kind, x));
+            panels.post(posted);
+        }
+        let queued: Vec<(ToolEventKind, f64)> = panels.lanes[&lane]
+            .iter()
+            .filter_map(|request| match &request.call {
+                Call::Tool { event, .. } => Some((event.kind, event.comp[0])),
+                _ => None,
+            })
+            .collect();
+        let kept: Vec<(ToolEventKind, f64)> =
+            (0..50).flat_map(|x| [(x >= 36).then_some((ToolEventKind::Move, f64::from(x))), Some((ToolEventKind::Key, f64::from(x)))]).flatten().collect();
+        assert_eq!(queued, kept);
     }
 }

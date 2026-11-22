@@ -3,6 +3,7 @@ use std::time::Duration;
 use craft_plugin::{AppEvent, MIN_TIMER_MS, PanelReply, Pointer, PointerPhase, Topic, UiEvent, UiEventKind, UiInput, Widget};
 
 const LEGACY_TIMER: &str = "";
+pub const MAX_BACKLOG: usize = 64;
 
 #[derive(Debug, Clone, PartialEq)]
 struct Armed {
@@ -45,12 +46,12 @@ fn merged(pending: &UiEventKind, next: &UiEventKind) -> Option<UiEventKind> {
     }
 }
 
+fn motion(kind: &UiEventKind) -> bool {
+    matches!(kind, UiEventKind::Pointer(pointer) if matches!(pointer.phase, PointerPhase::Hover | PointerPhase::Drag))
+}
+
 fn discrete(kind: &UiEventKind) -> bool {
-    match kind {
-        UiEventKind::Pointer(pointer) => matches!(pointer.phase, PointerPhase::Down | PointerPhase::Up),
-        UiEventKind::Number(_) | UiEventKind::Text(_) | UiEventKind::Color(_) => false,
-        UiEventKind::Click | UiEventKind::Bool(_) | UiEventKind::Key(_) | UiEventKind::Drop(_) => true,
-    }
+    !motion(kind) && !matches!(kind, UiEventKind::Number(_) | UiEventKind::Text(_) | UiEventKind::Color(_))
 }
 
 fn one_call(events: &mut Vec<UiEvent>) -> Vec<UiEvent> {
@@ -106,6 +107,11 @@ impl Retained {
                 Some((last, kind)) => last.kind = kind,
                 None => self.events.push(event),
             }
+        }
+        while self.events.len() > MAX_BACKLOG
+            && let Some(oldest) = self.events.iter().position(|event| motion(&event.kind))
+        {
+            self.events.remove(oldest);
         }
         self.keys.push_str(keys);
     }
@@ -403,5 +409,17 @@ mod tests {
         panel.finish(reply(vec![], vec![]), ms(40));
         assert_eq!(events(&mut panel, 48), Some(vec![click(7), number(2.0)]));
         assert_eq!(events(&mut panel, 64), Some(vec![click(7), number(3.0)]));
+    }
+
+    #[test]
+    fn a_backlog_past_its_bound_drops_its_oldest_pointer_motion_and_keeps_every_click() {
+        let mut panel = drawn(vec![], vec![]);
+        slow_call(&mut panel);
+        for x in 0..50 {
+            panel.push(vec![pointer(3, x as f32, PointerPhase::Drag), click(100 + x)], "");
+        }
+        panel.finish(reply(vec![], vec![]), ms(40));
+        let kept: Vec<UiEvent> = (0..50).flat_map(|x| [(x >= 36).then(|| pointer(3, x as f32, PointerPhase::Drag)), Some(click(100 + x))]).flatten().collect();
+        assert_eq!(events(&mut panel, 48), Some(kept));
     }
 }
