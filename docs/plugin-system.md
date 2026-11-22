@@ -168,11 +168,12 @@ resolves them.
 
 ## What plugins cannot do yet
 
-- Open network connections from the sandbox.
-- Draw custom controls inside Effect Controls. An effect can link a panel as its designer instead.
-- Keep per-instance state between frames, such as a simulation cache.
-- Read audio from inside an effect's render (`cx.audio`): a panel, command or task can read it. The
+- Open network connections from the sandbox. A native plugin can.
+- Read audio from inside an effect's render (`cx.audio`). A panel, command or task can read it. The
   render path reaches only footage items' audio (`EffectHost::audio`), not the comp mixer.
-- Import or export file formats. A task with `pick_file` and `frame` can write an export itself.
+- Change the audio a layer plays.
+- Register a decoder for a new footage format. A task with `pick_file` and `frame` can write an export
+  itself, and a command can convert a file and import the result.
+- Take over how the comp's 3D layers intersect or cast shadows. A plugin draws 3D into its own layer.
 
-Each of these is one more request variant and one more permission check, not a redesign.
+[What kinds of plugins can be built](plugin-capabilities.md) maps each kind of plugin to the calls it uses.
