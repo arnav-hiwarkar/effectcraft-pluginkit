@@ -1,7 +1,7 @@
 //! Content selected by layer parameters participates in the owner's cache key. Keep the
 //! ordinary layer cache (including static self reads), and conservatively decline only
 //! cyclic/over-budget graphs or expressions sampled at unknown times.
-use super::{KeyHasher, hash_debug, hash_values};
+use super::{KeyHasher, hash_value, hash_values};
 use crate::EvalCtx;
 use effectcraft_project::{ItemId, ItemKind, Layer, LayerId, LayerSource, LightKind, Node, PropGroup};
 use std::hash::Hash;
@@ -58,7 +58,7 @@ impl Dependencies<'_> {
                             if other.id == layer.id {
                                 // Source/Masks never enter the same stack again. The owner
                                 // key already covers its source and mask properties.
-                                hash_debug(self.h, &ctx.world_matrix(other));
+                                hash_value(self.h, &ctx.world_matrix(other));
                             } else {
                                 self.layer(ctx, other)?;
                             }
@@ -85,23 +85,23 @@ impl Dependencies<'_> {
         if (self.other_times || super::reads_other_times(layer, None)) && super::has_expression(&layer.props) {
             return None;
         }
-        hash_debug(self.h, layer);
+        hash_value(self.h, layer);
         // An overridden clip plays on the layer clock and a keyed one from its key: the same
         // selection at the same time can pose differently.
         super::hash_overrides(self.h, ctx, layer.id);
         hash_values(self.h, ctx, layer, &layer.props);
-        hash_debug(self.h, &ctx.world_matrix(layer));
+        hash_value(self.h, &ctx.world_matrix(layer));
         if let Some(item) = layer.source.item() {
-            hash_debug(self.h, &ctx.project.item(item));
+            hash_value(self.h, &ctx.project.item(item));
         }
         // The solo render goes through the comp's camera and lights. The camera's depth of
         // field blurs it (focus, aperture, iris, highlights) — none of that is in the
         // projection hashed above.
-        hash_debug(self.h, &ctx.camera());
-        hash_debug(self.h, &crate::three_d::active_camera(ctx).dof);
-        hash_debug(self.h, &crate::three_d::light::lights_at(ctx));
-        hash_debug(self.h, &ctx.comp.draft_3d);
-        hash_debug(self.h, &ctx.comp.renderer);
+        hash_value(self.h, &ctx.camera());
+        hash_value(self.h, &crate::three_d::active_camera(ctx).dof);
+        hash_value(self.h, &crate::three_d::light::lights_at(ctx));
+        hash_value(self.h, &ctx.comp.draft_3d);
+        hash_value(self.h, &ctx.comp.renderer);
         // An Environment light's image lights Advanced 3D models (its source can be any
         // layer's render, or any environment layer) — too open-ended to hash: while one is
         // on (and lighting: Draft 3D lights nothing), don't cache the read.
@@ -146,16 +146,16 @@ impl Dependencies<'_> {
         self.path.push(id);
         // Include transforms/parents as well as pixels: selected-layer anchors and
         // continuously rasterized sources can depend on them.
-        hash_debug(self.h, layer);
+        hash_value(self.h, layer);
         // A referenced layer's static values can be overridden by the collapsed instance without
         // editing it (`hash_values` only sees animated ones), so the owner's key needs them too.
         super::hash_overrides(self.h, ctx, layer.id);
         hash_values(self.h, ctx, layer, &layer.props);
-        hash_debug(self.h, &ctx.world_matrix(layer));
+        hash_value(self.h, &ctx.world_matrix(layer));
         // A cached owner never runs this layer's effects, so the comp camera and lights its
         // scene-reading effects see belong in the owner's key too (#1252).
         if super::reads_comp_scene(layer) {
-            hash_debug(self.h, &crate::comp_scene(ctx, layer));
+            hash_value(self.h, &crate::comp_scene(ctx, layer));
         }
         if super::time_dependent(layer, true) {
             layer.layer_time(ctx.time).0.hash(self.h);
@@ -167,7 +167,7 @@ impl Dependencies<'_> {
                     _ => item,
                 };
                 let source = ctx.project.item(item);
-                hash_debug(self.h, &source);
+                hash_value(self.h, &source);
                 if let Some(source) = source {
                     match &source.kind {
                         ItemKind::Footage(_) => {

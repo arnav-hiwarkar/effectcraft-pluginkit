@@ -321,7 +321,7 @@ pub(crate) fn comp_proj(cam: &[[f64; 4]; 3], c: [f64; 2], b: &Buf) -> Proj {
 }
 
 /// The comp's first light as the effect sees it (layer pixels), from [`crate::EffectHost::comp_scene`].
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
 pub struct CompLight {
     /// Position in layer pixels (z away from the viewer).
     pub pos: [f64; 3],
@@ -334,7 +334,7 @@ pub struct CompLight {
 }
 
 /// The comp's camera and lights relative to the effect's layer.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
 pub struct CompScene {
     /// Effect-space pixels (x, y, z) → effect-space pixels, homogeneous rows X, Y, W: the comp
     /// camera's view of the layer brought back into the layer's own pixel grid (identity on the
@@ -348,14 +348,14 @@ pub struct CompScene {
     pub lights: Vec<SceneLight>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
 pub struct CompCamera {
     pub layer_to_camera_rows: [[f64; 4]; 4],
     pub eye: [f64; 3],
     pub zoom: f64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub enum SceneLightKind {
     Parallel,
     #[default]
@@ -364,7 +364,7 @@ pub enum SceneLightKind {
     Spot,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
 pub struct SceneLight {
     pub kind: SceneLightKind,
     pub pos: [f64; 3],

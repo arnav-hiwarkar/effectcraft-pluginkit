@@ -16,6 +16,7 @@ mod footage_size;
 mod frame_blend;
 mod frame_cache;
 mod guides;
+mod layer_keys;
 mod mask_blur;
 mod mask_expansion;
 mod mask_feather;
