@@ -61,8 +61,10 @@ WAIT = ("plugin.tasks", {"wait": True, "timeout": 300})
 TARGET = "Pulse 60-250 Hz"
 SAMPLES = [15, 30, 45]
 
-base, base_time = session(("plugin.list", {}))
-timed, timed_time = session(analyse(False), WAIT)
+base_time = min(session(("plugin.list", {}))[1] for _ in range(3))
+runs = [session(analyse(False), WAIT) for _ in range(3)]
+timed = runs[0][0]
+timed_time = min(elapsed for _, elapsed in runs)
 if isinstance(timed, dict):
     check("the analysis of 60 s of audio finishes", False, timed.get("error"))
 else:
@@ -70,10 +72,10 @@ else:
     check("the analysis of 60 s of audio finishes", state["status"] == "done", f"{state['status']} {state.get('error')}")
     values = state["result"]["values"]
     check("one value per comp frame", len(values) == SECONDS * FPS, f"{len(values)} values")
-    print(f"MEASURE analysing {SECONDS} s of audio at 48 kHz: {timed_time - base_time:.2f} s (run with analysis {timed_time:.2f} s, without {base_time:.2f} s)")
+    print(f"MEASURE analysing {SECONDS} s of audio at 48 kHz: {timed_time - base_time:.2f} s (best of 3 runs with analysis {timed_time:.2f} s, without {base_time:.2f} s)")
 
 r, _ = session(analyse(True), WAIT, *[("prop.get", {"layer": TARGET, "path": "effects/#1/slider", "time": t}) for t in SAMPLES],
-               ("keys.info", {"layer": TARGET}), ("edit.undo", {}), ("prop.get", {"layer": TARGET, "path": "effects/#1/slider", "time": 30}))
+               ("edit.undo", {}), ("prop.get", {"layer": TARGET, "path": "effects/#1/slider", "time": 30}))
 if isinstance(r, dict):
     check("the band energy is written as keyframes that follow the tone's level", False, r.get("error"))
 else:
@@ -83,8 +85,8 @@ else:
     error = max(abs(a - b) for a, b in zip(got, expected))
     check("the band energy is written as keyframes that follow the tone's level", state["status"] == "done" and error < 3, f"slider {got}, expected {expected}")
     check("a keyframe for every frame", state["result"]["keys"] == SECONDS * FPS, f"{state['result']['keys']} keys")
-    undone = r[3 + len(SAMPLES)]
-    after = r[4 + len(SAMPLES)]
+    undone = r[2 + len(SAMPLES)]
+    after = r[3 + len(SAMPLES)]
     check("one undo removes every keyframe", undone == {"undone": f"{TARGET}: Keyframes"} and after["value"] == 0, f"undo {undone}, slider after {after}")
 
 r, _ = session(analyse(False), ("plugin.cancelTask", {"plugin": PLUGIN, "id": 1}), WAIT)
