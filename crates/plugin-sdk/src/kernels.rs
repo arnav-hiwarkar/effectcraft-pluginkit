@@ -129,6 +129,10 @@ impl HostKernel {
         !matches!(self, HostKernel::Blur { .. } | HostKernel::Resample { .. } | HostKernel::Convolve { .. } | HostKernel::Warp { .. })
     }
 
+    pub(crate) fn needs_temporary(&self) -> bool {
+        matches!(self, HostKernel::Blur { .. } | HostKernel::Convolve { taps: Taps::Separable { .. } })
+    }
+
     pub fn check(&self, src: [u32; 2], aux: Option<[u32; 2]>, out: [u32; 2]) -> Result<(), String> {
         let same = |field: &str, size: [u32; 2]| {
             if size == out {

@@ -629,9 +629,15 @@ impl GpuPlan {
             }
         }
         let area = |[w, h]: [u32; 2]| u64::from(w) * u64::from(h);
-        let scratch_area = self.images.iter().copied().map(area).fold(0, u64::saturating_add);
+        let mut temporaries: Vec<[u32; 2]> = Vec::new();
+        for pass in self.passes.iter().filter(|pass| pass.host.as_ref().is_some_and(HostKernel::needs_temporary)) {
+            if let Some(size) = self.size_of(pass.out, frame).filter(|size| !temporaries.contains(size)) {
+                temporaries.push(size);
+            }
+        }
+        let scratch_area = self.images.iter().chain(&temporaries).copied().map(area).fold(0, u64::saturating_add);
         if scratch_area > MAX_SCRATCH_FRAMES.saturating_mul(area(frame)) {
-            return Err(format!("the scratch images together exceed {MAX_SCRATCH_FRAMES} times the {fw}x{fh} padded frame"));
+            return Err(format!("the scratch images and blur temporaries together exceed {MAX_SCRATCH_FRAMES} times the {fw}x{fh} padded frame"));
         }
         if self.buffers.len() > MAX_BUFFERS {
             return Err(format!("a plan has at most {MAX_BUFFERS} buffers, this one has {}", self.buffers.len()));
@@ -1479,6 +1485,11 @@ mod tests {
             ("writes a layer", plan(vec![], vec![tint(GpuImage::Source, GpuImage::Layer(0)), finish()]), "which passes only read"),
             ("undeclared layer", plan(vec![], vec![tint(GpuImage::Layer(0), GpuImage::Output)]), "does not declare"),
             ("too much scratch", plan(vec![[2 * 53, 2 * 37]; 3], vec![finish()]), "exceed 8 times"),
+            (
+                "scratch at the limit and a blur temporary",
+                plan(vec![[53, 37]; 8], vec![GpuPass::blur(source, scratch, [1.0; 2]), finish()]),
+                "the scratch images and blur temporaries together exceed 8 times",
+            ),
             ("97 floats", plan(vec![], vec![finish().floats(&[0.0; 97])]), "97 floats"),
             ("17 uints", plan(vec![], vec![finish().uints(&[0; 17])]), "17 uints"),
             ("17 pictures", too_many_pictures, "at most 16 textures and layers"),

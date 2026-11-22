@@ -453,3 +453,19 @@ fn a_blend_at_full_amount_is_the_blend_and_at_none_the_base() {
     assert_eq!(blend(BlendMode::Over, 0.0, [f32::INFINITY, 0.0, 0.0, 1.0]), base);
     assert_eq!(blend(BlendMode::Add, 0.0, [f32::INFINITY, 0.0, 0.0, 1.0]), base);
 }
+
+#[test]
+fn on_the_gpu_blurs_of_one_size_share_one_temporary() {
+    let mut plan = GpuPlan::new();
+    let (soft, small, smaller) = (plan.scratch(SIZE), plan.scratch([5, 4]), plan.scratch([5, 4]));
+    let mut plan = plan.pass(GpuPass::blur(GpuImage::Source, soft, [2.0; 2]));
+    for k in 0..62 {
+        let (src, out) = if k % 2 == 0 { (soft, GpuImage::Output) } else { (GpuImage::Output, soft) };
+        plan = plan.pass(GpuPass::blur(src, out, [2.0; 2]));
+    }
+    let plan = plan.pass(GpuPass::resample(soft, small, Filter::Bilinear)).pass(GpuPass::blur(small, smaller, [1.0; 2]));
+    assert_eq!(plan.validate(SIZE), Ok(()));
+    let (lowered, temps) = lower(&plan, SIZE);
+    assert_eq!(lowered.len(), 2 * 64 + 1);
+    assert_eq!(temps, vec![SIZE, [5, 4]]);
+}

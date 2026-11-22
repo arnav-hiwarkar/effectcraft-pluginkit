@@ -58,8 +58,11 @@ pub fn lower(plan: &GpuPlan, frame: [u32; 2]) -> (Vec<Lowered<'_>>, Vec<[u32; 2]
                 let aux = pass.aux.map(StepImage::Plan);
                 let step = |entry, f, u, data| GpuStep { entry, src, aux, out, f, u, data };
                 let mut separable = |x: Vec<f32>, y: Vec<f32>| {
-                    let temp = StepImage::Temp(temps.len());
-                    temps.push(size(pass.out));
+                    let out_size = size(pass.out);
+                    let temp = StepImage::Temp(temps.iter().position(|known| *known == out_size).unwrap_or_else(|| {
+                        temps.push(out_size);
+                        temps.len() - 1
+                    }));
                     [
                         GpuStep { out: temp, ..step("craft_convolve_x", Vec::new(), vec![x.len() as u32], x) },
                         GpuStep { src: temp, ..step("craft_convolve_y", Vec::new(), vec![y.len() as u32], y) },
