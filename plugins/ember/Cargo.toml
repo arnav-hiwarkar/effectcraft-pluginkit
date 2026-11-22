@@ -1,0 +1,22 @@
+[package]
+name = "ember"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+craft-plugin = { path = "../../crates/plugin-sdk" }
+
+[dev-dependencies]
+craft-plugin-host = { path = "../../crates/plugin-host" }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+
+[workspace]

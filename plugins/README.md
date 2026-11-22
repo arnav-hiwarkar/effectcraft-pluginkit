@@ -6,6 +6,7 @@ Each folder here is one plugin: a standalone Rust crate outside the workspace, b
 | Plugin | Kind | What it does |
 |---|---|---|
 | [Lumen Glow](lumen-glow) | Effect | A wide, energy-conserving glow from a pyramid of blurs, with threshold, falloff, aspect, tint, chromatic aberration and views |
+| [Ember](ember) | Effect | A deterministic 3D particle system: point, box, sphere or mask emitters, gravity, wind, drag, curl-noise turbulence and spin, colour, size and opacity over life, discs, streaks and sparks, motion blur and the comp camera |
 | [Plasma Beam](plasma-beam) | Effect | A white-hot core with layered coloured glow between two points or along the layer's masks, with presets, taper, trim, flicker and distortion |
 | [Halo Flares](halo) | Effect | A lens flare from a light point: core glow, star rays, anamorphic streak, chromatic ring, iris ghosts along the line through the centre, lens-dirt bloom and a hoop, with six looks, edge trigger, shimmer, occlusion by another layer and Add or Screen compositing |
 | [Forge 3D](forge-3d) | Effect | Lit, depth-correct 3D models over a layer, drawn by GPU draw passes: a cube, sphere, torus, extruded star or the bundled OBJ model, a grid or ring replicator with a colour ramp, a material, and the comp's camera and lights |
@@ -64,3 +65,21 @@ Forge 3D draws only on the GPU: with GPU Acceleration off it leaves the layer as
 own work, an icosahedron with a raised point on each face, written out by a script for this plugin.
 
 To write your own, read [Write a plugin](../docs/plugin-sdk.md).
+
+## Ember
+
+Ember is a simulation. Frame N is stepped from frame N-1 with a fixed time step (two substeps per frame) and random
+numbers seeded from the emitter seed, the substep and the particle index, so a frame never depends on render order.
+Every tenth frame, and the last frame stepped, are stored in the plugin cache under a hash of every parameter the
+simulation reads; a render steps forward from the nearest stored frame, and the cache is only a memo.
+`layout()` steps the simulation once per frame, builds the screen-space draw list and stores it with row bins of
+16 rows; each band of the parallel, pointwise render recalls the list and draws only the sprites in its bins.
+`layout()` stops after 12 million particle-substeps and stores where it got to; the render finishes the catch-up.
+
+```sh
+cargo test --manifest-path plugins/ember/Cargo.toml --release            # unit tests and the host determinism tests
+cargo run --manifest-path plugins/ember/Cargo.toml --release --example showcase -- <out-dir>   # camera PNG and timings
+```
+
+Keyframed parameters are read at the current frame only, so the simulation uses today's values for its whole history;
+emitter motion is the constant `Emitter Motion` velocity, which `Inherit Emitter Motion` passes to new particles.
