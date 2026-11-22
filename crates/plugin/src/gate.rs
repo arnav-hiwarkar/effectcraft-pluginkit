@@ -69,6 +69,9 @@ const FILE_PERMISSIONS: [Permission; 2] = [Permission::FilesRead, Permission::Fi
 const MAX_AUDIO_FRAMES: f64 = (1u64 << 25) as f64;
 const AUDIO_RATES: std::ops::RangeInclusive<u32> = 1000..=192_000;
 const MAX_FRAME_SCALE: f64 = 4.0;
+const MAX_FRAME_SIDE: f64 = 16384.0;
+const MAX_FRAME_BYTES: f64 = (1u64 << 30) as f64;
+const RGBA_F32_BYTES: f64 = 16.0;
 
 pub type FilePicker = Box<dyn Fn(&PickFile) -> Option<PathBuf> + Send + Sync>;
 
@@ -294,6 +297,14 @@ impl Host for SessionHost<'_> {
             return Err(format!("a frame needs a scale above 0 and at most {MAX_FRAME_SCALE}, and a finite time"));
         }
         let comp = find_comp(self.session, request.comp.as_deref())?;
+        let size = self.session.project.comp(comp).map(|found| (found.width, found.height)).ok_or("the composition is gone")?;
+        let (width, height) = ((f64::from(size.0) * request.scale).ceil(), (f64::from(size.1) * request.scale).ceil());
+        if width > MAX_FRAME_SIDE || height > MAX_FRAME_SIDE || width * height * RGBA_F32_BYTES > MAX_FRAME_BYTES {
+            return Err(format!(
+                "a {width}×{height} frame is too large: a frame may be at most {MAX_FRAME_SIDE} pixels on a side and {} MiB as RGBA floats",
+                MAX_FRAME_BYTES / f64::from(1u32 << 20)
+            ));
+        }
         let solo = match &request.layer {
             Some(layer) => Some(only_layer(&self.session.project, comp, find_layer(&self.session.project, comp, layer)?, true)?),
             None => None,
