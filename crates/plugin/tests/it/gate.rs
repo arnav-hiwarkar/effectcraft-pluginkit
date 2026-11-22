@@ -194,6 +194,7 @@ fn commands_that_reach_outside_the_document_need_file_permissions() {
     let font = app.relay("layer.setText", json!({"font": "Inter"})).unwrap_err();
     assert!(font.contains("files.write"), "{font}");
     app.relay("layer.setText", json!({"text": "Subtitle"})).expect("changing the text alone stays a document edit");
+}
 
 #[test]
 fn a_plugin_may_write_text_into_its_own_custom_parameter_but_not_into_another_plugins() {

@@ -118,6 +118,8 @@ fn a_plugin_effect_changes_its_cache_key_when_a_file_in_its_data_folder_changes(
     std::fs::write(data.join("palette.json"), "[1, 2, 3]").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(600));
     assert_ne!(reader_key(&app).expect("the layer is cacheable"), before);
+}
+
 fn controls(app: &mut App, effect: &str, value: &str, events: Vec<UiEvent>) -> (Vec<Widget>, Option<String>) {
     let input = UiInput { events, size: [240.0, 80.0], ..Default::default() };
     let (plugin, reply) = effectcraft_plugin::controls(&mut app.session, effect, "level", value, input).expect("the controls draw");
