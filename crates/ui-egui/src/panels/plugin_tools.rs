@@ -47,7 +47,7 @@ pub(crate) fn toolbar(app: &mut EffectcraftApp, ui: &mut egui::Ui, mut x: f32, c
         crate::widgets::focus_outline(ui, &resp, &t);
         app.auto.add_response(&format!("tools.plugin.{plugin}.{}", spec.id), &resp, &spec.name);
         if resp.on_hover_text(&spec.name).clicked() {
-            app.ui.plugin_tool = (!on).then(|| PluginTool { plugin, tool: spec.id, under: app.ui.tool });
+            app.ui.plugin_tool = (!on).then_some(PluginTool { plugin, tool: spec.id, under: app.ui.tool });
             ui.data_mut(|d| d.remove::<Overlay>(overlay_id()));
         }
         x += 28.0;

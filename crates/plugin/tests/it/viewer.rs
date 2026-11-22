@@ -167,7 +167,7 @@ fn a_plugin_built_before_viewer_controls_loads_renders_and_keeps_the_built_in_cr
     app.session.execute("effect.apply", json!({"layer": "Aim", "effect": "test.viewer-legacy.mark"})).unwrap();
     let session = &app.session;
     let comp = session.active_comp_id().unwrap();
-    let mut renderer = effectcraft_engine::render::Renderer::new(&session.project, session.footage.as_ref(), Default::default());
+    let renderer = effectcraft_engine::render::Renderer::new(&session.project, session.footage.as_ref(), Default::default());
     let image = renderer.comp_frame(comp, Tick::ZERO);
     let centre = image.data[(image.height / 2 * image.width + image.width / 2) as usize];
     assert!((centre[0] - 0.5).abs() < 0.01 && (centre[1] - 0.5).abs() < 0.01, "it renders its point parameter: {centre:?}");

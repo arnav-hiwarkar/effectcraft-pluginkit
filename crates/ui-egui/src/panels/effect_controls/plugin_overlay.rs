@@ -83,17 +83,16 @@ struct Grab {
 pub(super) fn effect_overlay(
     app: &mut EffectcraftApp,
     ui: &mut egui::Ui,
-    painter: &egui::Painter,
     map: &ViewerMap,
     ectx: &EvalCtx,
     layer: &Layer,
     g: &PropGroup,
-    fm: &Mat3,
     actions: &mut Actions,
 ) -> Option<Arc<Shown>> {
     let shown = effectcraft_plugin::viewer::overlay(ectx, layer, g)?;
     let t = app.tokens;
-    draw_marks(&t, painter, map, &shown.overlay.marks, Some(fm));
+    let (painter, fm) = (ui.painter_at(map.area), &crate::panels::viewer::fx2c(ectx, layer));
+    draw_marks(&t, &painter, map, &shown.overlay.marks, Some(fm));
     for (index, handle) in shown.overlay.handles.iter().enumerate() {
         let s = map.to_screen(fw::layer_to_comp(fm, handle.at));
         if !s.is_finite() {
@@ -113,8 +112,8 @@ pub(super) fn effect_overlay(
         let col = if lit { t.accent } else { Color32::WHITE };
         match handle.bind {
             Bind::Point { .. } => {
-                fw::draw_crosshair(painter, s + vec2(1.0, 1.0), 5.0, Color32::from_black_alpha(160));
-                fw::draw_crosshair(painter, s, 5.0, col);
+                fw::draw_crosshair(&painter, s + vec2(1.0, 1.0), 5.0, Color32::from_black_alpha(160));
+                fw::draw_crosshair(&painter, s, 5.0, col);
             }
             _ => {
                 let square = Rect::from_center_size(s, vec2(7.0, 7.0));
