@@ -125,6 +125,9 @@ fn main() {
         Subject { name: "Probe invert", dir: root.join("tests/probe"), library: "probe", effect: "invert" },
         Subject { name: "Plasma Beam", dir: plugins.join("plasma-beam"), library: "plasma_beam", effect: "beam" },
         Subject { name: "Lumen Glow CPU", dir: plugins.join("lumen-glow"), library: "lumen_glow", effect: "glow" },
+        Subject { name: "Halo Flares", dir: plugins.join("halo"), library: "halo", effect: "flare" },
+        Subject { name: "Retro CRT", dir: plugins.join("retro"), library: "retro", effect: "crt" },
+        Subject { name: "Retro Neon", dir: plugins.join("retro"), library: "retro", effect: "neon" },
     ];
     let only: Vec<String> = std::env::args().skip(1).collect();
     let scratch = std::env::temp_dir().join("craft-plugin-bench");

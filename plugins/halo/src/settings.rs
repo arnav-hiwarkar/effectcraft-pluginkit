@@ -1,3 +1,4 @@
+use craft_plugin::math::smoothstep;
 use craft_plugin::prelude::*;
 
 use crate::flare::*;
