@@ -16,12 +16,25 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+pub(crate) type Project = Option<Arc<AtomicBool>>;
+
 pub(crate) struct Slot {
     state: Mutex<TaskState>,
     cancelled_at: Mutex<Option<Instant>>,
+    project: Project,
 }
 
+pub(crate) const PROJECT_CLOSED: &str = "the project this task started in was closed";
+
 impl Slot {
+    pub fn project(&self) -> Project {
+        self.project.clone()
+    }
+
+    pub fn project_closed(&self) -> bool {
+        self.project.as_ref().is_some_and(|closed| closed.load(Ordering::Acquire))
+    }
+
     pub fn state(&self) -> TaskState {
         lock(&self.state).clone()
     }
@@ -89,7 +102,7 @@ impl Tasks {
         *lock(&self.known) = names;
     }
 
-    pub fn add(&self, task: &str) -> Result<(u64, Arc<Slot>), String> {
+    pub fn add(&self, task: &str, project: Project) -> Result<(u64, Arc<Slot>), String> {
         if !lock(&self.known).iter().any(|known| known == task) {
             return Err(format!("this plugin has no task `{task}`"));
         }
@@ -106,7 +119,7 @@ impl Tasks {
             *next
         };
         let state = TaskState { id, task: task.to_string(), ..Default::default() };
-        let slot = Arc::new(Slot { state: Mutex::new(state), cancelled_at: Mutex::new(None) });
+        let slot = Arc::new(Slot { state: Mutex::new(state), cancelled_at: Mutex::new(None), project });
         slots.insert(id, slot.clone());
         let finished: Vec<u64> = slots.iter().filter(|(_, slot)| !slot.running()).map(|(id, _)| *id).collect();
         finished.iter().take(finished.len().saturating_sub(KEPT_FINISHED)).for_each(|old| {
@@ -134,6 +147,13 @@ impl Tasks {
         true
     }
 
+    pub fn cancel_orphans(&self) {
+        let orphans: Vec<u64> = lock(&self.slots).iter().filter(|(_, slot)| slot.running() && slot.project_closed()).map(|(id, _)| *id).collect();
+        orphans.into_iter().for_each(|id| {
+            self.cancel(id);
+        });
+    }
+
     pub fn cancel_all(&self) {
         {
             let mut queue = lock(&self.queue);
@@ -153,6 +173,9 @@ impl Tasks {
             if self.closed.load(Ordering::Acquire) {
                 return Err(STOPPED.into());
             }
+            if task.project_closed() {
+                return Err(PROJECT_CLOSED.into());
+            }
             if task.cancelled() {
                 return Err("cancelled".into());
             }
@@ -163,5 +186,31 @@ impl Tasks {
 
     pub fn take_queue(&self) -> Vec<Forwarded> {
         lock(&self.queue).drain(..).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use craft_plugin::TaskStatus;
+
+    use super::Tasks;
+
+    #[test]
+    fn a_task_whose_project_closed_is_cancelled_and_its_requests_fail_with_a_clear_error() {
+        let tasks = Tasks::default();
+        tasks.know(vec!["edit".into()]);
+        let closed = Arc::new(AtomicBool::new(false));
+        let (bound, slot) = tasks.add("edit", Some(closed.clone())).unwrap();
+        let (free, _) = tasks.add("edit", None).unwrap();
+        closed.store(true, Ordering::Release);
+        assert_eq!(tasks.forward(&slot, b"{}", &[]).err(), Some("the project this task started in was closed".to_string()));
+        tasks.cancel_orphans();
+        slot.finish(Ok(serde_json::Value::Null));
+        let status = |id: u64| tasks.list().into_iter().find(|state| state.id == id).map(|state| state.status);
+        assert_eq!(status(bound), Some(TaskStatus::Cancelled));
+        assert_eq!(status(free), Some(TaskStatus::Running));
     }
 }

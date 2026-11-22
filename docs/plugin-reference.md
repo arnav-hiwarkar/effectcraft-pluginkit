@@ -33,11 +33,14 @@ returns.
 | `task.progress(fraction, message)` | `Err` once the user cancelled, so `?` ends the task |
 
 A task runs on its own plugin instance on a background thread with no time limit. Its `command`,
-`notify`, `frame` and `audio` calls are answered by the app's main thread, once per UI frame (and in the
-`plugin.tasks` wait loop of headless runs); its log, file, cache and task calls are answered on its own
+`notify`, `frame` and `audio` calls are answered by the app's main thread, once per UI frame (in the
+CLI: after each `run` step, while `render` waits, in the `plugin.tasks` wait loop, and before `exec` or
+`run` saves and exits, which waits up to 600 s for running tasks); its log, file, cache and task calls are answered on its own
 thread. A sandboxed task that ignores cancel is stopped 0.5 s after the cancel. A native task can only
 be asked, through `progress`. A plugin runs at most 4 tasks at once. Disabling, reloading or removing a
-plugin cancels its tasks. The last 16 finished tasks of a plugin stay listed.
+plugin cancels its tasks. A task belongs to the project that was open when it started: when that project
+closes (a new project or another one is opened) the task is cancelled, and a request it makes after that
+fails with `the project this task started in was closed`. The last 16 finished tasks of a plugin stay listed.
 
 ## Effect
 
@@ -107,6 +110,9 @@ Panels, commands, the CLI and automation all use these two commands.
 | `Param::custom(id, name, default)` | `cx.text(id)` | text the plugin owns; `controls` draws its row |
 | `Param::layer(id, name)` | `cx.layer(id)` | another layer's pixels |
 | `Param::mask(id, name)` | `cx.index(id)` | index into `cx.masks()` |
+
+A new version of a plugin may add parameters. Effects already applied in a project gain them with their
+defaults when the project opens, or when the plugin starts while the project is open.
 
 ### Cx
 
@@ -279,9 +285,9 @@ All are in `craft_plugin::host`.
 | `start(task, args)`: starts a task, returns its id | None |
 | `task(id)`: `TaskState { status: Running, Done, Failed or Cancelled, progress, message, result, error }` | None |
 | `cancel(id)` | None |
-| `frame(FrameRequest { comp, layer, time, scale })`: the comp (the active one when `comp` is `None`), or one layer with its effects, as a premultiplied RGBA f32 `Image`. Refused inside an effect's `layout` or `render`. `scale` is above 0 and at most 4. | `document.read` |
+| `frame(FrameRequest { comp, layer, time, scale })`: the comp (the active one when `comp` is `None`), or one layer with its effects, its track matte and the comp's cameras and lights (every other layer is hidden; the layer itself shows even when its video switch is off, as through a layer parameter), as a premultiplied RGBA f32 `Image`. Refused inside an effect's `layout` or `render`. `scale` is above 0 and at most 4. | `document.read` |
 | `audio(AudioRequest { layer, start, duration, rate })`: interleaved f32 samples of the active comp's mix, or of one layer, with the channel count (2). Rates 1000 to 192000 Hz, at most 2^25 sample frames per call. Refused inside an effect. | `document.read` |
-| `pick_file(PickFile { save, title, extensions })`: the app's file dialog, `Some(path)` or `None`. The chosen path is then readable, and writable when `save` is set, through `Root::User` for the rest of the session. Panels and commands only. Refused in headless runs. | None |
+| `pick_file(PickFile { save, title, extensions })`: the app's file dialog, `Some(path)` or `None`. The chosen path is then readable, and writable when `save` is set, through `Root::User` for the rest of the session. The host holds the identity of the picked file: once it is replaced, for example by a link, reading or writing it fails with `is no longer the file the user picked`, and the plugin should ask the user to pick it again. Panels and commands only. Refused in headless runs. | None |
 | `upload_image(key, width, height, rgba8)`: stores an image for `ui.image` and `c.image` | None |
 | `remove_image(key)`: removes an uploaded image and frees its share of the 256 MiB image budget | None |
 
@@ -303,7 +309,8 @@ help, render jobs, and plugin management. A refused or denied call returns an `E
 | Padding | 4096 pixels |
 
 A sandboxed plugin that passes a limit or panics is stopped. The next call starts a new instance, and
-panel state is lost.
+panel state is lost. A file read, write or listing that a sandboxed call makes runs on a helper thread, so a
+stalled disk stops the call at its limit; the file call itself finishes in the background.
 
 ## App commands
 

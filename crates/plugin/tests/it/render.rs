@@ -205,3 +205,47 @@ fn without_a_camera_layer_the_scene_camera_is_the_comp_default_view() {
     assert_eq!(position.to_vec(), eye);
     assert!((zoom - default_zoom).abs() < 1e-3, "zoom {zoom} against the view's {default_zoom}");
 }
+
+#[test]
+fn a_layer_parameter_reads_a_layer_whose_video_is_off_as_its_pixels() {
+    let mut app = app("test.render-hidden-input", &[]);
+    let session = &mut app.session;
+    let matte = session.execute("layer.newSolid", json!({"name": "Matte", "color": "#ff8000", "width": 64, "height": 36})).unwrap()["layer"].as_u64();
+    session.execute("layer.setSwitch", json!({"layers": [matte], "switch": "video", "value": false})).unwrap();
+    let plate = session.execute("layer.newSolid", json!({"name": "Plate", "color": "#0000ff", "width": 64, "height": 36})).unwrap()["layer"].as_u64();
+    session.execute("effect.apply", json!({"layer": plate, "effect": format!("{}.gpu-matte", app.id)})).unwrap();
+    session.execute_checked("prop.set", json!({"layer": plate, "path": "effects/#1/matte", "value": matte})).unwrap();
+    assert!(close(centre_pixel(&app), [1.0, 0.502, 0.0, 1.0]), "the plate shows the hidden matte: {:?}", centre_pixel(&app));
+}
+
+#[test]
+fn reloading_new_code_with_the_same_effect_declarations_reuses_their_descriptions() {
+    let app = app("test.render-reuse", &[]);
+    let effect = "test.render-reuse.invert";
+    let first = effectcraft_engine::effects::find(effect).unwrap();
+    let module = app.bundle.path().join("probe.wasm");
+    for extra in 0..3u8 {
+        let mut bytes = std::fs::read(&module).unwrap();
+        bytes.extend_from_slice(&[0, 4, 1, b'x', 7, extra]);
+        std::fs::write(&module, bytes).unwrap();
+        app.plugins.load_for_session(app.bundle.path()).unwrap();
+        assert!(std::ptr::eq(effectcraft_engine::effects::find(effect).unwrap(), first), "reload {extra} leaked a new description");
+    }
+}
+
+#[test]
+fn a_plugin_that_starts_after_its_project_opened_gives_existing_instances_their_missing_parameters() {
+    let mut app = app("test.render-late", &[]);
+    let solid = app.session.execute("layer.newSolid", json!({"name": "Red", "color": "#ff3300", "width": 64, "height": 36})).unwrap()["layer"].as_u64();
+    app.session.execute("effect.apply", json!({"effect": "test.render-late.invert"})).unwrap();
+    let comp = app.session.active_comp_id().unwrap();
+    let layer =
+        std::sync::Arc::make_mut(&mut app.session.project).comp_mut(comp).unwrap().layer_mut(effectcraft_engine::project::LayerId(solid.unwrap())).unwrap();
+    let Some(effectcraft_engine::project::Node::Group(instance)) = layer.props.sub_mut("effects").unwrap().children.first_mut() else { panic!("no instance") };
+    instance.children.retain(|node| !matches!(node, effectcraft_engine::project::Node::Prop(prop) if prop.match_id == "amount"));
+    let path = json!({"layer": solid, "path": "effects/#1/amount"});
+    assert!(app.session.execute("prop.get", path.clone()).is_err());
+
+    app.session.execute("plugin.load", json!({"path": app.bundle.path()})).unwrap();
+    assert_eq!(app.session.execute("prop.get", path).unwrap()["value"], json!(1.0));
+}

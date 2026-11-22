@@ -1526,10 +1526,12 @@ version = "0.24.1"
 dependencies = [
  "bytemuck",
  "craft-plugin",
+ "getrandom 0.3.4",
  "image",
  "libloading",
  "log",
  "rayon",
+ "same-file",
  "serde",
  "serde_json",
  "sha2",

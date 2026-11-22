@@ -497,6 +497,14 @@ fn session(args: &Args) -> Result<effectcraft_engine::Session, Failure> {
     Ok(s)
 }
 
+fn finish_plugin_tasks(b: &mut Backend) -> Result<(), Failure> {
+    let finished = b.session().is_none_or(|s| effectcraft_plugin::wait_for_tasks(s, effectcraft_plugin::DEFAULT_WAIT));
+    if !finished {
+        return Err(Failure::Error(format!("plug-in tasks were still running after {} s", effectcraft_plugin::DEFAULT_WAIT)));
+    }
+    Ok(())
+}
+
 /// `--save` / `--save-as` after a mutating command.
 fn maybe_save(b: &mut Backend, args: &Args) -> Result<Option<String>, Failure> {
     let r = if let Some(p) = args.opt("--save-as") {
@@ -688,6 +696,7 @@ fn run(cmd: &str, args: &Args, json_out: bool) -> Result<(), Failure> {
             if let Some(e) = failed_render(&id, &r) {
                 return Err(Failure::Error(e));
             }
+            finish_plugin_tasks(&mut b)?;
             let saved = maybe_save(&mut b, args)?;
             emit(&with_saved(r, saved), json_out);
         }
@@ -733,6 +742,9 @@ fn run(cmd: &str, args: &Args, json_out: bool) -> Result<(), Failure> {
             // the leading `<id>: `.
             for (n, (id, params)) in steps.into_iter().enumerate() {
                 let r = b.exec(&id, params).map_err(|e| Failure::Error(format!("{id}: {e} (step {n})")))?;
+                if let Some(s) = b.session() {
+                    effectcraft_plugin::pump(s);
+                }
                 if let Some(e) = failed_render(&id, &r) {
                     return Err(Failure::Error(format!("{id}: {e} (step {n})")));
                 }
@@ -741,6 +753,7 @@ fn run(cmd: &str, args: &Args, json_out: bool) -> Result<(), Failure> {
                 }
                 results.push(json!({"command": id, "result": r}));
             }
+            finish_plugin_tasks(&mut b)?;
             let saved = maybe_save(&mut b, args)?;
             if json_out {
                 emit(&with_saved(json!(results), saved), true);
@@ -985,6 +998,7 @@ fn render(args: &Args, json_out: bool) -> Result<(), Failure> {
     let (mut last_line, mut last_done) = (std::time::Instant::now(), u64::MAX);
     while s.is_rendering() {
         std::thread::sleep(std::time::Duration::from_millis(100));
+        effectcraft_plugin::pump(&mut s);
         if lines
             && last_line.elapsed() >= std::time::Duration::from_millis(250)
             && let Some(p) = s.render_progress()

@@ -149,8 +149,8 @@ impl Plugin {
         Ok(())
     }
 
-    pub fn start(&self, task: &str, args: serde_json::Value) -> Result<u64, PluginError> {
-        self.engine.start(task, args).map_err(PluginError::Failed)
+    pub fn start(&self, task: &str, args: serde_json::Value, host: &dyn Host) -> Result<u64, PluginError> {
+        self.engine.start(task, args, host.project_closed()).map_err(PluginError::Failed)
     }
 
     pub fn tasks(&self) -> Vec<TaskState> {

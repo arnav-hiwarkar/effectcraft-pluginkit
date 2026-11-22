@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, OnceLock};
 
 use craft_plugin_host::{Access, AudioRequest, FrameRequest, Host, Permission, PickFile, Pixels, Samples};
 use effectcraft_automation::confine::{self, Confinement, Lookup};
@@ -60,6 +61,8 @@ const REFUSED: &[&str] = &[
     "prop.editGradient",
 ];
 
+const READ_ONLY: &[&str] = &["text.fontFeatures", "text.fonts"];
+
 const WRITES_A_PROPERTY: &[&str] = &["prop.set", "prop.setExpression", "prop.pickWhip", "prop.addKey", "keys.set"];
 
 const MAX_NOTICE: usize = 300;
@@ -98,10 +101,12 @@ fn only_layer(project: &Project, comp: ItemId, layer: LayerId, video: bool) -> R
     let comp = solo.comp_mut(comp).ok_or("the composition is gone")?;
     for other in comp.layers.iter_mut() {
         let keep = other.id == layer;
-        if video {
-            other.switches.video &= keep;
-        } else {
+        if !video {
             other.switches.audio &= keep;
+        } else if keep {
+            other.switches.video = true;
+        } else if !other.is_light() && !other.is_camera() {
+            other.switches.video = false;
         }
     }
     Ok(solo)
@@ -144,7 +149,7 @@ fn needed(id: &str, params: &Value, needs: &mut BTreeSet<Permission>) -> Result<
         needs.extend(FILE_PERMISSIONS);
     }
     needs.extend(outside_the_document(id, params));
-    needs.insert(if spec.journal { Permission::DocumentWrite } else { Permission::DocumentRead });
+    needs.insert(if spec.journal && !READ_ONLY.contains(&id) { Permission::DocumentWrite } else { Permission::DocumentRead });
     Ok(())
 }
 
@@ -350,6 +355,10 @@ impl Host for SessionHost<'_> {
         Ok(Samples { channels: 2, rate: request.rate, samples })
     }
 
+    fn project_closed(&self) -> Option<Arc<AtomicBool>> {
+        Some(self.session.project_closed.clone())
+    }
+
     fn pick_file(&mut self, request: &PickFile) -> Result<Option<PathBuf>, String> {
         let picker = FILE_PICKER.get().ok_or("a file dialog cannot open in a headless run")?;
         Ok(picker(request))
@@ -382,5 +391,11 @@ mod census {
             .chain(recorded.keys().filter(|id| !found.contains_key(*id)).map(|id| format!("{id}\tgone")))
             .collect();
         assert!(differences.is_empty(), "decide these commands and record them in census.tsv:\n{}", differences.join("\n"));
+    }
+
+    #[test]
+    fn every_read_only_exception_is_a_command_the_engine_journals() {
+        let stale: Vec<&str> = super::READ_ONLY.iter().copied().filter(|id| !effectcraft_engine::commands::find(id).is_some_and(|spec| spec.journal)).collect();
+        assert!(stale.is_empty(), "the engine no longer journals these, so remove them from READ_ONLY: {stale:?}");
     }
 }

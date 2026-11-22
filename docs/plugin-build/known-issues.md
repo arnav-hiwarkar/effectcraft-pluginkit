@@ -13,9 +13,7 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 ## From the Sol review, not fixed
 
-- **Late plugin start skips parameter migration.** A project opened while its plugin is disabled keeps its saved parameters. If the plugin later starts with a new parameter, existing instances lack it. The render uses the declared default for a missing value (`wire_params` in `crates/plugin/src/effects.rs`), but the parameter has no property, so it cannot be shown or keyframed until the effect is applied again. Migrating needs a hook when a plugin starts late.
-- **A slow host call is not interrupted.** The call fails when the host call returns past the limit, but the app cannot stop its own file read on a stalled disk. Instantiation has its own 5 s limit on top of the call limit. Interrupting needs host calls that run on another thread.
-- **Reloading leaks the old effect descriptions.** Each reload leaks a few kilobytes of strings, because the effect registry hands out `'static` references.
+- **A slow app command inside a sandboxed call is not interrupted.** File calls run on a helper thread and are abandoned at the call's limit (`on_disk` in `crates/plugin-host/src/runtime/serve.rs`). `command`, `frame` and `audio` borrow the open project on the app's thread, so they cannot be moved to another thread and abandoned; the call fails when one returns past the limit. Native calls and tasks have no time limit, so their file calls run inline. Instantiation has its own 5 s limit on top of the call limit.
 - **A dangling link is also possible in the automation confinement.** `crates/automation/src/confine.rs` falls back to the parent folder when a path does not resolve. This is upstream code and affects agents too.
 
 ## Reported by the flagship plugin authors, not fixed
@@ -35,7 +33,6 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 ## From the Opus review, not fixed
 
-- **Some queries need `document.write`.** The gate reads `journal` from the command table, and commands declared with `cmd!` are journaled even when they only read, such as `text.fonts` and `text.fontFeatures`. `crates/plugin/src/gate/census.tsv` shows each decision. Too strict, not a hole; the fix is in the engine's command table.
 - **Background jobs** (`camera.analyze`, `layer.sceneEditDetection`) apply their result later, outside the plugin's batch and its undo step. Plugins can start them but cannot wait for them.
 - **Panel events are dropped when the panel call fails**, so the click that crashed a plugin is lost.
 - **Glide: `keys.interpolation` runs on the whole selection**, so keys on properties Glide reports as skipped still lose their continuous and roving flags. (`plugins/glide/src/apply.rs`)
@@ -43,14 +40,9 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 ## From the second build and its reviews, not fixed
 
-- **A picked file is remembered by path.** If the file the user picked is later replaced by a link, the plugin reads what the link points to. (`crates/plugin-host/src/runtime/serve.rs`, Sol finding 5)
-- **A task answers against the project that is open when its request is served.** A task started in one project can edit another if the user opens it meanwhile. Tasks are not cancelled when a project opens. (`crates/plugin/src/manage.rs` `pump`, Sol finding 8)
-- **Another process of the same user can plant a compiled module.** The compiled cache is named by a SHA-256 of the module and plugins cannot write to it, but the files are not signed.
+- **A process of the same user that reads the cache key can still sign a compiled module.** Compiled cache entries carry an HMAC-SHA-256 under `Plugins/.compiled/key` (mode 0600, made from OS randomness), so a planted entry without the key is compiled again (`cached` in `crates/plugin-host/src/runtime/wasm.rs`). The key file is readable by every process of the same user; only the helper process with an OS sandbox would close this.
 - **A native task that ignores cancel keeps its thread.** Only a sandboxed task can be interrupted.
-- **In the CLI a task's document requests are answered only inside `plugin.tasks {wait}`.**
-- **`host::frame` of one layer hides every other layer**, including the layer's track matte.
 - **Effects cannot read audio.** The render path reaches footage audio, not the comp mix.
-- **A layer with its video switch off reads as empty through a layer parameter.**
 - **Plugin panels and custom controls cannot be fully used from the keyboard.** A canvas cannot take focus and custom controls get no key events. House rule 21 asks for this. (`crates/ui-egui/src/panels/plugin_view.rs`, Opus finding 8)
 - **One `reach` covers a pass's `src` and `aux`.**
 - **Lumen Glow has no CPU fallback for a level that needs more than 48 floats**; its `render` returns an error there.

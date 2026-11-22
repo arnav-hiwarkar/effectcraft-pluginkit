@@ -564,7 +564,7 @@ fn settle(loaded: &Loaded, id: u64, host: &mut Recorder) -> TaskState {
 fn a_task_reports_progress_and_finishes_with_its_result_without_a_time_limit() {
     each_kind(|kind| {
         let loaded = load(kind, &[]);
-        let id = loaded.plugin.start("count", json!({"steps": 4})).unwrap();
+        let id = loaded.plugin.start("count", json!({"steps": 4}), &Recorder::default()).unwrap();
         let state = settle(&loaded, id, &mut Recorder::default());
         assert_eq!(state.status, TaskStatus::Done, "{kind:?} {state:?}");
         assert_eq!(state.result, Some(json!({"counted": 4})));
@@ -574,14 +574,14 @@ fn a_task_reports_progress_and_finishes_with_its_result_without_a_time_limit() {
         let started: u64 = std::fs::read_to_string(loaded.data.path().join("data/task-id.txt")).unwrap().parse().unwrap();
         assert_eq!(started, id + 1);
         assert_eq!(settle(&loaded, started, &mut Recorder::default()).result, Some(json!({"counted": 3})));
-        assert!(loaded.plugin.start("missing", json!({})).unwrap_err().to_string().contains("no task `missing`"));
+        assert!(loaded.plugin.start("missing", json!({}), &Recorder::default()).unwrap_err().to_string().contains("no task `missing`"));
     });
 }
 
 #[test]
 fn cancel_stops_a_task_that_never_reports_progress() {
     let loaded = load(Kind::Wasm, &[]);
-    let id = loaded.plugin.start("forever", json!({})).unwrap();
+    let id = loaded.plugin.start("forever", json!({}), &Recorder::default()).unwrap();
     std::thread::sleep(Duration::from_millis(600));
     assert_eq!(loaded.plugin.tasks()[0].status, TaskStatus::Running, "a task has no fixed time limit");
     let asked = std::time::Instant::now();
@@ -591,7 +591,7 @@ fn cancel_stops_a_task_that_never_reports_progress() {
     assert!(asked.elapsed() < Duration::from_secs(2), "{:?}", asked.elapsed());
 
     let native = load(Kind::Native, &[]);
-    let id = native.plugin.start("patient", json!({})).unwrap();
+    let id = native.plugin.start("patient", json!({}), &Recorder::default()).unwrap();
     native.plugin.cancel(id);
     assert_eq!(settle(&native, id, &mut Recorder::default()).status, TaskStatus::Cancelled);
 }
@@ -601,14 +601,14 @@ fn a_task_edits_the_document_on_the_apps_thread_only_with_the_permission_for_it(
     each_kind(|kind| {
         let denied = load(kind, &["document.read"]);
         let mut host = Recorder::default();
-        let id = denied.plugin.start("edit", json!({})).unwrap();
+        let id = denied.plugin.start("edit", json!({}), &Recorder::default()).unwrap();
         let state = settle(&denied, id, &mut host);
         assert_eq!(state.status, TaskStatus::Failed, "{kind:?}");
         assert!(state.error.as_deref().unwrap_or_default().contains("document.write"), "{kind:?} {state:?}");
         assert!(host.commands.is_empty());
 
         let allowed = load(kind, &["document.write"]);
-        let id = allowed.plugin.start("edit", json!({})).unwrap();
+        let id = allowed.plugin.start("edit", json!({}), &Recorder::default()).unwrap();
         let state = settle(&allowed, id, &mut host);
         assert_eq!(state.result, Some(json!({"echo": {"name": "From Task"}})), "{kind:?}");
         assert_eq!(host.commands, ["layer.newNull"]);
@@ -619,14 +619,14 @@ fn a_task_edits_the_document_on_the_apps_thread_only_with_the_permission_for_it(
 fn a_plugin_runs_at_most_four_tasks_at_once_and_stopping_it_cancels_them() {
     each_kind(|kind| {
         let loaded = load(kind, &[]);
-        let ids: Vec<u64> = (0..4).map(|_| loaded.plugin.start("patient", json!({})).unwrap()).collect();
-        let fifth = loaded.plugin.start("patient", json!({})).unwrap_err();
+        let ids: Vec<u64> = (0..4).map(|_| loaded.plugin.start("patient", json!({}), &Recorder::default()).unwrap()).collect();
+        let fifth = loaded.plugin.start("patient", json!({}), &Recorder::default()).unwrap_err();
         assert!(fifth.to_string().contains("already runs 4 tasks"), "{kind:?} {fifth}");
         loaded.plugin.cancel_all();
         let states: Vec<TaskStatus> = ids.iter().map(|id| settle(&loaded, *id, &mut Recorder::default()).status).collect();
         assert_eq!(states, [TaskStatus::Cancelled; 4], "{kind:?}");
         assert_eq!(loaded.plugin.running_tasks(), 0);
-        let after = loaded.plugin.start("count", json!({"steps": 1})).unwrap_err();
+        let after = loaded.plugin.start("count", json!({"steps": 1}), &Recorder::default()).unwrap_err();
         assert!(after.to_string().contains("the plugin was stopped"), "{kind:?} {after}");
     });
 }
@@ -635,12 +635,12 @@ fn a_plugin_runs_at_most_four_tasks_at_once_and_stopping_it_cancels_them() {
 fn a_task_reads_a_frame_through_the_app_only_with_document_read() {
     each_kind(|kind| {
         let reader = load(kind, &["document.read"]);
-        let id = reader.plugin.start("frame", json!({"time": 0.75, "scale": 0.5})).unwrap();
+        let id = reader.plugin.start("frame", json!({"time": 0.75, "scale": 0.5}), &Recorder::default()).unwrap();
         let state = settle(&reader, id, &mut Recorder::default());
         assert_eq!(state.result, Some(json!({"width": 2, "height": 1, "center": [0.75, 0.0, 0.0, 1.0]})), "{kind:?} {state:?}");
 
         let blind = load(kind, &[]);
-        let id = blind.plugin.start("frame", json!({"time": 0.0})).unwrap();
+        let id = blind.plugin.start("frame", json!({"time": 0.0}), &Recorder::default()).unwrap();
         let state = settle(&blind, id, &mut Recorder::default());
         assert!(state.error.as_deref().unwrap_or_default().contains("document.read"), "{kind:?} {state:?}");
     });
@@ -669,9 +669,67 @@ fn a_picked_file_becomes_readable_without_the_files_permission_but_not_writable(
         assert_eq!(std::fs::read_to_string(loaded.data.path().join("data/picked.txt")).unwrap(), "chosen by the user");
         assert_eq!(std::fs::read_to_string(&chosen).unwrap(), "chosen by the user");
 
-        let id = loaded.plugin.start("pick", json!({})).unwrap();
+        let id = loaded.plugin.start("pick", json!({}), &Recorder::default()).unwrap();
         let state = settle(&loaded, id, &mut host);
         assert!(state.error.as_deref().unwrap_or_default().contains("only from a panel or a command"), "{kind:?} {state:?}");
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn a_picked_file_replaced_by_a_link_is_refused_and_a_new_save_target_is_not_followed() {
+    each_kind(|kind| {
+        let outside = tempfile::tempdir().unwrap();
+        let (chosen, secret) = (outside.path().join("chosen.txt"), outside.path().join("secret.txt"));
+        std::fs::write(&chosen, "chosen by the user").unwrap();
+        std::fs::write(&secret, "not for the plugin").unwrap();
+        let loaded = load(kind, &[]);
+        let mut host = Recorder { picked: Some(chosen.clone()), ..Default::default() };
+        command(&loaded, "pick-and-read", &mut host).unwrap_err();
+        std::fs::write(loaded._dir.path().join("user-target.txt"), chosen.to_str().unwrap()).unwrap();
+        command(&loaded, "read-user", &mut host).unwrap();
+        assert_eq!(std::fs::read_to_string(loaded.data.path().join("data/read.txt")).unwrap(), "chosen by the user", "{kind:?}");
+
+        std::fs::remove_file(&chosen).unwrap();
+        std::os::unix::fs::symlink(&secret, &chosen).unwrap();
+        let error = command(&loaded, "read-user", &mut host).unwrap_err().to_string();
+        assert!(error.contains("is no longer the file the user picked"), "{kind:?} {error}");
+        assert_eq!(std::fs::read_to_string(loaded.data.path().join("data/read.txt")).unwrap(), "chosen by the user", "{kind:?}");
+
+        let target = outside.path().join("new.txt");
+        let saver = load(kind, &[]);
+        let mut host = Recorder { picked: Some(target.clone()), ..Default::default() };
+        saver.plugin.call::<()>(&Call::Command { command: "pick-and-save".into() }, None, &mut host).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "saved", "{kind:?}");
+        std::fs::remove_file(&target).unwrap();
+        std::os::unix::fs::symlink(&secret, &target).unwrap();
+        std::fs::write(saver._dir.path().join("user-target.txt"), target.to_str().unwrap()).unwrap();
+        let error = saver.plugin.call::<()>(&Call::Command { command: "write-user".into() }, None, &mut host).unwrap_err().to_string();
+        assert!(error.contains("is no longer the file the user picked"), "{kind:?} {error}");
+        assert_eq!(std::fs::read_to_string(&secret).unwrap(), "not for the plugin", "{kind:?}");
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn a_sandboxed_call_whose_file_read_stalls_fails_at_its_time_limit() {
+    let outside = tempfile::tempdir().unwrap();
+    let stalled = outside.path().join("stalled");
+    assert!(Command::new("mkfifo").arg(&stalled).status().unwrap().success());
+    let loaded = load(Kind::Wasm, &["files.read", "files.write"]);
+    std::fs::write(loaded._dir.path().join("user-target.txt"), stalled.to_str().unwrap()).unwrap();
+    let (done, outcome) = std::sync::mpsc::channel();
+    let started = std::time::Instant::now();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let _ = done.send(command(&loaded, "read-user", &mut Recorder::default()).map_err(|e| e.to_string()));
+        });
+        let answered = outcome.recv_timeout(Duration::from_secs(5));
+        let release = std::fs::OpenOptions::new().write(true).open(&stalled);
+        drop(release);
+        let error = answered.expect("the call returned while the read was still stalled").unwrap_err();
+        assert!(error.contains("the plugin passed its time limit while the host served a call"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     });
 }
 

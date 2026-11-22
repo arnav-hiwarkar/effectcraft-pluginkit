@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use craft_plugin::{AudioRequest, FrameRequest, MaskPath, ParamsAt, Permission, PickFile, Pixel, Scene};
 use serde_json::Value;
@@ -69,6 +71,10 @@ pub trait Host {
     }
 
     fn params_at(&mut self, _layer_time: f64) -> Option<ParamsAt> {
+        None
+    }
+
+    fn project_closed(&self) -> Option<Arc<AtomicBool>> {
         None
     }
 }

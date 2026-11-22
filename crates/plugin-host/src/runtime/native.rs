@@ -2,7 +2,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use craft_plugin::{ABI, Outcome, Pixel};
 use libloading::Library;
@@ -29,7 +29,7 @@ pub(crate) fn erase(cx: &mut HostCx) -> usize {
     std::ptr::from_mut(cx) as usize
 }
 
-pub(crate) fn serve_erased(ctx: usize, request: &[u8], bulk: &[u8]) -> (Vec<u8>, Bulk, Duration) {
+pub(crate) fn serve_erased(ctx: usize, request: &[u8], bulk: &[u8], deadline: Option<Instant>) -> (Vec<u8>, Bulk, Duration) {
     if ctx == 0 {
         let (reply, bulk) = refusal("host calls are only available during a call from the app");
         return (reply, bulk, Duration::ZERO);
@@ -37,16 +37,17 @@ pub(crate) fn serve_erased(ctx: usize, request: &[u8], bulk: &[u8]) -> (Vec<u8>,
     // SAFETY: `ctx` comes from `erase` on a `HostCx` that the caller of the plugin keeps alive and
     // exclusively borrowed for the whole plugin call; the plugin runs on that same thread.
     let cx = unsafe { &mut *(ctx as *mut HostCx) };
+    cx.deadline = deadline;
     let (reply, bulk) = guarded(cx, request, bulk);
     (reply, bulk, std::mem::take(&mut cx.paused))
 }
 
-pub(crate) fn compiled_module(engine: &wasmtime::Engine, path: &Path) -> Option<wasmtime::Module> {
-    // SAFETY: files in the compile cache are written only by `wasm::cached` from `Engine::precompile_module`, named by
-    // the SHA-256 of the module bytes and this engine's version, target and settings, in a directory beside the plugin
-    // data directories that no plugin id can name and that `serve::resolve` refuses to every plugin file access;
-    // wasmtime rejects a file whose header does not match this engine's version and settings.
-    unsafe { wasmtime::Module::deserialize_file(engine, path) }.ok()
+pub(crate) fn compiled_module(engine: &wasmtime::Engine, verified: &[u8]) -> Option<wasmtime::Module> {
+    // SAFETY: `verified` is a compile-cache entry whose HMAC-SHA-256 under this install's owner-only key matched, so it
+    // was written by `wasm::cached` from `Engine::precompile_module`; the entry is named by the SHA-256 of the module
+    // bytes and this engine's version, target and settings, in a directory that `serve::resolve` refuses to every plugin
+    // file access, and wasmtime rejects bytes whose header does not match this engine's version and settings.
+    unsafe { wasmtime::Module::deserialize(engine, verified) }.ok()
 }
 
 pub(crate) fn fresh_module(engine: &wasmtime::Engine, compiled: &[u8]) -> wasmtime::Result<wasmtime::Module> {

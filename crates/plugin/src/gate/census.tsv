@@ -434,8 +434,8 @@ text.delete	document.write
 text.deleteSurrounding	document.write
 text.edit	document.write
 text.endEdit	document.write
-text.fontFeatures	document.write
-text.fonts	document.write+files.read
+text.fontFeatures	document.read
+text.fonts	document.read+files.read
 text.insert	document.write
 text.moveCaret	document.write
 text.presets	document.read

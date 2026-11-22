@@ -540,6 +540,11 @@ fn make() -> Plugin {
             host::write_file(Root::Data, "picked.txt", &bytes)?;
             host::write_file(Root::User, &path, b"overwritten")
         })
+        .command("pick-and-save", "Pick And Save", || {
+            let request = craft_plugin::PickFile { save: true, title: "Save".into(), ..Default::default() };
+            let path = host::pick_file(request)?.ok_or("nothing was picked")?;
+            host::write_file(Root::User, &path, b"saved")
+        })
         .task("pick", "Pick From A Task", |_task: &Task| host::pick_file(craft_plugin::PickFile::default()).map(|path| json!(path)))
         .task("frame", "Read A Frame", |task: &Task| {
             let args = task.args();
