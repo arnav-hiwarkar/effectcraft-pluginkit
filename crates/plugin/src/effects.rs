@@ -304,9 +304,12 @@ fn layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> La
 }
 
 fn shown_area(ctx: &EffectCtx, grid: Grid) -> Option<Rect> {
-    let [left, top, right, bottom] = ctx.env.host?.shown()?;
-    let [left, top] = to_px(grid, [left, top]).map(|at| at.floor().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32);
-    let [right, bottom] = to_px(grid, [right, bottom]).map(|at| at.ceil().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32);
+    let shown = ctx.env.host?.shown()?;
+    let [left, top, right, bottom] = shown.part;
+    let step = f64::from(shown.grid);
+    let edge = |at: f64, round: fn(f64) -> f64| (round(at / step) * step).clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32;
+    let [left, top] = to_px(grid, [left, top]).map(|at| edge(at, f64::floor));
+    let [right, bottom] = to_px(grid, [right, bottom]).map(|at| edge(at, f64::ceil));
     Some(Rect { left, top, right, bottom })
 }
 

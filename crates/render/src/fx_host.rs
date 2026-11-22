@@ -14,7 +14,7 @@ pub(crate) struct FxHost<'r, 'a, 'c> {
     /// Index of the effect being rendered (bounds `self_at` to effects before it).
     pub(crate) index: usize,
     pub(crate) original: Option<&'c Buf>,
-    pub(crate) shown: Option<[f64; 4]>,
+    pub(crate) shown: Option<effectcraft_effects::Shown>,
 }
 
 impl FxHost<'_, '_, '_> {
@@ -95,7 +95,7 @@ impl EffectHost for FxHost<'_, '_, '_> {
         self.original
     }
 
-    fn shown(&self) -> Option<[f64; 4]> {
+    fn shown(&self) -> Option<effectcraft_effects::Shown> {
         self.shown
     }
 

@@ -68,4 +68,12 @@ mod tests {
         let plugin = TestPlugin::of(super::plugin);
         assert_frame!(plugin.render("flare").set("look", 2.0).set("light", [200.0, 60.0]).set("Streak/size", 150.0), "anamorphic");
     }
+
+    #[test]
+    fn every_effect_renders_the_same_in_bands_as_whole_at_an_odd_height() {
+        let plugin = craft_plugin_host::testing::TestPlugin::of(crate::plugin);
+        for effect in plugin.plugin().contributions().effects.iter().map(|spec| spec.id.clone()) {
+            assert_eq!(plugin.render(&effect).size(40, 257).run().err(), None, "{effect}");
+        }
+    }
 }

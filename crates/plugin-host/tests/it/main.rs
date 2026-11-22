@@ -258,6 +258,30 @@ fn a_render_of_a_part_of_the_frame_equals_that_part_cut_from_a_whole_render() {
 }
 
 #[test]
+fn an_effect_that_reads_no_other_rows_changes_whole_rows_where_they_lie() {
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+    let (width, height) = (5usize, 300usize);
+    let mut cx = cx(width as u32, height as u32);
+    cx.params.insert("amount".into(), craft_plugin_host::Value::Number(1.0));
+    let (rows, part) = (Rect { left: 0, top: 101, right: 5, bottom: 260 }, Rect { left: 2, top: 101, right: 4, bottom: 260 });
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let mut pixels = numbered(width, height);
+        let at = pixels.as_ptr();
+        pool.install(|| loaded.plugin.render("invert", &cx, &Layout::pointwise(), None, &mut pixels, Recorder::default)).unwrap();
+        assert_eq!((pixels.as_ptr(), pixels[7]), (at, [-6.0, 0.0, 0.5, 1.0]), "{kind:?}");
+        for shown in [rows, part] {
+            let mut pixels_shown = numbered(width, height);
+            assert_eq!(
+                pool.install(|| loaded.plugin.render("invert", &cx, &Layout::pointwise(), Some(shown), &mut pixels_shown, Recorder::default)),
+                Ok(shown)
+            );
+            assert!(pixels_shown == cut(&pixels, width, shown), "{kind:?} {shown:?} differs from the whole render");
+        }
+    });
+}
+
+#[test]
 fn an_effect_without_a_cpu_render_leaves_the_part_it_is_asked_for_unchanged() {
     let source = numbered(5, 4);
     let part = Rect { left: 1, top: 1, right: 4, bottom: 3 };
@@ -586,11 +610,14 @@ fn an_empty_frame_renders_to_nothing_without_failing() {
                 .render("invert", &cx, &Layout::neighbourhood(0), None, &mut none, Recorder::default)
                 .unwrap_or_else(|e| panic!("{kind:?} {size:?}: {e}"));
         }
+        let wide = RenderCx { size: [1 << 31, 0], scale: 1.0, ..Default::default() };
+        let refused = loaded.plugin.render("invert", &wide, &Layout::pointwise(), None, &mut none, Recorder::default).unwrap_err();
+        assert_eq!(refused.to_string(), "a 2147483648x0 frame is larger than a plugin can address; each side must be under 2147483648 pixels", "{kind:?}");
     });
 }
 
 #[test]
-fn an_effect_whose_last_band_fails_leaves_the_frame_as_it_was() {
+fn an_effect_whose_last_band_fails_leaves_the_frame_as_it_was_unless_it_changes_it_in_place() {
     each_kind(|kind| {
         let loaded = load(kind, &[]);
         let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
@@ -610,7 +637,13 @@ fn an_effect_whose_last_band_fails_leaves_the_frame_as_it_was() {
                 })
                 .unwrap_err();
             assert!(failed.to_string().contains("gave up half way"), "{kind:?} {reach:?}: {failed}");
-            assert!(pixels == source, "{kind:?} {reach:?} changed the frame although a band failed");
+            let kept = match (kind, reach) {
+                (Kind::Native, Some(0)) => 0,
+                (Kind::Wasm, Some(0)) => 3 * 128,
+                _ => source.len(),
+            };
+            let expected: Vec<Pixel> = source.iter().enumerate().map(|(at, pixel)| if at < source.len() - kept { [9.0; 4] } else { *pixel }).collect();
+            assert!(pixels == expected, "{kind:?} {reach:?}: a failed band left the wrong frame");
         }
     });
 }

@@ -99,7 +99,7 @@ impl Cx {
         let [left, top, right, bottom] = applied_padding([left, top, right, bottom], self.size);
         let shift = [f64::from(left), f64::from(top)];
         let mut padded = self.0.clone();
-        padded.size = [padded.size[0] + left + right, padded.size[1] + top + bottom];
+        padded.size = [padded.size[0].saturating_add(left).saturating_add(right), padded.size[1].saturating_add(top).saturating_add(bottom)];
         padded.offset = [padded.offset[0] + shift[0], padded.offset[1] + shift[1]];
         for value in padded.params.values_mut() {
             if let Value::List(point) = value
@@ -207,7 +207,7 @@ fn image(call: &HostCall) -> Option<Image> {
 
 pub(crate) fn image_of(desc: ImageDesc, buffer: crate::abi::Buffer) -> Option<Image> {
     let (width, height) = (desc.width as usize, desc.height as usize);
-    (width * height > 0 && buffer.pixels().len() == width * height).then_some(Image { width, height, buffer })
+    width.checked_mul(height).is_some_and(|area| area > 0 && buffer.pixels().len() == area).then_some(Image { width, height, buffer })
 }
 
 pub struct Frame<'a> {
@@ -229,6 +229,9 @@ impl<'a> Frame<'a> {
     }
 
     pub fn rows(&mut self) -> impl Iterator<Item = (usize, &'a [Pixel], &mut [Pixel])> {
+        if self.input.pixels.is_empty() {
+            (self.input.pixels, self.pixels) = crate::abi::snapshot(std::mem::take(&mut self.pixels));
+        }
         let ([x0, y0], width, input) = (self.origin, self.width, self.input);
         self.pixels.chunks_exact_mut(width.max(1)).enumerate().map(move |(i, out)| {
             let y = y0 + i;
@@ -238,12 +241,20 @@ impl<'a> Frame<'a> {
     }
 
     pub fn map(&mut self, f: impl Fn(Pixel) -> Pixel) {
+        if self.input.pixels.is_empty() {
+            self.pixels.iter_mut().for_each(|pixel| *pixel = f(*pixel));
+            return;
+        }
         for (_, read, out) in self.rows() {
             out.iter_mut().zip(read).for_each(|(out, read)| *out = f(*read));
         }
     }
 
     pub fn at(&self, x: isize, y: isize) -> Pixel {
+        if self.input.pixels.is_empty() {
+            let own = Rows { width: self.width, height: self.input.height, first_row: self.origin[1], pixels: self.pixels };
+            return own.at(x - self.origin[0] as isize, y);
+        }
         self.input.at(x, y)
     }
 }

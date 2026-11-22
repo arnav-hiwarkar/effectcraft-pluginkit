@@ -128,6 +128,7 @@ impl WasmGuest {
             Io::None => ([&[], &[]], 0),
             Io::InPlace(pixels) => ([pixels, &[]], 0),
             Io::Region { input, .. } => ([input, &[]], 0),
+            Io::Render { input, out } => ([input, out], 0),
             Io::Pass { src, aux, out } => ([src, aux], size_of_val::<[Pixel]>(&**out)),
         };
         let [first, second] = inputs.map(bytemuck::cast_slice::<Pixel, u8>);
@@ -168,6 +169,7 @@ impl WasmGuest {
             Io::None => return Ok(reply),
             Io::InPlace(output) => (output, 0),
             Io::Region { output, skip, .. } => (output, skip),
+            Io::Render { input, out } => (out, input.len()),
             Io::Pass { src, aux, out } => (out, src.len() + aux.len()),
         };
         let output: &mut [u8] = bytemuck::cast_slice_mut(output);

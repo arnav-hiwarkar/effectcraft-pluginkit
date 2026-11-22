@@ -308,6 +308,13 @@ mod tests {
     }
 
     #[test]
+    fn the_glow_in_bands_equals_the_whole_glow_at_an_odd_height() {
+        let plugin = craft_plugin_host::testing::TestPlugin::of(crate::plugin);
+        let render = plugin.render("crt").size(48, 1025).on(craft_plugin_host::testing::Pattern::Checker).set("Phosphor Glow/glow_radius", 10.0);
+        assert_eq!(render.run().map(|picture| picture.height), Ok(1025));
+    }
+
+    #[test]
     fn bright_keeps_only_light_above_the_threshold() {
         assert_eq!(bright([0.2, 0.2, 0.2, 1.0], 0.5), [0.0; 4]);
         let b = bright([1.0, 1.0, 1.0, 1.0], 0.5);

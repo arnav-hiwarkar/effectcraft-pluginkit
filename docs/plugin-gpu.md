@@ -207,14 +207,16 @@ fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()> {
 | `out` | The band to fill. Write every pixel: what `out` holds before the call is not defined. `out.rows_mut()` yields `(y, row)` with `y` in the whole output image; `out.origin[1]` is the band's first row. |
 | `pass.out_size` | The whole output image's width and height. |
 
-`GpuPass::reach(n)` says how many source rows above and below the matching source row an output row
-reads. `reach(0)` is pointwise. The source and the output of a pass may differ in size: the matching
-source row of output row `y` is `y * src_height / out_height`, rounded down, and the same reach applies
-to `aux` with its own height. `GpuPass::aux_reach(n)` gives `aux` a reach of its own, for example
-`.reach(0).aux_reach(2)` for a pass that reads its source pointwise and a half-size `aux` two rows
-around. A band gets the source rows matching its first and last output rows, widened by the reach. Rows outside that read as transparent, so a reach that is too small shows as dark lines at
-band edges; when sizes are odd the matching row can be one less than `2 * y` or `y / 2` suggests, so
-allow one row more. A pass without a reach needs its whole source and runs as one call on one core.
+`GpuPass::reach(n)` says how many source rows above and below its matching source rows an output row
+reads. `reach(0)` is pointwise. The source and the output of a pass may differ in size: output rows `a`
+up to `b` match source rows `a * src_height / out_height`, rounded down, up to `b * src_height /
+out_height`, rounded up, and the same reach applies to `aux` with its own height. A pass that shrinks
+its source by `d` and reads `d` rows for each output row therefore needs `reach(d - 1)` at most.
+`GpuPass::aux_reach(n)` gives `aux` a reach of its own, for example `.reach(0).aux_reach(2)` for a pass
+that reads its source pointwise and a half-size `aux` two rows around. A band gets the source rows
+matching its output rows, widened by the reach, natively and in the sandbox alike. Rows outside that
+read as transparent, so a reach that is too small shows as dark lines at band edges, and the test kit
+reports it. A pass without a reach needs its whole source and runs as one call on one core.
 
 A plugin pass never reads the image it writes: the plan is refused. A pass that returns an error fails the
 render, and the layer keeps its frame. A native plugin runs the same bands directly on the app's images with no copies. The default

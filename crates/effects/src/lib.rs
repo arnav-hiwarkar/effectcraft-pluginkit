@@ -528,6 +528,12 @@ pub struct SharedLayer {
     pub size: [f64; 2],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shown {
+    pub part: [f64; 4],
+    pub grid: u32,
+}
+
 /// Services the renderer offers effects that look beyond their own pixels.
 pub trait EffectHost: Sync {
     /// Pixels entering the effect stack, in effect space, before any effects. For an
@@ -582,7 +588,7 @@ pub trait EffectHost: Sync {
     fn param_history(&self) -> Option<u64> {
         None
     }
-    fn shown(&self) -> Option<[f64; 4]> {
+    fn shown(&self) -> Option<Shown> {
         None
     }
     /// Parameter `id` (a [`flatten_params`] id such as `birthRate`) of effect `effect_index` in

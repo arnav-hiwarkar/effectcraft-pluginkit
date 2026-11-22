@@ -4,8 +4,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use craft_plugin::{
-    AppEvent, Call, EffectSpec, FrameRequest, Layout, MaskPath, Overlay, PanelReply, ParamKind, ParamsAt, Pixel, RenderCx, Scene, TaskStatus, ToolEvent,
-    ToolEventKind, UiEvent, UiEventKind, UiInput, Value, Widget,
+    AppEvent, Call, EffectSpec, FrameRequest, GpuPass, GpuPlan, Layout, MaskPath, Overlay, PanelReply, ParamKind, ParamsAt, Pixel, RenderCx, Scene, TaskStatus,
+    ToolEvent, ToolEventKind, UiEvent, UiEventKind, UiInput, Value, Widget,
 };
 pub use serde_json::json;
 
@@ -657,7 +657,7 @@ impl Render<'_> {
         let cx = self.cx(spec, &unpadded, [source.width, source.height], shift)?;
         let host = || self.host(&source, &layers, &masks, &cx);
         let plan = layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu());
-        let render = |reach: Option<u32>| {
+        let render = |reach: Option<u32>, plan: Option<&GpuPlan>| {
             let mut pixels = source.pixels.clone();
             let started = Instant::now();
             let layout = Layout { reach, ..layout.clone() };
@@ -668,23 +668,32 @@ impl Render<'_> {
             .map_err(|e| e.to_string())?;
             Ok::<_, String>((Picture { width: source.width, height: source.height, pixels }, started.elapsed()))
         };
-        let (mut picture, mut best) = render(layout.reach)?;
+        let (mut picture, mut best) = render(layout.reach, plan)?;
         for _ in 1..rounds {
-            let (again, took) = render(layout.reach)?;
+            let (again, took) = render(layout.reach, plan)?;
             (picture, best) = (again, best.min(took));
         }
-        if plan.is_none()
-            && !layout.maps_input
-            && let Some(reach) = layout.reach
-        {
-            let (whole, _) = render(None)?;
+        let unbanded = |plan: &GpuPlan| GpuPlan {
+            passes: plan.passes.iter().map(|pass| GpuPass { reach: None, aux_reach: None, ..pass.clone() }).collect(),
+            ..plan.clone()
+        };
+        let banded = match plan {
+            Some(plan) if plan.passes.iter().any(|pass| pass.reach.is_some()) => {
+                Some(("its passes read with GpuPass::reach and GpuPass::aux_reach".to_string(), Some(unbanded(plan))))
+            }
+            None if !layout.maps_input => layout.reach.map(|reach| (format!("each row reads rows at most {reach} away"), None)),
+            _ => None,
+        };
+        if let Some((declared, whole_plan)) = banded {
+            let (whole, _) = render(None, whole_plan.as_ref())?;
             if let Some(at) = picture.pixels.iter().zip(&whole.pixels).position(|(banded, whole)| banded != whole) {
                 let (x, y) = (at as u32 % picture.width, at as u32 / picture.width);
-                return Err(format!(
-                    "effect `{}` declares that each row reads rows at most {reach} away, but rendering in bands changed pixel ({x}, {y}): \
-                     return Layout::neighbourhood with the real distance from layout(), or Layout::whole_frame()",
-                    self.effect
-                ));
+                let change = if whole_plan.is_some() {
+                    "give each pass the real distance, or no reach"
+                } else {
+                    "return Layout::neighbourhood with the real distance from layout(), or Layout::whole_frame()"
+                };
+                return Err(format!("effect `{}` declares that {declared}, but rendering in bands changed pixel ({x}, {y}): {change}", self.effect));
             }
         }
         Ok((picture, best))

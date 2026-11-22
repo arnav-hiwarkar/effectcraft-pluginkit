@@ -199,3 +199,11 @@ fn two_harnesses_in_one_test_each_have_their_own_plugin_and_data_folder() {
     assert_eq!((named(&first), named(&second)), (Some(json!({ "name": "Pin 1" })), Some(json!({ "name": "Pin 1" }))));
     assert_ne!(first.data_dir(), second.data_dir());
 }
+
+#[test]
+fn every_effect_renders_the_same_in_bands_as_whole_at_an_odd_height() {
+    let plugin = craft_plugin_host::testing::TestPlugin::of(crate::plugin);
+    for effect in plugin.plugin().contributions().effects.iter().map(|spec| spec.id.clone()).filter(|id| !["smear", "crash"].contains(&id.as_str())) {
+        assert_eq!(plugin.render(&effect).size(40, 257).run().err(), None, "{effect}");
+    }
+}

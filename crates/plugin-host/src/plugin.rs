@@ -17,6 +17,7 @@ use crate::registry::Bundle;
 use crate::runtime::Engine;
 
 const MIN_BAND_ROWS: usize = 64;
+const STAGED_BYTES: usize = 1 << 30;
 
 fn plain_id(id: &str) -> bool {
     !id.is_empty() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
@@ -49,6 +50,7 @@ pub(crate) enum Io<'a> {
     None,
     InPlace(&'a mut [Pixel]),
     Region { input: &'a [Pixel], output: &'a mut [Pixel], skip: usize },
+    Render { input: &'a [Pixel], out: &'a mut [Pixel] },
     Pass { src: &'a [Pixel], aux: &'a [Pixel], out: &'a mut [Pixel] },
 }
 
@@ -56,9 +58,8 @@ impl Image<'_> {
     fn window(&self, band: Window, reach: Option<u32>) -> Window {
         let (height, out_height) = (u64::from(self.size[1]), u64::from(band.size[1]).max(1));
         let Some(reach) = reach.map(u64::from) else { return Window { size: self.size, first_row: 0, rows: self.size[1] } };
-        let matching = |row: u32| u64::from(row) * height / out_height;
-        let first = matching(band.first_row).saturating_sub(reach).min(height);
-        let end = (matching(band.first_row + band.rows.saturating_sub(1)) + reach + 1).min(height);
+        let first = (u64::from(band.first_row) * height / out_height).saturating_sub(reach).min(height);
+        let end = ((u64::from(band.first_row) + u64::from(band.rows)) * height).div_ceil(out_height).saturating_add(reach).min(height);
         Window { size: self.size, first_row: first as u32, rows: end.saturating_sub(first) as u32 }
     }
 
@@ -154,12 +155,19 @@ impl Plugin {
         make_host: impl Fn() -> H + Sync,
     ) -> Result<Rect, PluginError> {
         let (width, height) = (cx.size[0] as usize, cx.size[1] as usize);
-        if pixels.len() != width * height {
+        if cx.size.iter().any(|&side| i32::try_from(side).is_err()) {
+            return Err(PluginError::Failed(format!(
+                "a {width}x{height} frame is larger than a plugin can address; each side must be under {} pixels",
+                1u64 << 31
+            )));
+        }
+        if pixels.len() != width.saturating_mul(height) {
             return Err(PluginError::Protocol(format!("{} pixels for a {width}x{height} frame", pixels.len())));
         }
         let full = Rect::of_size(cx.size);
         let separate = self.contributions.separate_input;
         let mut area = area.map_or(full, |area| area.clipped(cx.size));
+        let pointwise = layout.reach == Some(0) && !(separate && layout.maps_input);
         if !separate {
             (area.left, area.right) = (full.left, full.right);
         }
@@ -168,16 +176,39 @@ impl Plugin {
             return Ok(area);
         }
         let (rows, out_width) = (area.height() as usize, area.width() as usize);
-        let even_rows = rows.div_ceil((rows / MIN_BAND_ROWS).clamp(1, rayon::current_num_threads()));
+        let bands = (rows / MIN_BAND_ROWS).clamp(1, rayon::current_num_threads());
+        let even_rows = rows.div_ceil(bands);
+        if pointwise && out_width == width {
+            let (top, bottom) = (area.top as usize, area.bottom as usize);
+            let call = |band: usize, rows: &[Pixel]| {
+                let frame =
+                    FrameDesc { width: cx.size[0], height: (rows.len() / width) as u32, origin: [0, (top + band * even_rows) as u32], ..Default::default() };
+                Call::Render { effect: effect.into(), cx: cx.clone(), frame }
+            };
+            let shown = &mut pixels[top * width..bottom * width];
+            shown
+                .par_chunks_mut(even_rows * width)
+                .enumerate()
+                .try_for_each(|(band, rows)| self.exchange::<()>(&call(band, rows), Io::InPlace(rows), &mut make_host()))?;
+            pixels.truncate(bottom * width);
+            pixels.drain(..top * width);
+            return Ok(area);
+        }
         let reach = layout.reach.map(|reach| reach as usize);
         let band_rows = match reach {
             _ if separate && layout.maps_input => even_rows,
+            Some(reach) if separate && self.engine.copies_pixels() => copied_band_rows(area, height, width, reach, bands, STAGED_BYTES),
             Some(_) if separate => even_rows,
             Some(reach) if even_rows.max(reach + 1) + 2 * reach < rows => even_rows.max(reach + 1),
             _ => rows,
         };
         let input: &[Pixel] = pixels;
-        let mut output = vec![[0.0; 4]; out_width * rows];
+        let mut output = match pointwise {
+            true => {
+                input.chunks_exact(width).skip(area.top as usize).take(rows).flat_map(|row| &row[area.left as usize..area.right as usize]).copied().collect()
+            }
+            false => vec![[0.0; 4]; out_width * rows],
+        };
         output.par_chunks_mut(band_rows * out_width).enumerate().try_for_each(|(band, written)| {
             let top = area.top + (band * band_rows) as i32;
             let out = Rect { top, bottom: top + (written.len() / out_width) as i32, ..area };
@@ -205,7 +236,7 @@ impl Plugin {
                 let mut table: [Pixel; 3] = bytemuck::cast([address(held), address(&[]), [written.as_mut_ptr() as u64, written.len() as u64]]);
                 self.exchange::<()>(&call, Io::InPlace(&mut table), &mut make_host())
             } else {
-                self.exchange::<()>(&call, Io::Pass { src: held, aux: &[], out: written }, &mut make_host())
+                self.exchange::<()>(&call, Io::Render { input: held, out: written }, &mut make_host())
             }
         })?;
         *pixels = output;
@@ -248,7 +279,7 @@ impl Plugin {
         pixels: &mut Vec<Pixel>,
         make_host: impl Fn() -> H + Sync,
     ) -> Result<(), PluginError> {
-        let area = |size: [u32; 2]| size[0] as usize * size[1] as usize;
+        let area = |size: [u32; 2]| (size[0] as usize).saturating_mul(size[1] as usize);
         if pixels.len() != area(cx.size) {
             return Err(PluginError::Protocol(format!("{} pixels for a {}x{} frame", pixels.len(), cx.size[0], cx.size[1])));
         }
@@ -318,9 +349,8 @@ impl Plugin {
         let band_rows = height.div_ceil(bands);
         out.par_chunks_mut(band_rows * width).enumerate().try_for_each(|(index, rows)| {
             let band = Window { size, first_row: (index * band_rows) as u32, rows: (rows.len() / width) as u32 };
-            let reach = pass.reach.filter(|_| !spread);
-            let src_window = src.window(band, reach);
-            let aux_window = aux.as_ref().map(|aux| aux.window(band, pass.aux_reach.or(reach).filter(|_| !spread)));
+            let src_window = src.window(band, pass.reach);
+            let aux_window = aux.as_ref().map(|aux| aux.window(band, pass.aux_reach.or(pass.reach)));
             let (src_held, aux_held) = (src.held(src_window), aux.as_ref().zip(aux_window).map_or(&[][..], |(aux, window)| aux.held(window)));
             let call = Call::Pass {
                 effect: effect.into(),
@@ -387,6 +417,22 @@ impl Drop for Plugin {
     }
 }
 
+fn copied_band_rows(area: Rect, height: usize, width: usize, reach: usize, bands: usize, budget: usize) -> usize {
+    let (rows, top, bottom) = (area.height() as usize, area.top as usize, area.bottom as usize);
+    let staged = |band_rows: usize| {
+        (0..rows).step_by(band_rows).fold((rows * area.width() as usize, true), |(pixels, covers), start| {
+            let first = (top + start).saturating_sub(reach);
+            let last = (top + start + band_rows).min(bottom).saturating_add(reach).min(height);
+            (pixels + (last - first) * width, covers && last - first == height)
+        })
+    };
+    (1..=bands)
+        .rev()
+        .map(|bands| rows.div_ceil(bands))
+        .find(|&band_rows| matches!(staged(band_rows), (pixels, false) if pixels.saturating_mul(size_of::<Pixel>()) <= budget))
+        .unwrap_or(rows)
+}
+
 fn what(call: &Call) -> String {
     match call {
         Call::Describe => "describing the plugin".into(),
@@ -411,5 +457,20 @@ fn origin(call: &Call) -> Origin {
         }
         Call::Layout { .. } | Call::Input { .. } | Call::Render { .. } | Call::Pass { .. } => Origin::Render,
         Call::Task { .. } => Origin::Task,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sandboxed_render_uses_one_band_when_its_reach_covers_the_frame_and_bounds_what_its_bands_stage() {
+        let frame = Rect::of_size([64, 256]);
+        assert_eq!(copied_band_rows(frame, 256, 64, 1000, 4, usize::MAX), 256, "a reach over the frame");
+        assert_eq!(copied_band_rows(frame, 256, 64, 8, 4, usize::MAX), 64, "a short reach");
+        assert_eq!(copied_band_rows(frame, 256, 64, 100, 4, 1_064_960), 64, "four bands stage 1,064,960 bytes");
+        assert_eq!(copied_band_rows(frame, 256, 64, 100, 4, 800_000), 128, "two bands stage 729,088 bytes");
+        assert_eq!(copied_band_rows(frame, 256, 64, 100, 4, 1000), 256, "nothing fits: one band");
     }
 }

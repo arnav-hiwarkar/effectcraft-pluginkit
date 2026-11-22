@@ -241,17 +241,17 @@ degrees) and `feather` (0 to 1). Light a surface with `colour` times `intensity`
 
 | Field | Meaning |
 |---|---|
-| `frame.pixels` | The pixels this call writes: premultiplied RGBA `f32`, row 0 at the top. Values above 1 are valid. Write every pixel; a pixel left unwritten is transparent. |
+| `frame.pixels` | The pixels this call writes: premultiplied RGBA `f32`, row 0 at the top. Values above 1 are valid. Write every pixel; a pixel left unwritten is transparent, or keeps its input with `Layout::pointwise()`. |
 | `frame.width`, `frame.height` | Size of the rectangle this call writes. |
 | `frame.origin` | Position of that rectangle in the full frame. Not `[0, 0]` in a band or when only part of the layer shows. |
-| `frame.input` | The input this call may read (`Rows`: `width`, `height` of the full frame, `first_row`, `pixels`, `row(y)`, `at(x, y)`, in full-frame coordinates). Whole rows: the rows the call writes, plus `n` above and below for `Layout::neighbourhood(n)`, the rows `Effect::input` names with `maps_input`, every row for `Layout::whole_frame()`. |
+| `frame.input` | The input this call may read (`Rows`: `width`, `height` of the full frame, `first_row`, `pixels`, `row(y)`, `at(x, y)`, in full-frame coordinates). Whole rows: the rows the call writes, plus `n` above and below for `Layout::neighbourhood(n)`, the rows `Effect::input` names with `maps_input`, every row for `Layout::whole_frame()`. In place it holds no rows until `frame.rows()` is called. |
 
 | Method | Meaning |
 |---|---|
 | `frame.map(f)` | Writes each pixel as `f` of the input pixel under it. The pointwise case. |
 | `frame.rows()` | `(y, input row, output row)`, `y` in the full frame, the input row cut to the columns written. |
 | `frame.rows_mut()` | `(y, output row)`. |
-| `frame.at(x, y)` | The input pixel at a full-frame position; transparent outside the input. |
+| `frame.at(x, y)` | The input pixel at a full-frame position; transparent outside the input. In place, before `frame.rows()`, the pixel as `frame.pixels` holds it now. |
 | `Frame::whole(width, height, input, pixels)` | A whole-frame call, for unit tests. |
 
 The app asks an effect only for the part of the layer that shows in the frame being rendered (the comp
@@ -260,8 +260,15 @@ later effects in the stack need. Without padding, a layer wholly in the frame re
 `Layout::pointwise()`, `Layout::neighbourhood(n)` or `.maps_input()` that rectangle is split into bands of
 rows on all cores, for sandboxed and native builds alike, and no row is written twice. A native plugin
 reads the input where it lies and writes the output frame directly; a sandboxed one gets its input rows
-copied in and its rows copied out. The rendered bands go into a new frame that replaces the layer's frame
-only when every call succeeded, so an effect that fails, in any band, leaves the layer as it was.
+copied in and its rows copied out. A sandboxed effect whose reach covers the frame renders in one band, so
+the frame is copied in once, and its bands never stage more than 1 GiB of rows between them.
+
+With `Layout::pointwise()`, `frame.pixels` holds the input when the call starts. When whole rows show, the
+effect changes the layer's frame in place and `frame.input` holds no rows: `frame.map(f)` maps the pixels
+where they lie with no copy, and `frame.rows()` first copies the band once, into memory kept for the next
+call, so its input rows are the input as it was. An effect that fails in one band then leaves the bands that
+finished changed. Every other case renders into a new frame that replaces the layer's frame only when
+every call succeeded, so an effect that fails, in any band, leaves the layer as it was.
 
 A plugin built before frames had separate input (it sends no `separate_input` in its description) still
 runs: each band gets whole rows with `n` rows above and below in `frame.pixels`, the app copies them for it
@@ -600,7 +607,7 @@ the app uses, with the permissions `plugin.json` asks for. Commands the plugin r
 | `TestPlugin::of(plugin)` | Runs the plugin that the function `plugin` (the one given to `export!`) makes, with the `plugin.json` of the crate under test. One test binary runs one plugin. |
 | `assert_frame!(plugin.render("tint").set("amount", 100.0), "name")` | Renders and compares with `tests/frames/<name>.png`. By default each straight (not premultiplied) RGBA channel may differ by one level of 255; `.tolerance(0)` on the render asks for an exact match and `.tolerance(n)` allows `n` levels. `<name>` is a plain name of letters, digits, `-` and `_`; a stored frame that is a link is refused. A missing frame is stored, except when `CI` is set: then the test fails and writes the rendered frame to `target/frames/<name>.actual.png`. A frame of another size fails the same way. A different one fails, writes `<name>.actual.png` and `<name>.diff.png` under the plugin's `target/frames/` and prints their paths. Only `UPDATE_FRAMES=1` stores every rendered frame; any other value is ignored. |
 | `plugin.render(effect)` | A `Render` builder: `.set(id, value)`, `.with(json)`, `.on(Pattern)`, `.input(Picture)`, `.size(w, h)` (320x180 by default), `.layer(param, Picture)`, `.mask(points, closed)`, `.time(s)`, `.scale(f)`, `.float()`, `.tolerance(levels)`. A `.set` value passes through `Param::fit` as in the app: clamped to the hard range, and an error when its kind is wrong. |
-| `render.run()`, `render.timed(rounds)` | The output `Picture` (padded by the layout's padding), and the best time. When the layout has a reach, the render in bands is also compared with a whole render, and a difference is an error naming the first pixel. |
+| `render.run()`, `render.timed(rounds)` | The output `Picture` (padded by the layout's padding), and the best time. When the layout or a pass of its plan has a reach, the render in bands is also compared with a whole render, and a difference is an error naming the first pixel. |
 | `render.layout()`, `render.overlay()`, `render.source()` | The effect's `Layout`, its `Overlay` (in layer pixels), and the input picture. |
 | `plugin.panel(id)` | A `PanelTest`: `.click(label)`, `.send(label, UiEventKind)`, `.app_event(AppEvent)`, `.timer(name)`, `.redraw()`, `.texts()`, `.widgets()`. |
 | `plugin.command(id)`, `plugin.task(id, args)`, `plugin.tool(id, event)` | Runs a command; runs a task to its end (60 s at most) and returns its result; sends a `ToolEvent` (`testing::pointer(kind, comp)` makes one) and returns the overlay. |
