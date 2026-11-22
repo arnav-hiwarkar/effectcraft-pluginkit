@@ -194,10 +194,15 @@ pub fn latest(prefs: &Prefs, project: Option<&str>, fallback: Option<&Path>) -> 
     latest_in(&StdFiles, prefs, project, fallback)
 }
 
-/// [`latest`] through `fs`.
+/// [`latest`] through `fs`, skipping snapshots that record another project as their origin.
 pub fn latest_in(fs: &dyn FileOps, prefs: &Prefs, project: Option<&str>, fallback: Option<&Path>) -> Option<PathBuf> {
     let dir = folder(prefs, project, fallback)?;
-    existing_in(fs, &dir, &project_stem(project)).into_iter().max_by_key(|e| e.2).map(|e| e.1)
+    existing_in(fs, &dir, &project_stem(project)).into_iter().filter(|e| !made_from_another(fs, &e.1, project)).max_by_key(|e| e.2).map(|e| e.1)
+}
+
+fn made_from_another(fs: &dyn FileOps, snapshot: &Path, project: Option<&str>) -> bool {
+    let origin = fs.read(snapshot).and_then(|text| effectcraft_project::saved_view(&text).autosave_of);
+    origin.is_some_and(|origin| Some(origin.as_str()) != project)
 }
 
 /// What the crash-recovery sentinel records.
@@ -233,7 +238,7 @@ pub fn begin(store: &dyn ConfigStore, prefs: &Prefs) -> Option<Recovery> {
     let autosave = s
         .autosave
         .clone()
-        .filter(|p| store.files().is_file(Path::new(p)))
+        .filter(|p| store.files().is_file(Path::new(p)) && !made_from_another(store.files(), Path::new(p), s.project.as_deref()))
         .or_else(|| latest_in(store.files(), prefs, s.project.as_deref(), fallback.as_deref()).map(|p| p.to_string_lossy().to_string()));
     Some(Recovery { project: s.project, autosave, dirty: s.dirty })
 }

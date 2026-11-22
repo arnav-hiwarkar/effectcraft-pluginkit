@@ -58,6 +58,10 @@ pub trait FileOps: Send + Sync {
     fn write(&self, path: &Path, data: &[u8]) -> std::io::Result<()>;
     fn remove(&self, path: &Path) -> std::io::Result<()>;
     fn is_file(&self, path: &Path) -> bool;
+    /// The text of the file at `path`, when this store can read it.
+    fn read(&self, _path: &Path) -> Option<String> {
+        None
+    }
 }
 
 /// [`FileOps`] on the file system.
@@ -84,6 +88,9 @@ impl FileOps for StdFiles {
     }
     fn is_file(&self, path: &Path) -> bool {
         path.is_file()
+    }
+    fn read(&self, path: &Path) -> Option<String> {
+        std::fs::read_to_string(path).ok()
     }
 }
 
