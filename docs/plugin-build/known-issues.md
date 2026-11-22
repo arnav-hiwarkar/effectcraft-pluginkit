@@ -82,6 +82,9 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **Native Lumen Glow on all cores takes 5 % longer in wall time** (14.4 ms against 13.7 ms at 1080p, load
   3) although it runs 3 % fewer instructions: the emission and the upsampled glow are two more
   full-size images written and read.
+- **Lumen Glow with a negative Aspect on a frame 16384 wide and 1 tall is refused.** Its levels halve only
+  across, and the app cannot pad such a frame, so two images per level stay half a frame each and the plan
+  asks for more than 8 frames of scratch. The effect reports the refusal and leaves the frame unchanged.
 
 ## Seen in the third build
 

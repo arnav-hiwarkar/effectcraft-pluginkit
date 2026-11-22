@@ -16,7 +16,6 @@ use effectcraft_engine::project::ParamUi;
 
 use crate::manage::Loaded;
 
-const MAX_PADDING: u32 = 4096;
 const PROBE_SIDE: u32 = 256;
 const MAX_STAMPED_FILES: usize = 256;
 const STAMP_LIFETIME: std::time::Duration = std::time::Duration::from_millis(500);
@@ -300,14 +299,8 @@ impl Host for RenderHost<'_, '_> {
 fn layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Layout {
     let call = Call::Layout { effect: spec.id.clone(), cx: render_cx(spec, ctx, grid) };
     let mut layout: Layout = loaded.plugin.call(&call, None, &mut RenderHost { ctx, grid, spec }).unwrap_or_default();
-    layout.padding = layout.padding.map(|side| side.min(MAX_PADDING));
+    layout.padding = craft_plugin_host::applied_padding(layout.padding, [grid.width, grid.height]);
     layout
-}
-
-fn padding(buf: &Buf, padding: [u32; 4]) -> [u32; 4] {
-    let (width, height) = (buf.img.width, buf.img.height);
-    let [left, top, right, bottom] = padding.map(f64::from);
-    effectcraft_engine::effects::grow_sides([-left, -top], [f64::from(width) + right, f64::from(height) + bottom], width, height).unwrap_or_default()
 }
 
 fn shown_area(ctx: &EffectCtx, grid: Grid) -> Option<Rect> {
@@ -322,7 +315,7 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
     if spec.shader.is_none() && layout.gpu.as_ref().is_some_and(|plan| plan_runs_on_gpu(spec, plan)) {
         mark_gpu_planned(&effect_id(&loaded.bundle.manifest.id, &spec.id));
     }
-    buf.pad_sides(padding(&buf, layout.padding));
+    buf.pad_sides(layout.padding);
     let grid = grid_of(&buf);
     let cx = render_cx(spec, ctx, grid);
     let host = || RenderHost { ctx, grid, spec };

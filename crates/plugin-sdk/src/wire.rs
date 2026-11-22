@@ -471,6 +471,31 @@ impl Layout {
     }
 }
 
+pub const MAX_PADDING: u32 = 4096;
+const MAX_PADDED_SIDE: f64 = 16384.0;
+const MIN_PIXEL_BUDGET: f64 = 16_777_216.0;
+
+pub fn applied_padding(requested: [u32; 4], size: [u32; 2]) -> [u32; 4] {
+    let sides = requested.map(|side| f64::from(side.min(MAX_PADDING)));
+    let [left, top, right, bottom] = sides;
+    let (w, h) = (f64::from(size[0]), f64::from(size[1]));
+    let (across, down) = (left + right, top + bottom);
+    let mut f = 1.0_f64;
+    if across > 0.0 {
+        f = f.min((MAX_PADDED_SIDE - w).max(0.0) / across);
+    }
+    if down > 0.0 {
+        f = f.min((MAX_PADDED_SIDE - h).max(0.0) / down);
+    }
+    let budget = MIN_PIXEL_BUDGET.max(4.0 * w * h);
+    if (w + across * f) * (h + down * f) > budget {
+        let (a, b, c) = (across * down, w * down + h * across, w * h - budget);
+        f = f.min(if a > 0.0 { (-b + (b * b - 4.0 * a * c).max(0.0).sqrt()) / (2.0 * a) } else { -c / b });
+    }
+    let f = if f.is_finite() { f.clamp(0.0, 1.0) } else { 0.0 };
+    sides.map(|side| (side * f).floor() as u32)
+}
+
 pub const MAX_PASSES: usize = 128;
 pub const MAX_SCRATCH_IMAGES: usize = 32;
 pub const MAX_SCRATCH_FRAMES: u64 = 8;
@@ -620,23 +645,24 @@ impl GpuPlan {
         self.validate(frame)
     }
 
-    fn working_images(&self, frame: [u32; 2]) -> Vec<([u32; 2], u64)> {
-        let mut working: Vec<(u8, [u32; 2], u64)> = Vec::new();
+    fn scratch_bytes(&self, frame: [u32; 2]) -> u64 {
+        let bytes = |[w, h]: [u32; 2], per_pixel: u64| (u64::from(w) * u64::from(h)).saturating_mul(per_pixel);
+        let mut kept: Vec<([u32; 2], u64)> = self.images.iter().map(|size| (*size, PIXEL_BYTES as u64)).collect();
+        let mut working: Vec<([u32; 2], u64)> = Vec::new();
+        let mut largest_intermediate = 0;
         for pass in &self.passes {
             let (Some(src), Some(out)) = (self.size_of(pass.src, frame), self.size_of(pass.out, frame)) else { continue };
-            let needs = match (&pass.host, &pass.draw) {
-                (Some(kernel), _) if kernel.needs_temporary() => vec![(0, out, PIXEL_BYTES as u64)],
-                (Some(HostKernel::Resample { .. }), _) => vec![(1, [out[0], src[1]], PIXEL_BYTES as u64)],
-                (None, Some(draw)) => std::iter::once((2, out, DRAW_PIXEL_BYTES)).chain(draw.depth.then_some((3, out, DEPTH_PIXEL_BYTES))).collect(),
-                _ => Vec::new(),
-            };
-            for need in needs {
-                if !working.contains(&need) {
-                    working.push(need);
-                }
+            match (&pass.host, &pass.draw) {
+                (Some(kernel), _) if kernel.needs_temporary() => working.push((out, PIXEL_BYTES as u64)),
+                (Some(HostKernel::Resample { .. }), _) => largest_intermediate = largest_intermediate.max(bytes([out[0], src[1]], PIXEL_BYTES as u64)),
+                (None, Some(draw)) => working.extend(std::iter::once((out, DRAW_PIXEL_BYTES)).chain(draw.depth.then_some((out, DEPTH_PIXEL_BYTES)))),
+                _ => {}
             }
         }
-        self.images.iter().map(|size| (*size, PIXEL_BYTES as u64)).chain(working.into_iter().map(|(_, size, bytes)| (size, bytes))).collect()
+        working.sort_unstable();
+        working.dedup();
+        kept.extend(working);
+        kept.iter().map(|&(size, per_pixel)| bytes(size, per_pixel)).fold(largest_intermediate, u64::saturating_add)
     }
 
     pub fn validate(&self, frame: [u32; 2]) -> Result<(), String> {
@@ -654,8 +680,7 @@ impl GpuPlan {
             }
         }
         let area = |[w, h]: [u32; 2]| u64::from(w) * u64::from(h);
-        let scratch_bytes = self.working_images(frame).iter().map(|(size, bytes)| area(*size).saturating_mul(*bytes)).fold(0, u64::saturating_add);
-        if scratch_bytes > MAX_SCRATCH_FRAMES.saturating_mul(area(frame)).saturating_mul(PIXEL_BYTES as u64) {
+        if self.scratch_bytes(frame) > MAX_SCRATCH_FRAMES.saturating_mul(area(frame)).saturating_mul(PIXEL_BYTES as u64) {
             return Err(format!(
                 "the scratch images and the images the passes work in (blur temporaries, resample intermediates, draw targets) together exceed {MAX_SCRATCH_FRAMES} times the {fw}x{fh} padded frame"
             ));

@@ -5,7 +5,7 @@ use crate::abi::Buffer;
 use crate::host;
 use crate::ui::Ui;
 use crate::viewer::Overlay;
-use crate::wire::{EffectSpec, HostCall, ImageDesc, Layout, MaskPath, ParamsAt, Pixel, Rect, RenderCx, Scene, Value};
+use crate::wire::{EffectSpec, HostCall, ImageDesc, Layout, MaskPath, ParamsAt, Pixel, Rect, RenderCx, Scene, Value, applied_padding};
 
 pub trait Effect: Send + Sync + 'static {
     fn spec(&self) -> EffectSpec;
@@ -96,6 +96,7 @@ impl Cx {
     }
 
     pub fn padded_sides(&self, left: u32, top: u32, right: u32, bottom: u32) -> Cx {
+        let [left, top, right, bottom] = applied_padding([left, top, right, bottom], self.size);
         let shift = [f64::from(left), f64::from(top)];
         let mut padded = self.0.clone();
         padded.size = [padded.size[0] + left + right, padded.size[1] + top + bottom];

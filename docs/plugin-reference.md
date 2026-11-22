@@ -189,7 +189,10 @@ defaults when the project opens, or when the plugin starts while the project is 
 
 `cx.px(id)` is `cx.f(id) * cx.scale`. In `layout`, `cx` describes the frame before padding.
 `cx.padded(n)` is the context `render` gets after `n` pixels of padding, `cx.padded_sides(left, top,
-right, bottom)` after padding each side by its own amount.
+right, bottom)` after padding each side by its own amount. Both pad as far as the app does:
+`applied_padding([left, top, right, bottom], cx.size)` gives those sides. Each side is at most
+`MAX_PADDING` (4096); when the padded frame would be wider or taller than 16384 or larger than 16 Mpx and
+four times the frame, every side is cut by one factor, so a frame 16384 wide is not padded at all.
 
 | Call | Returns |
 |---|---|
@@ -271,7 +274,7 @@ and keeps the band's own rows.
 | `Layout::whole_frame()` | One call gets the whole frame. |
 | `Layout::pointwise()` | Each output pixel depends only on the same input pixel. |
 | `Layout::neighbourhood(n)` | Each output row depends on input rows at most `n` away. |
-| `.padded(n)` | Grow the frame by `n` pixels on each side first. The app caps each side at 4096. |
+| `.padded(n)` | Grow the frame by `n` pixels on each side first, as far as `applied_padding` allows (each side at most 4096). |
 | `.padded_sides(left, top, right, bottom)` | Grow each side by its own amount. |
 | `.maps_input()` | The app asks `Effect::input` which input rectangle an output rectangle needs, once per band. |
 

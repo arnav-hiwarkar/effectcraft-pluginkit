@@ -347,3 +347,17 @@ fn extreme_values_and_negative_colour_give_the_same_literal_pixels_on_the_cpu_an
     }
     assert_eq!(wrong, Vec::<String>::new());
 }
+
+#[test]
+fn plugins_are_told_the_padding_the_app_applies_on_the_cpu_and_the_gpu() {
+    let sizes = [[1, 1], [7, 3000], [1920, 1080], [3840, 2160], [16000, 100], [16384, 1], [1, 16384], [4097, 4097], [9000, 9000]];
+    let paddings = [[0, 0, 0, 0], [1, 1, 1, 1], [5, 0, 2, 0], [300, 300, 300, 300], [4096, 4096, 4096, 4096], [5000, 7, 5000, 7]];
+    for size in sizes {
+        for padding in paddings {
+            let [l, t, r, b] = padding.map(|side| f64::from(side.min(4096)));
+            let grown = effects::grow_sides([-l, -t], [f64::from(size[0]) + r, f64::from(size[1]) + b], size[0], size[1]).unwrap_or_default();
+            assert_eq!(craft_plugin_host::applied_padding(padding, size), grown, "{size:?} padded by {padding:?}");
+        }
+    }
+    assert_eq!(craft_plugin_host::applied_padding([300; 4], [16384, 1]), [0; 4], "a frame as wide as the app grows one is not padded");
+}

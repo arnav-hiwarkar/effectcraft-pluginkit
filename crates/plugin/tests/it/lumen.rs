@@ -194,6 +194,23 @@ fn negative_colour_screens_and_encodes_as_the_build_before_host_kernels_did() {
 }
 
 #[test]
+fn a_frame_as_wide_as_the_app_grows_one_glows_at_the_largest_radius_on_the_cpu_and_the_gpu() {
+    let spec = spec();
+    let mut img = Image::new(16384, 1);
+    img.set(8000, 0, [4.0, 4.0, 4.0, 1.0]);
+    let params = params_for(spec, [16384, 1], &[("Glow/radius", 3000.0)]);
+    let ctx = || EffectCtx { params: &params, time: 0.0, layer_size: [16384.0, 1.0], seed: 11, adjustment: false, env: Default::default() };
+    let input = Buf { img, offset: [0.0, 0.0], scale: 1.0 };
+    let cpu = effects::apply(spec, &ctx(), input.clone());
+    assert_eq!((cpu.img.width, cpu.img.height), (16384, 1), "the app grows the frame no wider");
+    assert!(cpu.img.data[8100][0] > 1e-5 && cpu.img.data[8100][0] < 1e-3, "light spreads a hundred pixels: {:?}", cpu.img.data[8100]);
+    let Some(gpu) = gpu() else { return };
+    let out = gpu.effects(&[FxStep { spec, ctx: ctx() }], &input, None).expect("the GPU ran the plan");
+    let (mean, worst) = differences(&cpu.img, &out.img);
+    assert!(mean < MEAN_TOLERANCE && worst < WORST_TOLERANCE, "GPU and CPU differ by mean {mean}, worst {worst}");
+}
+
+#[test]
 fn lumen_glow_renders_on_the_gpu_as_its_cpu_render_does() {
     let spec = spec();
     let Some(gpu) = gpu() else { return };

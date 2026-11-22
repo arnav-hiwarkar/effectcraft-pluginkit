@@ -52,8 +52,8 @@ A pass reads `src` and, optionally, `aux`, and writes `out`. Each names one of:
 
 `layout` runs before the frame is padded, so there `cx.size`, `cx.offset` and point parameters describe
 the frame without padding. The passes run on the padded frame. Build the plan from `cx.padded(padding)`,
-which is the context `render` gets: its `size` includes the padding and its `offset` and points are
-moved by it. Read sizes in the kernel with `out_size()` and `src_size()` instead of assuming them.
+which is the context `render` gets: its `size` includes the padding the app really applies (less than
+asked for near the app's size limits) and its `offset` and points are moved by it. Read sizes in the kernel with `out_size()` and `src_size()` instead of assuming them.
 
 Values reach a pass through `.floats(&[..])` (up to 96) and `.uints(&[..])` (up to 16), on the GPU and the CPU alike. A kernel reads
 value `i` with `pass_f(i)` or `pass_u(i)`; values the pass did not give read as 0. Scale distances by
