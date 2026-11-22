@@ -1507,7 +1507,11 @@ mod tests {
                 plan(vec![], vec![GpuPass::brightness_curve(source, output, Measure::Luma, vec![0.0, 1.0], 0.0)]),
                 "pass 0 (brightness_curve): `range` is 0; it must be a finite number above 0",
             ),
-            ("one point brightness curve", plan(vec![], vec![GpuPass::brightness_curve(source, output, Measure::MaxChannel, vec![1.0], 1.0)]), "`curve` has 1 entries"),
+            (
+                "one point brightness curve",
+                plan(vec![], vec![GpuPass::brightness_curve(source, output, Measure::MaxChannel, vec![1.0], 1.0)]),
+                "`curve` has 1 entries",
+            ),
         ];
         for (name, plan, expected) in cases {
             let why = plan.validate(FRAME).expect_err(name);
