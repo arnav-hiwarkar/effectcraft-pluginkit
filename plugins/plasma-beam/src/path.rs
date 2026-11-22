@@ -86,9 +86,7 @@ impl Path {
             return Span { samples: vec![Sample { at, normal: [0.0, 0.0], distance: 0.0 }], ..empty };
         }
         let mut stations = vec![(self.point_at(from), from)];
-        stations.extend(
-            self.points.iter().zip(&self.lengths).filter(|&(_, &l)| l > from && l < to).map(|(&p, &l)| (p, l)),
-        );
+        stations.extend(self.points.iter().zip(&self.lengths).filter(|&(_, &l)| l > from && l < to).map(|(&p, &l)| (p, l)));
         stations.push((self.point_at(to), to));
         let mut points: Vec<(Point, f32)> = Vec::with_capacity(stations.len() + ((to - from) / step) as usize + 1);
         for pair in stations.windows(2) {

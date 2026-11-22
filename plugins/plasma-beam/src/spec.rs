@@ -66,10 +66,7 @@ pub fn effect() -> EffectSpec {
                 Param::slider(key(GLOW_BIAS), "Glow Bias", 0.0, -100.0..=100.0),
             ],
         )
-        .group(
-            "Flicker",
-            [slider(FLICKER_INTENSITY, "Flicker Intensity", 100.0, 1000.0), slider(FLICKER_SPEED, "Flicker Speed", 100.0, 1000.0)],
-        )
+        .group("Flicker", [slider(FLICKER_INTENSITY, "Flicker Intensity", 100.0, 1000.0), slider(FLICKER_SPEED, "Flicker Speed", 100.0, 1000.0)])
         .group(
             "Distortion",
             [
@@ -82,10 +79,7 @@ pub fn effect() -> EffectSpec {
         )
         .group(
             "Render",
-            [
-                Param::popup(key(COMPOSITE), "Composite", &["Add", "Screen", "On Transparent", "On Black"], 0),
-                slider(ALPHA_BOOST, "Alpha Boost", 100.0, 1000.0),
-            ],
+            [Param::popup(key(COMPOSITE), "Composite", &["Add", "Screen", "On Transparent", "On Black"], 0), slider(ALPHA_BOOST, "Alpha Boost", 100.0, 1000.0)],
         )
         .time_dependent()
 }

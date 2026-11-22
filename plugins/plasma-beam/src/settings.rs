@@ -93,33 +93,16 @@ impl Settings {
         };
         let motion = motion(look, &read, scale, cx.time as f32, seed);
         let glow = bands(look, &read, scale);
-        let reach = glow.iter().map(visible_radius).fold(0.0, f32::max)
-            + motion.core_amplitude.max(motion.glow_amplitude)
-            + core_radius;
+        let reach = glow.iter().map(visible_radius).fold(0.0, f32::max) + motion.core_amplitude.max(motion.glow_amplitude) + core_radius;
         let flicker = flicker(look, &read, cx.time as f32, seed);
-        Settings {
-            source,
-            shape,
-            motion,
-            glow,
-            reach: reach.min(MAX_REACH * scale),
-            strands: look.strands.max(1),
-            shading: shading(look, &read, flicker),
-        }
+        Settings { source, shape, motion, glow, reach: reach.min(MAX_REACH * scale), strands: look.strands.max(1), shading: shading(look, &read, flicker) }
     }
 
     pub fn padding(&self, paths: &[Path], size: [u32; 2]) -> u32 {
         let mut points = paths.iter().flat_map(|path| path.points().iter());
         let Some(&first) = points.next() else { return 0 };
-        let (min, max) = points.fold((first, first), |(lo, hi), p| {
-            ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])])
-        });
-        let overflow = [
-            self.reach - min[0],
-            self.reach - min[1],
-            max[0] + self.reach - size[0] as f32,
-            max[1] + self.reach - size[1] as f32,
-        ];
+        let (min, max) = points.fold((first, first), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
+        let overflow = [self.reach - min[0], self.reach - min[1], max[0] + self.reach - size[0] as f32, max[1] + self.reach - size[1] as f32];
         overflow.into_iter().fold(0.0f32, f32::max).min(self.reach).ceil() as u32
     }
 }
