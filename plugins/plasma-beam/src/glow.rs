@@ -28,12 +28,7 @@ fn base_plane(bounds: Bounds, reach: f32, size: [usize; 2]) -> (Plane, [usize; 2
 }
 
 fn level_count(bands: &[GlowBand], base: [usize; 2]) -> usize {
-    let wanted = bands
-        .iter()
-        .filter(|b| b.energy[0] + b.energy[1] > 0.0)
-        .map(|b| (b.sigma / SQRT_2).max(1.0).log2().ceil() as usize + 1)
-        .max()
-        .unwrap_or(1);
+    let wanted = bands.iter().filter(|b| b.energy[0] + b.energy[1] > 0.0).map(|b| (b.sigma / SQRT_2).max(1.0).log2().ceil() as usize + 1).max().unwrap_or(1);
     let available = (0..).take_while(|&k| base[0].min(base[1]) >> k > 1).count().max(1);
     wanted.min(available)
 }
@@ -111,11 +106,7 @@ pub fn energy(base: Image<1>, weights: &[[f32; 2]]) -> Image<2> {
     }
     let top = &levels[levels.len() - 1];
     let weight = weights[levels.len() - 1];
-    let mut acc = Image::<2> {
-        width: top.width,
-        height: top.height,
-        data: top.data.iter().map(|v| [v[0] * weight[0], v[0] * weight[1]]).collect(),
-    };
+    let mut acc = Image::<2> { width: top.width, height: top.height, data: top.data.iter().map(|v| [v[0] * weight[0], v[0] * weight[1]]).collect() };
     for (level, weight) in levels.iter().zip(weights).rev().skip(1) {
         acc = upsample_add(&acc, level, *weight);
     }

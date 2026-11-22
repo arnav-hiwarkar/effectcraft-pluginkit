@@ -22,11 +22,7 @@ impl<const N: usize> Image<N> {
 pub fn taps(fine: usize, coarse_len: usize) -> [(usize, f32); 2] {
     let last = coarse_len.saturating_sub(1);
     let m = fine / 2;
-    if fine.is_multiple_of(2) {
-        [(m.saturating_sub(1).min(last), 0.25), (m.min(last), 0.75)]
-    } else {
-        [(m.min(last), 0.75), ((m + 1).min(last), 0.25)]
-    }
+    if fine.is_multiple_of(2) { [(m.saturating_sub(1).min(last), 0.25), (m.min(last), 0.75)] } else { [(m.min(last), 0.75), ((m + 1).min(last), 0.25)] }
 }
 
 pub fn lerp_row<const N: usize>(out: &mut [[f32; N]], a: &[[f32; N]], b: &[[f32; N]], wa: f32, wb: f32) {

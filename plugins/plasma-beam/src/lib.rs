@@ -20,11 +20,7 @@ struct PlasmaBeam;
 fn sources(cx: &Cx, settings: &Settings) -> Vec<Path> {
     match settings.source {
         Source::TwoPoints(ends) => vec![Path::new(ends.to_vec(), false)],
-        Source::Masks => cx
-            .masks()
-            .into_iter()
-            .map(|mask| Path::new(mask.points.iter().map(|p| [p[0] as f32, p[1] as f32]).collect(), mask.closed))
-            .collect(),
+        Source::Masks => cx.masks().into_iter().map(|mask| Path::new(mask.points.iter().map(|p| [p[0] as f32, p[1] as f32]).collect(), mask.closed)).collect(),
     }
 }
 
@@ -35,12 +31,12 @@ impl Effect for PlasmaBeam {
 
     fn layout(&self, cx: &Cx) -> Layout {
         let settings = Settings::read(cx);
-        Layout::whole_frame().padded(settings.padding(&sources(cx, &settings), cx.size))
+        Layout::pointwise().padded(settings.padding(&sources(cx, &settings), cx.size))
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let settings = Settings::read(cx);
-        render::render(&settings, &sources(cx, &settings), frame);
+        render::render(&settings, &sources(cx, &settings), cx.size.map(|side| side as usize), frame);
         Ok(())
     }
 }

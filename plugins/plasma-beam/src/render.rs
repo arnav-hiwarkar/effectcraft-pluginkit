@@ -2,17 +2,19 @@ use craft_plugin::Frame;
 
 use crate::beam::{self, Stroke};
 use crate::glow::{self, Glow};
-use crate::noise;
 use crate::image::{lerp_row, sample_row, taps};
+use crate::noise;
 use crate::path::Path;
 use crate::plane::{Bounds, Plane};
 use crate::settings::Settings;
 use crate::shade::Shading;
 
-fn core_plane(strokes: &[Stroke], size: [usize; 2]) -> Option<Plane> {
+fn core_plane(strokes: &[Stroke], size: [usize; 2], rows: std::ops::Range<usize>) -> Option<Plane> {
     let bounds = Bounds::of_nodes(strokes.iter().flat_map(|s| &s.core))?;
-    let lo = [0, 1].map(|axis| (bounds.min[axis] - 2.0).floor().clamp(0.0, size[axis] as f32) as usize);
-    let hi = [0, 1].map(|axis| (bounds.max[axis] + 2.0).ceil().clamp(0.0, size[axis] as f32) as usize);
+    let mut lo = [0, 1].map(|axis| (bounds.min[axis] - 2.0).floor().clamp(0.0, size[axis] as f32) as usize);
+    let mut hi = [0, 1].map(|axis| (bounds.max[axis] + 2.0).ceil().clamp(0.0, size[axis] as f32) as usize);
+    lo[1] = lo[1].max(rows.start);
+    hi[1] = hi[1].min(rows.end);
     let dims = [0, 1].map(|axis| hi[axis].saturating_sub(lo[axis]));
     if dims[0] == 0 || dims[1] == 0 {
         return None;
@@ -33,9 +35,7 @@ fn composite(frame: &mut Frame, core: Option<&Plane>, glow: Option<&Glow>, shadi
         let core_row = core.and_then(|plane| plane.row_at(y));
         for (x, pixel) in row.iter_mut().enumerate() {
             let light = glow.map_or([0.0; 3], |g| sample_row(&column, x + g.guard[0]));
-            let coverage = core_row
-                .and_then(|(start, cells)| cells.get(x.checked_sub(start)?))
-                .map_or(0.0, |cell| cell[0]);
+            let coverage = core_row.and_then(|(start, cells)| cells.get(x.checked_sub(start)?)).map_or(0.0, |cell| cell[0]);
             if keeps_source && coverage <= 0.0 && light[0] + light[1] + light[2] <= 0.0 {
                 continue;
             }
@@ -44,23 +44,16 @@ fn composite(frame: &mut Frame, core: Option<&Plane>, glow: Option<&Glow>, shadi
     }
 }
 
-pub fn render(settings: &Settings, paths: &[Path], frame: &mut Frame) {
+pub fn render(settings: &Settings, paths: &[Path], size: [usize; 2], frame: &mut Frame) {
     let strokes: Vec<Stroke> = paths
         .iter()
         .enumerate()
         .flat_map(|(i, path)| (0..settings.strands).map(move |strand| (path, noise::mix(i as u32, strand))))
         .map(|(path, salt)| beam::stroke(path, &settings.shape, &settings.motion, salt))
         .collect();
-    let size = [frame.width, frame.height];
-    let core = core_plane(&strokes, size);
-    let glow = glow::render(
-        strokes.iter().map(|s| s.glow.as_slice()),
-        &settings.glow,
-        settings.shape.glow_radius,
-        settings.reach,
-        &settings.shading,
-        size,
-    );
+    let rows = frame.origin[1]..frame.origin[1] + frame.height;
+    let core = core_plane(&strokes, size, rows);
+    let glow = glow::render(strokes.iter().map(|s| s.glow.as_slice()), &settings.glow, settings.shape.glow_radius, settings.reach, &settings.shading, size);
     composite(frame, core.as_ref(), glow.as_ref(), &settings.shading);
 }
 
@@ -93,8 +86,31 @@ mod tests {
     fn rendered(settings: &Settings, paths: &[Path]) -> Vec<craft_plugin::Pixel> {
         let mut pixels = vec![[0.25, 0.5, 0.75, 1.0]; 160 * 90];
         let mut frame = Frame { width: 160, height: 90, origin: [0, 0], pixels: &mut pixels };
-        render(settings, paths, &mut frame);
+        render(settings, paths, [160, 90], &mut frame);
         pixels
+    }
+
+    fn banded(settings: &Settings, paths: &[Path], cuts: &[usize]) -> Vec<craft_plugin::Pixel> {
+        let mut pixels = vec![[0.25, 0.5, 0.75, 1.0]; 160 * 90];
+        for pair in cuts.windows(2) {
+            let band = &mut pixels[pair[0] * 160..pair[1] * 160];
+            let mut frame = Frame { width: 160, height: pair[1] - pair[0], origin: [0, pair[0]], pixels: band };
+            render(settings, paths, [160, 90], &mut frame);
+        }
+        pixels
+    }
+
+    #[test]
+    fn bands_render_the_same_pixels_as_the_whole_frame() {
+        let cuts = [0, 1, 17, 40, 45, 46, 71, 90];
+        let two_points = settings(&[]);
+        let beam = [Path::new(vec![[16.0, 20.0], [150.0, 70.0]], false)];
+        let mask = [Path::new(vec![[30.0, 10.0], [130.0, 25.0], [110.0, 80.0], [40.0, 60.0]], true)];
+        for (settings, paths) in [(&two_points, &beam[..]), (&settings(&[("preset", 2.0)]), &mask[..])] {
+            let whole = rendered(settings, paths);
+            assert!(whole.iter().any(|p| *p != [0.25, 0.5, 0.75, 1.0]));
+            assert_eq!(banded(settings, paths, &cuts), whole);
+        }
     }
 
     #[test]

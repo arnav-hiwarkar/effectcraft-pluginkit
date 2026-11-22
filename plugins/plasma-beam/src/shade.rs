@@ -114,13 +114,7 @@ mod tests {
 
     #[test]
     fn glow_saturates_toward_white_as_energy_grows() {
-        let shading = Shading {
-            inner: [0.2, 0.6, 1.4],
-            outer: [0.2, 0.6, 1.4],
-            core: [1.5; 3],
-            composite: Composite::Add,
-            alpha_boost: 1.0,
-        };
+        let shading = Shading { inner: [0.2, 0.6, 1.4], outer: [0.2, 0.6, 1.4], core: [1.5; 3], composite: Composite::Add, alpha_boost: 1.0 };
         let faint = shading.glow([0.0, 0.2]);
         let hot = shading.glow([0.0, 50.0]);
         assert!(faint[2] / faint[0] > 6.0);

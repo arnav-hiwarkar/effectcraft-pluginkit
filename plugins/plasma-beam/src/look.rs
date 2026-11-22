@@ -186,17 +186,7 @@ pub const LOOKS: [Look; 8] = [
         core_gain: 2.2,
         core_width: 1.6,
         glow: layers([[2.0, 13.2, 1.0], [5.0, 5.5, 0.8], [12.0, 2.64, 0.3], [30.0, 1.65, 0.0], [70.0, 0.66, 0.0]]),
-        distortion: Distortion {
-            amplitude: 0.8,
-            wavelength: 90.0,
-            speed: 1.0,
-            octaves: 2,
-            core: 0.3,
-            glow_width: 0.12,
-            core_width: 0.04,
-            pin: 0.5,
-            ..CALM
-        },
+        distortion: Distortion { amplitude: 0.8, wavelength: 90.0, speed: 1.0, octaves: 2, core: 0.3, glow_width: 0.12, core_width: 0.04, pin: 0.5, ..CALM },
         strands: 1,
         flicker: Flicker { amount: 0.06, rate: 12.0 },
     },

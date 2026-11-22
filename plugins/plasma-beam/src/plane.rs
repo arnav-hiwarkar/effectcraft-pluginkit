@@ -16,10 +16,7 @@ impl Bounds {
     }
 
     fn union(self, other: Bounds) -> Bounds {
-        Bounds {
-            min: [self.min[0].min(other.min[0]), self.min[1].min(other.min[1])],
-            max: [self.max[0].max(other.max[0]), self.max[1].max(other.max[1])],
-        }
+        Bounds { min: [self.min[0].min(other.min[0]), self.min[1].min(other.min[1])], max: [self.max[0].max(other.max[0]), self.max[1].max(other.max[1])] }
     }
 }
 
@@ -54,10 +51,7 @@ impl Plane {
     }
 
     fn local(&self, node: Node) -> Node {
-        let at = [
-            (node.at[0] - self.origin[0] as f32) / self.pitch,
-            (node.at[1] - self.origin[1] as f32) / self.pitch,
-        ];
+        let at = [(node.at[0] - self.origin[0] as f32) / self.pitch, (node.at[1] - self.origin[1] as f32) / self.pitch];
         Node { at, radius: node.radius / self.pitch }
     }
 

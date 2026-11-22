@@ -83,10 +83,7 @@ pub fn stroke(path: &Path, shape: &Shape, motion: &Motion, salt: u32) -> Stroke 
                 at: [sample.at[0] + sample.normal[0] * bend * amplitude, sample.at[1] + sample.normal[1] * bend * amplitude],
                 radius: radius * size * (1.0 + wobble * swell).max(0.0),
             };
-            (
-                node(motion.core_amplitude, shape.core_radius, motion.core_width),
-                node(motion.glow_amplitude, shape.glow_radius, motion.glow_width),
-            )
+            (node(motion.core_amplitude, shape.core_radius, motion.core_width), node(motion.glow_amplitude, shape.glow_radius, motion.glow_width))
         })
         .unzip();
     Stroke { core, glow }
