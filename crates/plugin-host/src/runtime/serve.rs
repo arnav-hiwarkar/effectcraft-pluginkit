@@ -30,7 +30,7 @@ pub(crate) struct Identity {
 pub(crate) struct Picked {
     path: PathBuf,
     writable: bool,
-    held: Option<Handle>,
+    held: Option<Arc<Handle>>,
 }
 
 impl Picked {
@@ -45,7 +45,7 @@ impl Identity {
     }
 
     fn remember_pick(&self, path: PathBuf, writable: bool) {
-        let held = Handle::from_path(&path).ok();
+        let held = Handle::from_path(&path).ok().map(Arc::new);
         if let Ok(mut picked) = self.picked.lock() {
             picked.retain(|chosen| chosen.path != path);
             picked.push(Picked { path, writable, held });
@@ -53,9 +53,12 @@ impl Identity {
     }
 
     fn open_picked(&self, path: &str, write: bool) -> Result<File, String> {
-        let mut picked = self.picked.lock().map_err(|_| "the picked files are unavailable")?;
-        let chosen = picked.iter_mut().find(|chosen| chosen.matches(Path::new(path), write)).ok_or(format!("`{path}` was not picked"))?;
-        let opened = match (write, chosen.held.is_some()) {
+        let held = {
+            let picked = self.picked.lock().map_err(|_| "the picked files are unavailable")?;
+            let chosen = picked.iter().find(|chosen| chosen.matches(Path::new(path), write)).ok_or(format!("`{path}` was not picked"))?;
+            chosen.held.clone()
+        };
+        let opened = match (write, held.is_some()) {
             (true, false) => OpenOptions::new().write(true).create_new(true).open(path),
             (true, true) => OpenOptions::new().write(true).open(path),
             (false, true) => File::open(path),
@@ -63,11 +66,14 @@ impl Identity {
         };
         let file = opened.map_err(|e| format!("{path}: {e}"))?;
         let found = file.try_clone().and_then(Handle::from_file).map_err(|e| format!("{path}: {e}"))?;
-        match &chosen.held {
+        match held {
             Some(held) if *held != found => Err(format!("`{path}` is no longer the file the user picked; ask the user to pick it again")),
             Some(_) => Ok(file),
             None => {
-                chosen.held = Some(found);
+                let mut picked = self.picked.lock().map_err(|_| "the picked files are unavailable")?;
+                if let Some(chosen) = picked.iter_mut().find(|chosen| chosen.matches(Path::new(path), write)) {
+                    chosen.held = Some(Arc::new(found));
+                }
                 Ok(file)
             }
         }
@@ -284,3 +290,50 @@ fn resolve(plugin: &Identity, root: Root, path: &str) -> Result<PathBuf, String>
     anchor.starts_with(&base).then_some(joined).ok_or(format!("`{path}` leaves the plugin's folder"))
 }
 
+#[cfg(all(test, unix))]
+mod tests {
+    use std::sync::mpsc::channel;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use super::Identity;
+    use crate::cache::{BUDGET, Cache};
+    use crate::images::{IMAGE_BUDGET, Images};
+
+    fn identity(dir: &std::path::Path) -> Identity {
+        Identity {
+            id: "test.serve".into(),
+            dir: dir.to_path_buf(),
+            data_dir: dir.join("data"),
+            app_folders: vec![dir.join("app")],
+            grants: Default::default(),
+            cache: Arc::new(Cache::new(BUDGET)),
+            tasks: Default::default(),
+            picked: Mutex::new(Vec::new()),
+            images: Images::new(IMAGE_BUDGET),
+        }
+    }
+
+    #[test]
+    fn a_stalled_open_of_a_picked_file_does_not_hold_up_other_permission_checks() {
+        let dir = tempfile::tempdir().unwrap();
+        let picked = dir.path().join("picked.txt");
+        std::fs::write(&picked, "chosen").unwrap();
+        let identity = identity(dir.path());
+        identity.remember_pick(picked.clone(), false);
+        std::fs::remove_file(&picked).unwrap();
+        assert!(std::process::Command::new("mkfifo").arg(&picked).status().unwrap().success());
+        let path = picked.to_str().unwrap();
+        std::thread::scope(|scope| {
+            let opener = scope.spawn(|| identity.open_picked(path, false).map(drop));
+            std::thread::sleep(Duration::from_millis(100));
+            let (send, answered) = channel();
+            let identity = &identity;
+            scope.spawn(move || send.send(identity.picked(path, false)));
+            let answer = answered.recv_timeout(Duration::from_secs(5));
+            drop(std::fs::OpenOptions::new().write(true).open(&picked));
+            assert_eq!(answer, Ok(true));
+            assert_eq!(opener.join().unwrap(), Err(format!("`{path}` is no longer the file the user picked; ask the user to pick it again")));
+        });
+    }
+}
