@@ -403,7 +403,7 @@ pub fn install(session: &mut Session, config_dir: Option<&Path>) -> &'static Plu
     plugins
 }
 
-fn running(plugin: &str) -> Result<Arc<Loaded>, String> {
+pub(crate) fn running(plugin: &str) -> Result<Arc<Loaded>, String> {
     plugins().and_then(|p| p.get(plugin)).ok_or_else(|| format!("plugin `{plugin}` is not running"))
 }
 
@@ -414,18 +414,24 @@ pub fn panel_ui(session: &mut Session, plugin: &str, panel: &str, input: UiInput
 }
 
 pub fn controls(session: &mut Session, effect_id: &str, param: &str, instance: u64, value: &str, input: UiInput) -> Result<(String, ControlsReply), String> {
-    let plugins = plugins().ok_or("plugins are not available")?;
-    let (owner, plugin, local) = {
-        let inner = plugins.lock();
-        inner
-            .loaded
-            .iter()
-            .find_map(|(id, loaded)| Some((id.clone(), loaded.clone(), local_effect(id, loaded, effect_id)?.to_string())))
-            .ok_or_else(|| format!("the plug-in that provides `{effect_id}` is not running"))?
-    };
+    let (owner, plugin, local) = effect_owner(effect_id)?;
     let call = Call::Controls { effect: local, param: param.to_string(), instance, value: value.to_string(), input };
     let reply = plugin.plugin.call(&call, None, &mut SessionHost::new(session, &plugin)).map_err(|e| e.to_string())?;
     Ok((owner, reply))
+}
+
+pub(crate) fn effect_owner(effect_id: &str) -> Result<(String, Arc<Loaded>, String), String> {
+    let plugins = plugins().ok_or("plugins are not available")?;
+    let inner = plugins.lock();
+    inner
+        .loaded
+        .iter()
+        .find_map(|(id, loaded)| Some((id.clone(), loaded.clone(), local_effect(id, loaded, effect_id)?.to_string())))
+        .ok_or_else(|| format!("the plug-in that provides `{effect_id}` is not running"))
+}
+
+pub(crate) fn running_plugins() -> Vec<Arc<Loaded>> {
+    plugins().map(Plugins::running_plugins).unwrap_or_default()
 }
 
 pub fn image(plugin: &str, key: &str) -> Option<Arc<PluginImage>> {

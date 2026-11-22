@@ -162,7 +162,7 @@ fn declared_default(param: &Param, layer_size: [f64; 2]) -> Value {
     }
 }
 
-fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 2], grid: Grid) -> BTreeMap<String, Wire> {
+pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 2], grid: Grid) -> BTreeMap<String, Wire> {
     let convert = |param: &Param| -> Wire {
         let fallback;
         let value = match params.get(&param.id) {

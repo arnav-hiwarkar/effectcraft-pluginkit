@@ -273,7 +273,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let resp = phase_menu(app, ui, &ectx, &mut v);
     phase_hover(app, ui, &ectx, &resp, &mut v);
     phase_press(app, ui, &ectx, &resp, &mut v);
-    if !middle_pan(app, ui, &resp, &v) {
+    if !middle_pan(app, ui, &resp, &v) && !super::plugin_tools::viewer(app, ui, &ectx, &v.map, &v.painter) {
         phase_dragstart(app, ui, &ectx, &resp, &mut v);
         phase_drag(app, ui, &ectx, &resp, &mut v);
         phase_stopped(app, ui, &ectx, &resp, &mut v);

@@ -287,9 +287,15 @@ pub fn viewer_hook(
                 {
                     crate::panels::fx_editors::mesh_warp_overlay(app, ui, painter, map, ectx, layer, g, &fm, &mut actions);
                 }
+                let shown = (!picking && app.ui.viewer.show_layer_controls)
+                    .then(|| super::plugin_overlay::effect_overlay(app, ui, map, ectx, layer, g, &mut actions))
+                    .flatten();
                 let scope = FxScope { effect: &g.match_id, root: g, path: String::new() };
                 let mut pts = Vec::new();
                 visible_points(g, &scope, layer, ectx, 0, &mut pts);
+                if let Some(shown) = &shown {
+                    pts.retain(|pr| !g.match_path_of(pr.uid).is_some_and(|param| shown.binds(&param)));
+                }
                 // An explicit pick stays visible even when View > Show Layer Controls is off.
                 if !app.ui.viewer.show_layer_controls {
                     pts.retain(|pr| picked_prop == Some(pr.uid));

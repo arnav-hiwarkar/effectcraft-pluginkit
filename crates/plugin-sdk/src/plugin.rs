@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::effect::{Cx, Effect, Frame, Pass, Rows};
 use crate::ui::{Panel, Ui};
+use crate::viewer::{Overlay, Space, Tool, ToolSpec};
 use crate::wire::{Call, CommandSpec, Contributions, ControlsReply, EffectSpec, HostCall, Outcome, PanelSpec, Pixel, TaskSpec, Window};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,6 +63,7 @@ pub struct Plugin {
     panels: Vec<(PanelSpec, Mutex<Box<dyn Panel>>)>,
     commands: Vec<(CommandSpec, CommandFn)>,
     tasks: Vec<(TaskSpec, TaskFn)>,
+    tools: Vec<(ToolSpec, Mutex<Box<dyn Tool>>)>,
 }
 
 impl Plugin {
@@ -90,12 +92,19 @@ impl Plugin {
         self
     }
 
+    pub fn tool(mut self, id: &str, name: &str, tool: impl Tool) -> Self {
+        let spec = ToolSpec { id: id.into(), name: name.into(), icon: tool.icon(), cursor: tool.cursor() };
+        self.tools.push((spec, Mutex::new(Box::new(tool))));
+        self
+    }
+
     pub fn contributions(&self) -> Contributions {
         Contributions {
             effects: self.effects.iter().map(|(spec, _)| spec.clone()).collect(),
             panels: self.panels.iter().map(|(spec, _)| spec.clone()).collect(),
             commands: self.commands.iter().map(|(spec, _)| spec.clone()).collect(),
             tasks: self.tasks.iter().map(|(spec, _)| spec.clone()).collect(),
+            tools: self.tools.iter().map(|(spec, _)| spec.clone()).collect(),
         }
     }
 
@@ -169,6 +178,22 @@ impl Plugin {
             Call::Task { task, args } => {
                 let (_, run) = self.tasks.iter().find(|(spec, _)| spec.id == task).ok_or_else(|| Error(format!("no task `{task}`")))?;
                 run(&Task { args })
+            }
+            Call::Overlay { effect, cx } => {
+                let mut overlay = Overlay::new();
+                self.find_effect(&effect)?.overlay(&Cx::new(cx), &mut overlay);
+                json(&overlay)
+            }
+            Call::Drag { effect, cx, key, to, value } => {
+                let mut edited = value.clone();
+                self.find_effect(&effect)?.drag(&Cx::new(cx), &key, to, &mut edited);
+                json(&(edited != value).then_some(edited))
+            }
+            Call::Tool { tool, event } => {
+                let (_, state) = self.tools.iter().find(|(spec, _)| spec.id == tool).ok_or_else(|| Error(format!("no tool `{tool}`")))?;
+                let mut overlay = Overlay::in_space(Space::Comp);
+                state.lock().map_err(|_| Error("the tool panicked earlier".into()))?.event(&event, &mut overlay)?;
+                json(&overlay)
             }
         }
     }

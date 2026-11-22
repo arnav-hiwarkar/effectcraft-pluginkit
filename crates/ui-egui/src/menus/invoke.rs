@@ -348,6 +348,7 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
         return frontend(app, ctx, "window.workspace", json!({"name": ws}));
     }
     if let Some(t) = id.strip_prefix("tool.") {
+        app.ui.plugin_tool = None;
         // C cycles through the camera tools.
         if t == "camera" {
             let tools = [Tool::Orbit, Tool::PanCamera, Tool::Dolly];

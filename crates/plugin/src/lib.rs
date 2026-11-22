@@ -1,6 +1,7 @@
 mod effects;
 mod gate;
 mod manage;
+pub mod viewer;
 
 pub use craft_plugin_host::ui;
 pub use craft_plugin_host::{ControlsReply, PickFile, PluginImage, TaskState, TaskStatus};

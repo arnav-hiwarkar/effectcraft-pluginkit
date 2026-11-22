@@ -39,6 +39,7 @@ pub mod paint_panels;
 pub mod panel_kit;
 pub mod path_vr_panels;
 pub mod plugin_manager;
+pub mod plugin_tools;
 pub mod plugin_view;
 pub mod precomp;
 pub(crate) mod preview_merge;

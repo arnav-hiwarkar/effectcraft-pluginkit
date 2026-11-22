@@ -4,6 +4,7 @@ use std::ops::RangeInclusive;
 use serde::{Deserialize, Serialize};
 
 use crate::kernels::{BlendMode, BlurShape, Filter, HostKernel, Taps};
+use crate::viewer::{ToolEvent, ToolSpec};
 
 pub const ABI: u32 = 1;
 pub const PIXEL_BYTES: usize = 16;
@@ -21,6 +22,9 @@ pub enum Call {
     Command { command: String },
     Task { task: String, args: serde_json::Value },
     Controls { effect: String, param: String, instance: u64, value: String, input: UiInput },
+    Overlay { effect: String, cx: RenderCx },
+    Drag { effect: String, cx: RenderCx, key: String, to: [f64; 2], value: String },
+    Tool { tool: String, event: ToolEvent },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -65,6 +69,8 @@ pub struct Contributions {
     pub commands: Vec<CommandSpec>,
     #[serde(default)]
     pub tasks: Vec<TaskSpec>,
+    #[serde(default)]
+    pub tools: Vec<ToolSpec>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]

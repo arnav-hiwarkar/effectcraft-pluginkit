@@ -309,6 +309,68 @@ custom value opens without the plugin: the value is kept and the layer renders w
 
 `plugins/curves` is a complete example.
 
+## On-viewer controls
+
+A selected effect can draw on the Composition viewer and give the user handles to drag there. A point
+handle for an existing parameter is one line:
+
+```rust
+impl Effect for Halo {
+    fn overlay(&self, cx: &Cx, overlay: &mut Overlay) {
+        overlay.point(cx, "light");
+    }
+}
+```
+
+A ring that sets a size, a guide line and a label take one line each:
+
+```rust
+fn overlay(&self, cx: &Cx, overlay: &mut Overlay) {
+    let centre = cx.point("light");
+    overlay.point(cx, "light").radius("size", centre, cx.f("size") * 2.0, 2.0);
+    overlay.line(&[centre, cx.point("target")]).text(centre, "Light");
+}
+```
+
+Coordinates are layer pixels, the same values `cx.point` returns here (in `overlay`, `cx.scale` is 1 and
+`cx.offset` is 0). The app maps them through the layer's transform, the 3D view, the zoom and the pixel
+aspect, and does the hit testing. A drag is one undo step and sets a key at the current time when the
+parameter is keyframed, as a drag in Effect Controls does. Tab moves between handles and the arrow keys
+move the focused one by 1 pixel (10 with Shift).
+
+The app calls `overlay` again only when the effect's values, the time or the selection change, and
+redraws the last overlay on every other frame. A point parameter with no handle of its own keeps the
+app's built-in crosshair.
+
+`plugins/halo` (light and glow ring) and `plugins/plasma-beam` (start and end) are complete examples.
+
+## Viewer tools
+
+A tool has a button in the toolbar. While it is picked, the plugin gets the pointer and key events on
+the Composition viewer and draws its own overlay.
+
+```rust
+#[derive(Default)]
+struct Pin;
+
+impl Tool for Pin {
+    fn event(&mut self, event: &ToolEvent, overlay: &mut Overlay) -> Result<()> {
+        if event.kind == ToolEventKind::Down {
+            host::command("layer.newNull", json!({ "name": "Pin" }))?;
+        }
+        overlay.circle(event.comp, 6.0);
+        Ok(())
+    }
+}
+
+Plugin::new().tool("pin", "Pin", Pin::default())
+```
+
+`event.comp` is the pointer in comp pixels at any zoom; `event.layer` is the same point in the first
+selected layer's pixels. A tool's overlay is in comp pixels unless it calls `overlay.space(Space::Layer)`.
+Everything one press-to-release gesture changes in the project is one undo step, named after the tool.
+Changing the project needs the `document.write` permission.
+
 ## Add a command
 
 ```rust

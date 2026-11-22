@@ -638,6 +638,8 @@ impl ProjectStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UiState {
     pub tool: Tool,
+    #[serde(default)]
+    pub plugin_tool: Option<crate::panels::plugin_tools::PluginTool>,
     /// Window ▸ Script Console input, output and history.
     #[serde(default)]
     pub script_console: crate::panels::script_console::ScriptConsole,
@@ -787,6 +789,7 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             tool: Tool::Selection,
+            plugin_tool: None,
             script_console: Default::default(),
             slot_tools: Tool::SLOTS.iter().map(|s| s[0]).collect(),
             workspace: "Default".into(),

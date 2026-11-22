@@ -262,7 +262,13 @@ impl Plugin {
 
     fn budget(&self, call: &Call) -> Duration {
         match call {
-            Call::Describe | Call::Layout { .. } | Call::Panel { .. } | Call::Controls { .. } => self.limits.interactive,
+            Call::Describe
+            | Call::Layout { .. }
+            | Call::Panel { .. }
+            | Call::Controls { .. }
+            | Call::Overlay { .. }
+            | Call::Drag { .. }
+            | Call::Tool { .. } => self.limits.interactive,
             Call::Render { .. } | Call::Pass { .. } | Call::Command { .. } | Call::Task { .. } => self.limits.work,
         }
     }
@@ -283,7 +289,9 @@ impl Drop for Plugin {
 
 fn origin(call: &Call) -> Origin {
     match call {
-        Call::Describe | Call::Panel { .. } | Call::Controls { .. } | Call::Command { .. } => Origin::Interactive,
+        Call::Describe | Call::Panel { .. } | Call::Controls { .. } | Call::Command { .. } | Call::Overlay { .. } | Call::Drag { .. } | Call::Tool { .. } => {
+            Origin::Interactive
+        }
         Call::Layout { .. } | Call::Render { .. } | Call::Pass { .. } => Origin::Render,
         Call::Task { .. } => Origin::Task,
     }

@@ -11,6 +11,10 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 - **ScriptUI panel bundles.** The removed `Install Effect Plug-in Bundle (Folder)` command also copied `.jsx` panels. Single panels still install through `file.installScriptUIPanel`.
 - **SDK gaps reported by the Plasma Beam author.** A percent parameter is fixed at 0 to 100. A preset cannot set the visible parameter values (After Effects plugins do this). `cx.f` does not clamp to the slider range, so expression-driven values can leave it. A whole-frame sandboxed effect cannot use more than one core.
 
+- **Viewer tools from automation.** A plugin tool is picked only with its toolbar button. `ui.set` and the `tool.*` commands do not name plugin tools (`crates/ui-egui/src/panels/plugin_tools.rs`).
+- **Viewer tools get no pen pressure.** egui reports no pressure for a pen, so `ToolEvent::pressure` is 1 while the button is down and 0 otherwise.
+- **Two copies of the theme colour mapping.** `colour` in `crates/ui-egui/src/panels/effect_controls/plugin_overlay.rs` repeats `paint` in `panels/plugin_view.rs` (owned by the panels work in the same wave). Share one after both merge.
+
 ## From the Sol review, not fixed
 
 - **A slow app command inside a sandboxed call is not interrupted.** File calls run on a helper thread and are abandoned at the call's limit (`on_disk` in `crates/plugin-host/src/runtime/serve.rs`). `command`, `frame` and `audio` borrow the open project on the app's thread, so they cannot be moved to another thread and abandoned; the call fails when one returns past the limit. Native calls and tasks have no time limit, so their file calls run inline. Instantiation has its own 5 s limit on top of the call limit.
@@ -91,3 +95,11 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
   frame (2,960 M against 1,420 M before). The same split costs native Lumen 7 % more instructions than its
   old fused level pass, because each level is now four host passes. A kernel for a brightness knee and a
   transfer curve on premultiplied colour would move the rest out of the sandbox.
+
+## Seen in the third build
+
+- **One UI test fails now and then under load.** `app::viewer_frames::tests::the_viewers_show_a_still_reloaded_at_the_same_size`
+  compares the viewer's frame key across two steps and saw the `opts` part change. It failed once for a
+  worker and once in a full run at load 15 to 30, passed 15 of 15 alone and 4 of 4 full runs at load 13.
+  The key's `opts` mixes in the fast-preview draft state and a process-wide LUT generation, so a slow
+  frame or a parallel test can move it. Upstream code; the cause was not pinned down.

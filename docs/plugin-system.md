@@ -12,6 +12,8 @@ built and why. To write a plugin, read [Write a plugin](plugin-sdk.md). For the 
 | Panel | A dockable tab, listed in **Window ▸ Plug-ins** | A function the app calls every frame the tab is visible |
 | Command | **Window ▸ Plug-ins** | A function that runs app commands |
 | Task | The plugin manager, while it runs | A function that runs in the background with progress and cancel |
+| Viewer tool | The toolbar, and the Composition viewer while it is picked | A function that gets the viewer's pointer and key events and returns what to draw |
+| On-viewer controls | The Composition viewer, while the effect is selected | Marks and handles an effect returns; the app draws them and turns a drag into a parameter change |
 
 A plugin effect is registered in the same registry as the built-in effects. Nothing downstream can tell
 the two apart: Effect Controls, keyframes, expressions, presets, the render cache, and project files all
@@ -33,7 +35,7 @@ adopts the system by writing its own version of the third crate, which is about 
 There is one function in each direction.
 
 - The app calls `craft_plugin_call` with a JSON request: `describe`, `layout`, `render`, `panel`,
-  `command`, or `task`.
+  `command`, `task`, `overlay`, `drag`, or `tool`.
 - The plugin calls `host_call` with a JSON request: run an app command, read a layer, read the masks,
   read or write a file, write a log line, start or ask about a task, render a frame, read audio, or
   open the file dialog.
