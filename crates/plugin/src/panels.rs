@@ -106,18 +106,14 @@ impl Bound {
         &self.loaded.bundle.manifest.id
     }
 
-    fn superseded(&self) -> bool {
-        !plugins().and_then(|plugins| plugins.get(self.plugin())).is_some_and(|now| Arc::ptr_eq(&now, &self.loaded))
-    }
-
-    fn stale(&self, session: &Session) -> Option<&'static str> {
-        if !Arc::ptr_eq(&self.project, &session.project_closed) {
-            Some("its project closed")
-        } else if self.superseded() {
-            Some("its plugin was reloaded or turned off")
-        } else {
-            None
-        }
+    pub(crate) fn check(&self) -> Result<(), String> {
+        let reloaded = || !plugins().and_then(|plugins| plugins.get(self.plugin())).is_some_and(|now| Arc::ptr_eq(&now, &self.loaded));
+        let why = match () {
+            _ if self.project.load(Ordering::SeqCst) => "its project closed",
+            _ if reloaded() => "its plugin was reloaded or turned off",
+            _ => return Ok(()),
+        };
+        Err(format!("the app dropped this request because {why}"))
     }
 }
 
@@ -162,20 +158,17 @@ impl Remote {
         let (bound, gesture) = (self.bound.clone(), self.gesture.clone());
         let project = bound.project.clone();
         let run = Box::new(move |session: &mut Session| {
-            let answered = match bound.stale(session) {
-                Some(why) => {
-                    log::info!("plugin `{}`: a request to the app was dropped because {why}", bound.plugin());
-                    Err(format!("the app dropped this request because {why}"))
+            let answered = bound.check().map(|()| {
+                let before = session.project.clone();
+                let answered = run(&mut SessionHost::new(session, &bound.loaded));
+                if let Some(gesture) = &gesture {
+                    gesture.fold(session, &before);
                 }
-                None => {
-                    let before = session.project.clone();
-                    let answered = run(&mut SessionHost::new(session, &bound.loaded));
-                    if let Some(gesture) = &gesture {
-                        gesture.fold(session, &before);
-                    }
-                    Ok(answered)
-                }
-            };
+                answered
+            });
+            if let Err(error) = &answered {
+                log::info!("plugin `{}`: {error}", bound.plugin());
+            }
             let _ = reply.send(answered);
         });
         lock(&FORWARDED.jobs).push(Job { project, run });
@@ -204,13 +197,15 @@ impl Host for Remote {
     fn frame(&mut self, request: &FrameRequest) -> Result<Pixels, String> {
         let request = request.clone();
         let render = self.on_app(move |host| host.frame_job(&request))??;
-        Ok(render())
+        let pixels = render();
+        self.bound.check().map(|()| pixels)
     }
 
     fn audio(&mut self, request: &AudioRequest) -> Result<Samples, String> {
         let request = request.clone();
         let mix = self.on_app(move |host| host.audio_job(&request))??;
-        Ok(mix())
+        let samples = mix();
+        self.bound.check().map(|()| samples)
     }
 
     fn pick_file(&mut self, request: &PickFile) -> Result<Option<PathBuf>, String> {
@@ -300,10 +295,7 @@ fn worker(loaded: &Arc<Loaded>, done: Sender<Done>, wake: Waker) -> std::io::Res
     let plugin = loaded.bundle.manifest.id.clone();
     std::thread::Builder::new().name(format!("craft-plugin-{plugin}")).spawn(move || {
         for request in queue {
-            let reply = match request.bound.superseded() {
-                true => Err("its plugin was reloaded or turned off".to_string()),
-                false => run(&request, &wake),
-            };
+            let reply = request.bound.check().and_then(|()| run(&request, &wake));
             idle(&plugin);
             let _ = done.send(Done { request, reply });
             FORWARDED.ready.notify_all();
@@ -562,9 +554,9 @@ impl Panels {
     }
 
     fn apply(&mut self, session: &mut Session, Done { request, reply }: Done) {
-        let stale = request.bound.stale(session);
-        if let Some(why) = stale {
-            log::info!("plugin `{}`: a reply for {:?} was dropped because {why}", request.bound.plugin(), request.key);
+        let stale = request.bound.check().err();
+        if let Some(why) = &stale {
+            log::info!("plugin `{}`: a reply for {:?} was dropped: {why}", request.bound.plugin(), request.key);
         }
         let Request { key, bound, call, edit, .. } = request;
         if let Key::Slot(slot_key) = &key {

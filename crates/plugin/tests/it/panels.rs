@@ -64,11 +64,11 @@ fn hold(app: &App) {
     std::fs::write(app.bundle.path().join("hold"), "").expect("write the hold file");
 }
 
-fn release(app: &App) {
+pub(crate) fn release(app: &App) {
     std::fs::remove_file(app.bundle.path().join("hold")).expect("remove the hold file");
 }
 
-fn relay(app: &mut App, panels: &mut Panels, frame: &mut u64, relayed: Value, held: bool) {
+pub(crate) fn relay(app: &mut App, panels: &mut Panels, frame: &mut u64, relayed: Value, held: bool) {
     let id = app.id.clone();
     let surface = Surface::Panel { plugin: &id, panel: "relay" };
     let relay = button(&settled(app, panels, RELAY, surface, frame), 0);
