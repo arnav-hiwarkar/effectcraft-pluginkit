@@ -12,7 +12,6 @@ use std::time::Duration;
 use craft_plugin::{Call, Outcome, Permission, RunMode, TaskState};
 use serde_json::Value;
 
-pub use self::native::Exports;
 use self::native::NativeGuest;
 use self::serve::{HostCx, Identity};
 use self::tasks::{PROJECT_CLOSED, Project, Slot, Tasks};
@@ -53,7 +52,13 @@ impl Engine {
         Ok(Engine::with(kind, &bundle.manifest.id, bundle.dir.clone(), grants, data_dir))
     }
 
-    pub fn in_process(exports: Exports, id: &str, dir: PathBuf, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Result<Arc<Engine>, PluginError> {
+    pub fn in_process(
+        exports: craft_plugin::abi::Exports,
+        id: &str,
+        dir: PathBuf,
+        grants: BTreeSet<Permission>,
+        data_dir: PathBuf,
+    ) -> Result<Arc<Engine>, PluginError> {
         Ok(Engine::with(Kind::Native(NativeGuest::in_process(exports)?), id, dir, grants, data_dir))
     }
 

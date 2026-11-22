@@ -530,8 +530,8 @@ the app uses, with the permissions `plugin.json` asks for. Commands the plugin r
 
 | Call | Does |
 |---|---|
-| `this_plugin!()` | The `TestPlugin` of the crate under test. `export!` must be in the crate root. |
-| `assert_frame!("effect", { "id": value, … }, "name")`, `assert_frame!(render, "name")` | Renders and compares with `tests/frames/<name>.png`, within 1/255 per channel by default. A missing frame is stored (except when `CI` is set); a different one fails, writes `<name>.actual.png` and `<name>.diff.png` beside it and prints their paths. `UPDATE_FRAMES=1` stores every rendered frame. |
+| `TestPlugin::of(plugin)` | Runs the plugin that the function `plugin` (the one given to `export!`) makes, with the `plugin.json` of the crate under test. One test binary runs one plugin. |
+| `assert_frame!(plugin, "effect", { "id": value, … }, "name")`, `assert_frame!(render, "name")` | Renders and compares with `tests/frames/<name>.png`, within 1/255 per channel by default. A missing frame is stored (except when `CI` is set); a different one fails, writes `<name>.actual.png` and `<name>.diff.png` beside it and prints their paths. `UPDATE_FRAMES=1` stores every rendered frame. |
 | `plugin.render(effect)` | A `Render` builder: `.set(id, value)`, `.with(json)`, `.on(Pattern)`, `.input(Picture)`, `.size(w, h)` (320x180 by default), `.layer(param, Picture)`, `.mask(points, closed)`, `.time(s)`, `.scale(f)`, `.float()`, `.tolerance(levels)`. |
 | `render.run()`, `render.timed(rounds)` | The output `Picture` (padded by the layout's padding), and the best time. When the layout has a reach, the render in bands is also compared with a whole render, and a difference is an error naming the first pixel. |
 | `render.layout()`, `render.overlay()`, `render.source()` | The effect's `Layout`, its `Overlay` (in layer pixels), and the input picture. |

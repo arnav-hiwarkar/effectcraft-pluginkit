@@ -28,12 +28,11 @@ craft_plugin::export!(plugin);
 #[cfg(test)]
 mod tests {
     use craft_plugin::ToolEventKind;
-    use craft_plugin_host::testing::{json, pointer};
-    use craft_plugin_host::this_plugin;
+    use craft_plugin_host::testing::{TestPlugin, json, pointer};
 
     #[test]
     fn a_click_adds_a_null_and_leaves_a_pin_on_the_viewer() {
-        let plugin = this_plugin!();
+        let plugin = TestPlugin::of(super::plugin);
         plugin.tool("{{name}}", pointer(ToolEventKind::Down, [40.0, 30.0])).unwrap();
         let overlay = plugin.tool("{{name}}", pointer(ToolEventKind::Move, [90.0, 60.0])).unwrap();
         assert_eq!(plugin.commands(), [("layer.newNull".to_string(), json!({ "name": "Pin 1" }))]);

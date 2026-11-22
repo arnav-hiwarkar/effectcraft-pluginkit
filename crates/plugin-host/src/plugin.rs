@@ -83,7 +83,7 @@ impl Plugin {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn in_process(manifest: Manifest, exports: crate::runtime::Exports, dir: PathBuf, data_dir: PathBuf, limits: Limits) -> Result<Plugin, PluginError> {
+    pub fn in_process(manifest: Manifest, exports: craft_plugin::abi::Exports, dir: PathBuf, data_dir: PathBuf, limits: Limits) -> Result<Plugin, PluginError> {
         let engine = Engine::in_process(exports, &manifest.id, dir, manifest.permissions.clone(), data_dir)?;
         Plugin::described(manifest, engine, limits)
     }

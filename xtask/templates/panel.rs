@@ -33,12 +33,11 @@ craft_plugin::export!(plugin);
 #[cfg(test)]
 mod tests {
     use craft_plugin::AppEvent;
-    use craft_plugin_host::testing::json;
-    use craft_plugin_host::this_plugin;
+    use craft_plugin_host::testing::{TestPlugin, json};
 
     #[test]
     fn the_button_adds_a_named_null_and_the_panel_counts_it() {
-        let plugin = this_plugin!();
+        let plugin = TestPlugin::of(super::plugin);
         let mut panel = plugin.panel("{{name}}").unwrap();
         panel.click("Add Null").unwrap();
         assert_eq!(plugin.commands(), [("layer.newNull".to_string(), json!({ "name": "{{Title}} 1" }))]);
@@ -47,7 +46,7 @@ mod tests {
 
     #[test]
     fn the_panel_follows_the_selection() {
-        let plugin = this_plugin!();
+        let plugin = TestPlugin::of(super::plugin);
         let mut panel = plugin.panel("{{name}}").unwrap();
         panel.app_event(AppEvent::Selection { layers: vec![3, 4], properties: vec![], keyframes: 0 }).unwrap();
         assert!(panel.texts().contains(&"2 layers selected".to_string()), "{:?}", panel.texts());

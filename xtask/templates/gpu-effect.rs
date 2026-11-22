@@ -52,16 +52,17 @@ craft_plugin::export!(plugin);
 
 #[cfg(test)]
 mod tests {
-    use craft_plugin_host::{assert_frame, this_plugin};
+    use craft_plugin_host::assert_frame;
+    use craft_plugin_host::testing::TestPlugin;
 
     #[test]
     fn the_cpu_pass_tints_the_test_image() {
-        assert_frame!("{{name}}", { "amount": 100 }, "full");
+        assert_frame!(TestPlugin::of(super::plugin), "{{name}}", { "amount": 100 }, "full");
     }
 
     #[test]
     fn the_gpu_plan_passes_the_check_the_app_runs() {
-        let plugin = this_plugin!();
+        let plugin = TestPlugin::of(super::plugin);
         let render = plugin.render("{{name}}");
         let plan = render.layout().unwrap().gpu.unwrap();
         let source = render.source();

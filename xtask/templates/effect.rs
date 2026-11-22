@@ -38,16 +38,17 @@ craft_plugin::export!(plugin);
 
 #[cfg(test)]
 mod tests {
-    use craft_plugin_host::{assert_frame, this_plugin};
+    use craft_plugin_host::assert_frame;
+    use craft_plugin_host::testing::TestPlugin;
 
     #[test]
     fn full_amount_tints_the_test_image() {
-        assert_frame!("{{name}}", { "amount": 100 }, "full");
+        assert_frame!(TestPlugin::of(super::plugin), "{{name}}", { "amount": 100 }, "full");
     }
 
     #[test]
     fn zero_amount_leaves_every_pixel_as_it_was() {
-        let plugin = this_plugin!();
+        let plugin = TestPlugin::of(super::plugin);
         let render = plugin.render("{{name}}").set("amount", 0.0);
         assert_eq!(render.run().unwrap(), render.source());
     }

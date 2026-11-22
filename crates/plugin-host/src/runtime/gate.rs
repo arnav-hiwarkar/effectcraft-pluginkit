@@ -6,8 +6,12 @@ use crate::host::{Access, Host, Origin};
 fn access(call: &HostCall, host: &dyn Host, plugin: &Identity, origin: Origin) -> Access {
     match call {
         HostCall::Start { .. } | HostCall::Task { .. } | HostCall::Cancel { .. } | HostCall::Progress { .. } => Access::Free,
-        HostCall::Frame { .. } if origin == Origin::Render => Access::Refused("an effect cannot render a frame while it renders; read another layer through a layer parameter (cx.layer) instead".into()),
-        HostCall::Audio { .. } if origin == Origin::Render => Access::Refused("an effect cannot read audio while it renders; read it in a task and pass what the effect needs as a parameter".into()),
+        HostCall::Frame { .. } if origin == Origin::Render => {
+            Access::Refused("an effect cannot render a frame while it renders; read another layer through a layer parameter (cx.layer) instead".into())
+        }
+        HostCall::Audio { .. } if origin == Origin::Render => {
+            Access::Refused("an effect cannot read audio while it renders; read it in a task and pass what the effect needs as a parameter".into())
+        }
         HostCall::Frame { .. } | HostCall::Audio { .. } => Access::Needs(vec![Permission::DocumentRead]),
         HostCall::PickFile { .. } if origin != Origin::Interactive => Access::Refused("a file can be picked only from a panel or a command".into()),
         HostCall::PickFile { .. } => Access::Free,

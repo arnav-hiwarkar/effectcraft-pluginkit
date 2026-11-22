@@ -54,19 +54,18 @@ craft_plugin::export!(plugin);
 
 #[cfg(test)]
 mod tests {
-    use craft_plugin_host::testing::json;
-    use craft_plugin_host::this_plugin;
+    use craft_plugin_host::testing::{TestPlugin, json};
 
     #[test]
     fn the_task_averages_the_brightness_of_the_frames_it_reads() {
-        let result = this_plugin!().task("measure", json!({ "frames": 3 })).unwrap();
+        let result = TestPlugin::of(super::plugin).task("measure", json!({ "frames": 3 })).unwrap();
         let brightness = result["brightness"].as_f64().unwrap();
         assert!((0.3..0.6).contains(&brightness), "{brightness}");
     }
 
     #[test]
     fn the_panel_starts_the_task_and_offers_to_cancel_it() {
-        let plugin = this_plugin!();
+        let plugin = TestPlugin::of(super::plugin);
         let mut panel = plugin.panel("{{name}}").unwrap();
         panel.click("Measure").unwrap();
         panel.timer("progress").unwrap();

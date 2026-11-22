@@ -9,36 +9,18 @@ use craft_plugin::{
 };
 pub use serde_json::json;
 
-pub use crate::runtime::Exports;
 use crate::{Access, Bundle, Host, Limits, Pixels, Plugin};
 
 pub const MAX_PADDING: u32 = 4096;
 const TASK_WAIT: Duration = Duration::from_secs(60);
 
 #[macro_export]
-macro_rules! this_plugin {
-    () => {
-        $crate::testing::TestPlugin::in_process(
-            ::std::env!("CARGO_MANIFEST_DIR"),
-            $crate::testing::Exports {
-                abi: crate::craft_plugin_abi,
-                init: crate::craft_plugin_init,
-                call: crate::craft_plugin_call,
-                alloc: crate::craft_plugin_alloc,
-                free: crate::craft_plugin_free,
-            },
-        )
-        .unwrap_or_else(|error| ::std::panic!("{error}"))
-    };
-}
-
-#[macro_export]
 macro_rules! assert_frame {
-    ($effect:literal, { $($params:tt)* }, $name:expr) => {
-        $crate::assert_frame!($crate::this_plugin!().render($effect).with($crate::testing::json!({ $($params)* })), $name)
+    ($plugin:expr, $effect:expr, { $($params:tt)* }, $name:expr) => {
+        $crate::testing::assert_frame($name, $plugin.render($effect).with($crate::testing::json!({ $($params)* })))
     };
     ($render:expr, $name:expr) => {
-        $crate::testing::assert_frame(::std::path::Path::new(::std::env!("CARGO_MANIFEST_DIR")), $name, $render)
+        $crate::testing::assert_frame($name, $render)
     };
 }
 
@@ -140,7 +122,7 @@ impl Pattern {
                 Pattern::Gradient => [x / w, y / h, 1.0 - x / w, 1.0],
                 Pattern::Checker => {
                     let cell = (h / 8.0).max(1.0);
-                    let on = ((x / cell) as u32 + (y / cell) as u32) % 2 == 0;
+                    let on = ((x / cell) as u32 + (y / cell) as u32).is_multiple_of(2);
                     if on { [1.0; 4] } else { [0.0, 0.0, 0.0, 1.0] }
                 }
                 Pattern::Shapes => shapes(x, y, w, h),
@@ -394,15 +376,24 @@ pub struct TestPlugin {
     recorder: Mutex<Recorder>,
 }
 
+fn manifest_dir() -> Result<PathBuf, String> {
+    std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from).ok_or_else(|| "CARGO_MANIFEST_DIR is not set; run the test with cargo test".into())
+}
+
 fn data_dir(id: &str) -> PathBuf {
     std::env::temp_dir().join("craft-plugin-test").join(format!("{id}-{}", std::process::id()))
 }
 
 impl TestPlugin {
-    pub fn in_process(manifest_dir: &str, exports: Exports) -> Result<TestPlugin, String> {
-        let dir = PathBuf::from(manifest_dir);
+    pub fn of(plugin: fn() -> craft_plugin::Plugin) -> TestPlugin {
+        TestPlugin::in_process(plugin).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    pub fn in_process(plugin: fn() -> craft_plugin::Plugin) -> Result<TestPlugin, String> {
+        let dir = manifest_dir()?;
         let manifest = Bundle::manifest_of(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let data = data_dir(&manifest.id);
+        let exports = craft_plugin::abi::in_process(plugin);
         let plugin = Plugin::in_process(manifest, exports, dir, data, Limits::default()).map_err(|e| e.to_string())?;
         Ok(TestPlugin { plugin, recorder: Mutex::default() })
     }
@@ -812,8 +803,9 @@ pub fn difference(expected: &[u8], actual: &[u8], width: u32, tolerance: u8) -> 
     out
 }
 
-pub fn assert_frame(dir: &Path, name: &str, render: Render) {
-    if let Err(message) = check_frame(dir, name, &render) {
+#[track_caller]
+pub fn assert_frame(name: &str, render: Render) {
+    if let Err(message) = manifest_dir().and_then(|dir| check_frame(&dir, name, &render)) {
         panic!("{message}");
     }
 }

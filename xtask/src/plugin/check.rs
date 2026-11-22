@@ -341,7 +341,8 @@ pub(super) fn unread_params(files: &[(String, String)]) -> Vec<(String, String)>
 }
 
 fn typed(sources: &[(String, String)], contributions: &Contributions, report: &mut Report) {
-    let leaves: BTreeMap<&str, &str> = contributions.effects.iter().flat_map(|e| &e.params).map(|p| (p.id.rsplit('/').next().unwrap_or(&p.id), p.id.as_str())).collect();
+    let leaves: BTreeMap<&str, &str> =
+        contributions.effects.iter().flat_map(|e| &e.params).map(|p| (p.id.rsplit('/').next().unwrap_or(&p.id), p.id.as_str())).collect();
     for (field, at) in unread_params(sources) {
         let id = leaves.get(field.as_str()).copied().unwrap_or(&field);
         report.warn(format!("{at}: the parameter `{id}` is declared in params! but never read"), "use it in layout or render, or remove it");

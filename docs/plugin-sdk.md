@@ -97,14 +97,17 @@ effect in the test process through the same host code the app uses (bands, paddi
 kernels), on a built-in test image, and compares it with a stored PNG:
 
 ```rust
+use craft_plugin_host::assert_frame;
+use craft_plugin_host::testing::{Pattern, TestPlugin};
+
 #[test]
 fn half_amount_matches_the_stored_frame() {
-    assert_frame!("tint", { "amount": 50 }, "half");
+    assert_frame!(TestPlugin::of(super::plugin), "tint", { "amount": 50 }, "half");
 }
 
 #[test]
 fn zero_amount_changes_nothing() {
-    let plugin = this_plugin!();
+    let plugin = TestPlugin::of(super::plugin);
     let render = plugin.render("tint").set("amount", 0.0).on(Pattern::Checker).size(64, 32);
     assert_eq!(render.run().unwrap(), render.source());
 }

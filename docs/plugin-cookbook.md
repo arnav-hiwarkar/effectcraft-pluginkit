@@ -369,6 +369,7 @@ impl Panel for Meter {
         }
         if self.running.is_none() && ui.button("Measure") {
             self.running = host::start("measure", json!({ "frames": 10 })).ok();
+            ui.every("progress", 100);
         }
     }
 }
@@ -386,7 +387,7 @@ new frames.
 ```rust
 #[test]
 fn tint_matches_its_stored_frame() {
-    assert_frame!("tint", { "amount": 100 }, "tint");
+    assert_frame!(TestPlugin::of(crate::plugin), "tint", { "amount": 100 }, "tint");
 }
 ```
 
@@ -397,7 +398,7 @@ fn tint_matches_its_stored_frame() {
 ```rust
 #[test]
 fn a_test_renders_on_a_chosen_image_and_compares_with_a_stored_frame() {
-    let plugin = this_plugin!();
+    let plugin = TestPlugin::of(crate::plugin);
     let render = plugin.render("blur").on(Pattern::Checker).size(160, 90).set("radius", 6.0);
     assert_frame!(render, "blur-checker");
 }
@@ -414,7 +415,7 @@ lists what it shows. Commands the plugin runs are recorded, not run: `commands()
 ```rust
 #[test]
 fn the_rig_button_adds_two_nulls_in_one_undo_step_and_logs_where() {
-    let plugin = this_plugin!();
+    let plugin = TestPlugin::of(crate::plugin);
     plugin.panel("rig").unwrap().click("Add Rig").unwrap();
     let (command, params) = &plugin.commands()[0];
     assert_eq!((command.as_str(), &params["label"]), ("engine.batch", &json!("Add Rig")));
@@ -425,13 +426,11 @@ fn the_rig_button_adds_two_nulls_in_one_undo_step_and_logs_where() {
 ```
 ```rust
 #[test]
-fn the_measure_task_reports_the_average_brightness() {
-    let plugin = this_plugin!();
-    let brightness = plugin.task("measure", json!({ "frames": 2 })).unwrap()["brightness"].as_f64().unwrap();
-    assert!((0.3..0.6).contains(&brightness), "{brightness}");
-    let mut meter = plugin.panel("meter").unwrap();
-    meter.click("Measure").unwrap();
-    assert!(!meter.texts().contains(&"Measure".to_string()), "{:?}", meter.texts());
+fn a_panic_reaches_the_test_and_the_log_with_its_file_and_line() {
+    let plugin = TestPlugin::of(crate::plugin);
+    let error = plugin.render("crash").size(4, 2).run().unwrap_err();
+    assert_eq!(error, "the plugin panicked at src/tests.rs:36:9: index out of bounds: the len is 8 but the index is 8");
+    assert!(plugin.logs().contains(&format!("render of effect `crash` failed: {error}")), "{:?}", plugin.logs());
 }
 ```
 
@@ -465,7 +464,7 @@ impl Tool for Pin {
 ```rust
 #[test]
 fn the_pin_tool_adds_a_null_and_rings_the_pointer() {
-    let plugin = this_plugin!();
+    let plugin = TestPlugin::of(crate::plugin);
     let overlay = plugin.tool("pin", pointer(ToolEventKind::Down, [10.0, 20.0])).unwrap();
     assert_eq!(plugin.commands(), [("layer.newNull".to_string(), json!({ "name": "Pin 1" }))]);
     let Shape::Circle { center, radius, .. } = &overlay.marks[1].shape else { panic!("{:?}", overlay.marks) };
