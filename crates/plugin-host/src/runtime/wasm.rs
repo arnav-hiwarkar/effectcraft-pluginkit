@@ -120,7 +120,10 @@ impl WasmGuest {
         let reply = self.exchange(request, io);
         self.store.data_mut().ctx = 0;
         self.store.data_mut().deadline = None;
-        reply.map_err(|e| PluginError::Trap(format!("{e:#}")))
+        reply.map_err(|e| {
+            log::warn!(target: "plugin", "{e:#}");
+            PluginError::Trap(e.root_cause().to_string())
+        })
     }
 
     fn exchange(&mut self, request: &[u8], io: Io) -> wasmtime::Result<Vec<u8>> {

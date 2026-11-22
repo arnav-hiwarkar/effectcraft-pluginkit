@@ -443,7 +443,8 @@ impl MenuSync {
 /// window, where any widget that holds the keyboard counts (the Viewer's text editor is not an
 /// egui text field).
 pub fn text_field_window(ctx: &egui::Context) -> Option<egui::ViewportId> {
-    craft_ui::docking::typing_window(ctx).or_else(|| ctx.egui_wants_keyboard_input().then_some(egui::ViewportId::ROOT))
+    craft_ui::docking::typing_window(ctx)
+        .or_else(|| (ctx.egui_wants_keyboard_input() && !crate::panels::effect_controls::handle_has_focus(ctx)).then_some(egui::ViewportId::ROOT))
 }
 
 /// Whether a focused text field takes the menu command `command` ([`activate`]): the native menu

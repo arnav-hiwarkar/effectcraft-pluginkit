@@ -144,6 +144,33 @@ fn dragging_the_halo_centre_handle_moves_the_light_in_one_undo_step_and_renders_
 }
 
 #[test]
+fn undo_reaches_the_app_while_a_dragged_handle_keeps_keyboard_focus() {
+    let mut session = halo_session();
+    let layer = session.active_comp().unwrap().layers[0].clone();
+    let effect = layer.effects().unwrap().groups().next().unwrap().uid;
+    session.state.selected_layers = vec![layer.id];
+    session.state.selected_props = vec![(LayerId(layer.id.0), effect)];
+    let mut harness = harness(session);
+    harness.state_mut().ui.viewer.zoom = Some(1.0);
+    settle(&mut harness, |h| shown_frame(h).is_some() && h.state().auto.find(&format!("viewer.pluginHandle.{effect}.0")).is_some());
+    stable_frame(&mut harness);
+    let centre = element(&harness, &format!("viewer.pluginHandle.{effect}.0")).center();
+    press_drag_release(&mut harness, &[centre, centre + Vec2::new(20.0, 10.0), centre + Vec2::new(40.0, 20.0)]);
+    let light = |h: &mut Harness<'_, EffectcraftApp>| {
+        h.state_mut().session.execute("prop.get", json!({"layer": "Sky", "path": "effects/#1/light"})).unwrap()["value"].clone()
+    };
+    assert_eq!(light(&mut harness), json!([136.0, 74.0]));
+    assert!(harness.ctx.memory(|m| m.focused()).is_some(), "the handle keeps keyboard focus after the drag");
+
+    let z = |pressed| egui::Event::Key { key: egui::Key::Z, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::COMMAND };
+    harness.input_mut().events.push(z(true));
+    harness.step();
+    harness.input_mut().events.push(z(false));
+    harness.step();
+    assert_eq!(light(&mut harness), json!([96.0, 54.0]), "Cmd+Z undoes the drag without Escape first");
+}
+
+#[test]
 fn the_ring_and_point_handles_take_tab_focus_and_arrow_keys() {
     let mut session = halo_session();
     let layer = session.active_comp().unwrap().layers[0].clone();

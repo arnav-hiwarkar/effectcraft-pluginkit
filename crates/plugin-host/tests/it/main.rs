@@ -642,7 +642,7 @@ fn an_empty_frame_renders_to_nothing_without_failing() {
 }
 
 #[test]
-fn an_effect_whose_last_band_fails_leaves_the_frame_as_it_was_unless_it_changes_it_in_place() {
+fn an_effect_whose_last_band_fails_leaves_each_other_band_finished_or_as_it_was() {
     each_kind(|kind| {
         let loaded = load(kind, &[]);
         let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
@@ -662,13 +662,20 @@ fn an_effect_whose_last_band_fails_leaves_the_frame_as_it_was_unless_it_changes_
                 })
                 .unwrap_err();
             assert!(failed.to_string().contains("gave up half way"), "{kind:?} {reach:?}: {failed}");
-            let kept = match (kind, reach) {
-                (Kind::Native, Some(0)) => 0,
-                (Kind::Wasm, Some(0)) => 3 * 128,
-                _ => source.len(),
-            };
-            let expected: Vec<Pixel> = source.iter().enumerate().map(|(at, pixel)| if at < source.len() - kept { [9.0; 4] } else { *pixel }).collect();
-            assert!(pixels == expected, "{kind:?} {reach:?}: a failed band left the wrong frame");
+            if reach != Some(0) {
+                assert!(pixels == source, "{kind:?} {reach:?}: a failed render changed a frame that is not changed in place");
+                continue;
+            }
+            let band = 3 * 128;
+            let (earlier, last) = pixels.split_at(source.len() - band);
+            let last_is_written = last.iter().all(|pixel| *pixel == [9.0; 4]);
+            let last_is_untouched = last == &source[source.len() - band..];
+            assert!(if kind == Kind::Native { last_is_written } else { last_is_untouched }, "{kind:?}: the failing band");
+            for (at, rows) in earlier.chunks(band).enumerate() {
+                let written = rows.iter().all(|pixel| *pixel == [9.0; 4]);
+                let untouched = rows == &source[at * band..(at + 1) * band];
+                assert!(written || untouched, "{kind:?}: band {at} is neither finished nor as it was");
+            }
         }
     });
 }
@@ -1219,9 +1226,24 @@ fn a_failing_pass_fails_the_render() {
 fn a_panic_in_a_sandboxed_plugin_logs_its_file_and_line_before_the_trap() {
     let loaded = load(Kind::Wasm, &[]);
     let error = command(&loaded, "panic", &mut Recorder::default()).unwrap_err().to_string();
-    assert!(error.contains("unreachable"), "{error}");
+    assert!(error.starts_with("the plugin stopped: the plugin panicked at src/lib.rs:") && error.ends_with(": oops"), "{error}");
     let logs: Vec<String> = loaded.plugin.logs(0).into_iter().map(|line| line.message).collect();
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/probe/src/lib.rs")).unwrap();
     let (line, column) = source.lines().enumerate().find_map(|(n, text)| Some((n + 1, text.find("panic!(\"oops\")")? + 1))).unwrap();
     assert_eq!(logs.first().cloned(), Some(format!("the plugin panicked at src/lib.rs:{line}:{column}: oops")), "{logs:?}");
+}
+
+#[test]
+fn a_trapped_sandboxed_render_is_reported_in_one_short_line_with_the_effect_and_the_panic_location() {
+    let loaded = load(Kind::Wasm, &[]);
+    let mut pixels = vec![[0.0; 4]; 2];
+    let error = loaded.plugin.render("explode", &cx(2, 1), &Layout::neighbourhood(0), None, &mut pixels, Recorder::default).unwrap_err().to_string();
+    let journal = loaded.plugin.logs(0).into_iter().map(|line| line.message).next_back().unwrap();
+    for text in [&error, &journal] {
+        assert!(!text.contains('\n') && !text.contains("\\n"), "{text}");
+        assert!(text.chars().count() < 300, "{} characters: {text}", text.chars().count());
+        assert!(text.contains("the plugin panicked at src/lib.rs:"), "{text}");
+        assert!(text.contains("index out of bounds"), "{text}");
+    }
+    assert!(journal.starts_with("render of effect `explode` failed: "), "{journal}");
 }

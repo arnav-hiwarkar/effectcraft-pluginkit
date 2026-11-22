@@ -361,7 +361,8 @@ fn handle_shortcuts_impl(app: &mut EffectcraftApp, ctx: &egui::Context, tab_only
     }
     // While a menu or popup list is open, keys go to it, not to the app (Space must not start a
     // preview behind the menu, #279).
-    if ctx.egui_wants_keyboard_input() || crate::widgets::any_menu_open(ctx) {
+    let on_handle = crate::panels::effect_controls::handle_has_focus(ctx);
+    if (ctx.egui_wants_keyboard_input() && !on_handle) || crate::widgets::any_menu_open(ctx) {
         return;
     }
     // Text editing in the viewer takes the clipboard events itself.
@@ -372,6 +373,11 @@ fn handle_shortcuts_impl(app: &mut EffectcraftApp, ctx: &egui::Context, tab_only
         if clipboard { ctx.input(|i| i.events.iter().rev().find_map(|e| if let egui::Event::Paste(t) = e { Some(t.clone()) } else { None })) } else { None };
     let mut events = collect_key_events(ctx, start, clipboard, project);
     events.retain(|(key, _, _, _)| (*key == egui::Key::Tab) == tab_only);
+    if on_handle {
+        events.retain(|(key, _, _, _)| {
+            !matches!(key, egui::Key::Escape | egui::Key::ArrowLeft | egui::Key::ArrowRight | egui::Key::ArrowUp | egui::Key::ArrowDown)
+        });
+    }
     if !tab_only && clipboard && app.dialog.is_none() {
         numpad_star_marker(app, ctx);
     }
