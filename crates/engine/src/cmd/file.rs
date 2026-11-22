@@ -42,6 +42,22 @@ fn demo(s: &mut Session, _: &Value) -> Result<Value> {
 
 pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_p(p, "path").ok_or_else(|| bad("file.open", "missing `path`"))?;
+    let Some(autosave_of) = p.get("autosaveOf") else {
+        let opened = open_file(s, path, Some(path))?;
+        s.note_project_path(path);
+        return Ok(opened);
+    };
+    let original = autosave_of.as_str();
+    let opened = open_file(s, path, original)?;
+    s.mark_unsaved();
+    match original {
+        Some(original) => s.note_project_path(original),
+        None => s.note_project_replaced(),
+    }
+    Ok(opened)
+}
+
+fn open_file(s: &mut Session, path: &str, home: Option<&str>) -> Result<Value> {
     let bytes = s.services.read_file(path).map_err(|e| EngineError::Other(format!("cannot read {path}: {e}")))?;
     let text = String::from_utf8(bytes).map_err(|_| EngineError::Other("not a text project file".into()))?;
     // XML copies (File ▸ Save a Copy As XML…) open like the JSON project.
@@ -51,11 +67,10 @@ pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     // Footage saved with a relative path (imported by the CLI or an agent as `clip.mp4`, or
     // written by hand) is found next to the project file, as After Effects looks for footage
     // relative to the project (#652).
-    let refused = crate::doc_path::resolve_footage(&mut proj, Some(path));
-    s.replace_project(proj, Some(path.to_string()));
-    s.stored_paths.add(&s.project, Some(path));
+    let refused = crate::doc_path::resolve_footage(&mut proj, Some(home.unwrap_or(path)));
+    s.replace_project(proj, home.map(str::to_string));
+    s.stored_paths.add(&s.project, home);
     s.restore_view(&effectcraft_project::saved_view(&text));
-    s.note_project_path(path);
     // Values past the limits (a corrupt or hostile file) were brought within them (#788).
     if !repaired.is_empty() {
         let more = repaired.len().saturating_sub(3);

@@ -72,21 +72,8 @@ Found while the plugin system was built and reviewed, and not fixed. Each entry 
 
 ## Seen while trying the app by hand, not fixed
 
-- **A recovered auto-save opens only the first composition.** File ▸ Save writes the open comps, the
-  active comp and each comp's current time (`Project::to_file_json_with_view` with `Session::saved_view`,
-  `crates/engine/src/cmd/file.rs`). An auto-save writes the bare project (`Project::to_json_compact` in
-  `Session::autosave_now`, `crates/engine/src/settings/session_settings.rs`, both the background and the
-  direct path), so the file has no `openComps`, `activeComp` or `compTimes`. Every comp and every change up
-  to the last auto-save comes back; the tabs, the active comp and the current times do not. Seen on a
-  seven-comp project killed after an auto-save: Open Auto-Save restored all seven comps and the edits in
-  comps 1, 3 and 5, with only comp 1 open. Upstream code, not plugin code. Fix: write
-  `to_file_json_with_view(&self.saved_view(), true)` in both paths, with a test that opens the auto-save
-  in a fresh session and checks `open_comps` and `active_comp`, in the foreground and in the background.
 - **Work after the last auto-save is lost on a crash.** By design: the default interval is 20 minutes
   (Settings ▸ Auto-Save). Not a bug, noted because it looks like one when testing recovery.
-- **A recovered project keeps the auto-save as its path.** Open Auto-Save opens
-  `EffectCraft Auto-Save/<name> auto-save N.ecproj`, so File ▸ Save writes there rather than to the
-  original project. The user has to Save As over the original.
 - **Launching the app from an agent's shell can get it stopped about 30 minutes later**, with no log line
   and no crash report, because the shell's process group is cleaned up. Start it in its own session
   (`setsid` or a double fork) or from the user's own Terminal; `pluginkit/demo/start.sh` is the demo
