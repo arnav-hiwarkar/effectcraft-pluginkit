@@ -99,3 +99,6 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **A moving layer that is partly outside the frame is rendered again on every frame.** Its cache key holds
   the shown rectangle, which moves with it. A layer wholly inside the frame keeps one key.
 
+- **A layer cache entry may be kept for a layer whose built-in effect reads another frame while an
+  expression is present.** Built-in effects that read other frames are not counted as reading other times
+  for the layer cache. Raised by the render fix worker; not verified. (`crates/render/src/cache.rs`)
