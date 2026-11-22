@@ -260,3 +260,41 @@ fn every_host_kernel_renders_on_the_gpu_within_two_levels_of_the_cpu() {
         assert!(worst < 2.0 / 255.0, "kernel {kernel} mode {mode}: GPU and CPU differ by {worst}");
     }
 }
+
+#[test]
+fn host_kernel_edge_cases_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() {
+    let app = app("test.gpu-kernel-edges", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
+    let big = [16_777_216.0, 0.5, 0.25, 1.0];
+    let input = Buf {
+        img: Image { width: 4, height: 1, data: vec![[0.0; 4], [1.0 / 16.0, 0.0, 0.0, 1.0 / 16.0], [0.0, 0.0, 0.0, 1.0], big] },
+        offset: [0.0, 0.0],
+        scale: 1.0,
+    };
+    let mut padded = input.clone();
+    padded.pad(6);
+    let on_row = |img: &Image, x: u32| img.data[(6 * img.width + x) as usize];
+    let cases = ["a Gaussian too small to matter", "a warp past the image", "a bicubic zoom", "Over at amount 1", "Over at amount 0"];
+    let mut wrong = Vec::new();
+    for (kernel, case) in (16..).zip(cases) {
+        let params = params(spec, &[("kernel", f64::from(kernel))]);
+        let cpu = effects::apply(spec, &ctx(&params), input.clone());
+        assert_eq!(app.plugins.render_error(spec.id), None, "{case}: the CPU render succeeded");
+        let on_gpu = gpu.effects(&[FxStep { spec, ctx: ctx(&params) }], &input, None).unwrap_or_else(|| panic!("{case}: the GPU ran the plan"));
+        for (backend, out) in [("CPU", &cpu.img), ("GPU", &on_gpu.img)] {
+            let right = (out.width, out.height) == (16, 13)
+                && match kernel {
+                    16 => out.data == padded.img.data,
+                    17 => out.data.iter().all(|p| *p == [0.0; 4]),
+                    18 => on_row(out, 13) == [0.0; 4] && out.data.iter().all(|p| p[3] > 0.0 || *p == [0.0; 4]),
+                    19 => on_row(out, 9) == [0.25, 0.0, 0.0, 1.0],
+                    _ => on_row(out, 9) == big,
+                };
+            if !right {
+                wrong.push(format!("{case} on the {backend}"));
+            }
+        }
+    }
+    assert_eq!(wrong, Vec::<String>::new());
+}
