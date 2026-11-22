@@ -137,7 +137,7 @@ instances. An effect that needs the whole frame at once, such as a wide glow, de
 passes ([Passes](plugin-gpu.md)): the app owns the images and runs each pass on the GPU, or on the CPU in
 bands on all cores, copying into each instance only the source rows its band reads. Lumen Glow at its
 default settings on a 1920×1080 layer (the padded frame is larger), sandboxed, on a shared ten-core
-machine, fastest of 15: 326 ms as one whole-frame call, 53 ms as banded passes; native 190 ms and 42 ms.
+machine, fastest of 15: 85 ms as one whole-frame call, 29 ms as banded passes; native 49 ms and 13 ms.
 
 Effects are stateless. The app keeps a pool of instances and may run any frame on any of them, in any
 order. A panel or a command runs on one long-lived instance, so panel state persists between frames.
