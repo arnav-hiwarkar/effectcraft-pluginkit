@@ -155,7 +155,8 @@ A render call has rows to write and rows to read, and they are separate: the inp
 output, so a band writes only its own rows and nothing is rendered twice. The app asks an effect only
 for the part of the layer that the frame being rendered shows (`shown` on the effect host, set by the
 CPU compositor in `crates/render/src/pipeline.rs` for a top-level 2D layer whose stack has a plugin
-effect), and the layer's cache key then includes that rectangle. A native band reads the input frame
+effect), and the layer's cache key then includes that rectangle. Its edges are moved out to a grid of
+64 rendered pixels, so a layer that moves a few pixels keeps its key and its cached render. A native band reads the input frame
 and writes the output frame where they lie; a sandboxed band copies its input rows in and its own rows
 out.
 

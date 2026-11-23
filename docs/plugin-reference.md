@@ -257,7 +257,8 @@ degrees) and `feather` (0 to 1). Light a surface with `colour` times `intensity`
 
 The app asks an effect only for the part of the layer that shows in the frame being rendered (the comp
 frame, or the viewer's region when it is zoomed in), grown by what the resampling onto the comp and the
-later effects in the stack need. Without padding, a layer wholly in the frame renders whole. With
+later effects in the stack need, with its edges moved out to a 64-pixel grid so a layer moved a few pixels
+keeps its cached render. Without padding, a layer wholly in the frame renders whole. With
 `Layout::pointwise()`, `Layout::neighbourhood(n)` or `.maps_input()` that rectangle is split into bands of
 rows on all cores, for sandboxed and native builds alike, and no row is written twice. A native plugin
 reads the input where it lies and writes the output frame directly; a sandboxed one gets its input rows

@@ -1651,6 +1651,8 @@ impl<'a> Renderer<'a> {
     }
 }
 
+const SHOWN_SNAP: f64 = 64.0;
+
 impl Renderer<'_> {
     fn shown_part(&self, ctx: &EvalCtx, layer: &Layer) -> Option<Shown> {
         let plugin_effect = layer
@@ -1684,14 +1686,16 @@ impl Renderer<'_> {
         let s = self.opts.scale.max(1e-3);
         let k = [vec2(1.0, 0.0), vec2(0.0, 1.0)].iter().map(|v| to_effect.apply_vec(*v).length()).fold(1.0f64, f64::max);
         let margin = 2.0 + (2.0 / s).ceil() + (2.0 * k / s).ceil();
-        let part = [lo[0] - margin, lo[1] - margin, hi[0] + margin, hi[1] + margin];
-        let size = ctx.effect_bounds(layer).0;
-        let covers = part[0] <= 0.0 && part[1] <= 0.0 && part[2] >= size[0] && part[3] >= size[1];
         let mut shrink = s * to_comp.mean_scale() / self.raster_scale(ctx, layer);
         let mut grid = 1u32;
         while shrink < 0.5 + 1e-9 && grid < 1 << 16 {
             (shrink, grid) = (shrink * 2.0, grid * 2);
         }
+        let snap = SHOWN_SNAP * f64::from(grid);
+        let [lo, hi] = [lo.map(|side| ((side - margin) / snap).floor() * snap), hi.map(|side| ((side + margin) / snap).ceil() * snap)];
+        let part = [lo[0], lo[1], hi[0], hi[1]];
+        let size = ctx.effect_bounds(layer).0;
+        let covers = part[0] <= 0.0 && part[1] <= 0.0 && part[2] >= size[0] && part[3] >= size[1];
         (part.iter().all(|side| side.is_finite()) && !covers).then_some(Shown { part, grid })
     }
 

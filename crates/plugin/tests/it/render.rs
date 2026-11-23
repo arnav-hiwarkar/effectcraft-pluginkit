@@ -270,10 +270,36 @@ fn tally(app: &App) -> u64 {
 }
 
 fn frame(app: &App, roi: Option<[f64; 4]>) -> effectcraft_engine::raster::Image {
+    cached_frame(app, roi, None)
+}
+
+fn cached_frame(app: &App, roi: Option<[f64; 4]>, cache: Option<&effectcraft_engine::render::LayerCache>) -> effectcraft_engine::raster::Image {
     let session = &app.session;
     let mut renderer = Renderer::new(&session.project, session.footage.as_ref(), RenderOpts { roi, ..RenderOpts::default() });
     renderer.expr = session.expr.as_deref();
+    renderer.cache = cache;
     renderer.comp_frame(session.active_comp_id().expect("an active comp"), Tick::from_seconds_f64(0.0))
+}
+
+#[test]
+fn a_layer_partly_outside_the_comp_moved_a_few_pixels_is_served_from_the_layer_cache() {
+    let mut app = app("test.render-moving", &[]);
+    app.session.execute("comp.new", json!({"name": "Wide", "width": 640, "height": 100, "frameRate": 24, "duration": 2})).unwrap();
+    app.session.execute("layer.newSolid", json!({"name": "Grey", "color": "#808080", "width": 640, "height": 100})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "test.render-moving.tally"})).unwrap();
+    let cache = effectcraft_engine::render::LayerCache::new(256 << 20);
+    app.session.execute("prop.set", json!({"path": "transform/position", "value": [700, 50]})).unwrap();
+    cached_frame(&app, None, Some(&cache));
+    let rendered = tally(&app);
+    assert!(rendered < 64_000, "the layer rendered {rendered} of 64000 pixels, not only its shown part");
+
+    app.session.execute("prop.set", json!({"path": "transform/position", "value": [704, 50]})).unwrap();
+    let moved = cached_frame(&app, None, Some(&cache));
+    assert_eq!(tally(&app), rendered, "a layer moved by 4 pixels rendered its effect again");
+
+    let whole = frame(&app, Some([0.0, 0.0, 1280.0, 100.0]));
+    let fresh: Vec<[f32; 4]> = whole.data.chunks(whole.width as usize).flat_map(|row| row[..640].to_vec()).collect();
+    assert!(moved.data == fresh, "the cached render of the moved layer differs from the whole layer's render");
 }
 
 #[test]
@@ -288,13 +314,16 @@ fn a_layer_mostly_outside_the_comp_renders_only_its_visible_part() {
     app.session.execute("prop.set", json!({"path": "transform/position", "value": [896, 50]})).unwrap();
     let shown = frame(&app, None);
     let rendered = tally(&app) - 64_000;
-    assert!((6_400..=7_200).contains(&rendered), "a layer 10 % inside the comp rendered {rendered} of 64000 pixels");
+    assert!(
+        (6_400..=12_800).contains(&rendered),
+        "a layer 10 % inside the comp rendered {rendered} of 64000 pixels, more than its part snapped out to 64 pixels"
+    );
     let at = |image: &effectcraft_engine::raster::Image, x: u32| image.data[(50 * image.width + x) as usize];
     assert_eq!(at(&shown, 600), at(&whole, 600), "the visible part has the layer's pixels");
     assert_eq!(at(&shown, 500), [0.0; 4], "the comp left of the layer is empty");
 
     let zoomed = frame(&app, Some([576.0, 0.0, 32.0, 100.0]));
-    assert_eq!(tally(&app) - 64_000 - rendered, 3_800, "a region of interest renders its part grown by the resampling margin");
+    assert_eq!(tally(&app) - 64_000 - rendered, 6_400, "a region of interest renders its part grown by the resampling margin and snapped out to 64 pixels");
     assert_eq!(at(&zoomed, 10), at(&whole, 600));
 }
 
