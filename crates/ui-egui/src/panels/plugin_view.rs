@@ -808,7 +808,7 @@ mod tests {
         let corner = |x: f32, y: f32| egui::pos2(x, y);
         let arrow = vec![corner(0.0, 0.0), corner(10.0, 0.0), corner(10.0, 4.0), corner(4.0, 4.0), corner(4.0, 10.0), corner(0.0, 10.0)];
         let egui::Shape::Mesh(mesh) = filled_polygon(arrow, Color32::WHITE) else { panic!("a mesh was expected") };
-        let triangles: Vec<[egui::Pos2; 3]> = mesh.indices.chunks_exact(3).map(|t| [0, 1, 2].map(|k| mesh.vertices[t[k] as usize].pos)).collect();
+        let triangles: Vec<[egui::Pos2; 3]> = mesh.indices.as_chunks::<3>().0.iter().map(|t| t.map(|i| mesh.vertices[i as usize].pos)).collect();
         let area = |[a, b, c]: &[egui::Pos2; 3]| ((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)).abs() / 2.0;
         assert_eq!(triangles.iter().map(area).sum::<f32>(), 64.0);
         let covers = |point: egui::Pos2| {

@@ -798,7 +798,7 @@ pub struct Difference {
 
 pub fn difference(expected: &[u8], actual: &[u8], width: u32, tolerance: u8) -> Difference {
     let mut out = Difference { differing: 0, largest: 0, first: None, image: Vec::with_capacity(expected.len()) };
-    for (at, (want, got)) in expected.chunks_exact(4).zip(actual.chunks_exact(4)).enumerate() {
+    for (at, (want, got)) in expected.as_chunks::<4>().0.iter().zip(actual.as_chunks::<4>().0).enumerate() {
         let gap = want.iter().zip(got).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
         out.largest = out.largest.max(gap);
         if gap > tolerance {
