@@ -29,6 +29,7 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
     for spec in &loaded.plugin.contributions().effects {
         let (render_plugin, render_spec) = (loaded.clone(), spec.clone());
         let (plugin, gpu_spec) = (loaded.clone(), spec.clone());
+        let (margin_plugin, margin_spec) = (loaded.clone(), spec.clone());
         let gpu: dynamic::GpuDyn = Box::new(move |ctx: &EffectCtx, grid: Grid| gpu_program(&plugin, &gpu_spec, ctx, grid));
         let id = effect_id(plugin_id, &spec.id);
         dynamic::register(DynamicEffect {
@@ -47,6 +48,7 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
             presets: spec.presets.iter().map(|preset| (preset.name.clone(), preset_values(spec, &preset.values))).collect(),
             revision: loaded.revision,
             files: Some(revision_stamp(loaded.clone())),
+            margin: Some(Box::new(move |ctx, scale| margin(&margin_plugin, &margin_spec, ctx, scale))),
         });
         if spec.shader.is_none() && default_plan_runs_on_gpu(loaded, spec) {
             mark_gpu_planned(&id);
@@ -305,6 +307,18 @@ fn layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> La
     let mut layout: Layout = loaded.plugin.call(&call, None, &mut RenderHost { ctx, grid, spec }).unwrap_or_default();
     layout.padding = craft_plugin_host::applied_padding(layout.padding, [grid.width, grid.height]);
     layout
+}
+
+fn margin(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, scale: f64) -> Option<f64> {
+    if spec.reads_other_frames {
+        return None;
+    }
+    let [width, height] = ctx.layer_size.map(|side| (side * scale).ceil().clamp(1.0, f64::from(u32::MAX)) as u32);
+    let layout = layout(loaded, spec, ctx, Grid { width, height, offset: [0.0; 2], scale });
+    if layout.maps_input || layout.gpu.is_some_and(|plan| !plan.layers.is_empty()) {
+        return None;
+    }
+    Some(f64::from(layout.reach?.saturating_add(layout.padding.into_iter().max().unwrap_or(0))) / scale)
 }
 
 fn shown_area(ctx: &EffectCtx, grid: Grid) -> Option<Rect> {

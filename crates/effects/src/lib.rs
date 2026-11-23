@@ -124,7 +124,7 @@ pub use ocio::color_stabilizer_maps;
 pub use channel3d::{
     CRYPTO_LAYERS, CryptoOutput, CryptoPlane, EXTRACTOR_COPY, MATTE_ONLY_IN_ALPHA, aux_need, aux_needs, aux_point, crypto_aux_image, crypto_box_scale,
     crypto_layer_choices, crypto_layer_menu, crypto_layer_name, crypto_layer_named, crypto_plane, extractor_aux_channel, extractor_own_channel, id_color,
-    is_extractor_copy, matte_only_px, pixel_margin, reads_aux, selection_hashes,
+    is_extractor_copy, matte_only_px, reads_aux, selection_hashes,
 };
 pub use file_cache::{check_lut_files, lut_generation};
 pub use ocio::{ColorOp, Straight, Tf, color_program};
@@ -458,6 +458,53 @@ pub fn adjustment_crop(offset: [f64; 2], canvas_offset: [f64; 2], size: (u32, u3
 /// Drop Shadow also pads by its distance and softness on both CPU and GPU: covering the
 /// layer rectangle first only inflates working images on highly scaled text and shapes (#3357).
 pub const SKIPS_COVER: &[&str] = &["ec.blur.gaussian", "ec.blur.fastbox", "ec.stylize.glow", "ec.distort.turbulentdisplace", "ec.perspective.dropshadow"];
+
+/// Effects whose pixel depends on that pixel alone (and on its position, masks and parameters).
+pub const POINTWISE: &[&str] = &[
+    "ec.color.tint",
+    "ec.color.tritone",
+    "ec.color.brightnesscontrast",
+    "ec.color.huesaturation",
+    "ec.color.levels",
+    "ec.color.exposure",
+    "ec.color.blackwhite",
+    "ec.color.changetocolor",
+    "ec.color.leavecolor",
+    "ec.color.photofilter",
+    "ec.color.vibrance",
+    "ec.color.colorbalance",
+    "ec.color.channelmixer",
+    "ec.color.gammapedestalgain",
+    "ec.color.colorama",
+    "ec.color.curves",
+    "ec.color.levelsic",
+    "ec.color.selectivecolor",
+    "ec.color.colorbalancehls",
+    "ec.color.broadcast",
+    "ec.color.cctoner",
+    "ec.color.cccoloroffset",
+    "ec.3d.channelextract",
+    "ec.3d.depthmatte",
+    "ec.3d.identifier",
+    "ec.3d.cryptomatte",
+    "ec.3d.extractor",
+];
+
+/// How far effect `id` reaches around a pixel of its layer (layer pixels) when it renders on a
+/// grid of `scale` grid pixels per layer pixel, for rendering only the part of a layer that is
+/// shown: `Some(0)` for effects whose pixel depends on that pixel alone, `None` for every effect
+/// that may read anywhere (#3271).
+pub fn pixel_margin(id: &str, ctx: &EffectCtx, scale: f64) -> Option<f64> {
+    let params = ctx.params;
+    match id {
+        _ if POINTWISE.contains(&id) => Some(0.0),
+        "ec.3d.fog3d" if params.f("layerContribution") <= 0.0 => Some(0.0),
+        "ec.3d.idmatte" if params.f("feather") <= 0.0 => Some(0.0),
+        "ec.generate.fill" if params.f("horizontalFeather") <= 0.0 && params.f("verticalFeather") <= 0.0 => Some(0.0),
+        "ec.blur.gaussian" => misc::gaussian_margin(params, scale),
+        _ => dynamic::get(id)?.effect.margin.as_ref()?(ctx, scale),
+    }
+}
 
 pub const QUANTIZES_OUTPUT: &[&str] = &["ec.blur.gaussian", "ec.color.levels", "ec.color.curves", "ec.color.huesaturation", "ec.stylize.glow"];
 

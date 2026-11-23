@@ -1607,6 +1607,7 @@ fn register_gain_effect() {
         presets: Vec::new(),
         revision: 1,
         files: None,
+        margin: None,
     });
 }
 
