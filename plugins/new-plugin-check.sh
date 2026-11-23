@@ -21,7 +21,8 @@ trap cleanup EXIT
 for kind in "${kinds[@]}"; do
     name="$(name_of "$kind")"
     cargo run --quiet --package xtask -- plugin new "$name" --kind "$kind" > /dev/null
-    cargo test -j "$jobs" --quiet --manifest-path "plugins/$name/Cargo.toml"
+    UPDATE_FRAMES=1 cargo test -j "$jobs" --quiet --manifest-path "plugins/$name/Cargo.toml" > /dev/null
+    CI=1 cargo test -j "$jobs" --quiet --manifest-path "plugins/$name/Cargo.toml"
     cargo build -j "$jobs" --quiet --release --target wasm32-unknown-unknown --manifest-path "plugins/$name/Cargo.toml"
     echo "PASS $kind"
 done
