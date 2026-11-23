@@ -289,8 +289,7 @@ Metal or Vulkan access) ask for one new permission, `system`: a new `Permission:
 Its helper runs with no OS sandbox. It is still a separate process, so it keeps crash and hang
 isolation. This is the one behaviour change: a native plugin that today opens sockets or runs processes
 with its own code needs `"system"` added. No reference plugin does that; `grep` for `std::fs`,
-`std::net` and `std::process` in `plugins/*/src` finds nothing. **The owner should confirm this
-default.** The alternative is that every native plugin gets `system`, and only WebAssembly is sandboxed.
+`std::net` and `std::process` in `plugins/*/src` finds nothing. The owner confirmed this default on 2026-11-23 (`docs/plugin-build/roadmap.md`).
 
 ### macOS
 

@@ -30,11 +30,16 @@ measured speed before and after is [speed.md](speed.md).
 | Services between plugins, localisation of plugin text | Nothing depends on them yet. | Nothing yet. |
 | Network access from the sandbox | Decided: not for now. | A native plugin can; a sandboxed one cannot. |
 
-## Decisions waiting for the owner
+## Decisions the owner made
 
-- **Should native plugins be sandboxed by default once the helper process exists?** The helper design sandboxes
-  them and adds a `system` permission for a native plugin that must open connections or run programs. The
-  alternative is that only WebAssembly is sandboxed, as today. Nothing built so far depends on the answer.
+- **Native plugins are sandboxed by default once the helper process exists** (decided 2026-11-23). Every native
+  plugin runs in its own helper with the OS rules in `docs/plugin-helper.md`: no network, no other programs, files
+  only in its own folders unless it holds `files.read` or `files.write`. A native plugin that needs more asks for
+  the `system` permission; its helper runs without OS rules, still keeps crash and hang isolation, and the install
+  approval says it has full access to the computer. Why: a sandbox can be loosened later without breaking plugins
+  but not added later; `system` keeps every capability; the rules cost about 4.5 ms per helper start and nothing
+  per render; none of the nine reference plugins needs `system`. With it, `cargo xtask plugin check` and the dev
+  log name the `system` permission when a call is refused by the OS.
 
 ## Removed again during the build, and why
 
