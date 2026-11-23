@@ -35,14 +35,14 @@ fn effect(id: &str, wgsl: &str, program: GpuProgram) -> DynamicEffect {
         name: id.into(),
         category: "Test".into(),
         params: Vec::new(),
-        render: Box::new(|_, mut buf: Buf| {
+        render: Box::new(|ctx: &EffectCtx, mut buf: Buf| {
             buf.pad(3);
             for p in &mut buf.img.data {
                 for (c, k) in p.iter_mut().zip(TINT) {
                     *c *= k;
                 }
             }
-            buf
+            ctx.quantized(buf)
         }),
         shader: Some(wgsl.into()),
         gpu: Some(Box::new(move |_, _| Some(program.clone()))),
