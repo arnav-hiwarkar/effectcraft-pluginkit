@@ -215,6 +215,7 @@ enum CurveEdit {
     Declared,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn curve_channels(
     app: &mut EffectcraftApp,
     ui: &mut egui::Ui,

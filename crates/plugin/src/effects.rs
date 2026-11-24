@@ -248,6 +248,15 @@ pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 
     spec.params.iter().filter_map(|param| Some((param.id.clone(), param.fit(convert(param)).ok()?))).collect()
 }
 
+fn warn_dropped_stops(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) {
+    for param in spec.params.iter().filter(|param| matches!(param.kind, ParamKind::Gradient { .. })) {
+        if let Some(value @ Value::Gradient(_)) = ctx.params.get(&param.id) {
+            let wire = Placed(grid).to_wire(param, value);
+            loaded.plugin.warn_dropped_stops(&spec.id, &param.id, &wire);
+        }
+    }
+}
+
 fn render_cx(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> RenderCx {
     RenderCx {
         params: wire_params(spec, ctx.params, ctx.layer_size, grid),
@@ -395,6 +404,7 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
     }
     buf.pad_sides(layout.padding);
     let grid = grid_of(&buf);
+    warn_dropped_stops(loaded, spec, ctx, grid);
     let cx = render_cx(spec, ctx, grid);
     let host = || RenderHost { ctx, grid, spec };
     let passes = layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu());

@@ -129,4 +129,3 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **`Camera` gained a `focus` field.** Plugin code that builds a `craft_plugin::Camera` field by field no longer compiles; built plugins still load. Plugins normally only read the camera the app sends.
 - **`cx.scene()` without `.reads_scene()` is not refused.** `cx.placement`, `cx.placement_at` and `cx.scene_at` are refused without their declarations; the older `cx.scene()` is not, so an undeclared call can still show a stale cached frame.
 - **An effect that reads the scene at other times is not cached in a comp with any expression.** Its cache key covers every layer's keyframes but cannot cover expression results (`cache::hash_scene`).
-- **A gradient edited past 64 stops reaches the plugin as its first 64.** The editor allows more; the adapter cuts without a warning (craft-libs `crates/plugin-sdk/src/gradient.rs`, `limited`).
