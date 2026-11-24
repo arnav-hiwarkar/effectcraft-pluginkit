@@ -76,6 +76,7 @@ fn dir_of(dir: &Path, file: &str) -> String {
 
 #[test]
 fn a_data_only_bundle_survives_a_restart_without_asking_again() {
+    let _exclusive = super::exclusive();
     let id = "test.data-restart";
     let root = tempfile::tempdir().unwrap();
     let (_source, dir) = pack(id, &[("swap.cube", SWAP_RED_AND_BLUE)], json!([]));
@@ -137,7 +138,7 @@ fn a_preset_may_name_only_files_inside_its_own_bundle() {
 #[test]
 fn reload_removes_a_pack_deleted_from_disk_from_the_menus() {
     let id = "test.data-removed";
-    let app = super::app("test.data-removed-host", &[]);
+    let app = super::app_exclusive("test.data-removed-host", &[]);
     let (_source, dir) =
         pack(id, &[("swap.cube", SWAP_RED_AND_BLUE)], json!([{"effect": "ec.color.brightnesscontrast", "name": "Gone", "values": {"brightness": 1.0}}]));
     let info = app.plugins.install(&dir).unwrap();

@@ -22,6 +22,7 @@ fn listed(plugins: &Plugins, id: &str) -> PluginInfo {
 
 #[test]
 fn plugins_that_were_live_when_the_app_closed_unexpectedly_stay_off_until_turned_back_on() {
+    let _exclusive = super::exclusive();
     let root = tempfile::tempdir().unwrap();
     let id = "test.trust-crash";
     let (first, _source) = installed(root.path(), id);
@@ -39,6 +40,7 @@ fn plugins_that_were_live_when_the_app_closed_unexpectedly_stay_off_until_turned
 
 #[test]
 fn safe_mode_starts_no_plugin() {
+    let _exclusive = super::exclusive();
     let root = tempfile::tempdir().unwrap();
     let id = "test.trust-safe";
     let (first, _source) = installed(root.path(), id);
@@ -99,6 +101,7 @@ fn a_bundle_replaced_while_it_loads_never_runs_as_the_approved_one() {
 
 #[test]
 fn a_warm_start_runs_no_plugin_and_the_first_use_runs_only_the_one_used() {
+    let _exclusive = super::exclusive();
     struct NoHost;
     impl craft_plugin_host::Host for NoHost {}
     let root = tempfile::tempdir().unwrap();
@@ -122,6 +125,7 @@ fn a_warm_start_runs_no_plugin_and_the_first_use_runs_only_the_one_used() {
 
 #[test]
 fn a_session_plugin_reloads_the_entry_its_changed_manifest_names() {
+    let _exclusive = super::exclusive();
     let plugins = Plugins::open(tempfile::tempdir().unwrap().path(), false);
     let source = tempfile::tempdir().unwrap();
     let id = "test.trust-session-entry";
@@ -138,6 +142,7 @@ fn a_session_plugin_reloads_the_entry_its_changed_manifest_names() {
 
 #[test]
 fn a_first_use_that_cannot_load_its_module_shows_the_plugin_as_failed_with_the_reason() {
+    let _exclusive = super::exclusive();
     struct NoHost;
     impl craft_plugin_host::Host for NoHost {}
     let root = tempfile::tempdir().unwrap();
