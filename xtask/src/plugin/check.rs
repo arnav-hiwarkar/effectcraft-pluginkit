@@ -204,11 +204,14 @@ fn smoke_renders(plugin: &TestPlugin, report: &mut Report) {
         let render = plugin.render(&spec.id);
         let [width, height] = [render.source().width, render.source().height];
         let source = render.source();
-        if let Err(error) = layers_from_source(plugin, &spec.id, render, &source).run() {
+        let render = layers_from_source(plugin, &spec.id, render, &source);
+        if let Err(error) = render.run() {
             report.error(
                 format!("effect `{}` fails to render at its default settings on a {width}x{height} test image: {error}", spec.id),
                 format!("run cargo xtask plugin render <dir> --effect {} and fix the error; the app shows it on the layer instead of the effect", spec.id),
             );
+        } else if let Err(error) = render.time_check() {
+            report.error(error, "add `.time_dependent()` to the EffectSpec");
         }
     }
 }
