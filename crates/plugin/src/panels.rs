@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use craft_plugin_host::ui::{AppEvent, ControlsReply, PanelReply, UiEvent, UiInput, Widget};
 use craft_plugin_host::viewer::{Overlay, ToolEventKind};
-use craft_plugin_host::{Access, AudioRequest, Call, FrameRequest, Host, MAX_BACKLOG, PickFile, Pixels, Place, Retained, Samples};
+use craft_plugin_host::{Access, AudioRequest, Call, Form, FrameRequest, Host, MAX_BACKLOG, PickFile, Pixels, Place, Retained, Samples};
 use effectcraft_engine::project::{ItemId, Project};
 use effectcraft_engine::{History, Session};
 use serde_json::{Value, json};
@@ -63,7 +63,7 @@ pub(crate) fn run_command(session: &mut Session, loaded: Arc<Loaded>, command: &
     let request = Request { key: Key::Command(plugin.clone()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture };
     let running = std::thread::Builder::new()
         .name(format!("craft-plugin-command-{plugin}"))
-        .spawn(move || run(&request, &(Arc::new(|| {}) as Waker)).map(drop))
+        .spawn(move || run(&request, &(Arc::new(|| {}) as Waker), false).map(drop))
         .map_err(|error| error.to_string())?;
     while !running.is_finished() {
         if !serve_one(session) {
@@ -176,6 +176,7 @@ struct Remote {
     bound: Bound,
     wake: Waker,
     gesture: Option<Gesture>,
+    forms: bool,
 }
 
 impl Remote {
@@ -248,6 +249,28 @@ impl Host for Remote {
         self.on_app(move |host| host.pick_file(&request))?
     }
 
+    fn form(&mut self, form: &Form) -> Result<Option<crate::Values>, String> {
+        if !self.forms {
+            return Err("a form opens only when the command runs in the app's window, from its menus, shortcuts or `ui.menu.invoke`".into());
+        }
+        let (reply, answer) = channel();
+        let id = crate::forms::ask(self.bound.plugin(), self.bound.project.clone(), form, reply);
+        (self.wake)();
+        let answered = loop {
+            match answer.recv_timeout(RECHECK) {
+                Ok(answered) => break Ok(answered),
+                Err(RecvTimeoutError::Timeout) => {
+                    if let Err(error) = self.bound.check() {
+                        break Err(error);
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => break Err("the form closed without an answer".into()),
+            }
+        };
+        crate::forms::withdraw(id);
+        answered
+    }
+
     fn project_closed(&self) -> Option<Arc<AtomicBool>> {
         Some(self.bound.project.clone())
     }
@@ -316,8 +339,8 @@ struct Done {
     reply: Result<Reply, String>,
 }
 
-fn run(request: &Request, wake: &Waker) -> Result<Reply, String> {
-    let mut host = Remote { bound: request.bound.clone(), wake: wake.clone(), gesture: request.gesture.clone() };
+fn run(request: &Request, wake: &Waker, forms: bool) -> Result<Reply, String> {
+    let mut host = Remote { bound: request.bound.clone(), wake: wake.clone(), gesture: request.gesture.clone(), forms };
     let (plugin, call) = (&request.bound.loaded.plugin, &request.call);
     match call {
         Call::Panel { .. } => plugin.call(call, None, &mut host).map(|reply| Reply::Panel(reply, None)),
@@ -341,7 +364,7 @@ fn worker(loaded: &Arc<Loaded>, done: Sender<Done>, wake: Waker) -> std::io::Res
     let plugin = loaded.bundle.manifest.id.clone();
     std::thread::Builder::new().name(format!("craft-plugin-{plugin}")).spawn(move || {
         for request in queue {
-            let reply = request.bound.check().and_then(|()| run(&request, &wake));
+            let reply = request.bound.check().and_then(|()| run(&request, &wake, true));
             let _ = done.send(Done { request, reply });
             FORWARDED.ready.notify_all();
             wake();

@@ -728,6 +728,11 @@ fn palette(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
                 v.push((c.label.to_string(), c.id.to_string(), json!({}), c.shortcut.unwrap_or("").to_string()));
             }
         }
+        for item in app.session.plugin_items.iter().filter(|item| !item.panel) {
+            let params = effectcraft_engine::shortcuts::plugin_command_params(&item.plugin, &item.id);
+            let keys = app.session.shortcuts().shortcut_of("plugin.run", &params).unwrap_or_default().to_string();
+            v.push((format!("Window ▸ Plug-ins ▸ {}: {}", item.plugin_name, item.title), "plugin.run".into(), params, keys));
+        }
         v
     };
     let ql = q.to_lowercase();

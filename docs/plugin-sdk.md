@@ -877,7 +877,15 @@ Plugin::new().command("add-null", "Add Control Null", || {
 })
 ```
 
-The command appears in **Window ▸ Plug-ins**.
+The command appears in **Window ▸ Plug-ins** and in the command palette, and the user can give it a
+shortcut in Edit ▸ Keyboard Shortcuts. To suggest one, add `.shortcut` after it:
+
+```rust
+Plugin::new().command("add-null", "Add Control Null", add_null).shortcut("Alt+Shift+N")
+```
+
+The app keeps the suggestion only when no other command uses those keys; otherwise the command starts
+with no shortcut and the log says which command holds them.
 
 ## Read and edit the project
 
@@ -959,6 +967,19 @@ if let Some(path) = picked {
 ```
 
 Panels and commands only. With `save: true` the path is also writable.
+
+## Ask the user for settings
+
+```rust
+let form = Form::new("Add Grid")
+    .field(Param::slider("rows", "Rows", 4.0, 1.0..=50.0))
+    .field(Param::checkbox("guides", "Show Guides", true));
+if let Some(values) = host::form(form)? {
+    let rows = values["rows"].clone();   // None: the user cancelled
+}
+```
+
+The app draws the form as a dialog with OK and Cancel. Panels and commands only.
 
 ## Store files
 

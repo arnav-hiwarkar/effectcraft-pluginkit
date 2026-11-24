@@ -199,6 +199,17 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
         let text = |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default();
         return app.plugin_ui.panels.command(&app.session, text("plugin"), text("command")).map(|()| Value::Null);
     }
+    if id == "plugin.form" {
+        return Ok(effectcraft_plugin::asked_form(&app.session, |asked| json!({"plugin": asked.plugin, "form": asked.form, "values": asked.values}))
+            .unwrap_or(Value::Null));
+    }
+    if id == "plugin.answerForm" {
+        let values = match params.get("cancel").and_then(Value::as_bool) {
+            Some(true) => None,
+            _ => Some(serde_json::from_value(params.get("values").cloned().unwrap_or_else(|| json!({}))).map_err(|error| format!("`values`: {error}"))?),
+        };
+        return effectcraft_plugin::answer_form(&app.session, values).map(|()| Value::Null);
+    }
     // Layer ▸ New ▸ Text (menu, shortcut, context menus) puts an insertion point in the centre of
     // the comp, as After Effects does, so typing goes into Source Text rather than running
     // shortcuts (#866). `engine.execute` keeps the headless default.

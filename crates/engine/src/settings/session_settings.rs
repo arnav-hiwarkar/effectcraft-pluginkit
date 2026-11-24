@@ -305,8 +305,19 @@ impl Session {
     pub fn shortcuts(&self) -> &ShortcutTable {
         self.shortcut_table.get_or_init(|| {
             let scripts: Vec<String> = crate::commands::scripts::scripts(self).into_iter().filter(|e| !e.panel).map(|e| e.name).collect();
-            ShortcutTable::build_with_scripts(&self.keymaps, &self.ui_commands, &scripts)
+            let mut table = ShortcutTable::build_with_scripts(&self.keymaps, &self.ui_commands, &scripts);
+            table.add_plugin_commands(&self.keymaps, &self.plugin_items);
+            table
         })
+    }
+
+    /// The running plug-ins' panels and commands changed: list their commands again in the
+    /// shortcut table.
+    pub fn set_plugin_items(&mut self, items: Vec<crate::PluginItem>) {
+        if self.plugin_items != items {
+            self.plugin_items = items;
+            self.shortcut_table = std::sync::OnceLock::new();
+        }
     }
 
     /// Remember a project in File ▸ Open Recent and in the crash-recovery sentinel.
