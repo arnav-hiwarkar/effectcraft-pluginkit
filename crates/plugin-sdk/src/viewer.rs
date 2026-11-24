@@ -59,6 +59,11 @@ pub struct Overlay {
     paint: Option<Paint>,
 }
 
+pub const MAX_MARKS: usize = 4096;
+pub const MAX_POINTS: usize = 4096;
+pub const MAX_LABEL_CHARS: usize = 512;
+pub const MAX_HANDLES: usize = 256;
+
 fn f32s(point: [f64; 2]) -> [f32; 2] {
     point.map(|c| c as f32)
 }
@@ -66,6 +71,33 @@ fn f32s(point: [f64; 2]) -> [f32; 2] {
 impl Overlay {
     pub fn new() -> Self {
         Overlay::default()
+    }
+
+    pub fn capped(mut self) -> (Self, Option<String>) {
+        let (marks, handles) = (self.marks.len(), self.handles.len());
+        self.marks.truncate(MAX_MARKS);
+        self.handles.truncate(MAX_HANDLES);
+        let mut cut = marks - self.marks.len() + handles - self.handles.len();
+        for mark in &mut self.marks {
+            match &mut mark.shape {
+                Shape::Line { points, .. } | Shape::Polygon { points, .. } if points.len() > MAX_POINTS => {
+                    cut += points.len() - MAX_POINTS;
+                    points.truncate(MAX_POINTS);
+                }
+                Shape::Text { text, .. } if text.chars().nth(MAX_LABEL_CHARS).is_some() => {
+                    let end = text.char_indices().nth(MAX_LABEL_CHARS).map_or(text.len(), |(at, _)| at);
+                    cut += text[end..].chars().count();
+                    text.truncate(end);
+                }
+                _ => {}
+            }
+        }
+        let note = (cut > 0).then(|| {
+            format!(
+                "the overlay drew {marks} shapes and {handles} handles; the viewer keeps the first {MAX_MARKS} shapes, {MAX_POINTS} points per line, {MAX_LABEL_CHARS} label characters and {MAX_HANDLES} handles ({cut} items dropped)"
+            )
+        });
+        (self, note)
     }
 
     pub fn in_space(space: Space) -> Self {
@@ -207,4 +239,45 @@ pub trait Tool: Send + 'static {
     }
 
     fn event(&mut self, event: &ToolEvent, overlay: &mut Overlay) -> Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn caps_keep_the_first_items_in_order_and_say_what_was_dropped() {
+        let mut overlay = Overlay::new();
+        for n in 0..5000 {
+            overlay.circle([n as f64, 0.0], 1.0);
+        }
+        overlay.line(&vec![[1.0, 2.0]; 5000]);
+        overlay.text([0.0, 0.0], &"é".repeat(600));
+        for n in 0..300 {
+            overlay.custom("p", "k", [n as f64, 0.0]);
+        }
+        let (capped, note) = overlay.capped();
+        assert_eq!(capped.marks.len(), 4096);
+        assert_eq!(capped.handles.len(), 256);
+        assert_eq!(capped.handles[255].at, [255.0, 0.0]);
+        let Shape::Circle { center, .. } = capped.marks[4095].shape else { panic!("a circle") };
+        assert_eq!(center, [4095.0, 0.0]);
+        let note = note.unwrap();
+        assert!(note.contains("5002 shapes and 300 handles") && note.contains("(950 items dropped)"), "{note}");
+    }
+
+    #[test]
+    fn long_lines_and_labels_are_cut_and_small_overlays_pass_untouched() {
+        let mut overlay = Overlay::new();
+        overlay.line(&vec![[1.0, 2.0]; 5000]).text([0.0, 0.0], &"é".repeat(600));
+        let (capped, note) = overlay.capped();
+        let Shape::Line { points, .. } = &capped.marks[0].shape else { panic!("a line") };
+        let Shape::Text { text, .. } = &capped.marks[1].shape else { panic!("a text") };
+        assert_eq!((points.len(), text.chars().count()), (4096, 512));
+        assert!(note.unwrap().contains("(992 items dropped)"));
+        let mut small = Overlay::new();
+        small.circle([1.0, 1.0], 2.0);
+        let (same, note) = small.clone().capped();
+        assert_eq!((same, note), (small, None));
+    }
 }

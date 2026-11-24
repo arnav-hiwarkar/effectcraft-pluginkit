@@ -14,6 +14,14 @@ use crate::panels::{Bound, Gesture, Key, Overlaid, Panels, Request, Target, Tool
 
 const MAX_RETAINED: usize = 256;
 
+pub(crate) fn capped(overlay: Overlay, plugin: &str) -> Overlay {
+    let (overlay, note) = overlay.capped();
+    if let Some(note) = note {
+        log::warn!("plugin `{plugin}`: {note}");
+    }
+    overlay
+}
+
 pub struct Shown {
     pub overlay: Overlay,
     pub plugin: String,

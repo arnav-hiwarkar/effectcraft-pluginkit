@@ -645,6 +645,9 @@ The app calls `overlay` again only when the effect's values, the time or the sel
 redraws the last overlay on every other frame. A point parameter with no handle of its own keeps the
 app's built-in crosshair.
 
+An overlay is capped at 4096 shapes, 256 handles, 4096 points per line and 512 characters per label;
+the first ones drawn are kept, so draw the important marks first.
+
 `plugins/halo` (light and glow ring) and `plugins/plasma-beam` (start and end) are complete examples.
 
 ## Viewer tools

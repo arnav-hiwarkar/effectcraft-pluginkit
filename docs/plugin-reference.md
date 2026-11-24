@@ -473,6 +473,10 @@ Marks are drawn in the overlay's current space (`overlay.space(Space::Layer)`, t
 | `text(at, text)` | Text at 12 points, its top left at `at` |
 | `shape(Shape)` | Any canvas shape (`Line`, `Bezier`, `Rect`, `Circle`, `Polygon`, `Text`); widths and text sizes are screen points, `Image` is not drawn |
 
+**Caps.** One overlay, from an effect or a tool, keeps its first 4096 shapes and 256 handles, 4096 points
+per `Line` or `Polygon` and 512 characters per `Text`, in the order drawn. The rest is dropped and the app
+logs one warning naming the plugin and the count. Draw a coarser overlay instead of a dense one.
+
 Handles are in layer pixels. Each is bound to what a drag changes:
 
 | Method | Handle | A drag sets |

@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 
 use crate::gate::SessionHost;
 use crate::manage::{Loaded, plugins, running, running_plugins};
-use crate::viewer::Shown as Drawn;
+use crate::viewer::{Shown as Drawn, capped};
 
 const WAIT: Duration = Duration::from_millis(4);
 const POLL: Duration = Duration::from_micros(500);
@@ -625,7 +625,7 @@ impl Panels {
         match (call, reply) {
             (Call::Overlay { effect, cx }, reply) => {
                 let overlay = match reply {
-                    Ok(Reply::Overlay(overlay)) => overlay,
+                    Ok(Reply::Overlay(overlay)) => capped(overlay, bound.plugin()),
                     Ok(_) => Overlay::default(),
                     Err(error) => {
                         log::debug!("plugin `{}` effect `{effect}` draws no overlay: {error}", bound.plugin());
@@ -639,7 +639,7 @@ impl Panels {
             }
             (Call::Tool { .. }, Ok(Reply::Overlay(overlay))) => {
                 if let Some(tool) = self.tool.as_mut().filter(|tool| bound.asked_by(&tool.open)) {
-                    tool.overlay = overlay;
+                    tool.overlay = capped(overlay, bound.plugin());
                 }
             }
             (Call::Drag { .. }, Ok(Reply::Value(Some(value)))) => {
