@@ -1,9 +1,8 @@
 name: Plugin kit
 
-# Checks for the plugin system on Linux: the kit and adapter tests against a real probe plugin, lint
-# for the crates the plugin system touches, the layer and web checks, and the end-to-end script that
-# bundles every plugin in plugins/ and runs it in the app. Run by hand.
 on:
+  push:
+    branches: [pluginkit]
   workflow_dispatch:
 
 permissions:
@@ -18,23 +17,14 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  linux:
+  checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - name: Install system packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
-            libxcb1-dev libxcursor-dev libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev \
-            mesa-vulkan-drivers libgl1-mesa-dev libasound2-dev
-      - name: Install Rust targets and components
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
-          rustup target add wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: checks
       - name: Layers
         run: cargo run --quiet --package xtask -- layers
       - name: Assets are attributed
@@ -42,27 +32,48 @@ jobs:
       - name: Kit rev is pinned once
         run: cargo run --quiet --package xtask -- kit-rev --check
       - name: Format
-        run: cargo fmt --check -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-ui-egui -p effectcraft-engine -p effectcraft-automation -p xtask
-      - name: Adapter tests (the kit job tests the kit crates)
-        run: cargo test -p effectcraft-plugin
+        run: cargo fmt --check --all
       - name: Lint
-        run: cargo clippy -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-engine -p effectcraft-automation -p effectcraft-ui-egui -p xtask --all-targets --keep-going -- -D warnings
-      - name: Tests of the crates the plugin system changed
-        run: |
-          cargo test -p effectcraft-effects --lib
-          cargo test -p effectcraft-engine --lib
-          cargo test -p effectcraft-automation
-          cargo test -p effectcraft-ui-egui --lib -- plugin i18n:: menus::
-          cargo test -p effectcraft-project --lib
-          cargo test -p effectcraft-gpu --lib plugin
-          cargo test -p effectcraft-render -p effectcraft-raster
-          cargo test -p effectcraft-ui-egui --lib -- viewer_frames effect_controls
-          cargo test -p effectcraft-ui-egui --test it -- ui_recovery plugin
-          cargo test -p xtask
+        run: cargo clippy -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-engine -p effectcraft-automation -p effectcraft-render -p effectcraft-project -p effectcraft-cli -p effectcraft-script -p effectcraft-ui-egui -p xtask --all-targets --keep-going -- -D warnings
       - name: Web build
         run: cargo run --quiet --package xtask -- wasm
       - name: Desktop app builds
         run: cargo check -p effectcraft
+
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: tests
+      - name: Adapter tests
+        run: cargo test -p effectcraft-plugin
+      - name: Engine, project, effects, render, raster, automation, script, CLI and xtask
+        run: cargo test -p effectcraft-engine --lib -p effectcraft-project --lib -p effectcraft-effects --lib -p effectcraft-render -p effectcraft-raster -p effectcraft-automation -p effectcraft-script -p effectcraft-cli -p xtask
+      - name: GPU plugin tests
+        run: cargo test -p effectcraft-gpu --lib plugin
+
+  ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: ui
+      - name: UI tests
+        run: cargo test -p effectcraft-ui-egui
+
+  plugins:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: plugins
       - name: Plugins end to end
         run: ./plugins/e2e.sh
       - name: New plugin templates and the cookbook

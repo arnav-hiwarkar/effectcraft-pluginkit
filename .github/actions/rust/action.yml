@@ -1,0 +1,29 @@
+name: Rust for the plugin kit checks
+description: System packages, the stable toolchain with clippy, rustfmt and wasm32, and the build cache
+inputs:
+  workspaces:
+    description: Workspaces for the build cache
+    default: ". -> target"
+  cache-key:
+    description: Extra key so parallel jobs keep separate caches
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Install system packages
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
+          libxcb1-dev libxcursor-dev libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev \
+          mesa-vulkan-drivers libgl1-mesa-dev libasound2-dev
+    - name: Install Rust targets and components
+      shell: bash
+      run: |
+        rustup toolchain install stable --profile minimal --component clippy,rustfmt
+        rustup default stable
+        rustup target add wasm32-unknown-unknown
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: ${{ inputs.workspaces }}
+        key: ${{ inputs.cache-key }}
