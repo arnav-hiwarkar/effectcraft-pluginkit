@@ -8,7 +8,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "ddfc63563ebff49a36d26d9e226d64d203317886" }
+craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "02975668d7c1997ca12c4a39712a8c9addc6a910" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
