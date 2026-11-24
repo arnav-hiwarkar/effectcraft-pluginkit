@@ -8,10 +8,10 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "196edb8ab7c5caaa538d06addff9bca8f5092cdc" }
+craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "bf71c70d7f12129d813a45ababd741b0461a7fbe" }
 
 [dev-dependencies]
-craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "196edb8ab7c5caaa538d06addff9bca8f5092cdc", features = ["testing"] }
+craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "bf71c70d7f12129d813a45ababd741b0461a7fbe", features = ["testing"] }
 
 [profile.release]
 opt-level = 3
