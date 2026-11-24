@@ -167,7 +167,7 @@ dependencies = [
 [[package]]
 name = "craft-plugin"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=4828cbc643183068fbf75327123ce291d8d1cc44#4828cbc643183068fbf75327123ce291d8d1cc44"
+source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=ced69142b6046c4933f1e857d66dfc3cffe01530#ced69142b6046c4933f1e857d66dfc3cffe01530"
 dependencies = [
  "serde",
  "serde_json",
@@ -176,7 +176,7 @@ dependencies = [
 [[package]]
 name = "craft-plugin-host"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=4828cbc643183068fbf75327123ce291d8d1cc44#4828cbc643183068fbf75327123ce291d8d1cc44"
+source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=ced69142b6046c4933f1e857d66dfc3cffe01530#ced69142b6046c4933f1e857d66dfc3cffe01530"
 dependencies = [
  "bytemuck",
  "craft-plugin",
@@ -556,14 +556,6 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
-]
-
-[[package]]
-name = "timewarp"
-version = "0.1.0"
-dependencies = [
- "craft-plugin",
- "craft-plugin-host",
 ]
 
 [[package]]
@@ -1168,6 +1160,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.10",
+]
+
+[[package]]
+name = "timewarp"
+version = "0.1.0"
+dependencies = [
+ "craft-plugin",
+ "craft-plugin-host",
 ]
 
 [[package]]
