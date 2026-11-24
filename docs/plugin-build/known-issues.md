@@ -85,8 +85,11 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **Native Lumen Glow at 1080p takes 5 % longer than at the start of the third build** (13.35 ms against
   12.66 ms, minimum of four alternating runs at load 4 to 6; 4K 41.6 against 41.2 ms). Pass images are now
   allocated when first used and a dead one is reused, which removed 0.6 ms of single-threaded zeroing. What
-  is left: the emission and the upsampled glow are two more full-size images written and read, and the
-  resample and convolve kernels zero a temporary of their own on every call (`crates/plugin-host/src/kernels/mod.rs`).
+  is left: the emission and the upsampled glow are two more full-size images written and read. Reusing one
+  temporary for the resample and convolve kernels instead of zeroing a new one per call was tried and not
+  kept: `sample` put all zeroing at 3 % of the render before and 2.4 % after (patch in
+  `pluginkit/reports/w5-lumen-temp-reuse.patch`). About 75 % of the samples are in the fused pointwise rows
+  and the transfer rows (`crates/plugin-host/src/kernels/pointwise.rs`), 19 % in the resample.
 - **Native and sandboxed Lumen Glow give different pixels.** Its plan's blur taps and level gains use
   `f32::exp`, `exp2` and `log2`, which differ in the last bits between the native and the WebAssembly
   standard library (`plugins/lumen-glow/src/blur.rs`, `settings.rs`, `profile.rs`). `craft_plugin::math`
