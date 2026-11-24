@@ -1731,3 +1731,48 @@ fn an_effect_whose_plugin_is_missing_is_marked_in_effect_controls() {
     let name = h.get_by_label_contains("test.ui.refs").accesskit_node().label().unwrap_or_default();
     assert!(name.starts_with("⚠ ") && name.contains("not installed"), "{name:?}");
 }
+
+#[test]
+fn lut_library_opens_by_keyboard_and_entries_are_chosen_by_id() {
+    use effectcraft_engine::effects::contributed;
+    let owner = "lut-library-ids-test";
+    contributed::replace(owner, Vec::new(), vec![("warm".into(), "/packs/warm.cube".into()), ("cool".into(), "/packs/cool.cube".into())]);
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Main", "width": 64, "height": 36, "frameRate": 30, "duration": 2})).unwrap();
+    let lid = s.execute("layer.newSolid", json!({"name": "Grey", "color": "#808080"})).unwrap()["layer"].as_u64().unwrap();
+    let fx = s.execute("effect.apply", json!({"layers": [lid], "effect": "Apply Color LUT"})).unwrap()["effects"][0].as_u64().unwrap();
+    let prop = layer(&s, lid).props.find_group(fx).unwrap().get("lut").unwrap().uid;
+    s.state.selected_layers = vec![LayerId(lid)];
+    let mut app = EffectcraftApp::new(s);
+    app.show_panel(PanelKind::EffectControls);
+    app.toggle_maximize(PanelKind::EffectControls);
+    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).with_step_dt(1.0 / 60.0).build_eframe(|_| app);
+    h.run_steps(4);
+    let value = |h: &Harness<'_, EffectcraftApp>| match layer(&h.state().session, lid).props.find_group(fx).unwrap().get("lut").unwrap().value.clone() {
+        KV::Str(s) => s,
+        other => panic!("{other:?}"),
+    };
+    assert!(ids(&h).contains(&format!("effectControls.prop.{prop}.library")));
+    h.get_by_label("Library").focus();
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    let entry = format!("effectControls.prop.{prop}.library.{owner}.cool");
+    assert!(ids(&h).contains(&entry), "{:?}", ids(&h));
+    use egui_kittest::kittest::NodeT;
+    assert_eq!(h.get_by_label("cool").accesskit_node().role(), egui::accesskit::Role::MenuItem);
+    let at = rect_of(&h, &entry).center();
+    click(&mut h, at);
+    h.run_steps(3);
+    assert_eq!(value(&h), "/packs/cool.cube");
+    h.get_by_label("Library").focus();
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    h.key_press(egui::Key::ArrowUp);
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(value(&h), "/packs/warm.cube");
+    contributed::remove(owner);
+}

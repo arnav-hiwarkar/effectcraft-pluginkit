@@ -533,7 +533,9 @@ fn value_file(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value: &
         }
         app.auto.add(&format!("effectControls.prop.{uid}.library"), lr, &prop.name);
         let names: Vec<String> = library.iter().map(|lut| lut.name.clone()).collect();
-        if let Some(i) = widgets::popup_menu(ui, pop, lr.left_bottom(), &names, library.iter().position(|lut| &lut.path == s)) {
+        let entry_ids: Vec<String> = library.iter().map(|lut| format!("effectControls.prop.{uid}.library.{}.{}", lut.owner, lut.name)).collect();
+        let current = library.iter().position(|lut| &lut.path == s);
+        if let Some(i) = widgets::popup_menu_named(ui, pop, lr.left_bottom(), &names, current, Some((&mut app.auto, &entry_ids))) {
             actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": uid, "value": library[i].path})));
         }
     }
