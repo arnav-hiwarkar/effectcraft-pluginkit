@@ -2147,8 +2147,8 @@ pub(crate) struct Enc<'g> {
     owner: u64,
     /// `owner` is lent ([`Enc::lent`]) and outlives this `Enc`.
     lent: bool,
-    guards: Vec<Arc<crate::guard::ShaderGuard>>,
-    submitted_guards: Vec<Arc<crate::guard::ShaderGuard>>,
+    guards: Vec<crate::guard::FlagRead>,
+    submitted_guards: Vec<crate::guard::FlagRead>,
 }
 
 #[derive(Clone, Copy)]
@@ -2173,7 +2173,6 @@ pub(crate) struct KernelImages<'a> {
 impl Drop for Enc<'_> {
     fn drop(&mut self) {
         // Unsubmitted work is discarded, so nothing recorded will read pooled textures.
-        self.guards.iter().for_each(|guard| guard.dropped());
         if let Ok(mut p) = self.g.pool.lock() {
             if let Some((_, id)) = self.enc.take() {
                 p.close(id);
@@ -2232,16 +2231,20 @@ impl<'g> Enc<'g> {
         self.encoder()
     }
 
-    pub(crate) fn read_loop_flag(&mut self, guard: &Arc<crate::guard::ShaderGuard>) {
-        if guard.copy(self.encoder()) {
-            self.guards.push(guard.clone());
-        }
+    pub(crate) fn read_loop_flag(&mut self, guard: &crate::guard::ShaderGuard) {
+        let read = guard.copy(&self.g.device, self.encoder());
+        self.guards.push(read);
     }
 
-    /// Whether a plugin loop submitted by this encoder ran past the cap. Call after a readback
-    /// waited for the work: the frame is then truncated and must render on the CPU.
+    /// Whether a plugin loop submitted by this encoder ran past the cap, or its flag could not be
+    /// read: the frame is then truncated and must render on the CPU. Waits for this encoder's
+    /// submission when a flag is still in flight and the context can wait.
     pub(crate) fn loop_capped(&mut self) -> bool {
-        std::mem::take(&mut self.submitted_guards).iter().map(|guard| guard.check().is_err()).fold(false, |capped, raised| capped | raised)
+        let reads = std::mem::take(&mut self.submitted_guards);
+        if let Some(submission) = self.last_submit.clone().filter(|_| reads.iter().any(crate::guard::FlagRead::pending) && self.g.can_wait()) {
+            self.g.poll_wait(submission, crate::readback::TIMEOUT);
+        }
+        reads.into_iter().map(crate::guard::FlagRead::clean).fold(false, |capped, clean| capped | !clean)
     }
 
     /// The raw encoder: within this module only, after [`Enc::uses`] on every pooled image.
@@ -2568,8 +2571,10 @@ impl<'g> Enc<'g> {
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
         self.submit();
+        let flags = std::mem::take(&mut self.submitted_guards);
         self.g.map_readback(&buf, row as usize, padded as usize, h as usize, move |r| {
-            done(r.map_err(|e| log::error!("gpu texture readback: {e}")).ok());
+            let r = r.map_err(|e| log::error!("gpu texture readback: {e}")).ok();
+            done(r.filter(|_| flags.into_iter().map(crate::guard::FlagRead::clean).fold(true, |clean, read| clean & read)));
         });
         #[cfg(not(target_arch = "wasm32"))]
         let _ = self.g.poll_readbacks(wgpu::PollType::Poll);
