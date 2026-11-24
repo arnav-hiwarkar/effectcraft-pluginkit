@@ -470,6 +470,14 @@ delivered at most once per UI frame with its latest contents.
 `ms` is at least 16 (`MIN_TIMER_MS`). Timers wait while the tab is hidden and start over when it shows.
 A timer the next reply does not ask for is stopped.
 
+### Custom parameter rows
+
+The row `Effect::controls` draws for a `Param::custom` is kept and called again like a panel, on the same
+worker, so `ui.on`, `ui.every` and `ui.after` work in it as they do in a panel. Each row has its own
+subscriptions and timers. It is also called again when its value changes. A row the app does not draw
+(its layer is not shown in Effect Controls, or Effect Controls is closed) waits like a hidden tab. A row
+built with an older SDK subscribes to nothing and arms no timer.
+
 ### Keyboard, pointer and drops
 
 | Field or call | Holds |

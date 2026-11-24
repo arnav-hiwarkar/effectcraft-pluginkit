@@ -42,7 +42,6 @@ measured speed before and after.
 - **Effects cannot read audio.** The render path reaches footage audio, not the comp mix.
 - **Forge 3D draws only on the GPU.** Draw passes render to an `Rgba16Float` target that is created per frame and copied.
 - **Ember simulates from frame 0 on every render when a parameter has an expression**, because the history cannot be hashed. It reads the masks at the current time for every step.
-- **Custom Effect Controls rows cannot subscribe to app events or set timers.** They are called again on their own widget events, a new value or a new width. (`crates/plugin/src/panels.rs`)
 - **`plugin dev` was not run against a live app, and double-clicking a `.craftplugin` was not tried on a built app.**
 - **The 8/16 bpc quantise pass still runs after most CPU effects.** Gaussian Blur, Levels, Curves, Hue/Saturation and Glow quantise their own output (`QUANTIZES_OUTPUT` in `crates/effects`); plugin effects quantise each band as it is written; every other built-in effect is followed by a full-frame pass.
 - **An animated comp keeps only its bottom run of static 2D layers composited.** On the CPU compositor the layers below the first animated, adjustment, collapsed, 3D or matted layer are kept as one buffer; every layer from there up is composited again each frame. The GPU compositor re-composites every layer.
