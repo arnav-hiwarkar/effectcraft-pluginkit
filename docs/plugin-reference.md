@@ -319,6 +319,7 @@ it shows on screen, pass `apply(point)` to `scene.project`.
 | `frame.rows_mut()` | `(y, output row)`. |
 | `frame.rows_in_place()` | `(y, row)`, each row holding the input under it, to change in place: the cheapest loop for an effect that reads only its own pixel. In place it is `rows_mut()`; when `frame.input` holds rows, each one is copied into its row first. |
 | `frame.at(x, y)` | The input pixel at a full-frame position; transparent outside the input. In place, before `frame.rows()`, the pixel as `frame.pixels` holds it now. |
+| `frame.drawn(rect)` | Says the call drew only inside `rect` (full-frame coordinates): the layer is transparent outside it. |
 | `Frame::whole(width, height, input, pixels)` | A whole-frame call, for unit tests. |
 
 The app asks an effect only for the part of the layer that shows in the frame being rendered (the comp
@@ -338,6 +339,25 @@ call, so its input rows are the input as it was. An effect that fails in one ban
 finished changed. Every other case renders into a new frame that replaces the layer's frame only when
 every call succeeded, so an effect that fails, in any band, leaves the layer as it was.
 
+An effect that draws without reading its input (a generator: a shape, text, particles) adds
+`.ignores_input()` to its layout and reports the rectangle it drew with `frame.drawn(rect)`. The contract:
+
+- With `ignores_input`, `frame.input` holds no rows and `frame.pixels` starts with unspecified contents,
+  not the input and not zeros. Write every pixel inside the rectangle you report; nothing outside it.
+- Everything outside the reported rectangle is transparent. The app crops the layer to the rectangle (the
+  union of what each band reported, clipped to the band and the frame), so nothing clears the rest of the
+  frame. A rectangle that reaches past the frame is clipped to it; one wholly outside leaves the layer
+  empty. A call that reports nothing drew its whole rectangle, as before.
+- A sandboxed plugin then has nothing copied in and only the reported rows copied out. On a 3840x2160
+  layer with a 200x200 sprite a sandboxed render drops from 6.3 to 0.42 ms (89 M to 12.5 M instructions),
+  a native one from 1.28 to 0.14 ms (`examples/gen_measure.rs` in craft-plugin-host).
+- `frame.drawn` also works without `ignores_input`, with the same meaning: outside the rectangle the
+  layer is transparent.
+- An app older than these two calls ignores `ignores_input` and refuses a render that reports a
+  rectangle, so a plugin that uses them needs an app that has them.
+- Bands that report different rectangles are cropped to their union; where a band reported nothing the
+  layer is transparent.
+
 A plugin built before frames had separate input (it sends no `separate_input` in its description) still
 runs: each band gets whole rows with `n` rows above and below in `frame.pixels`, the app copies them for it
 and keeps the band's own rows.
@@ -352,9 +372,10 @@ and keeps the band's own rows.
 | `.padded(n)` | Grow the frame by `n` pixels on each side first, as far as `applied_padding` allows (each side at most 4096). |
 | `.padded_sides(left, top, right, bottom)` | Grow each side by its own amount. |
 | `.maps_input()` | The app asks `Effect::input` which input rectangle an output rectangle needs, once per band. |
+| `.ignores_input()` | The effect reads no input: nothing is copied in, and `frame.pixels` starts unspecified. Pair it with `frame.drawn(rect)` (see Frame). |
 
 `Rect { left, top, right, bottom }` is in frame pixels, `right` and `bottom` exclusive, and may reach past
-the frame; the app clips it. `Rect::of_size`, `grown(n)`, `clipped(size)`, `union`, `contains`, `width`,
+the frame; the app clips it. `Rect::of_size`, `grown(n)`, `clipped(size)`, `union`, `intersection`, `contains`, `width`,
 `height` and `is_empty` help build one.
 | `.passes(plan)` | Run these passes on the GPU when the GPU renderer is active, and otherwise on the CPU through `Effect::pass`, in bands on all cores. |
 | `.gpu(plan)` | Run these passes when the GPU renderer is active; `render` is the CPU path. |

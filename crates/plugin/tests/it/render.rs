@@ -540,3 +540,64 @@ fn a_gradient_edited_past_the_stop_limit_reaches_the_plugin_cut_with_one_warning
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].contains("gradient parameter `ramp` has 6 stops beyond the limit of 64"), "{warnings:?}");
 }
+
+fn probe_native() -> std::path::PathBuf {
+    let probe = craft_plugin_host::testing::probe_dir();
+    let status = std::process::Command::new(env!("CARGO"))
+        .args(["build", "--release", "--quiet", "--manifest-path"])
+        .arg(probe.join("Cargo.toml"))
+        .status()
+        .expect("cargo runs");
+    assert!(status.success(), "the native probe builds");
+    probe.join("target/release").join(format!("{}probe{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX))
+}
+
+fn sprite_frames(app: &mut App, effect: &str) -> Vec<effectcraft_engine::raster::Image> {
+    app.session.execute("comp.new", json!({"name": effect, "width": 300, "height": 260, "frameRate": 24, "duration": 2})).unwrap();
+    app.session.execute("layer.newSolid", json!({"name": "Grey", "color": "#808080", "width": 300, "height": 260})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": effect})).unwrap();
+    let mut frames = Vec::new();
+    for whole in [false, true] {
+        for roi in [None, Some([100.0, 0.0, 200.0, 260.0])] {
+            let mut render = |drawn: bool| {
+                app.session.execute("prop.set", json!({"path": "effects/#1/whole", "value": whole})).unwrap();
+                app.session.execute("prop.set", json!({"path": "effects/#1/drawn", "value": drawn})).unwrap();
+                frame(app, roi)
+            };
+            let (cleared, drawn) = (render(false), render(true));
+            assert_eq!((drawn.width, drawn.height), (cleared.width, cleared.height));
+            assert!(
+                drawn.data == cleared.data,
+                "{effect} whole {whole} roi {roi:?}: the comp differs when the effect ignores its input and reports what it drew"
+            );
+            frames.push(drawn);
+        }
+    }
+    frames
+}
+
+#[test]
+fn a_generator_that_ignores_its_input_and_reports_what_it_drew_renders_the_same_comp_sandboxed_and_native() {
+    let mut app = app("test.render-sprite", &[]);
+    let native = "test.render-sprite-native";
+    let source = tempfile::tempdir().unwrap();
+    let library = probe_native();
+    let file = library.file_name().unwrap().to_str().unwrap().to_string();
+    std::fs::copy(app.bundle.path().join("probe.wasm"), source.path().join("probe.wasm")).unwrap();
+    std::fs::copy(&library, source.path().join(&file)).unwrap();
+    let entry = json!({"wasm": "probe.wasm", "native": {format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH): file}});
+    let manifest = json!({"id": native, "name": "Probe", "version": "1.0.0", "entry": entry});
+    std::fs::write(source.path().join("plugin.json"), manifest.to_string()).unwrap();
+    app.plugins.install(source.path()).unwrap();
+    app.plugins.approve(native).unwrap();
+    app.plugins.set_sandboxed(native, false).unwrap();
+    assert!(app.plugins.get(native).is_some(), "the native probe runs");
+
+    let sandboxed = sprite_frames(&mut app, "test.render-sprite.sprite");
+    let unsandboxed = sprite_frames(&mut app, &format!("{native}.sprite"));
+    app.plugins.uninstall(native).unwrap();
+    assert!(sandboxed.iter().zip(&unsandboxed).all(|(a, b)| a.data == b.data), "the sandboxed and native comps differ");
+    let at = |x: u32, y: u32| sandboxed[0].data[(y * 300 + x) as usize];
+    assert!(close(at(150, 130), [0.5, 0.5, 0.75, 1.0]), "the sprite's centre is {:?}", at(150, 130));
+    assert_eq!(at(10, 10), [0.0; 4], "outside the sprite the comp is empty");
+}
