@@ -1,6 +1,6 @@
 # Plugin speed before and after the third build
 
-Measured 2026-11-23 on an Apple M5 with 10 threads. `crates/plugin-host/examples/bench.rs` was built in release
+Measured 2026-11-23 on an Apple M5 with 10 threads. `crates/plugin-host/examples/bench.rs` (now in craft-libs) was built in release
 at `e097e232` (the start of the build) and at `4b0ebda1` (the end, before the last Plasma Beam change), and
 the two were run alternately four times each at a load average of 5.2 to 7.3, 15 frames per size per run. Each
 figure is the smallest per-run minimum in ms. The Plasma Beam rows are from a second session of five

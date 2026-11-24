@@ -37,7 +37,7 @@ fn main() {
     let bundles = [
         bundle(&root().join("plugins/glide"), "glide", None, &work),
         bundle(&root().join("plugins/pulse"), "pulse", None, &work),
-        bundle(&root().join("crates/plugin-host/tests/probe"), "probe", Some(probe), &work),
+        bundle(craft_plugin_host::testing::probe_dir(), "probe", Some(probe), &work),
     ];
     let mut session = effectcraft_host::session();
     let plugins = effectcraft_plugin::install(&mut session, Some(&work.join("config")));

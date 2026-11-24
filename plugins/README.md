@@ -1,7 +1,7 @@
 # Plugins
 
-Each folder here is one plugin: a standalone Rust crate outside the workspace, built against the SDK in
-`crates/plugin-sdk`. They are the reference for what a plugin can do.
+Each folder here is one plugin: a standalone Rust crate outside the workspace, built against the SDK, `craft-plugin`
+from craft-libs at the `rev` the workspace `Cargo.toml` pins. They are the reference for what a plugin can do.
 
 | Plugin | Kind | What it does |
 |---|---|---|

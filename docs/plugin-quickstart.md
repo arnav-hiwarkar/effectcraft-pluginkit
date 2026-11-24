@@ -41,7 +41,8 @@ made plugins/my-tint from the effect template
 | `task` | A panel that runs a background task with progress and cancel |
 
 The folder holds `Cargo.toml`, `plugin.json` (the id, name, licence and the permissions it asks for) and
-`src/lib.rs`. The parameters are declared once with `params!`, the effect reads them into a struct, and
+`src/lib.rs`. `Cargo.toml` takes the SDK, `craft-plugin`, and for tests `craft-plugin-host` from craft-libs by
+git, at the `rev` the app's workspace `Cargo.toml` pins, so the plugin builds against the app's SDK. The parameters are declared once with `params!`, the effect reads them into a struct, and
 `export!` makes the plugin loadable. This is the whole `src/lib.rs` the command wrote:
 
 `plugins/my-tint/src/lib.rs`:

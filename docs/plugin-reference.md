@@ -683,7 +683,8 @@ Installed plugins live in `Plugins/` in the settings folder. `Plugins/state.json
 
 ## Testing
 
-`craft-plugin-host = { path = "…/crates/plugin-host", features = ["testing"] }` as a dev-dependency gives
+`craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "…", features = ["testing"] }` as a
+dev-dependency gives
 `craft_plugin_host::testing`. It runs the plugin compiled into the test binary through the same host code
 the app uses, with the permissions `plugin.json` asks for. Commands the plugin runs are recorded, not run.
 

@@ -210,6 +210,10 @@ impl craft_plugin_ui::Host for AppHost<'_> {
     fn accept_files(&mut self, paths: &[String]) {
         effectcraft_plugin::accept_drop(self.source.plugin, paths);
     }
+
+    fn combo_box(&self, ui: &mut egui::Ui, id: egui::IdSalt, label: &str, selected: String, menu: &mut dyn FnMut(&mut egui::Ui)) -> egui::Response {
+        craft_ui::ComboBox::new(id, label).selected_text(selected).show_ui(ui, menu).response
+    }
 }
 
 #[cfg(test)]
@@ -240,7 +244,7 @@ mod tests {
     }
 
     fn probe_bundle(id: &str) -> tempfile::TempDir {
-        let probe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugin-host/tests/probe");
+        let probe = craft_plugin_host::testing::probe_dir();
         let status = std::process::Command::new(env!("CARGO"))
             .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
             .arg(probe.join("Cargo.toml"))

@@ -136,7 +136,7 @@ Helpers start when the plugin loads, because `Describe` runs then anyway. They s
 is unloaded or the app quits.
 
 The helper is a separate small binary, `craft-plugin-helper`
-(`crates/plugin-host/src/bin/craft-plugin-helper.rs`), installed next to the app executable. Re-running
+(craft-libs `crates/plugin-host/src/bin/craft-plugin-helper.rs`), installed next to the app executable. Re-running
 the app binary itself would load every framework the app links, and the measured start-up and memory
 figures would not hold.
 

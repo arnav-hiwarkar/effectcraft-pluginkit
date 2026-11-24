@@ -67,6 +67,7 @@ egui_kittest = { workspace = true, features = ["eframe", "wgpu"] }
 pollster = "1"
 effectcraft-segment = { workspace = true }
 effectcraft-host = { workspace = true }
+craft-plugin-host = { workspace = true, features = ["testing"] }
 effectcraft-media = { workspace = true }
 exr = { workspace = true }
 tempfile = { workspace = true }

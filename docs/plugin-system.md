@@ -19,17 +19,31 @@ A plugin effect is registered in the same registry as the built-in effects. Noth
 the two apart: Effect Controls, keyframes, expressions, presets, the render cache, and project files all
 work from the registry entry.
 
-## Three crates
+## Four crates
 
 | Crate | Path | Job |
 |---|---|---|
-| `craft-plugin` | `crates/plugin-sdk` | The SDK a plugin author depends on. Also holds the manifest and message types the host reads. |
-| `craft-plugin-host` | `crates/plugin-host` | Loads plugins, runs them, checks permissions, and keeps the list of installed plugins. |
+| `craft-plugin` | craft-libs `crates/plugin-sdk` | The SDK a plugin author depends on. Also holds the manifest and message types the host reads. |
+| `craft-plugin-host` | craft-libs `crates/plugin-host` | Loads plugins, runs them, checks permissions, and keeps the list of installed plugins. |
 | `effectcraft-plugin` | `crates/plugin` | Connects the runtime to EffectCraft: effects, engine commands, and the file rules. |
-| `craft-plugin-ui` | `crates/plugin-ui` | Draws plugin panels, custom controls and viewer marks in egui. The app passes its theme, translations, textures and drag payloads through a `Host`. |
+| `craft-plugin-ui` | craft-libs `crates/plugin-ui` | Draws plugin panels, custom controls and viewer marks in egui. The app passes its theme, translations, textures and drag payloads through a `Host`. |
 
-The first two crates do not depend on EffectCraft. `cargo xtask layers` checks this. Another Craft app
-adopts the system by writing its own version of the third crate, which is about 600 lines here.
+The SDK, the host and the UI crate live in craft-libs (the fork
+[arnav-hiwarkar/craft-libs-plugin-beta](https://github.com/arnav-hiwarkar/craft-libs-plugin-beta), branch `pluginkit`), so they cannot depend on
+EffectCraft. EffectCraft takes them by git at one `rev` in the workspace `Cargo.toml`; the reference
+plugins in `plugins/` and the `cargo xtask plugin new` templates use the same `rev` (the templates read it
+from the workspace `Cargo.toml`). Another Craft app adopts the system by writing its own version of
+`effectcraft-plugin`, which is about 600 lines here.
+
+To change the kit and EffectCraft together, check out craft-libs branch `pluginkit` next to this
+repository (`../craft-libs`; from a worktree under `pluginkit/wt/` the path is `../../craft-libs`, so edit the
+block's paths) and uncomment the `[patch."https://github.com/arnav-hiwarkar/craft-libs-plugin-beta"]` block in the
+workspace `Cargo.toml`: the app then builds the kit from that checkout. The reference plugins are
+workspaces of their own and keep the git `rev`; add the same block to a plugin's `Cargo.toml` to build it
+against the checkout too. When the change is done, push craft-libs `pluginkit`, set the new `rev` in the
+workspace `Cargo.toml`, in `plugins/*/Cargo.toml` and in `xtask/tests/check-fixture/Cargo.toml`, let cargo
+update the `Cargo.lock` files, and comment the block again. The kit's own tests run in craft-libs:
+`cargo test -p craft-plugin -p craft-plugin-host -p craft-plugin-ui`.
 
 ## How the app and a plugin talk
 
@@ -83,7 +97,7 @@ update of a native plugin waits for a new approval.
 | `files.write` | Writing files outside the plugin's own folders |
 | `clipboard` | Reading and replacing the text on the system clipboard |
 
-Every host call passes one check, `gate::check` in `crates/plugin-host/src/runtime/gate.rs`, before the
+Every host call passes one check, `gate::check` in craft-libs `crates/plugin-host/src/runtime/gate.rs`, before the
 app sees it. For an app command, EffectCraft decides what the command needs in
 `crates/plugin/src/gate.rs`:
 
@@ -131,7 +145,8 @@ There is no network permission. A sandboxed plugin cannot open a connection.
 | Sandboxed, CPU | One copy of the frame in and one out | Everything else |
 
 Measured on a ten-core Apple M-series laptop that was also running other builds, 1920×1080 `f32` RGBA,
-median of 15, with `cargo run --release -p craft-plugin-host --example bench`:
+median of 15, with `CRAFT_PLUGINS=<EffectCraft>/plugins cargo run --release -p craft-plugin-host --example bench`
+in craft-libs:
 
 | Effect | Native | Sandboxed | Sandboxed before bands and parallel copies |
 |---|---|---|---|

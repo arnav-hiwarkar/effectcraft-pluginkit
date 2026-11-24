@@ -239,9 +239,9 @@ fn probe_session() -> Session {
     static PROBE: OnceLock<tempfile::TempDir> = OnceLock::new();
     let session = session();
     load(&PROBE, || {
-        let probe = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugin-host/tests/probe");
+        let probe = craft_plugin_host::testing::probe_dir();
         let manifest = json!({"id": "test.viewer-tool-ui", "name": "Probe", "version": "1.0.0", "entry": {"wasm": "plugin.wasm"}, "permissions": ["document.read", "document.write"]});
-        bundle(&wasm(&probe, "probe"), manifest)
+        bundle(&wasm(probe, "probe"), manifest)
     });
     session
 }
