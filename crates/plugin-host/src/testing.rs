@@ -487,6 +487,9 @@ impl TestPlugin {
     }
 }
 
+const TIME_CHECK_STEP: f64 = 0.5;
+
+#[derive(Clone)]
 pub struct Render<'a> {
     plugin: &'a TestPlugin,
     effect: String,
@@ -632,6 +635,20 @@ impl Render<'_> {
 
     fn host<'h>(&'h self, source: &'h Picture, layers: &'h BTreeMap<String, Picture>, masks: &'h [MaskPath], cx: &'h RenderCx) -> TestHost<'h> {
         TestHost { recorder: &self.plugin.recorder, source: Some(source), layers: Some(layers), masks, params: Some(&cx.params), layer_size: cx.layer_size }
+    }
+
+    pub fn time_check(&self) -> Result<(), String> {
+        if self.plugin.spec(&self.effect)?.time_dependent {
+            return Ok(());
+        }
+        let later = Render { time: self.time + TIME_CHECK_STEP, ..self.clone() };
+        if self.run()? != later.run()? {
+            return Err(format!(
+                "effect `{}` renders differently at {} s and at {} s but does not say it depends on time, so the app would show a stale cached frame: add `.time_dependent()` to its EffectSpec",
+                self.effect, self.time, later.time
+            ));
+        }
+        Ok(())
     }
 
     pub fn run(&self) -> Result<Picture, String> {

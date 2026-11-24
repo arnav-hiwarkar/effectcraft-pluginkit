@@ -23,6 +23,30 @@ impl Effect for Invert {
     }
 }
 
+struct Drift {
+    declared: bool,
+}
+
+impl Effect for Drift {
+    fn spec(&self) -> EffectSpec {
+        let spec = EffectSpec::new(if self.declared { "drift" } else { "silent-drift" }, "Drift", "Probe");
+        if self.declared { spec.time_dependent() } else { spec }
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise()
+    }
+
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let lift = cx.time as f32 * 0.5;
+        frame.map(|mut pixel| {
+            pixel[1] += lift;
+            pixel
+        });
+        Ok(())
+    }
+}
+
 struct FastMaths;
 
 impl Effect for FastMaths {
@@ -899,6 +923,8 @@ impl Panel for Ticker {
 fn make() -> Plugin {
     Plugin::new()
         .effect(Invert)
+        .effect(Drift { declared: true })
+        .effect(Drift { declared: false })
         .effect(FastMaths)
         .effect(Scale)
         .effect(ShiftDown)

@@ -109,3 +109,12 @@ fn a_test_render_clamps_to_the_hard_range_and_refuses_text_for_a_number_like_the
     let error = plugin.render("invert").set("amount", "x").run().unwrap_err();
     assert_eq!(error, r#"parameter `amount` takes a number, not the text "x""#);
 }
+
+#[test]
+fn an_effect_that_changes_with_time_must_say_so() {
+    let (_bundle, plugin) = probe();
+    assert_eq!(plugin.render("drift").time_check(), Ok(()));
+    assert_eq!(plugin.render("invert").time_check(), Ok(()));
+    let error = plugin.render("silent-drift").time_check().unwrap_err();
+    assert!(error.contains("effect `silent-drift` renders differently at 0 s and at 0.5 s") && error.contains("`.time_dependent()`"), "{error}");
+}

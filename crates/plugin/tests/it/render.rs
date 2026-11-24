@@ -445,3 +445,23 @@ fn a_plugin_effect_followed_by_a_small_blur_and_a_colour_effect_renders_only_the
         }
     }
 }
+
+#[test]
+fn a_time_dependent_plugin_effect_renders_each_frame_again_through_the_layer_cache() {
+    let mut app = app("test.render-drift", &[]);
+    app.session.execute("layer.newSolid", json!({"name": "Red", "color": "#ff3300", "width": 64, "height": 36})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "test.render-drift.drift"})).unwrap();
+    let session = &app.session;
+    let comp = session.active_comp_id().expect("an active comp");
+    let cache = effectcraft_engine::render::LayerCache::default();
+    let mut renderer = Renderer::new(&session.project, session.footage.as_ref(), RenderOpts::default());
+    renderer.cache = Some(&cache);
+    let mut green = |seconds: f64| {
+        let image = renderer.comp_frame(comp, Tick::from_seconds_f64(seconds));
+        image.data[(image.height / 2 * image.width + image.width / 2) as usize][1]
+    };
+    let [first, later, again] = [0.0, 0.5, 0.0].map(&mut green);
+    assert!((first - 0.2).abs() < 0.02, "at 0 s green is {first}");
+    assert!((later - 0.45).abs() < 0.02, "at 0.5 s green is {later}");
+    assert!((again - first).abs() < 1e-6, "back at 0 s green is {again}");
+}
