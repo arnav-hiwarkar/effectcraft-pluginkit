@@ -2,6 +2,8 @@ use std::path::Path;
 
 const TEMPLATE_CARGO: &str = include_str!("../../templates/Cargo.toml");
 const TEMPLATE_MANIFEST: &str = include_str!("../../templates/plugin.json");
+const TEMPLATE_DATA_MANIFEST: &str = include_str!("../../templates/data-plugin.json");
+const TEMPLATE_DATA_LUT: &str = include_str!("../../templates/warm.cube");
 const WORKSPACE_CARGO: &str = include_str!("../../../Cargo.toml");
 
 pub(super) struct Kind {
@@ -10,12 +12,14 @@ pub(super) struct Kind {
     permissions: &'static [&'static str],
     description: &'static str,
     renders: bool,
+    pub code: bool,
     next: &'static str,
 }
 
-pub(super) const KINDS: [Kind; 5] = [
+pub(super) const KINDS: [Kind; 6] = [
     Kind {
         name: "effect",
+        code: true,
         renders: true,
         lib: include_str!("../../templates/effect.rs"),
         permissions: &[],
@@ -24,6 +28,7 @@ pub(super) const KINDS: [Kind; 5] = [
     },
     Kind {
         name: "gpu-effect",
+        code: true,
         renders: true,
         lib: include_str!("../../templates/gpu-effect.rs"),
         permissions: &[],
@@ -32,6 +37,7 @@ pub(super) const KINDS: [Kind; 5] = [
     },
     Kind {
         name: "panel",
+        code: true,
         renders: false,
         lib: include_str!("../../templates/panel.rs"),
         permissions: &["document.write"],
@@ -40,6 +46,7 @@ pub(super) const KINDS: [Kind; 5] = [
     },
     Kind {
         name: "tool",
+        code: true,
         renders: false,
         lib: include_str!("../../templates/tool.rs"),
         permissions: &["document.write"],
@@ -48,11 +55,21 @@ pub(super) const KINDS: [Kind; 5] = [
     },
     Kind {
         name: "task",
+        code: true,
         renders: false,
         lib: include_str!("../../templates/task.rs"),
         permissions: &["document.read"],
         description: "measures the comp's brightness in a background task with progress",
         next: "open Window > Plug-ins > {{Title}} and press Measure",
+    },
+    Kind {
+        name: "data",
+        code: false,
+        renders: false,
+        lib: "",
+        permissions: &[],
+        description: "a preset and a LUT",
+        next: "install it: drag the folder or a .craftplugin onto Window > Plug-ins; the preset is in the Tint effect's Presets menu and the LUT in Apply Color LUT's Library",
     },
 ];
 
@@ -89,6 +106,10 @@ pub(super) fn kind(name: &str) -> Result<&'static Kind, String> {
     })
 }
 
+fn fill_in(substitutions: &[(&str, String)], template: &str) -> String {
+    substitutions.iter().fold(template.to_string(), |text, (key, value)| text.replace(key, value))
+}
+
 pub(super) fn generate(name: &str, kind: &Kind) -> Result<Vec<(&'static str, String)>, String> {
     if !valid_name(name) {
         return Err(format!("`{name}` must start with a lower case letter and use only lower case letters, digits and single `-`, such as `soft-glow`"));
@@ -104,6 +125,15 @@ pub(super) fn generate(name: &str, kind: &Kind) -> Result<Vec<(&'static str, Str
         ("{{description}}", format!("{title}: {}.", kind.description)),
         ("{{kit}}", kit_source()?.to_string()),
     ];
+    if !kind.code {
+        let next = "  check it:     cargo xtask plugin plugins/{{name}}   (packs plugins/dist/<id>-0.1.0.craftplugin; installing it checks every preset and LUT)\n  then ";
+        let next = fill_in(&substitutions, &format!("{next}{}", kind.next));
+        return Ok(vec![
+            ("plugin.json", fill_in(&substitutions, TEMPLATE_DATA_MANIFEST)),
+            ("warm.cube", TEMPLATE_DATA_LUT.to_string()),
+            ("next", next),
+        ]);
+    }
     let fill = |template: &str| substitutions.iter().fold(template.to_string(), |text, (key, value)| text.replace(key, value));
     let mut next = vec!["  test it:      cargo test --manifest-path plugins/{{name}}/Cargo.toml"];
     if kind.renders {
@@ -150,7 +180,7 @@ mod tests {
 
     #[test]
     fn a_new_plugin_is_named_from_its_folder_and_every_placeholder_is_filled_for_every_kind() {
-        for kind in &KINDS {
+        for kind in KINDS.iter().filter(|kind| kind.code) {
             let files: BTreeMap<_, _> = generate("soft-glow", kind).unwrap().into_iter().collect();
             assert!(files["plugin.json"].contains(r#""id": "com.example.soft-glow""#), "{}", kind.name);
             assert!(files["plugin.json"].contains(r#""name": "Soft Glow""#), "{}", kind.name);
@@ -177,7 +207,7 @@ mod tests {
 
     #[test]
     fn the_types_a_template_declares_do_not_depend_on_the_plugin_name() {
-        for kind in &KINDS {
+        for kind in KINDS.iter().filter(|kind| kind.code) {
             let lib = |name: &str| generate(name, kind).unwrap().into_iter().find(|(path, _)| *path == "src/lib.rs").unwrap().1;
             for name in ["settings", "panel", "plugin", "tint", "null-panel"] {
                 assert_eq!(type_names(&lib(name)), type_names(&lib("a")), "{} {name}", kind.name);
@@ -187,7 +217,7 @@ mod tests {
 
     #[test]
     fn only_an_effect_offers_to_render_and_every_kind_offers_to_test_check_and_run_live() {
-        for kind in &KINDS {
+        for kind in KINDS.iter().filter(|kind| kind.code) {
             let next = generate("soft-glow", kind).unwrap().into_iter().find(|(path, _)| *path == "next").unwrap().1;
             assert_eq!(next.contains("cargo xtask plugin render plugins/soft-glow"), kind.name.ends_with("effect"), "{}", kind.name);
             for command in [
@@ -205,6 +235,18 @@ mod tests {
         for name in ["Tint", "1tint", "-tint", "tint-", "tint_x", "ti nt", "a--b", ""] {
             assert!(generate(name, &KINDS[0]).is_err(), "{name}");
         }
-        assert_eq!(kind("filter").err().unwrap(), "`--kind filter` is not a kind of plugin; pick one of effect, gpu-effect, panel, tool, task");
+        assert_eq!(kind("filter").err().unwrap(), "`--kind filter` is not a kind of plugin; pick one of effect, gpu-effect, panel, tool, task, data");
+    }
+
+    #[test]
+    fn a_data_plugin_is_a_manifest_and_a_lut_with_no_code_and_its_manifest_is_valid() {
+        let files: BTreeMap<_, _> = generate("film-looks", kind("data").unwrap()).unwrap().into_iter().collect();
+        assert_eq!(files.keys().copied().collect::<Vec<_>>(), ["next", "plugin.json", "warm.cube"]);
+        assert!(files.values().all(|text| !text.contains("{{")));
+        let manifest = craft_plugin::Manifest::parse(&files["plugin.json"]).unwrap();
+        assert!(manifest.is_data_only());
+        assert_eq!(manifest.contributes.luts, ["warm.cube"]);
+        assert_eq!(manifest.contributes.presets[0].name, "Film Looks Warm");
+        assert_eq!(files["warm.cube"].lines().filter(|line| line.split_whitespace().count() == 3 && !line.starts_with("LUT")).count(), 8);
     }
 }
