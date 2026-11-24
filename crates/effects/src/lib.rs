@@ -475,7 +475,6 @@ pub const POINTWISE: &[&str] = &[
     "ec.color.colorbalance",
     "ec.color.channelmixer",
     "ec.color.gammapedestalgain",
-    "ec.color.colorama",
     "ec.color.curves",
     "ec.color.levelsic",
     "ec.color.selectivecolor",
@@ -498,6 +497,7 @@ pub fn pixel_margin(id: &str, ctx: &EffectCtx, scale: f64) -> Option<f64> {
     let params = ctx.params;
     match id {
         _ if POINTWISE.contains(&id) => Some(0.0),
+        "ec.color.colorama" if ["inputPhase/addPhase", "masking/maskLayer"].iter().all(|p| params.get(p).and_then(Value::as_layer).is_none()) => Some(0.0),
         "ec.3d.fog3d" if params.f("layerContribution") <= 0.0 => Some(0.0),
         "ec.3d.idmatte" if params.f("feather") <= 0.0 => Some(0.0),
         "ec.generate.fill" if params.f("horizontalFeather") <= 0.0 && params.f("verticalFeather") <= 0.0 => Some(0.0),
@@ -1956,6 +1956,18 @@ mod tests {
         fn audio(&self, _: u64, _: f64, _: usize, _: u32) -> Option<Vec<f32>> {
             None
         }
+    }
+
+    #[test]
+    fn colorama_reaches_only_its_own_pixel_until_it_reads_another_layer() {
+        let margin = |layer: Option<u64>| {
+            let mut params = Params::default();
+            params.values.insert("masking/maskLayer".into(), Value::Layer(layer));
+            let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [8.0, 8.0], seed: 0, adjustment: false, env: Default::default() };
+            pixel_margin("ec.color.colorama", &ctx, 1.0)
+        };
+        assert_eq!(margin(None), Some(0.0));
+        assert_eq!(margin(Some(3)), None);
     }
 
     #[test]
