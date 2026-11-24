@@ -300,10 +300,8 @@ fn spin_program(u: Vec<u32>) -> GpuProgram {
 fn a_loop_that_never_ends_stops_at_the_cap_then_its_shader_is_turned_off_and_reported() {
     let Some(g) = gpu() else { return };
     register("test.gpu.spin", SPIN_WGSL, spin_program(Vec::new()));
-    let first = small("test.gpu.spin").expect("the capped loop ends and the frame comes back");
-    assert!(first.img.data.iter().all(|p| *p == [1.0; 4]), "every pixel looped exactly the cap: {:?}", first.img.data.first());
-    let declined = (0..4).position(|_| small("test.gpu.spin").is_none());
-    assert!(declined.is_some(), "a later frame declines to the CPU");
+    assert!(small("test.gpu.spin").is_none(), "the first frame, whose loop was cut at the cap, renders on the CPU");
+    assert!(small("test.gpu.spin").is_none(), "the next frame declines before it records");
     let registered = dynamic::get("test.gpu.spin").expect("registered");
     let stopped = registered.gpu_stopped.get().expect("the effect carries the reason");
     assert!(stopped.starts_with("a loop in this shader ran past 1048576 iterations in one invocation"), "{stopped}");
@@ -329,4 +327,36 @@ fn a_plugin_effect_is_built_before_its_first_frame() {
     assert!(!g.ctx.plugin_shader_cached("test.gpu.warm"), "a fresh context has built nothing");
     g.warm_plugins().expect("a new plugin effect starts a warm-up").join().expect("the warm-up finishes");
     assert!(g.ctx.plugin_shader_cached("test.gpu.warm"), "the shader was built off the frame path");
+}
+
+const TRIANGLE_WGSL: &str = r#"
+@vertex
+fn vs_tri(@location(0) p: vec2<f32>) -> @builtin(position) vec4<f32> {
+    return vec4<f32>(p, 0.0, 1.0);
+}
+
+@fragment
+fn fs_tri() -> @location(0) vec4<f32> {
+    return vec4<f32>(1.0);
+}
+"#;
+
+#[test]
+fn warming_up_leaves_the_buffers_of_a_live_render_alone() {
+    let Some(g) = gpu() else { return };
+    let triangles = |n: usize| [-1.0f32, -1.0, 3.0, -1.0, -1.0, 3.0].repeat(n).iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+    let draw = dynamic::GpuDraw { layout: vec![2], clear: true, ..Default::default() };
+    let mut effect = effect("test.gpu.warm-draw", TRIANGLE_WGSL, GpuProgram::default());
+    effect.gpu = Some(Box::new(move |ctx: &EffectCtx, _| {
+        Some(GpuProgram {
+            buffers: vec![dynamic::GpuBytes { name: "mesh".into(), bytes: triangles(if ctx.seed == 1 { 1 } else { 2 }).into() }],
+            passes: vec![GpuPass { draw: Some(draw.clone()), ..pass("tri", GpuSlot::Source, GpuSlot::Output) }],
+            ..Default::default()
+        })
+    }));
+    dynamic::register(effect);
+    assert!(small("test.gpu.warm-draw").is_some(), "the live frame draws on the GPU");
+    assert_eq!(g.ctx.plugin_draw.kept_bytes("test.gpu.warm-draw", "mesh"), Some(24), "the live render keeps its one triangle");
+    crate::fx_plugin::warm(&g.ctx, &dynamic::get("test.gpu.warm-draw").expect("registered"));
+    assert_eq!(g.ctx.plugin_draw.kept_bytes("test.gpu.warm-draw", "mesh"), Some(24), "the warm-up's two triangles do not replace it");
 }

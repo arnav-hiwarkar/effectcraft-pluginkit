@@ -125,6 +125,9 @@ pub(crate) fn run_chain(e: &mut Enc, chain: &[FxStep], buf: &Buf, levels: Option
         };
     }
     let img = e.download(&b.img)?;
+    if e.loop_capped() {
+        return None;
+    }
     Some(Buf { img, offset: b.offset, scale: b.scale })
 }
 
