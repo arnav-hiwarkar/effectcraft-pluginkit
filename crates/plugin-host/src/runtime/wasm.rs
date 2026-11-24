@@ -17,6 +17,8 @@ use crate::plugin::{Io, PluginError};
 
 const TICK: Duration = Duration::from_millis(50);
 const MEMORY_LIMIT: usize = 3 << 30;
+const TABLE_LIMIT: usize = 4;
+const TABLE_ELEMENT_LIMIT: usize = 65_536;
 
 type CallFn = TypedFunc<(u32, u32, u32, u32, u32, u32), ()>;
 type AllocFn = TypedFunc<u32, u32>;
@@ -35,6 +37,7 @@ fn engine() -> Result<&'static Engine, PluginError> {
         .get_or_init(|| {
             let mut config = Config::new();
             config.epoch_interruption(true);
+            config.relaxed_simd_deterministic(true);
             let engine = Engine::new(&config).map_err(|e| e.to_string())?;
             let clock = engine.weak();
             std::thread::Builder::new()
@@ -67,7 +70,8 @@ impl WasmModule {
     }
 
     pub fn instantiate(&self) -> Result<WasmGuest, PluginError> {
-        let limits = StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).memories(1).instances(1).build();
+        let limits =
+            StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).memories(1).instances(1).tables(TABLE_LIMIT).table_elements(TABLE_ELEMENT_LIMIT).build();
         let mut store = Store::new(self.module.engine(), State { limits, ctx: 0, alloc: None, deadline: None });
         store.limiter(|state| &mut state.limits);
         store.set_epoch_deadline(ticks(Duration::from_secs(5)));
@@ -383,10 +387,48 @@ fn missing(export: &str) -> PluginError {
 
 #[cfg(test)]
 mod tests {
-    use super::{KEY_FILE, cache_name, cached, engine, hmac, install_key};
+    use super::{KEY_FILE, WasmModule, cache_name, cached, engine, hmac, install_key};
 
     const EMPTY: &[u8] = &[0, 0x61, 0x73, 0x6d, 1, 0, 0, 0];
     const ONE_IMPORT: &[u8] = &[0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 1, 4, 1, 0x60, 0, 0, 2, 7, 1, 1, b'a', 1, b'b', 0, 0];
+
+    fn tables_module(tables: &[u32]) -> Vec<u8> {
+        let mut body = vec![tables.len() as u8];
+        for &min in tables {
+            body.extend([0x70, 0x00]);
+            let mut rest = min;
+            loop {
+                let byte = (rest & 0x7f) as u8;
+                rest >>= 7;
+                if rest == 0 {
+                    body.push(byte);
+                    break;
+                }
+                body.push(byte | 0x80);
+            }
+        }
+        let mut module = vec![0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 4, body.len() as u8];
+        module.extend(body);
+        module
+    }
+
+    fn instantiate_error(module: &[u8]) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        match WasmModule::compile(module, dir.path()).unwrap().instantiate() {
+            Ok(_) => panic!("the module has no exports and cannot instantiate"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_table_of_100000_elements_is_refused_and_four_small_tables_pass_the_limit() {
+        let refused = instantiate_error(&tables_module(&[100_000]));
+        assert!(refused.contains("table") && refused.contains("limit"), "{refused}");
+        let passed = instantiate_error(&tables_module(&[10, 10, 10, 10]));
+        assert!(passed.contains("does not export `memory`"), "{passed}");
+        let too_many = instantiate_error(&tables_module(&[1, 1, 1, 1, 1]));
+        assert!(too_many.contains("table") && too_many.contains("limit"), "{too_many}");
+    }
 
     #[test]
     fn hmac_sha256_matches_rfc_4231_test_case_2() {
