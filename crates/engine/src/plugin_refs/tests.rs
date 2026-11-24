@@ -106,3 +106,31 @@ fn an_old_project_without_a_plugin_record_is_refused_for_a_missing_plugin_effect
     let rendered = s.execute("renderQueue.render", json!({"withoutMissingPlugins": true})).unwrap();
     assert_eq!(rendered["items"][0]["status"], "Done", "{rendered}");
 }
+
+#[test]
+fn a_missing_effect_counts_only_in_the_queued_comps_and_the_comps_they_nest() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = dir.path().join("saved.ecproj");
+    register();
+    let mut s = Session::new();
+    let inner = s.execute("comp.new", json!({"name": "Inner"})).unwrap()["comp"].clone();
+    let layer = s.execute("layer.newSolid", json!({})).unwrap()["layer"].clone();
+    s.execute("effect.apply", json!({"layer": layer, "effect": EFFECT})).unwrap();
+    let outer = s.execute("comp.new", json!({"name": "Outer"})).unwrap()["comp"].clone();
+    s.execute("layer.addItem", json!({"comp": outer, "item": inner})).unwrap();
+    let clean = s.execute("comp.new", json!({"name": "Clean"})).unwrap()["comp"].clone();
+    s.execute("layer.newSolid", json!({"comp": clean})).unwrap();
+    s.execute("file.saveAs", json!({"path": saved})).unwrap();
+
+    dynamic::unregister(OWNER);
+    let mut s = Session::new();
+    s.exporter = Some(Arc::new(MockExporter { log: Default::default() }));
+    s.execute("file.open", json!({"path": saved})).unwrap();
+    s.execute("renderQueue.add", json!({"comp": clean, "output": dir.path().join("clean.mp4")})).unwrap();
+    let rendered = s.execute("renderQueue.render", json!({})).unwrap();
+    assert_eq!(rendered["items"][0]["status"], "Done", "{rendered}");
+
+    s.execute("renderQueue.add", json!({"comp": outer, "output": dir.path().join("outer.mp4")})).unwrap();
+    let refused = s.execute("renderQueue.render", json!({})).unwrap_err().to_string();
+    assert!(refused.contains(EFFECT), "{refused}");
+}
