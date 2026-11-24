@@ -1017,6 +1017,7 @@ pub fn layer_source_id(id: &str) -> String {
 pub fn instantiate(spec: &EffectSpec, ids: &mut Ids, instance_name: &str, layer_size: [f64; 2]) -> PropGroup {
     let mut g = ids.group(spec.id, instance_name);
     g.kind = GroupKind::Effect { effect: spec.id.to_string() };
+    g.state_version = dynamic::get(spec.id).map_or(0, |registered| registered.effect.state_version);
     for ps in &spec.params {
         let default = default_value(ps, layer_size);
         // `group/sub/param` ids nest the parameter in twirl-down groups (Warp Stabilizer's

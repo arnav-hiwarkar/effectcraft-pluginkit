@@ -44,6 +44,7 @@ fn register(loaded: &Arc<Loaded>) {
         let (render_plugin, render_spec) = (loaded.clone(), spec.clone());
         let (plugin, gpu_spec) = (loaded.clone(), spec.clone());
         let (margin_plugin, margin_spec) = (loaded.clone(), spec.clone());
+        let (migrate_plugin, migrate_spec) = (loaded.clone(), spec.clone());
         let gpu: dynamic::GpuDyn = Box::new(move |ctx: &EffectCtx, grid: Grid| gpu_program(&plugin, &gpu_spec, ctx, grid));
         let id = effect_id(plugin_id, &spec.id);
         dynamic::register(DynamicEffect {
@@ -64,6 +65,8 @@ fn register(loaded: &Arc<Loaded>) {
             revision: loaded.revision,
             files: Some(revision_stamp(loaded.clone())),
             margin: Some(Box::new(move |ctx, scale| margin(&margin_plugin, &margin_spec, ctx, scale))),
+            state_version: spec.version,
+            migrate: Some(Box::new(move |from, values| migrate(&migrate_plugin, &migrate_spec, from, values))),
         });
         if spec.shader.is_none() && default_plan_runs_on_gpu(loaded, spec) {
             mark_gpu_planned(&id);
@@ -222,6 +225,53 @@ impl ParamValues for Placed {
             },
         }
     }
+}
+
+fn saved_to_wire(value: &Value) -> Option<Wire> {
+    Some(match value {
+        Value::Scalar(n) => Wire::Number(*n),
+        Value::Enum(n) => Wire::Number(f64::from(*n)),
+        Value::Bool(b) => Wire::Bool(*b),
+        Value::Vec2(v) => Wire::List(v.to_vec()),
+        Value::Vec3(v) => Wire::List(v.to_vec()),
+        Value::Color(c) => Wire::List(c.to_vec()),
+        Value::Str(text) => Wire::Text(text.clone()),
+        Value::Gradient(gradient) => Wire::Gradient(WireGradient {
+            colors: gradient.colors.iter().map(|(at, color)| (*at, color.map(f64::from))).collect(),
+            opacities: gradient.opacities.iter().map(|(at, opacity)| (*at, f64::from(*opacity))).collect(),
+        }),
+        _ => return None,
+    })
+}
+
+fn wire_to_saved(spec: &EffectSpec, id: &str, value: Wire) -> Option<Value> {
+    if let Some(param) = spec.params.iter().find(|param| param.id == id) {
+        return Placed::from_wire(param, value);
+    }
+    Some(match value {
+        Wire::Number(n) => Value::Scalar(n),
+        Wire::Bool(b) => Value::Bool(b),
+        Wire::List(v) if v.len() == 2 => Value::Vec2([v[0], v[1]]),
+        Wire::List(v) if v.len() == 3 => Value::Vec3([v[0], v[1], v[2]]),
+        Wire::List(v) if v.len() == 4 => Value::Color([v[0], v[1], v[2], v[3]]),
+        Wire::Text(text) => Value::Str(text),
+        Wire::Gradient(gradient) => Value::Gradient(app_gradient(&gradient)),
+        Wire::List(_) => return None,
+    })
+}
+
+fn migrate(loaded: &Loaded, spec: &EffectSpec, from: u32, values: &mut BTreeMap<String, Value>) -> Result<(), String> {
+    let sent: BTreeMap<String, Wire> = values.iter().filter_map(|(id, value)| Some((id.clone(), saved_to_wire(value)?))).collect();
+    let call = Call::Migrate { effect: spec.id.clone(), from, values: sent.clone() };
+    let migrated: BTreeMap<String, Wire> = loaded.plugin.call(&call, None, &mut Quiet).map_err(|error| error.to_string())?;
+    for id in sent.keys().filter(|id| !migrated.contains_key(*id)) {
+        values.remove(id);
+    }
+    for (id, value) in migrated.into_iter().filter(|(id, value)| sent.get(id) != Some(value)) {
+        let saved = wire_to_saved(spec, &id, value).ok_or_else(|| format!("the migration gave `{id}` a value it cannot hold"))?;
+        values.insert(id, saved);
+    }
+    Ok(())
 }
 
 fn grid_of(buf: &Buf) -> Grid {

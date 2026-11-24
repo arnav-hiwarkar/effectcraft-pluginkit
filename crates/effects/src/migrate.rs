@@ -16,7 +16,7 @@
 
 use effectcraft_keyframe::Value;
 use effectcraft_project::build::Ids;
-use effectcraft_project::{Node, ParamUi, PropGroup, Property};
+use effectcraft_project::{GroupKind, Node, ParamUi, PropGroup, Property};
 
 use crate::{EffectSpec, ParamSpec, default_value, group_name, layer_source_id, nested_group};
 
@@ -355,6 +355,60 @@ pub fn upgrade_instance(spec: &EffectSpec, g: &mut PropGroup, ids: &mut Ids, lay
         names(g);
     }
     *g != before
+}
+
+fn saved_values(g: &PropGroup, prefix: &str, values: &mut std::collections::BTreeMap<String, Value>) {
+    for child in &g.children {
+        match child {
+            Node::Prop(pr) => {
+                values.insert(format!("{prefix}{}", pr.match_id), pr.value.clone());
+            }
+            Node::Group(sub) => saved_values(sub, &format!("{prefix}{}/", sub.match_id), values),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum StateKept {
+    Newer { saved: u32, plugin: u32 },
+    Failed { saved: u32, plugin: u32, error: String },
+}
+
+pub fn upgrade_plugin_state(g: &mut PropGroup, ids: &mut Ids) -> Result<(), StateKept> {
+    let GroupKind::Effect { effect } = &g.kind else { return Ok(()) };
+    let Some(registered) = crate::dynamic::get(effect) else { return Ok(()) };
+    let (saved, plugin) = (g.state_version, registered.effect.state_version);
+    if saved > plugin {
+        return Err(StateKept::Newer { saved, plugin });
+    }
+    if saved == plugin {
+        return Ok(());
+    }
+    if let Some(migrate) = &registered.effect.migrate {
+        let mut before = std::collections::BTreeMap::new();
+        saved_values(g, "", &mut before);
+        let mut after = before.clone();
+        migrate(saved, &mut after).map_err(|error| StateKept::Failed { saved, plugin, error })?;
+        let mut gone: Vec<Property> = before.keys().filter(|id| !after.contains_key(*id)).filter_map(|id| take_at(g, id)).collect();
+        for (id, value) in after.into_iter().filter(|(id, value)| before.get(id) != Some(value)) {
+            if let Some(pr) = prop_at(g, &id) {
+                pr.value = value;
+                continue;
+            }
+            let (path, leaf) = id.rsplit_once('/').map_or((None, id.as_str()), |(p, l)| (Some(p), l));
+            let mut pr = match gone.iter().position(|pr| pr.value == value) {
+                Some(i) => gone.swap_remove(i),
+                None => Property::new(ids.alloc(), leaf, leaf, value),
+            };
+            pr.match_id = leaf.to_string();
+            match path.and_then(|path| nested_group(g, ids, path)) {
+                Some(sub) => sub.children.push(pr.into()),
+                None => g.children.push(pr.into()),
+            }
+        }
+    }
+    g.state_version = plugin;
+    Ok(())
 }
 
 /// Make the channel-selection parameters of the saved instance `g` of `spec` static

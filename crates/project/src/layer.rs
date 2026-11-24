@@ -257,8 +257,14 @@ fn reads_own_params_elsewhen(g: &PropGroup, unit_stretch: bool) -> bool {
 /// `a` and `b` have the same header: every field but the children.
 fn same_head(a: &PropGroup, b: &PropGroup) -> bool {
     // Every field (no `..`: a new field must be considered here).
-    let PropGroup { uid, match_id, name, kind, enabled, label, children: _ } = a;
-    *uid == b.uid && *match_id == b.match_id && *name == b.name && *kind == b.kind && *enabled == b.enabled && *label == b.label
+    let PropGroup { uid, match_id, name, kind, enabled, label, children: _, state_version } = a;
+    *uid == b.uid
+        && *match_id == b.match_id
+        && *name == b.name
+        && *kind == b.kind
+        && *enabled == b.enabled
+        && *label == b.label
+        && *state_version == b.state_version
 }
 
 /// Groups nested deeper than this in a layer's property tree count as changed everywhere.

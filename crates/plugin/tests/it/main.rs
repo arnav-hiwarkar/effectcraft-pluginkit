@@ -8,6 +8,7 @@ mod media;
 mod panels;
 mod params;
 mod render;
+mod state;
 mod trust;
 mod viewer;
 

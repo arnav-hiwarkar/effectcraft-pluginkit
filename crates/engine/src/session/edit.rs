@@ -223,7 +223,7 @@ impl Session {
         self.drop_tasks();
         self.script_ui.project_epoch = self.script_ui.project_epoch.wrapping_add(1);
         p.fix_next_id();
-        let lost = upgrade_effects(&mut p);
+        let Upgraded { lost, kept } = upgrade_effects(&mut p);
         // Let go of what the closed project's footage and proxies decoded (frames, decoders,
         // models), and of what the new project's files decoded under an earlier project: the
         // media layer keys them by path, and the files may have changed since (#1070).
@@ -243,6 +243,10 @@ impl Session {
         self.mark_saved();
         // (channel selection can't be animated, as in After Effects: a document that animated it
         // keeps its first value; said once, not as an error)
+        for kept in &kept {
+            log::warn!("{kept}");
+            self.toast(kept.clone());
+        }
         if !lost.is_empty() {
             log::warn!("channel selection is static: keyframes or expressions dropped on {}", lost.join("; "));
             self.toast(format!("Channel selection can't be animated: kept the first value of {}", lost.join(", ")));
@@ -266,9 +270,9 @@ impl Session {
 /// current schema. Channel-selection parameters are made static
 /// ([`effectcraft_effects::migrate::static_channel_params`]); returns what lost its animation
 /// (`Layer: Effect: Parameter`).
-#[must_use = "what lost its animation is reported to the user"]
-pub fn upgrade_effects(p: &mut Project) -> Vec<String> {
-    let mut lost = vec![];
+#[must_use = "what lost its animation or kept its state is reported to the user"]
+pub fn upgrade_effects(p: &mut Project) -> Upgraded {
+    let mut upgraded = Upgraded::default();
     let to_effect_space = p.schema < effectcraft_project::SCHEMA_EFFECT_SPACE;
     // Effect bounds per layer: (size, top-left in layer coordinates).
     let mut bounds = std::collections::HashMap::new();
@@ -298,12 +302,16 @@ pub fn upgrade_effects(p: &mut Project) -> Vec<String> {
                 let effectcraft_project::Node::Group(g) = n else { continue };
                 let effectcraft_project::GroupKind::Effect { effect } = &g.kind else { continue };
                 if let Some(spec) = effectcraft_effects::find(effect) {
+                    if let Err(state) = effectcraft_effects::migrate::upgrade_plugin_state(g, &mut effectcraft_project::build::Ids(&mut next)) {
+                        upgraded.kept.push(kept_state(&l.name, &g.name, state));
+                        continue;
+                    }
                     effectcraft_effects::migrate::upgrade_instance(spec, g, &mut effectcraft_project::build::Ids(&mut next), size);
                     if to_effect_space {
                         effectcraft_effects::migrate::to_effect_space(spec, g, size, d, &clone_d);
                     }
                     for name in effectcraft_effects::migrate::static_channel_params(spec, g) {
-                        lost.push(format!("{}: {}: {name}", l.name, g.name));
+                        upgraded.lost.push(format!("{}: {}: {name}", l.name, g.name));
                     }
                 }
             }
@@ -311,5 +319,22 @@ pub fn upgrade_effects(p: &mut Project) -> Vec<String> {
     }
     p.next_id = next;
     p.schema = effectcraft_project::SCHEMA_VERSION;
-    lost
+    upgraded
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct Upgraded {
+    pub lost: Vec<String>,
+    pub kept: Vec<String>,
+}
+
+fn kept_state(layer: &str, effect: &str, state: effectcraft_effects::migrate::StateKept) -> String {
+    match state {
+        effectcraft_effects::migrate::StateKept::Newer { saved, plugin } => format!(
+            "{layer}: {effect} was saved by a newer version of its plug-in (state version {saved}, the installed plug-in has {plugin}); its settings are kept unchanged and saved as they were"
+        ),
+        effectcraft_effects::migrate::StateKept::Failed { saved, plugin, error } => {
+            format!("{layer}: {effect}: its plug-in could not update its settings from state version {saved} to {plugin} ({error}); they are kept unchanged")
+        }
+    }
 }
