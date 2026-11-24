@@ -1,4 +1,4 @@
-//! Workspace automation: `cargo xtask <layers|assets|pdf-deps|lock-patches|aep-corpus|wasm|web|ico|ci>`.
+//! Workspace automation: `cargo xtask <layers|assets|pdf-deps|lock-patches|kit-rev <SHA|--check>|aep-corpus|wasm|web|ico|ci>`.
 //!
 //! - `layers`: enforces the dependency layering of `docs/architecture.md` §1 (downward-only edges,
 //!   listed same-layer edges, no UI/OS crates below L5).
@@ -23,6 +23,7 @@ mod aep_corpus;
 mod affected;
 mod bench;
 mod ico;
+mod kit_rev;
 mod lock_patches;
 mod pdf_deps;
 mod plugin;
@@ -599,6 +600,7 @@ fn main() -> ExitCode {
         "assets" => assets(),
         "pdf-deps" => pdf_deps::run(&root()),
         "lock-patches" => lock_patches::run(&root()),
+        "kit-rev" => kit_rev::run(&root(), &std::env::args().skip(2).collect::<Vec<_>>()),
         "aep-corpus" => aep_corpus::run(&root(), &std::env::args().skip(2).collect::<Vec<_>>()),
         "ci" => {
             let rest: Vec<String> = std::env::args().skip(2).collect();
