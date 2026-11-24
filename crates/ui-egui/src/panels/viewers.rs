@@ -140,6 +140,84 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: u32, rect: Rect) {
     }
 }
 
+/// The texture of the locked viewer's pane (Split with New Locked Viewer).
+pub const LOCKED_PANE: u32 = u32::MAX;
+
+/// The texture of extra view `i` of a multi-view layout.
+pub(crate) fn aux_pane(i: usize) -> u32 {
+    LOCKED_PANE - 1 - i as u32
+}
+
+/// A side pane of the Composition viewer (a view of a multi-view layout, the locked viewer): its
+/// frame of `comp` at the comp's time, rendered with `opts` by the frame workers behind the active
+/// viewer's frame, and drawn from texture `id` as a passive viewer's. Returns the texture and the
+/// frame's place in it once a frame of `comp` is ready.
+pub(crate) fn pane(
+    app: &mut EffectcraftApp,
+    ctx: &egui::Context,
+    id: u32,
+    comp: ItemId,
+    opts: effectcraft_engine::render::RenderOpts,
+    dc: Option<effectcraft_engine::viewer::DisplayColor>,
+) -> Option<(egui::TextureId, Rect)> {
+    let rate = app.session.project.comp(comp)?.frame_rate;
+    let frame = rate.frame_at(app.session.time_of(comp));
+    let cpu = cfg!(target_arch = "wasm32") && !passive_pass(super::viewer_tools::rgba8_encoding(app), dc.as_ref()).is_identity();
+    let opts = if cpu { effectcraft_engine::render::RenderOpts { backend: effectcraft_engine::render::Backend::Cpu, ..opts } } else { opts };
+    let key = app.pane_key(comp, frame, &opts);
+    let dkey = dc.as_ref().map_or(0, |_| display_hash(&super::viewer_tools::display_key(app, true)));
+    let shown = app.passive_tex.get(&id).map(|(k, _)| *k);
+    if let Some((key, img)) = app.frames.get_for_viewer(&key, shown.as_ref()).or_else(|| Some((key, app.frames.take_pane(id, &key)?))) {
+        set_texture(app, ctx, id, key, img, dc, dkey);
+    }
+    let shown = app.passive_tex.get(&id).map(|(k, _)| *k);
+    if shown != Some(key) || ctx.data(|d| d.get_temp::<u64>(display_id(id))) != Some(dkey) {
+        app.pane_demands.push((id, key, comp, rate.tick_of(frame), opts));
+    }
+    let tex = app
+        .passive_tex
+        .get(&id)
+        .filter(|(k, _)| k.comp == key.comp && k.view == key.view && k.opts == key.opts)
+        .and_then(|(_, tex)| Some((tex.id()?, tex.uv())));
+    if tex.is_none() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+    }
+    tex
+}
+
+/// The texture viewer or pane `id` draws, once it has a frame.
+pub fn texture(app: &EffectcraftApp, id: u32) -> Option<egui::TextureId> {
+    app.passive_tex.get(&id)?.1.id()
+}
+
+/// Queue the frames the side panes asked for this UI frame, behind the active viewer's frame.
+pub(crate) fn request_panes(app: &mut EffectcraftApp) {
+    let src = app.render_source();
+    for (id, key, comp, t, opts) in std::mem::take(&mut app.pane_demands) {
+        app.frames.request_pane(id, &src, key, comp, t, opts);
+    }
+}
+
+/// Give back texture `id` of a viewer or pane no longer shown.
+pub(crate) fn release(app: &mut EffectcraftApp, id: u32) {
+    app.frames.release_pane(id);
+    let tex = app.passive_tex.remove(&id).map(|(_, t)| t);
+    free(app, tex);
+}
+
+/// Give back the side panes' textures (the locked viewer, the extra views of a layout).
+pub(crate) fn release_panes(app: &mut EffectcraftApp) {
+    release(app, LOCKED_PANE);
+    for i in 0..3 {
+        release(app, aux_pane(i));
+    }
+}
+
+/// Where viewer or pane `id` keeps the display conversion its texture was made with.
+fn display_id(id: u32) -> egui::Id {
+    egui::Id::unique(("passive-viewer-display", id))
+}
+
 /// Keep the frame viewer `id` shows in its texture.
 pub(crate) fn set_texture(
     app: &mut EffectcraftApp,
@@ -150,7 +228,7 @@ pub(crate) fn set_texture(
     dc: Option<effectcraft_engine::viewer::DisplayColor>,
     dkey: u64,
 ) {
-    let dc_id = egui::Id::unique(("passive-viewer-display", id));
+    let dc_id = display_id(id);
     let same_display = ctx.data(|d| d.get_temp::<u64>(dc_id)) == Some(dkey);
     if let Some((k, _)) = app.passive_tex.get_mut(&id)
         && *k == key
@@ -202,13 +280,20 @@ pub(crate) fn set_texture(
             let Some(rs) = &app.wgpu else { return };
             let view = f.texture.create_view(&Default::default());
             let sampler = || super::viewer::zoom_sampler(smooth);
+            let reuse = match old {
+                Some((_, PassiveTexture::Gpu(tid, _))) => Some(tid),
+                old => {
+                    free(app, old.map(|(_, t)| t));
+                    None
+                }
+            };
             let mut ren = rs.renderer.write();
-            let tid = match old {
-                Some((_, PassiveTexture::Gpu(tid, _))) => {
+            let tid = match reuse {
+                Some(tid) => {
                     ren.update_egui_texture_from_wgpu_texture_with_sampler_options(&rs.device, &view, sampler(), tid);
                     tid
                 }
-                _ => ren.register_native_texture_with_sampler_options(&rs.device, &view, sampler()),
+                None => ren.register_native_texture_with_sampler_options(&rs.device, &view, sampler()),
             };
             PassiveTexture::Gpu(tid, f)
         }
@@ -352,8 +437,10 @@ fn add_viewer(app: &mut EffectcraftApp, near: u32) -> u32 {
 /// active viewer another open one takes over.
 pub fn on_close(app: &mut EffectcraftApp, p: PanelKind) {
     let Some(id) = id_of(p) else { return };
-    let tex = app.passive_tex.remove(&id).map(|(_, t)| t);
-    free(app, tex);
+    release(app, id);
+    if app.ui.active_viewer == id {
+        release_panes(app);
+    }
     if id != 0 {
         app.ui.viewers.remove(&id);
         app.ui.locked_tabs.remove(&p.id());

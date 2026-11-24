@@ -11,7 +11,11 @@ pub(super) fn aux_views(
     bg: Color32,
 ) -> Rect {
     let n = app.session.state.view_layout;
-    if n < 2 {
+    let panes = if n < 2 { 0 } else { n as usize - 1 };
+    for i in panes..3 {
+        crate::panels::viewers::release(app, crate::panels::viewers::aux_pane(i));
+    }
+    if panes == 0 {
         return full;
     }
     let gap = 2.0;
@@ -66,32 +70,12 @@ pub(super) fn aux_views(
         // view camera.
         let through_active = v == View3D::ActiveCamera;
         let cam = if through_active { three_d::active_camera(&ectx) } else { views.cam(v, comp.width as f64, comp.height as f64).state() };
-        let key = {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            (app.session.revision, cid.0, t.0, i, scale.to_bits(), format!("{cam:?}")).hash(&mut h);
-            h.finish()
-        };
-        let id = egui::Id::unique(("viewer-aux", i));
-        let cached: Option<(u64, egui::TextureHandle)> = ctx.data(|d| d.get_temp(id));
-        let tex = match cached {
-            Some((k, tex)) if k == key => tex,
-            _ => {
-                let opts = effectcraft_engine::render::RenderOpts {
-                    scale,
-                    view: (comp.has_3d() && !through_active).then_some(cam),
-                    draft: true,
-                    ..Default::default()
-                };
-                let img = app.session.render(cid, t, opts);
-                let tex = crate::frames::load_fitted(&ctx, format!("viewer-aux-{i}"), crate::frames::to_color_image(&img), egui::TextureOptions::LINEAR);
-                ctx.data_mut(|d| d.insert_temp(id, (key, tex.clone())));
-                tex
-            }
-        };
+        let opts = pane_opts(app, scale, (comp.has_3d() && !through_active).then_some(cam), true);
         let b = comp.background;
         p.rect_filled(cr, 0.0, Color32::from_rgb((b[0] * 255.0) as u8, (b[1] * 255.0) as u8, (b[2] * 255.0) as u8));
-        p.image(tex.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        if let Some((tex, uv)) = crate::panels::viewers::pane(app, &ctx, crate::panels::viewers::aux_pane(i), cid, opts, None) {
+            p.image(tex, cr, uv, Color32::WHITE);
+        }
         p.rect_stroke(cr, 0.0, Stroke::new(1.0, Color32::from_black_alpha(160)), StrokeKind::Outside);
         if share && app.ui.viewer.safe_margins {
             for k in [0.9, 0.8] {
@@ -152,8 +136,10 @@ fn pane_selector(app: &mut EffectcraftApp, ui: &mut egui::Ui, pane: usize, area:
 /// View ▸ Split with New Locked Viewer: the locked viewer on the left of the Composition panel
 /// (its comp and 3D view stay put whatever comp is active). Returns the main viewer's rectangle.
 pub(super) fn locked_pane(app: &mut EffectcraftApp, ui: &mut egui::Ui, full: Rect, bg: Color32) -> Rect {
-    let Some(lv) = app.session.state.locked_viewer else { return full };
-    let Some(comp) = app.session.project.comp_arc(lv.comp) else { return full };
+    let Some((lv, comp)) = app.session.state.locked_viewer.and_then(|lv| Some((lv, app.session.project.comp_arc(lv.comp)?))) else {
+        crate::panels::viewers::release(app, crate::panels::viewers::LOCKED_PANE);
+        return full;
+    };
     let name = app.session.project.item(lv.comp).map(|i| i.name.clone()).unwrap_or_default();
     let gap = 2.0;
     let mid = full.center().x;
@@ -167,39 +153,14 @@ pub(super) fn locked_pane(app: &mut EffectcraftApp, ui: &mut egui::Ui, full: Rec
     let fit = ((r.width() - 20.0) / cw).min((r.height() - 44.0) / ch).max(0.01);
     let cr = Rect::from_center_size(r.center(), vec2(cw * fit, ch * fit));
     let scale = (fit * ctx.pixels_per_point()).min(1.0) as f64;
-    let t = app.session.time_of(lv.comp);
     let cam = (lv.view != View3D::ActiveCamera && comp.has_3d())
         .then(|| app.session.state.views3d.get(&lv.comp).cloned().unwrap_or_default().cam(lv.view, comp.width as f64, comp.height as f64).state());
     let dc = effectcraft_engine::viewer::DisplayColor::of(&app.session);
-    // The display conversion's inputs, keyed as in the main viewer's texture caches.
-    let dc_key = format!("{cam:?}{}", crate::panels::viewer_tools::display_key(app, dc.is_some()));
-    let key = {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        (app.session.revision, lv.comp.0, t.0, scale.to_bits(), dc_key).hash(&mut h);
-        h.finish()
-    };
-    let id = egui::Id::unique("viewer-locked");
-    let cached: Option<(u64, egui::TextureHandle)> = ctx.data(|d| d.get_temp(id));
-    let tex = match cached {
-        Some((k, tex)) if k == key => tex,
-        _ => {
-            let opts = effectcraft_engine::render::RenderOpts { scale, view: cam, ..Default::default() };
-            let img = app.session.render(lv.comp, t, opts);
-            let mut ci = crate::frames::to_color_image(&img);
-            if let Some(dc) = dc {
-                let mut px: Vec<[u8; 4]> = ci.pixels.iter().map(|c| c.to_array()).collect();
-                dc.apply(&mut px);
-                ci = egui::ColorImage::new(ci.size, px.into_iter().map(|a| Color32::from_rgba_premultiplied(a[0], a[1], a[2], a[3])).collect());
-            }
-            let tex = crate::frames::load_fitted(&ctx, "viewer-locked", ci, egui::TextureOptions::LINEAR);
-            ctx.data_mut(|d| d.insert_temp(id, (key, tex.clone())));
-            tex
-        }
-    };
     let b = comp.background;
     p.rect_filled(cr, 0.0, Color32::from_rgb((b[0] * 255.0) as u8, (b[1] * 255.0) as u8, (b[2] * 255.0) as u8));
-    p.image(tex.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    if let Some((tex, uv)) = crate::panels::viewers::pane(app, &ctx, crate::panels::viewers::LOCKED_PANE, lv.comp, pane_opts(app, scale, cam, false), dc) {
+        p.image(tex, cr, uv, Color32::WHITE);
+    }
     p.rect_stroke(cr, 0.0, Stroke::new(1.0, Color32::from_black_alpha(160)), StrokeKind::Outside);
     let label =
         crate::i18n::tr_args("Locked: {} — {}", &[&name, &(if comp.has_3d() { super::view3d_label(lv.view) } else { crate::i18n::tr("Active Camera") })]);
@@ -214,6 +175,19 @@ pub(super) fn locked_pane(app: &mut EffectcraftApp, ui: &mut egui::Ui, full: Rec
         let _ = app.session.execute("view.closeLockedViewer", serde_json::json!({}));
     }
     main
+}
+
+/// The render options of a side pane at `scale` (snapped to the frame key's thousandths): as
+/// `Session::render` gave them, CPU or GPU as the frame workers pick.
+fn pane_opts(app: &EffectcraftApp, scale: f64, view: Option<three_d::CameraState>, draft: bool) -> effectcraft_engine::render::RenderOpts {
+    let scale = ((scale * 1000.0).round() / 1000.0).max(0.001);
+    app.session.render_opts(effectcraft_engine::render::RenderOpts {
+        scale,
+        view,
+        draft,
+        backend: effectcraft_engine::render::Backend::Auto,
+        ..Default::default()
+    })
 }
 
 pub(crate) fn checker(p: &egui::Painter, r: Rect) {

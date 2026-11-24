@@ -77,6 +77,7 @@ impl EffectcraftApp {
             error_toasts: Default::default(),
             viewer_tex: None,
             passive_tex: std::collections::HashMap::new(),
+            pane_demands: Vec::new(),
             viewer_native: None,
             viewer_shown: None,
             crypto_probe_busy: Default::default(),

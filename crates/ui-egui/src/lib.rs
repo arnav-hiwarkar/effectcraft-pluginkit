@@ -405,6 +405,8 @@ pub struct EffectcraftApp {
     pub(crate) viewer_tex: Option<(egui::TextureHandle, FrameKey, usize)>,
     /// The frames the other (passive) Composition viewers show, by viewer id.
     pub(crate) passive_tex: std::collections::HashMap<u32, (FrameKey, panels::viewers::PassiveTexture)>,
+    /// The frames the side panes asked for this UI frame, queued behind the viewer's frame.
+    pub(crate) pane_demands: Vec<(u32, FrameKey, effectcraft_engine::project::ItemId, effectcraft_engine::time::Tick, effectcraft_engine::render::RenderOpts)>,
     /// The last GPU frame shown: its egui texture id (registered with egui-wgpu), key and texture.
     pub(crate) viewer_native: Option<(egui::TextureId, FrameKey, Arc<effectcraft_gpu::DisplayFrame>)>,
     /// The texture the viewer draws and its frame key (CPU or GPU frame).

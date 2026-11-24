@@ -3699,3 +3699,38 @@ fn an_effect_found_by_a_short_route_is_not_hidden_by_a_deep_one() {
     nest(&mut s, root, fx);
     assert!(comp_has_effects(&s.project, root));
 }
+
+/// A side pane's new frame takes the place of the one it queued before, and a pane that goes
+/// away calls its frame off.
+#[test]
+fn a_pane_s_new_frame_replaces_its_queued_one() {
+    let mut f = Frames::default();
+    f.set_remote(Some(Arc::new(Idle)));
+    let src = idle_source();
+    for frame in 0..3 {
+        f.request_pane(7, &src, key(1, frame, 0), ItemId(1), Tick::ZERO, RenderOpts::default());
+    }
+    let frames: Vec<i64> = f.queued().iter().map(|(k, _)| k.frame).collect();
+    assert_eq!(frames, [2]);
+    assert_eq!(f.inflight(), 1);
+    f.release_pane(7);
+    assert!(f.queued().is_empty());
+    assert_eq!(f.inflight(), 0);
+}
+
+/// A full cache evicts a pane's frame of another scale as it comes in: the pane still gets it.
+#[test]
+fn a_pane_gets_its_frame_when_the_cache_evicts_it() {
+    let mut f = Frames::default();
+    f.set_remote(Some(Arc::new(Idle)));
+    f.set_budget(2 * 16);
+    for frame in 0..2 {
+        insert(&f, key(1, frame, 0));
+    }
+    f.cache.lock().unwrap().scale = Some(1000);
+    let pane = FrameKey { scale: 500, ..key(1, 5, 0) };
+    f.request_pane(3, &idle_source(), pane, ItemId(1), Tick::ZERO, RenderOpts::default());
+    f.worker().finish_key(pane, false, img(), None, None, web_time::Instant::now());
+    assert!(!f.is_cached(&pane));
+    assert!(f.take_pane(3, &pane).is_some());
+}
