@@ -173,7 +173,7 @@ fn rgb_curves(
 ) {
     let prefix = format!("effectControls.effect.{}.lumetri.rgbCurves", root.uid);
     let curves: Vec<String> = RGB_CURVES.iter().map(|(id, _)| str_value(layer, ectx, g, id)).collect();
-    if let Some((ch, text, merge)) = curve_channels(app, ui, p, r, &prefix, g.uid, &curves) {
+    if let Some(CurveEdit::Set(ch, text, merge)) = curve_channels(app, ui, p, r, &prefix, g.uid, &curves, false) {
         set_str(actions, layer, g, RGB_CURVES[ch].0, text, merge);
     }
 }
@@ -200,10 +200,19 @@ pub fn curve_param(
     };
     let mut curves: Vec<String> = text.split('|').map(|curve| curve.trim().to_string()).collect();
     curves.resize(if channels { RGB_CURVES.len() } else { 1 }, fw::CurvePoints::identity().format());
-    if let Some((ch, edited, merge)) = curve_channels(app, ui, p, r, &format!("effectControls.prop.{}.curve", prop.uid), prop.uid, &curves) {
-        curves[ch] = edited;
-        actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": prop.uid, "value": curves.join(" | "), "merge": merge})));
+    match curve_channels(app, ui, p, r, &format!("effectControls.prop.{}.curve", prop.uid), prop.uid, &curves, true) {
+        Some(CurveEdit::Set(ch, edited, merge)) => {
+            curves[ch] = edited;
+            actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": prop.uid, "value": curves.join(" | "), "merge": merge})));
+        }
+        Some(CurveEdit::Declared) => actions.push(("prop.reset".into(), json!({"layer": layer.id.0, "prop": prop.uid}))),
+        None => {}
     }
+}
+
+enum CurveEdit {
+    Set(usize, String, Option<String>),
+    Declared,
 }
 
 fn curve_channels(
@@ -214,7 +223,8 @@ fn curve_channels(
     prefix: &str,
     memo: u64,
     curves: &[String],
-) -> Option<(usize, String, Option<String>)> {
+    reset_to_declared: bool,
+) -> Option<CurveEdit> {
     let t = app.tokens;
     let ch = app.ui.fx_curve_channel.get(&memo).copied().unwrap_or(0).min(curves.len().saturating_sub(1));
     let x0 = r.min.x + 38.0;
@@ -230,7 +240,7 @@ fn curve_channels(
     let size = graph_size(r.width());
     let mut edited = None;
     if reset_link(app, ui, p, Rect::from_min_size(pos2(x0 + size - 44.0, cy - 9.0), vec2(44.0, 18.0)), &format!("{prefix}.reset")) {
-        edited = Some((ch, fw::CurvePoints::identity().format(), None));
+        edited = Some(if reset_to_declared { CurveEdit::Declared } else { CurveEdit::Set(ch, fw::CurvePoints::identity().format(), None) });
     }
     let gr = Rect::from_min_size(pos2(x0, r.min.y + 30.0), vec2(size, size));
     let gid = egui::Id::unique((prefix, ch));
@@ -239,7 +249,7 @@ fn curve_channels(
     register_points(app, prefix, gr, &cur.0);
     let key = gesture_key(ui, gid, resp.drag_started() || resp.clicked());
     if let Some(np) = edit.changed {
-        edited = Some((ch, np.format(), Some(key)));
+        edited = Some(CurveEdit::Set(ch, np.format(), Some(key)));
     }
     p.text(pos2(gr.min.x, gr.max.y + 11.0), Align2::LEFT_CENTER, tr("Click adds a point; drag one off to remove"), Tokens::ui(10.5), t.text_faint);
     edited

@@ -302,6 +302,8 @@ fn composition_tabs_and_scrolling_preview() {
     assert!(h.state().ui.dock.is_docked(PanelKind::Timeline));
 }
 
+const DECLARED_CURVES: &str = "0,0 1,1 | 0,0 0.5,0.8 1,1 | 0,0 1,1 | 0,0 0.2,0.3 1,1";
+
 #[test]
 fn a_plugin_curve_parameter_edits_one_channel_in_the_curves_graph_and_undoes() {
     use effectcraft_engine::effects::dynamic::{self, DynamicEffect, DynamicParam};
@@ -314,7 +316,7 @@ fn a_plugin_curve_parameter_edits_one_channel_in_the_curves_graph_and_undoes() {
         params: vec![DynamicParam {
             id: "grade".into(),
             name: "Grade".into(),
-            default: KV::Str("0,0 1,1 | 0,0 1,1 | 0,0 1,1 | 0,0 1,1".into()),
+            default: KV::Str(DECLARED_CURVES.into()),
             ui: ParamUi::Curve { channels: true },
         }],
         render: Box::new(|ctx, buf| ctx.unchanged(buf)),
@@ -339,8 +341,10 @@ fn a_plugin_curve_parameter_edits_one_channel_in_the_curves_graph_and_undoes() {
     drag(&mut h, top, at(gr, 0.98, 0.5));
     let edited = s(value(&h, l, fx, "grade"));
     let channels: Vec<&str> = edited.split(" | ").collect();
-    assert_eq!((channels.len(), channels[0], channels[2], channels[3]), (4, "0,0 1,1", "0,0 1,1", "0,0 1,1"), "{edited}");
-    assert_ne!(channels[1], "0,0 1,1", "{edited}");
+    assert_eq!((channels.len(), channels[0], channels[2], channels[3]), (4, "0,0 1,1", "0,0 1,1", "0,0 0.2,0.3 1,1"), "{edited}");
+    assert_ne!(channels[1], "0,0 0.5,0.8 1,1", "{edited}");
+    click_id(&mut h, &format!("{pre}.reset"));
+    assert_eq!(s(value(&h, l, fx, "grade")), DECLARED_CURVES);
     undo(&mut h);
-    assert_eq!(s(value(&h, l, fx, "grade")), "0,0 1,1 | 0,0 1,1 | 0,0 1,1 | 0,0 1,1");
+    assert_eq!(s(value(&h, l, fx, "grade")), edited);
 }
