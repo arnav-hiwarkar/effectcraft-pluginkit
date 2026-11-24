@@ -140,3 +140,24 @@ fn a_missing_effect_counts_only_in_the_queued_comps_and_the_comps_they_nest() {
     let refused = s.execute("renderQueue.render", json!({})).unwrap_err().to_string();
     assert!(refused.contains(EFFECT), "{refused}");
 }
+
+#[test]
+fn a_missing_effect_on_a_layer_whose_fx_switch_is_off_does_not_block_export() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = dir.path().join("saved.ecproj");
+    let _registered = register();
+    let mut s = Session::new();
+    let comp = s.execute("comp.new", json!({"name": "Main"})).unwrap()["comp"].clone();
+    let layer = s.execute("layer.newSolid", json!({})).unwrap()["layer"].clone();
+    s.execute("effect.apply", json!({"layer": layer, "effect": EFFECT})).unwrap();
+    s.execute("layer.setSwitch", json!({"comp": comp, "layers": [layer], "switch": "fx", "value": false})).unwrap();
+    s.execute("file.saveAs", json!({"path": saved})).unwrap();
+
+    dynamic::unregister(OWNER);
+    let mut s = Session::new();
+    s.exporter = Some(Arc::new(MockExporter { log: Default::default() }));
+    s.execute("file.open", json!({"path": saved})).unwrap();
+    s.execute("renderQueue.add", json!({"comp": comp, "output": dir.path().join("out.mp4")})).unwrap();
+    let rendered = s.execute("renderQueue.render", json!({})).unwrap();
+    assert_eq!(rendered["items"][0]["status"], "Done", "{rendered}");
+}

@@ -75,7 +75,13 @@ fn missing_effects(p: &Project) -> BTreeMap<&str, Option<String>> {
         Some(reached)
     });
     let rendered = |id: &ItemId| reached.as_ref().is_none_or(|reached| reached.contains(id));
-    let groups = p.comps().filter(|(id, _)| rendered(id)).flat_map(|(_, c)| c.layers.iter()).filter_map(|l| l.effects()).flat_map(|fx| &fx.children);
+    let groups = p
+        .comps()
+        .filter(|(id, _)| rendered(id))
+        .flat_map(|(_, c)| c.layers.iter())
+        .filter(|l| l.switches.effects)
+        .filter_map(|l| l.effects())
+        .flat_map(|fx| &fx.children);
     groups
         .filter_map(|n| match n {
             Node::Group(g) if g.enabled => match &g.kind {

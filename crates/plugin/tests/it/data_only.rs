@@ -109,3 +109,41 @@ fn a_malformed_data_only_bundle_is_refused_with_the_reason_and_installs_nothing(
     assert!(cube.starts_with("LUT `broken.cube` is not a valid .cube file: "), "{cube}");
     assert_eq!(refused("nothing", &[], json!([])), "plugin.json field `entry` is empty");
 }
+
+#[test]
+fn a_preset_may_name_only_files_inside_its_own_bundle() {
+    let app = super::app("test.data-preset-files", &[]);
+    let lut = |value: &str| json!([{"effect": "ec.utility.applylut", "name": "Look", "values": {"lut": value}}]);
+    let outside = tempfile::tempdir().unwrap();
+    let elsewhere = outside.path().join("other.cube");
+    std::fs::write(&elsewhere, SWAP_RED_AND_BLUE).unwrap();
+    for (name, value) in [("absolute", elsewhere.to_string_lossy().into_owned()), ("parent", "../other.cube".into()), ("missing", "gone.cube".into())] {
+        let (_source, dir) = pack(&format!("test.preset-file-{name}"), &[("swap.cube", SWAP_RED_AND_BLUE)], lut(&value));
+        let error = app.plugins.install(&dir).unwrap_err();
+        assert!(error.starts_with("preset `Look`: `lut`: "), "{name}: {error}");
+    }
+    let (_source, dir) = pack("test.preset-file-inside", &[("swap.cube", SWAP_RED_AND_BLUE)], lut("swap.cube"));
+    app.plugins.install(&dir).unwrap();
+    let presets = effectcraft_engine::effects::presets("ec.utility.applylut");
+    let (_, values) = presets.iter().find(|(name, _)| name == "Look").unwrap();
+    let path = std::fs::canonicalize(
+        effectcraft_plugin::Plugins::list(app.plugins).iter().find(|info| info.id == "test.preset-file-inside").unwrap().path.join("swap.cube"),
+    )
+    .unwrap();
+    assert_eq!(values[0].1, effectcraft_engine::keyframe::Value::Str(path.to_string_lossy().into_owned()));
+    app.plugins.uninstall("test.preset-file-inside").unwrap();
+}
+
+#[test]
+fn reload_removes_a_pack_deleted_from_disk_from_the_menus() {
+    let id = "test.data-removed";
+    let app = super::app("test.data-removed-host", &[]);
+    let (_source, dir) =
+        pack(id, &[("swap.cube", SWAP_RED_AND_BLUE)], json!([{"effect": "ec.color.brightnesscontrast", "name": "Gone", "values": {"brightness": 1.0}}]));
+    let info = app.plugins.install(&dir).unwrap();
+    assert!(effectcraft_engine::effects::presets("ec.color.brightnesscontrast").iter().any(|(name, _)| name == "Gone"));
+    std::fs::remove_dir_all(&info.path).unwrap();
+    app.plugins.reload();
+    assert!(effectcraft_engine::effects::presets("ec.color.brightnesscontrast").iter().all(|(name, _)| name != "Gone"));
+    assert!(contributed::luts().iter().all(|lut| lut.owner != id));
+}
