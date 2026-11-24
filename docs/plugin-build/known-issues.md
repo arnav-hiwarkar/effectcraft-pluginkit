@@ -132,3 +132,4 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **An effect that reads the scene at other times is not cached in a comp with any expression.** Its cache key covers every layer's keyframes but cannot cover expression results (`cache::hash_scene`).
 - **A plugin rebuilt with a group name that is not an id reads the derived id.** `.group("Edge Options", …)` stores its parameters under `edge_options/…`; code that still reads `"Edge Options/…"` gets nothing for them. Saved projects migrate.
 - **A gradient edited past 64 stops reaches the plugin as its first 64.** The editor allows more; the adapter cuts without a warning (`crates/plugin-sdk/src/gradient.rs`, `limited`).
+- **A plugin curve's Reset button sets a straight line, not the curve the plugin declared.** The editor is shared with Lumetri, whose default is the straight line (`crates/ui-egui/src/panels/effect_controls`).
