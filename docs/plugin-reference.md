@@ -74,7 +74,7 @@ pooled instance, so values stored outside `cx` are not shared between calls.
 |---|---|
 | `.param(Param)` | Adds a parameter. |
 | `.params([Param, …])` | Adds parameters, such as the list `params!` makes. |
-| `.group(name, [Param, …])` | Adds parameters under a twirl-down. Their ids become `name/<id>`. |
+| `.group(name, [Param, …])` | Adds parameters under a twirl-down that shows `name`. Their ids become `<group id>/<id>`, see [Parameter ids](#parameter-ids). |
 | `.time_dependent()` | The output changes with `cx.time` when no parameter is animated. |
 | `.reads_other_frames()` | The effect calls `cx.source_at` or `cx.layer_at`. |
 | `.reads_scene()` | The effect calls `cx.scene`. |
@@ -87,6 +87,19 @@ The render cache uses the four declarations. An effect that omits one shows stal
 layer's cache key already holds every keyframe and expression of the effect, not only the values at
 the current time (`hash_debug(&mut h, c)` in `crates/render/src/cache.rs`, `key_any`), so a keyframe
 moved at frame 12 also redraws frame 40.
+
+### Parameter ids
+
+A parameter id is up to 8 parts joined by `/`, at most 256 bytes. Each part is letters, digits, `-` and `_`;
+the parts before the last name twirl-down groups. An effect has at most 512 parameters, each with its own
+id. A plugin that breaks one of these does not load, and the message names the effect, the id and the rule.
+
+`.group(name, …)` uses `name` as the group id when it is a valid part (`"Glow"` gives `Glow/radius`).
+Otherwise it derives one, lower case, with runs of other characters turned into one `_`: `"Fine Tuning"` gives
+`fine_tuning/detail`, and the twirl-down still shows `Fine Tuning` (`EffectSpec::groups` maps the id to the
+name). A project saved before this rule, when the id was `Fine Tuning/detail`, keeps its values: the saved
+group moves to the new id when the plugin loads. A `params!` group name is the id as written, so it must be a
+valid part.
 
 ### Presets
 

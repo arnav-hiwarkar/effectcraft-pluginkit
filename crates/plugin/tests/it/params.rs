@@ -150,3 +150,32 @@ fn a_value_an_expression_pushes_outside_the_hard_range_reaches_the_plugin_inside
     render_at(&app, 0.0);
     assert_eq!(reports(&app)[0]["now"].as_f64(), Some(0.0));
 }
+
+#[test]
+fn a_group_named_with_spaces_shows_its_name_and_a_project_saved_under_the_old_id_keeps_its_value() {
+    use effectcraft_engine::project::{LayerId, Node};
+    let mut app = app("test.params-groups", &[]);
+    let solid =
+        app.session.execute("layer.newSolid", json!({"name": "Red", "color": "#ff3300", "width": 64, "height": 36})).unwrap()["layer"].as_u64().unwrap();
+    app.session.execute("effect.apply", json!({"effect": "test.params-groups.tuned"})).unwrap();
+    let detail = json!({"layer": solid, "path": "effects/#1/fine_tuning/detail"});
+    assert_eq!(app.session.execute("prop.get", detail.clone()).unwrap()["value"], json!(2.0));
+    let comp = app.session.active_comp_id().unwrap();
+    let instance = |app: &mut App| -> effectcraft_engine::project::PropGroup {
+        let layer = std::sync::Arc::make_mut(&mut app.session.project).comp_mut(comp).unwrap().layer_mut(LayerId(solid)).unwrap();
+        let Some(Node::Group(instance)) = layer.props.sub_mut("effects").unwrap().children.first_mut() else { panic!("no instance") };
+        instance.clone()
+    };
+    let group = instance(&mut app).sub("fine_tuning").map(|group| group.name.clone());
+    assert_eq!(group.as_deref(), Some("Fine Tuning"));
+
+    app.session.execute("prop.set", json!({"layer": solid, "path": "effects/#1/fine_tuning/detail", "value": 7.0})).unwrap();
+    let layer = std::sync::Arc::make_mut(&mut app.session.project).comp_mut(comp).unwrap().layer_mut(LayerId(solid)).unwrap();
+    let Some(Node::Group(saved)) = layer.props.sub_mut("effects").unwrap().children.first_mut() else { panic!("no instance") };
+    saved.sub_mut("fine_tuning").unwrap().match_id = "Fine Tuning".into();
+    assert!(app.session.execute("prop.get", detail.clone()).is_err());
+
+    app.session.execute("plugin.load", json!({"path": app.bundle.path()})).unwrap();
+    assert_eq!(app.session.execute("prop.get", detail).unwrap()["value"], json!(7.0));
+    assert!(instance(&mut app).sub("Fine Tuning").is_none());
+}

@@ -1,5 +1,5 @@
 use crate::effect::{Cx, Image};
-use crate::wire::{EffectSpec, Param, ParamKind, Value};
+use crate::wire::{EffectSpec, Param, ParamKind, Value, id_segment};
 
 pub trait FromParam: Sized {
     fn from_param(cx: &Cx, id: &'static str) -> Self;
@@ -116,8 +116,49 @@ impl Param {
     }
 }
 
+const MAX_PARAMS: usize = 512;
+const MAX_ID_BYTES: usize = 256;
+const MAX_ID_DEPTH: usize = 8;
+const SEGMENT_RULE: &str = "may only use letters, digits, `-` and `_`";
+
+fn check_id(id: &str) -> Result<(), String> {
+    if id.len() > MAX_ID_BYTES {
+        return Err(format!("is {} bytes long; at most {MAX_ID_BYTES} are allowed", id.len()));
+    }
+    if id.split('/').count() > MAX_ID_DEPTH {
+        return Err(format!("nests {} levels deep; at most {MAX_ID_DEPTH} are allowed", id.split('/').count()));
+    }
+    match id.split('/').find(|segment| !id_segment(segment)) {
+        Some("") => Err("has an empty part; each part between `/` needs a name".into()),
+        Some(_) => {
+            Err(format!("{SEGMENT_RULE}, with `/` between group and parameter; `.group(\"Fine Tuning\", …)` derives the id `fine_tuning` and keeps the name"))
+        }
+        None => Ok(()),
+    }
+}
+
+fn shown(id: &str) -> String {
+    match id.char_indices().nth(40) {
+        Some((end, _)) => format!("{}…", &id[..end]),
+        None => id.to_string(),
+    }
+}
+
 impl EffectSpec {
     pub fn check(&self) -> Result<(), String> {
+        if self.params.len() > MAX_PARAMS {
+            return Err(format!("effect `{}` declares {} parameters; at most {MAX_PARAMS} are allowed", self.id, self.params.len()));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for param in &self.params {
+            check_id(&param.id).map_err(|problem| format!("effect `{}`: parameter id `{}` {problem}", self.id, shown(&param.id)))?;
+            if !seen.insert(param.id.as_str()) {
+                return Err(format!("effect `{}` declares the parameter id `{}` twice; give each parameter its own id", self.id, param.id));
+            }
+        }
+        if let Some(id) = self.groups.keys().find(|id| !id_segment(id)) {
+            return Err(format!("effect `{}`: group id `{}` {SEGMENT_RULE}", self.id, shown(id)));
+        }
         for param in &self.params {
             if let ParamKind::Slider { min, max, .. } = param.kind
                 && min.partial_cmp(&max).is_none_or(std::cmp::Ordering::is_gt)
@@ -349,5 +390,37 @@ mod tests {
         ]);
         let saved = Saved::read(&Cx::new(RenderCx { params, ..Default::default() }));
         assert_eq!((saved.kind, saved.core_gain, saved.shape, saved.glow_gain, saved.last), (0, 3.0, 1, 0.5, false));
+    }
+
+    #[test]
+    fn a_parameter_id_that_would_break_the_property_tree_is_refused_with_the_rule_it_breaks() {
+        let with = |id: &str| EffectSpec::new("glow", "Glow", "Stylize").param(Param::checkbox(id, "On", true)).check();
+        let deep = vec!["a"; 10_000].join("/");
+        assert_eq!(
+            with(&deep),
+            Err("effect `glow`: parameter id `a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/…` is 19999 bytes long; at most 256 are allowed".into())
+        );
+        assert_eq!(with("a/b/c/d/e/f/g/h/i"), Err("effect `glow`: parameter id `a/b/c/d/e/f/g/h/i` nests 9 levels deep; at most 8 are allowed".into()));
+        assert_eq!(with("edges//on"), Err("effect `glow`: parameter id `edges//on` has an empty part; each part between `/` needs a name".into()));
+        assert!(with("Edge Options/on").unwrap_err().contains("may only use letters, digits, `-` and `_`"));
+        assert_eq!(with("a/b/c/d/e/f/g/On_2-x"), Ok(()));
+        let twice = EffectSpec::new("glow", "Glow", "Stylize").params([Param::checkbox("on", "On", true), Param::checkbox("on", "Again", false)]);
+        assert_eq!(twice.check(), Err("effect `glow` declares the parameter id `on` twice; give each parameter its own id".into()));
+        let many = EffectSpec::new("glow", "Glow", "Stylize").params((0..513).map(|i| Param::checkbox(&format!("p{i}"), "On", true)));
+        assert_eq!(many.check(), Err("effect `glow` declares 513 parameters; at most 512 are allowed".into()));
+    }
+
+    #[test]
+    fn a_group_named_with_spaces_gets_a_safe_id_and_keeps_its_name() {
+        let spec = EffectSpec::new("glow", "Glow", "Stylize")
+            .group("Fine Tuning", [Param::checkbox("on", "On", true)])
+            .group("Glow", [Param::checkbox("on", "On", true)])
+            .group("Glow & Rays (2)", [Param::checkbox("on", "On", true)]);
+        let ids: Vec<&str> = spec.params.iter().map(|param| param.id.as_str()).collect();
+        assert_eq!(ids, ["fine_tuning/on", "Glow/on", "glow_rays_2/on"]);
+        assert_eq!(spec.groups, BTreeMap::from([("fine_tuning".into(), "Fine Tuning".into()), ("glow_rays_2".into(), "Glow & Rays (2)".into())]));
+        assert_eq!(spec.check(), Ok(()));
+        let old: EffectSpec = serde_json::from_str(r#"{"id":"glow","name":"Glow","category":"Stylize"}"#).unwrap();
+        assert!(old.groups.is_empty());
     }
 }

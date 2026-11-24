@@ -1271,3 +1271,22 @@ fn a_trapped_sandboxed_render_is_reported_in_one_short_line_with_the_effect_and_
     }
     assert!(journal.starts_with("render of effect `explode` failed: "), "{journal}");
 }
+
+#[test]
+fn an_effect_with_a_parameter_id_ten_thousand_groups_deep_is_refused_at_load_with_the_rule() {
+    struct Deep;
+    impl craft_plugin::Effect for Deep {
+        fn spec(&self) -> craft_plugin::EffectSpec {
+            craft_plugin::EffectSpec::new("deep", "Deep", "Probe").param(craft_plugin::Param::checkbox(&vec!["a"; 10_000].join("/"), "On", true))
+        }
+    }
+    let manifest = serde_json::from_value(json!({"id": "test.deep", "name": "Deep", "version": "1.0.0", "entry": {"wasm": "deep.wasm"}})).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let plugin = craft_plugin::Plugin::new().effect(Deep);
+    let error = Plugin::in_process(manifest, plugin, dir.path().into(), dir.path().join("data"), Limits::default()).err().map(|error| error.to_string());
+    let shown = "a/".repeat(20);
+    assert_eq!(
+        error,
+        Some(format!("the plugin could not be loaded: effect `deep`: parameter id `{}…` is 19999 bytes long; at most 256 are allowed", &shown[..40]))
+    );
+}
