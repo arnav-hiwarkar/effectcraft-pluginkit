@@ -10,6 +10,7 @@ pub type GpuDyn = Box<dyn Fn(&EffectCtx, Grid, Planning) -> Option<GpuProgram> +
 pub type StampDyn = Box<dyn Fn() -> u64 + Send + Sync>;
 pub type MarginDyn = Box<dyn Fn(&EffectCtx, f64) -> Option<f64> + Send + Sync>;
 pub type GpuProbeDyn = Box<dyn Fn() -> bool + Send + Sync>;
+pub type ParamStateDyn = Box<dyn Fn(&str, &dyn Fn(&str) -> Option<Value>) -> [bool; 2] + Send + Sync>;
 pub type MigrateDyn = Box<dyn Fn(u32, &mut std::collections::BTreeMap<String, Value>) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +129,7 @@ pub struct DynamicEffect {
     pub margin: Option<MarginDyn>,
     pub state_version: u32,
     pub migrate: Option<MigrateDyn>,
+    pub param_state: Option<ParamStateDyn>,
     pub aux: Vec<effectcraft_raster::channels3d::AuxLookup>,
 }
 

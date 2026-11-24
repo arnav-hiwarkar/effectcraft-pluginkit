@@ -271,6 +271,7 @@ pub struct Session {
     /// is, settings that guard what scripts may do can't change (see
     /// [`prefs::Scripting::same_permissions`]).
     pub script_calls: ScriptCalls,
+    pub plugin_writes: bool,
 }
 
 /// The count behind [`Session::running_for_script`]; only the engine changes it.
@@ -388,6 +389,7 @@ impl Default for Session {
             aux_footage: None,
             aux_needs: None,
             script_calls: ScriptCalls::default(),
+            plugin_writes: false,
         }
     }
 }

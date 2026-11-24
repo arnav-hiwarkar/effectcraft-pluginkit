@@ -2,7 +2,7 @@
 //! Language menu (the ⓕ button next to an expression), written from the public Expression
 //! Language Reference.
 
-use effectcraft_project::{Comp, Expression, ItemId, Layer, Property};
+use effectcraft_project::{Comp, Expression, ItemId, Layer, Node, PropGroup, Property, Uid};
 use effectcraft_render::EvalCtx;
 use effectcraft_time::Tick;
 use serde::Serialize;
@@ -52,6 +52,29 @@ pub fn errors(s: &Session, cid: ItemId, t: Tick) -> Vec<ExprError> {
 /// all evaluate through this one context.
 pub fn eval_ctx<'a>(s: &'a Session, cid: ItemId, comp: &'a Comp, t: Tick) -> EvalCtx<'a> {
     EvalCtx { footage: Some(s.footage.as_ref()), expr: s.expr.as_deref(), ..EvalCtx::new(&s.project, cid, comp, t) }
+}
+
+/// The effect instance holding property `uid` of `layer` and the parameter's spec id in it
+/// (`group/param` for a nested one).
+pub fn effect_param(layer: &Layer, uid: Uid) -> Option<(&PropGroup, String)> {
+    fn path(g: &PropGroup, uid: Uid) -> Option<String> {
+        g.children.iter().find_map(|c| match c {
+            Node::Prop(p) if p.uid == uid => Some(p.match_id.clone()),
+            Node::Group(sg) => path(sg, uid).map(|rest| format!("{}/{rest}", sg.match_id)),
+            Node::Prop(_) => None,
+        })
+    }
+    layer.effects()?.groups().find_map(|root| Some((root, path(root, uid)?)))
+}
+
+/// `[shown, enabled]` of parameter `param` of effect instance `root`, its conditions read from
+/// the instance's values evaluated in `ctx`.
+pub fn param_state(ctx: &EvalCtx, layer: &Layer, root: &PropGroup, param: &str) -> [bool; 2] {
+    let value = |id: &str| {
+        let (group, leaf) = id.rsplit_once('/').map_or((Some(root), id), |(group, leaf)| (group.split('/').try_fold(root, |g, part| g.sub(part)), leaf));
+        group?.get(leaf).map(|p| ctx.value(layer, p))
+    };
+    effectcraft_effects::catalog::param_state(&root.match_id, param, &value)
 }
 
 /// Evaluate diagnostics against an immutable snapshot. Background callers can cancel between

@@ -46,6 +46,7 @@ fn with_prop<T>(
     f: impl FnOnce(&mut Property, Tick) -> Result<T>,
 ) -> Result<T> {
     let t = s.time_of(cid);
+    editable(s, cid, lid, uid, t)?;
     let linear = s.prefs.general.default_spatial_linear;
     s.edit(label, merge, |proj, state| {
         let l = layer_mut(proj, cid, lid)?;
@@ -67,6 +68,20 @@ fn with_prop<T>(
         }
         Ok(r)
     })
+}
+
+fn editable(s: &Session, cid: ItemId, lid: LayerId, uid: Uid, t: Tick) -> Result<()> {
+    let comp = s.project.comp(cid).ok_or(EngineError::NoComp)?;
+    let layer = comp.layer(lid).ok_or(EngineError::NoComp)?;
+    let Some(pr) = layer.props.find(uid) else { return Ok(()) };
+    if matches!(pr.ui, effectcraft_project::ParamUi::Button) {
+        return Err(bad("prop", format!("`{}` is a button: it has no value to set, key or animate; press it with plugin.press", pr.name)));
+    }
+    let Some((root, param)) = super::expr_tools::effect_param(layer, uid).filter(|_| !s.plugin_writes) else { return Ok(()) };
+    match super::expr_tools::param_state(&super::expr_tools::eval_ctx(s, cid, comp, t), layer, root, &param) {
+        [_, false] => Err(bad("prop", format!("`{}` is turned off by another control of its effect; change that control first", pr.name))),
+        _ => Ok(()),
+    }
 }
 
 /// Keep Polystar controls and their selection references in the property's edit transaction.

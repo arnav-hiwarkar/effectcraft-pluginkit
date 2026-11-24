@@ -1031,7 +1031,7 @@ pub fn instantiate(spec: &EffectSpec, ids: &mut Ids, instance_name: &str, layer_
             pr.hold_only = true;
         }
         // (the channels an effect reads: not animatable, as in After Effects)
-        pr.static_only = channel3d::selects_channels(spec.id, ps.id);
+        pr.static_only = channel3d::selects_channels(spec.id, ps.id) || matches!(ps.ui, ParamUi::Button);
         match path.and_then(|path| nested_group(&mut g, ids, path)) {
             Some(sub) => sub.children.push(pr.into()),
             None => g.children.push(pr.into()),

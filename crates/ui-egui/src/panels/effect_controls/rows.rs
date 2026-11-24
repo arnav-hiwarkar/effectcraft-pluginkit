@@ -766,46 +766,13 @@ fn custom_control(
 fn button_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, layer: &Layer, prop: &Property, fx: &FxScope, r: Rect) {
     let param = format!("{}{}", fx.path, prop.match_id);
     let Some(declared) = effectcraft_plugin::plugin_param(fx.effect, &param) else { return };
-    let mut row = ui.new_child(egui::UiBuilder::new().id_salt(("ec-button", prop.uid)).max_rect(r.shrink2(vec2(0.0, 1.0))));
+    let mut row = ui.new_child(egui::UiBuilder::new().scope_id(ui.scope_id().with(("ec-button", prop.uid))).max_rect(r.shrink2(vec2(0.0, 1.0))));
     let enabled = row.is_enabled();
     let scope = format!("effectControls.prop.{}.button", prop.uid);
     if crate::panels::plugin_view::param_button(app, &mut row, &declared, enabled, &scope)
-        && let Err(error) = app.plugin_ui.panels.press(&app.session, fx.effect, &param, fx.root.uid, layer.id.0)
+        && let Err(error) = app.plugin_ui.panels.press(&app.session, layer.id.0, prop.uid)
     {
         app.ui.status = error;
-    }
-}
-
-pub(crate) fn press_button(app: &mut EffectcraftApp, layer: u64, prop: u64) -> Result<(), String> {
-    fn path(g: &PropGroup, uid: u64) -> Option<String> {
-        g.children.iter().find_map(|c| match c {
-            Node::Prop(p) if p.uid == uid => Some(p.match_id.clone()),
-            Node::Group(sg) => path(sg, uid).map(|rest| format!("{}/{rest}", sg.match_id)),
-            Node::Prop(_) => None,
-        })
-    }
-    let cid = app.session.active_comp_id().ok_or("no composition is open")?;
-    let comp = app.session.project.comp_arc(cid).ok_or("no composition is open")?;
-    let found = comp.layer(effectcraft_engine::project::LayerId(layer)).ok_or_else(|| format!("no layer {layer}"))?;
-    let effects = found.props.group("effects").ok_or("the layer has no effects")?;
-    let (root, param) = effects.groups().find_map(|g| Some((g, path(g, prop)?))).ok_or_else(|| format!("no effect property @{prop} on layer {layer}"))?;
-    let (project, expr) = (app.session.project.clone(), app.session.expr.clone());
-    let ectx = EvalCtx {
-        project: &project,
-        comp_id: cid,
-        comp: &comp,
-        time: app.session.time(),
-        expr: expr.as_deref(),
-        footage: None,
-        property_overrides: &[],
-        media_overrides: &[],
-        reads: None,
-    };
-    let (group, name) = param.rsplit_once('/').map_or(("", param.as_str()), |(group, name)| (group, name));
-    let scope = FxScope { effect: &root.match_id, root, path: if group.is_empty() { String::new() } else { format!("{group}/") } };
-    match scope.state(found, &ectx, name) {
-        [true, true] => app.plugin_ui.panels.press(&app.session, &root.match_id, &param, root.uid, layer),
-        _ => Err(format!("the button `{param}` is hidden or turned off by another control")),
     }
 }
 
@@ -838,27 +805,7 @@ impl<'a> FxScope<'a> {
 
     /// Whether child `m` is shown and whether it is enabled.
     pub(super) fn state(&self, layer: &Layer, ectx: &EvalCtx, m: &str) -> [bool; 2] {
-        let root = self.root;
-        let value = |id: &str| -> Option<Value> {
-            let mut g = root;
-            let mut parts = id.split('/').peekable();
-            while let Some(part) = parts.next() {
-                if parts.peek().is_none() {
-                    return g.get(part).map(|p| ectx.value(layer, p));
-                }
-                g = g.sub(part)?;
-            }
-            None
-        };
-        let id = format!("{}{m}", self.path);
-        let shown = effectcraft_engine::effects::catalog::param_shown(self.effect, &id, &value);
-        match effectcraft_plugin::plugin_param(self.effect, &id) {
-            Some(param) => {
-                let [visible, enabled] = effectcraft_plugin::param_state(&param, &value);
-                [shown && visible, enabled]
-            }
-            None => [shown, true],
-        }
+        effectcraft_engine::commands::expr_tools::param_state(ectx, layer, self.root, &format!("{}{m}", self.path))
     }
 }
 

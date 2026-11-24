@@ -47,6 +47,7 @@ fn register(loaded: &Arc<Loaded>) {
         let (plugin, gpu_spec) = (loaded.clone(), spec.clone());
         let (margin_plugin, margin_spec) = (loaded.clone(), spec.clone());
         let (migrate_plugin, migrate_spec) = (loaded.clone(), spec.clone());
+        let state_params = spec.params.clone();
         let gpu: dynamic::GpuDyn = Box::new(move |ctx: &EffectCtx, grid: Grid, planning| gpu_program(&plugin, &gpu_spec, ctx, grid, planning));
         let id = effect_id(plugin_id, &spec.id);
         dynamic::register(DynamicEffect {
@@ -69,6 +70,9 @@ fn register(loaded: &Arc<Loaded>) {
             margin: Some(Box::new(move |ctx, scale| margin(&margin_plugin, &margin_spec, ctx, scale))),
             state_version: spec.version,
             migrate: Some(Box::new(move |from, values| migrate(&migrate_plugin, &migrate_spec, from, values))),
+            param_state: Some(Box::new(move |id, value| {
+                state_params.iter().find(|param| param.id == id).map_or([true, true], |param| param_state(param, value))
+            })),
             aux: Channel::unique(&spec.reads_aux).iter().flat_map(aux_lookups).collect(),
         });
         if spec.shader.is_none()
@@ -240,7 +244,7 @@ pub fn plugin_param(effect: &str, param: &str) -> Option<Param> {
     spec.params.iter().find(|declared| declared.id == param).cloned()
 }
 
-pub fn param_state(param: &Param, value: &dyn Fn(&str) -> Option<Value>) -> [bool; 2] {
+fn param_state(param: &Param, value: &dyn Fn(&str) -> Option<Value>) -> [bool; 2] {
     let wire = |id: &str| value(id).as_ref().and_then(saved_to_wire);
     [param.visible(wire), param.enabled(wire)]
 }

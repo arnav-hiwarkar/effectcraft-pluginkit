@@ -864,7 +864,7 @@ fn group_visible(g: &PropGroup, layer: &Layer) -> bool {
 }
 
 fn prop_visible(p: &Property, layer: &Layer) -> bool {
-    if matches!(p.ui, ParamUi::Hidden) {
+    if matches!(p.ui, ParamUi::Hidden | ParamUi::Button) {
         return false;
     }
     // Path Options show only the Path popup until a mask path is chosen.

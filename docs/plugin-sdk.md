@@ -584,8 +584,9 @@ fn button(&self, press: &Press) -> Result<()> {
 }
 ```
 
-Hidden and greyed parameters keep their values and `render` still gets them. Everything `button` changes is
-one undo step.
+Hidden and greyed parameters keep their values and `render` still gets them. Hiding is display only; a
+greyed parameter refuses user edits but not the plugin's own `host::command` writes. Everything `button`
+changes is one undo step.
 
 ## Colour by a gradient
 

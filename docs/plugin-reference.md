@@ -191,21 +191,34 @@ A parameter declared without these behaves as before. `effect.list` reports `sli
 `.visible_when(id, is)` hides a row and `.enabled_when(id, is)` greys it out unless another parameter of the
 same effect has a value. `is` is `Is::Equals(n)` or `Is::NotEquals(n)` for a popup, slider, percent or angle,
 or `Is::On` for a checkbox. `id` is the full id (`"Fine Tuning/detail"` inside a group). The app works this
-out from the current values, with no call to the plugin. A hidden or greyed parameter keeps its value and
-its keyframes, and `render` still receives it. A condition that names an unknown parameter, the parameter
+out from the current values, expressions included (an expression that samples footage reads its pixels),
+with no call to the plugin. A hidden or greyed parameter keeps its value and its keyframes, and `render`
+still receives it. Hiding is display only: `prop.set`, the Timeline and presets may still set a hidden
+parameter. A greyed (disabled) parameter takes no edit from the user: `prop.set`, keyframe commands and the
+Timeline refuse it (`is turned off by another control of its effect`), a preset skips it (judged by the
+preset's own values over the current ones), and a form answer keeps its previous value. The plugin itself may
+still set it through `host::command`, so a reset handler can restore it. A condition that names an unknown parameter, the parameter
 itself or one of a kind it cannot test stops the plugin from loading with
 `effect `fx`: parameter `soft` depends on `mode`, which is not another of its parameters of a kind that fits On; …`.
-Forms (`host::form`) honour both on their fields.
+Forms (`host::form`) honour both on their fields; `plugin.answerForm` keeps the previous value of a field
+its own answer turns off.
 
 `Param::button(id, name)` draws a button in Effect Controls. It has no value: `render` does not receive it,
-a preset or `.set` that names it is refused (`takes no value, as it is a button`), and forms refuse it. A
-press calls `Effect::button(&Press { param, instance, layer })` once, on the plugin's queue, with the
-time limit of a command. Host commands, tasks and data writes made in it are one undo step named after the
-button. In EffectCraft `instance` is the effect's group uid and `layer` the layer id, so
+a preset or `.set` that names it is refused (`takes no value, as it is a button`), and forms refuse it. In
+EffectCraft it has no Timeline row, and `prop.set` or a keyframe on it is refused (`is a button: it has no
+value`). A press calls `Effect::button(&Press { param, instance, layer })` once, on the plugin's queue, with
+the time limit of a command. Its host commands and data writes are one undo step. Before the call and
+before each host call the app checks again that the effect, its layer and the button are still there and
+the button still shown and enabled; if not, the press stops and the plugin log says why
+(`the press of `Reset` stopped: its effect was removed from layer 3`). If another edit changes the project
+while the press runs (say while it waits on a form), its later host calls are refused the same way, so the
+press never splits across undo steps. A task the press starts runs on after it and its writes are undone
+on their own. In EffectCraft `instance` is the effect's group uid and `layer` the layer id, so
 `host::command("prop.set", json!({"layer": press.layer, "path": format!("effects/@{}/amount", press.instance), "value": 0.0}))`
 resets a parameter of that effect. An error is shown in the status bar. The button takes Tab focus and
-Enter or Space presses it. Automation presses it with `ui.click` on `effectControls.prop.<uid>.button` or,
-without the window, `plugin.press {layer, prop}`, which refuses a hidden or greyed button. A hidden row is
+Enter or Space presses it. Automation presses it with `ui.click` on `effectControls.prop.<uid>.button` or with
+`plugin.press {layer, prop}`, an engine command that also runs without the window (CLI, MCP, a bare
+`Session`) and waits for the press; it refuses a hidden or greyed button. A hidden row is
 absent from `ui.elements`. Tests press it with `TestPlugin::press(effect, param)`.
 
 #### Gradients
@@ -849,6 +862,7 @@ reason has still landed.
 | `plugin.load` | `path` | Runs a bundle until the app quits, with the permissions it asks for |
 | `plugin.reload` | | Stops and restarts every plugin |
 | `plugin.run` | `plugin`, `command` | Runs a plugin command |
+| `plugin.press` | `layer`, `prop` | Presses a plugin effect's button (`prop` is its uid) and waits for it; refused while the button is hidden or greyed |
 | `plugin.startTask` | `plugin`, `task`, `args` | Starts a plugin task, returns its id |
 | `plugin.tasks` | `wait`, `timeout` (600 s) | Every plugin task with status, progress, message, result and error. With `wait`, answers the tasks' app calls until none runs. |
 | `plugin.cancelTask` | `plugin`, `id` | Cancels a task |

@@ -151,3 +151,7 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **A native library swapped after its approval check can run its initialisers.** The re-check after load refuses to register it, but `Library::new` has already run whatever the new file's initialisers do. Inherited from before lazy start; staging verified bytes in a private copy before opening them would close it (`crates/plugin/src/manage.rs`, craft-libs `crates/plugin-host/src/runtime/native.rs`).
 - **`FrameRequest` gained `ids` and `source`.** Plugin code that builds it field by field no longer compiles; write `..Default::default()` for the rest. Built plugins still load.
 - **A side pane that already shows a loop-capped GPU frame keeps it until the pane asks for a frame again.** The main viewer and `get_for_viewer` lookups drop it (loopcap-onscreen).
+## From the controls-ui review, not fixed
+
+- **A form field's condition is not validated.** `visible_when("missing", Is::On)` on a form field opens a form that silently hides the field, while the same condition on an effect parameter stops the plugin from loading. `Form::check` (craft-libs `crates/plugin-sdk/src/wire.rs`) should reuse the effect's source, kind and self-reference checks.
+- **A greyed plugin parameter is judged at the playhead.** `prop.set` and the keyframe commands that go through `with_prop` (`crates/engine/src/cmd/prop.rs`) evaluate the condition at the current time, not at the `time` of the write, and `keys.*` commands that move or paste keys do not check it.

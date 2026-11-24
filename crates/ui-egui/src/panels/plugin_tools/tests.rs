@@ -517,25 +517,26 @@ fn a_plugin_form_returns_the_values_entered_on_ok_nothing_on_cancel_and_automati
 }
 
 #[test]
-fn a_plugin_popup_shows_its_hidden_slider_and_its_button_runs_two_commands_in_one_undo_step_by_pointer_keyboard_and_automation() {
+fn a_plugin_button_is_found_by_its_label_keeps_focus_when_a_row_appears_above_it_and_runs_two_edits_in_one_undo_step() {
+    use egui_kittest::kittest::NodeT;
     let mut session = probe_session();
     session.execute("layer.newSolid", json!({"name": "Switched", "color": "#000000", "width": 320, "height": 180})).unwrap();
     session.execute("effect.apply", json!({"layer": "Switched", "effect": "test.viewer-tool-ui.switches"})).unwrap();
     let layer = session.active_comp().unwrap().layers[0].clone();
     let effect = layer.effects().unwrap().groups().next().unwrap();
-    let [mode, softness, reset_uid, effect_amount] = ["mode", "softness", "reset", "amount"].map(|param| effect.get(param).unwrap().uid);
+    let [softness, reset_uid, ask, effect_amount] = ["softness", "reset", "ask", "amount"].map(|param| effect.get(param).unwrap().uid);
     session.state.selected_layers = vec![layer.id];
     let mut harness = harness(session);
     harness.state_mut().show_panel(crate::dock::PanelKind::EffectControls);
     let button = format!("effectControls.prop.{reset_uid}.button");
     settle(&mut harness, |h| h.state().auto.find(&button).is_some());
+    harness.run_steps(2);
     let softness_row = format!("effectControls.row.{softness}");
     assert!(harness.state().auto.find(&softness_row).is_none(), "Softness is hidden while Mode is Plain");
-    let popup = element(&harness, &format!("effectControls.prop.{mode}.value")).center();
-    press_drag_release(&mut harness, &[popup]);
-    harness.run_steps(2);
-    harness.get_by_label("Soft").click();
-    settle(&mut harness, |h| h.state().auto.find(&softness_row).is_some());
+    let reset_node = harness.get_by_label("Reset");
+    assert_eq!((reset_node.accesskit_node().role(), reset_node.accesskit_node().is_disabled()), (egui::accesskit::Role::Button, false));
+    assert!(harness.query_by_label("Ask Then Reset").is_some(), "Ask Then Reset shows while Mode is Plain");
+    reset_node.focus();
     harness.run_steps(2);
 
     let values = |h: &mut Harness<'_, EffectcraftApp>| {
@@ -549,6 +550,14 @@ fn a_plugin_popup_shows_its_hidden_slider_and_its_button_runs_two_commands_in_on
         assert_eq!(values(h), [json!(4.0), json!(1.0)], "one undo step takes back the whole press");
         h.run_steps(2);
     };
+    harness.state_mut().session.execute("prop.set", json!({"layer": "Switched", "path": "effects/#1/mode", "value": 1})).unwrap();
+    settle(&mut harness, |h| h.state().auto.find(&softness_row).is_some());
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Ask Then Reset").is_none(), "a hidden button leaves the accessibility tree");
+    assert!(harness.get_by_label("Reset").accesskit_node().is_focused(), "Reset keeps the keyboard focus when Softness appears above it");
+    harness.key_press(egui::Key::Enter);
+    reset(&mut harness);
+
     let at = element(&harness, &button);
     press_drag_release(&mut harness, &[at.center()]);
     reset(&mut harness);
@@ -557,16 +566,9 @@ fn a_plugin_popup_shows_its_hidden_slider_and_its_button_runs_two_commands_in_on
     press_drag_release(&mut harness, &[amount, amount + Vec2::new(30.0, 0.0), amount + Vec2::new(60.0, 0.0)]);
     assert_eq!(values(&mut harness)[1], json!(1.0), "Amount is turned off until Manual is on");
 
-    let focused = harness.state().auto.find(&button).and_then(|element| element.response_id).expect("the button registers its response");
-    harness.ctx.memory_mut(|memory| memory.request_focus(focused));
-    harness.step();
-    harness.key_press(egui::Key::Enter);
-    reset(&mut harness);
-
     let ctx = harness.ctx.clone();
     crate::menus::invoke(harness.state_mut(), &ctx, "plugin.press", json!({"layer": layer.id.0, "prop": reset_uid})).unwrap();
     reset(&mut harness);
-    harness.state_mut().session.execute("prop.set", json!({"layer": "Switched", "path": "effects/#1/mode", "value": 0})).unwrap();
-    let hidden = crate::menus::invoke(harness.state_mut(), &ctx, "plugin.press", json!({"layer": layer.id.0, "prop": softness})).unwrap_err();
+    let hidden = crate::menus::invoke(harness.state_mut(), &ctx, "plugin.press", json!({"layer": layer.id.0, "prop": ask})).unwrap_err();
     assert!(hidden.contains("hidden or turned off"), "{hidden}");
 }

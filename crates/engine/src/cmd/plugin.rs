@@ -42,6 +42,11 @@ pub fn specs() -> Vec<CommandSpec> {
         plugin!("plugin.load", "Load Plug-in for This Session", "{path: plug-in folder} — development: runs it with the permissions it asks for until quit"),
         plugin!("plugin.reload", "Reload Plug-ins", "{}"),
         plugin!("plugin.run", "Run Plug-in Command", "{plugin, command}"),
+        plugin!(
+            "plugin.press",
+            "Press Plug-in Button",
+            "{layer, prop: the button's uid} — runs the button's effect in one undo step; refused while the button is hidden or turned off"
+        ),
         plugin!("plugin.startTask", "Start Plug-in Task", "{plugin, task, args?} — runs the task in the background; returns its id"),
         plugin!(
             "plugin.tasks",
