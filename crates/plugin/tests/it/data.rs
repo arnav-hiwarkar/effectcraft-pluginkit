@@ -40,6 +40,7 @@ fn with_one_undo_level_a_command_that_writes_twice_is_still_one_undo_step() {
     write(&mut app, json!({"place": {"layer": layer}, "key": "track", "value": "points", "null": true})).unwrap();
     assert_eq!(app.layer_names(), ["Marker", "Plate"]);
     assert_eq!(app.session.history.undo.len(), 1);
+    assert_eq!(app.session.history.undo.last().unwrap().0, "Write Data");
     assert!(app.session.undo());
     assert_eq!((on_plate(&app), app.layer_names()), (None, vec!["Plate".to_string()]));
 }
