@@ -161,10 +161,21 @@ enum Fit {
 }
 
 impl Fit {
-    fn on_cpu(self, buf: &mut Buf) {
+    fn on_cpu(self, buf: &mut Buf, fits: impl Fn(u32, u32) -> bool) {
+        let (offset, scale, w, h) = (buf.offset, buf.scale, buf.img.width, buf.img.height);
         match self {
-            Fit::Cover(size) => buf.cover(size),
-            Fit::Align(size) => buf.align(size),
+            Fit::Cover(size) => {
+                if effectcraft_effects::cover_plan(offset, scale, size, w, h).is_none_or(|(_, _, w, h)| fits(w, h)) {
+                    buf.cover(size);
+                }
+            }
+            Fit::Align(size) => {
+                if effectcraft_effects::align_plan(offset, scale, size, w, h)
+                    .is_none_or(|(l, t)| w.checked_add(l).zip(h.checked_add(t)).is_some_and(|(w, h)| fits(w, h)))
+                {
+                    buf.align(size);
+                }
+            }
         }
     }
 
@@ -223,7 +234,7 @@ impl<'e, 'g> GpuFx<'e, 'g> {
         }
         match &mut self.held {
             Held::Gpu(b) => fit.on_gpu(self.e, b),
-            Held::Cpu(buf) => fit.on_cpu(buf),
+            Held::Cpu(buf) => fit.on_cpu(buf, |w, h| self.e.g.fits(w, h)),
             Held::Source(..) | Held::Lost => {}
         }
     }
@@ -264,7 +275,7 @@ impl effectcraft_render::FxTarget for GpuFx<'_, '_> {
             Held::Source(buf, fit) => {
                 let mut buf = std::sync::Arc::unwrap_or_clone(buf);
                 if let Some(fit) = fit {
-                    fit.on_cpu(&mut buf);
+                    fit.on_cpu(&mut buf, |w, h| self.e.g.fits(w, h));
                 }
                 buf
             }
