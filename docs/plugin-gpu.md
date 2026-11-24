@@ -80,6 +80,8 @@ device and the stored bytes (image sizes the GPU holds, buffer and texture byte 
 - the limits of each [host kernel](#host-kernels);
 - at most 16 textures and layers together, each texture as many bytes as its size needs, together at
   most 16 777 216 pixels (a layer counts as one padded frame);
+- at most 4 source frames (`plan.source_at`), each one padded frame, budgeted apart from textures and
+  layers, so two DCI 4K frames fit;
 - the limits on draw passes below.
 
 ### Time

@@ -455,12 +455,19 @@ fn craft_flow_track(@builtin(global_invocation_id) id: vec3<u32>) {
             yt += c.a * t;
         }
     }
-    let steady = 1e-4 * f32((2 * r + 1) * (2 * r + 1));
+    let steady = 1e-4 * f32((2 * r + 1) * (2 * r + 1)) + 1e-4 * (xx + yy);
     let sxx = xx + steady;
     let syy = yy + steady;
     let det = sxx * syy - xy * xy;
+    let nu = xy * yt - syy * xt;
+    let nv = xy * xt - sxx * yt;
+    let largest = 3.40282347e+38;
+    if (!(det > 0.0 && det <= largest && abs(nu) <= largest && abs(nv) <= largest)) {
+        store(id.xy, vec4<f32>(start, 0.0, 1.0));
+        return;
+    }
     let limit = f32(r + 1);
-    let du = clamp((xy * yt - syy * xt) / det, -limit, limit);
-    let dv = clamp((xy * xt - sxx * yt) / det, -limit, limit);
+    let du = clamp(nu / det, -limit, limit);
+    let dv = clamp(nv / det, -limit, limit);
     store(id.xy, vec4<f32>(start.x + du, start.y + dv, 0.0, 1.0));
 }

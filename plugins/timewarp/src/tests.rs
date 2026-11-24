@@ -59,3 +59,14 @@ fn a_whole_source_frame_is_shown_unchanged() {
     let picture = plugin.render("timewarp").input(scene(0.0)).source_at(frame_at).set("speed", 0.5).time(4.0 / 30.0).run().unwrap();
     assert!(picture.pixels == scene(52.0).pixels, "source frame 2 at time 4 frames and half speed");
 }
+
+#[test]
+fn both_neighbouring_frames_of_a_dci_4k_layer_fit_the_plan_budget() {
+    let plugin = TestPlugin::of(crate::plugin);
+    let dci = [4096, 2160];
+    for (method, time) in [(0.0, 3.0 / 30.0), (1.0, 3.0 / 30.0), (0.0, 4.0 / 30.0)] {
+        let layout = plugin.render("timewarp").size(dci[0], dci[1]).set("speed", 0.5).set("method", method).time(time).layout().unwrap();
+        let plan = layout.gpu.expect("a plan");
+        assert_eq!(plan.validate(dci), Ok(()), "method {method} at {time}");
+    }
+}

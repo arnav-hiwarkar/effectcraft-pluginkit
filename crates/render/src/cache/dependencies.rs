@@ -12,7 +12,8 @@ pub(super) fn hash(h: &mut KeyHasher, ctx: &EvalCtx, layer: &Layer, effects: sup
     if limit == 0 {
         return Some(());
     }
-    let mut deps = Dependencies { h, path: vec![(ctx.comp_id, layer.id)], remaining: 1024, other_times: super::reads_other_times(layer, Some(limit)) };
+    let mut deps =
+        Dependencies { h, path: vec![(ctx.comp_id, layer.id)], remaining: 1024, other_times: super::reads_other_times(layer, Some(limit)), resampled: false };
     deps.effects(ctx, layer, limit)
 }
 
@@ -21,6 +22,7 @@ struct Dependencies<'a> {
     path: Vec<(ItemId, LayerId)>,
     remaining: usize,
     other_times: bool,
+    resampled: bool,
 }
 
 impl Dependencies<'_> {
@@ -30,11 +32,16 @@ impl Dependencies<'_> {
         if layer.switches.effects
             && let Some(fx) = layer.effects()
         {
-            for g in fx.groups().take(limit).filter(|g| g.enabled) {
+            let groups: Vec<&PropGroup> = fx.groups().take(limit).collect();
+            let last_reader = groups.iter().rposition(|g| g.enabled && super::resamples_input(g));
+            let outer = self.resampled;
+            for (index, g) in groups.into_iter().enumerate().filter(|(_, g)| g.enabled) {
+                self.resampled = last_reader.is_some_and(|last| index < last);
                 self.group(ctx, layer, g, 0)?;
                 // A LUT file edited on disk changes the pixels without an edit (#3493).
                 crate::reads::lut_files(ctx, layer, g).hash(self.h);
             }
+            self.resampled = outer;
             super::effect_revisions(layer, limit).for_each(|revision| revision.hash(self.h));
         }
         self.other_times = previous;
@@ -49,6 +56,9 @@ impl Dependencies<'_> {
             match node {
                 Node::Prop(p) => {
                     if let Some(id) = ctx.value(layer, p).as_layer() {
+                        if self.resampled {
+                            return None;
+                        }
                         p.uid.hash(self.h);
                         id.hash(self.h);
                         let other = ctx.layer(LayerId(id));

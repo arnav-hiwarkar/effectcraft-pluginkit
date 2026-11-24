@@ -272,7 +272,7 @@ four times the frame, every side is cut by one factor, so a frame 16384 wide is 
 | `cx.layer("matte")` | The layer chosen in a layer parameter, resampled onto this frame's grid. |
 | `cx.layer_at("matte", comp_time)` | The same at another time. |
 | `cx.source_at(layer_time)` | This effect's input at another time. Declare `.reads_other_frames()`. |
-| `plan.source_at(layer_time)` | The same frame as an image a plan reads, on the CPU and the GPU: the padded frame's size, transparent when there is no frame. Declare `.reads_other_frames()`; the app refuses the plan otherwise. Counts towards the plan's textures and layers. |
+| `plan.source_at(layer_time)` | The same frame as an image a plan reads, on the CPU and the GPU: the padded frame's size, transparent when there is no frame. Declare `.reads_other_frames()`; the app refuses the plan otherwise. A plan reads at most 4, budgeted apart from its textures and layers. |
 | `cx.at(layer_time)` | The same `Cx` with every parameter evaluated at another layer time, keyframes and expressions applied as the app renders that time. `time` becomes `layer_time` and `comp_time` moves by the same amount; the frame fields stay. `None` outside the app. Declare `.reads_param_history()`. |
 | `cx.param_history()` | A hash of everything that sets this effect's parameters over time (values, keyframes, expression text), the same in every frame and session. `None` when a parameter has an expression, whose values at other times the hash cannot see, or outside the app. Use it to key caches of a simulation. |
 | `cx.masks()` | The layer's masks as polylines in frame pixels. |

@@ -822,6 +822,10 @@ fn reads_other_times(layer: &Layer, effects: Option<usize>) -> bool {
         })
 }
 
+fn resamples_input(g: &effectcraft_project::PropGroup) -> bool {
+    matches!(&g.kind, effectcraft_project::GroupKind::Effect { effect } if effect.starts_with("ec.time.") || effectcraft_effects::reads_other_frames(effect))
+}
+
 /// The layer reads values at other times (see [`reads_other_times`]) and has expressions
 /// (outside Transform), whose results at those times the key can't see.
 fn history_unkeyable(layer: &Layer, effects: Option<usize>) -> bool {
