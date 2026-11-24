@@ -969,9 +969,12 @@ fn apply_preset(s: &mut Session, p: &Value) -> Result<Value> {
         effectcraft_keyframe::Value::Vec3([x, y, z]) => effectcraft_keyframe::Value::Vec3([x * size[0], y * size[1], *z]),
         other => other.clone(),
     };
+    let root = layer.props.find_group(uid).ok_or_else(|| bad(cmd, "effect gone"))?;
+    let proposed = |id: &str| values.iter().find(|(known, _)| known == id).map(|(_, value)| scaled(value)).or_else(|| root.prop(id).map(|pr| pr.value_at(lt)));
+    let values: Vec<_> = values.iter().filter(|(id, _)| effectcraft_effects::catalog::param_state(&root.match_id, id, &proposed)[1]).collect();
     s.edit(&format!("Apply Preset {name}"), None, |proj, _| {
         let g = layer_mut(proj, cid, lid)?.props.find_group_mut(uid).ok_or_else(|| bad(cmd, "effect gone"))?;
-        for (id, value) in &values {
+        for (id, value) in values {
             if let Some(pr) = g.prop_mut(id) {
                 pr.set_value_at(lt, scaled(value));
             }

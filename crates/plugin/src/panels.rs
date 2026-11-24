@@ -60,7 +60,17 @@ pub(crate) fn run_command(session: &mut Session, loaded: Arc<Loaded>, command: &
     let plugin = loaded.bundle.manifest.id.clone();
     let gesture = Some(command_gesture(&loaded, command));
     let bound = Bound::of(loaded, session, Arc::downgrade(&asking));
-    let request = Request { key: Key::Command(plugin.clone()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture };
+    run_now(session, Request { key: Key::Command(plugin), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture })
+}
+
+pub(crate) fn press_now(session: &mut Session, layer: u64, prop: u64) -> Result<(), String> {
+    let asking = Arc::new(());
+    let request = press_request(session, layer, prop, Arc::downgrade(&asking))?;
+    run_now(session, request)
+}
+
+fn run_now(session: &mut Session, request: Request) -> Result<(), String> {
+    let plugin = request.bound.plugin().to_string();
     let running = std::thread::Builder::new()
         .name(format!("craft-plugin-command-{plugin}"))
         .spawn(move || run(&request, &(Arc::new(|| {}) as Waker), false).map(drop))
@@ -128,6 +138,42 @@ impl Bound {
     }
 }
 
+#[derive(Clone)]
+struct Pressed {
+    comp: ItemId,
+    layer: u64,
+    prop: u64,
+}
+
+struct Press {
+    effect: String,
+    param: String,
+    instance: u64,
+    name: String,
+}
+
+fn pressable(session: &Session, &Pressed { comp, layer, prop }: &Pressed) -> Result<Press, String> {
+    use effectcraft_engine::commands::expr_tools::{effect_param, eval_ctx, param_state};
+    let found = session.project.comp(comp).ok_or("its composition was closed or deleted")?;
+    let on = found.layer(effectcraft_engine::project::LayerId(layer)).ok_or_else(|| format!("layer {layer} was deleted"))?;
+    let (root, param) = effect_param(on, prop).ok_or_else(|| format!("its effect was removed from layer {layer}"))?;
+    let button = on.props.find(prop).filter(|pr| matches!(pr.ui, effectcraft_engine::project::ParamUi::Button));
+    let name = button.ok_or_else(|| format!("@{prop} is not a plug-in button"))?.name.clone();
+    match param_state(&eval_ctx(session, comp, found, session.time_of(comp)), on, root, &param) {
+        [true, true] => Ok(Press { effect: root.match_id.clone(), param, instance: root.uid, name }),
+        _ => Err(format!("the button `{name}` is hidden or turned off by another control")),
+    }
+}
+
+fn press_request(session: &Session, layer: u64, prop: u64, surface: Weak<()>) -> Result<Request, String> {
+    let pressed = Pressed { comp: session.active_comp_id().ok_or("no composition is open")?, layer, prop };
+    let Press { effect, param, instance, name } = pressable(session, &pressed)?;
+    let (plugin, loaded, local) = crate::manage::effect_owner(&effect)?;
+    let gesture = Gesture { keeps_own: true, pressed: Some(pressed), ..Gesture::new(&name) };
+    let bound = Bound::of(loaded, session, surface);
+    Ok(Request { key: Key::Command(plugin), bound, call: Call::Button { effect: local, param, instance, layer }, edit: None, gesture: Some(gesture) })
+}
+
 fn command_gesture(loaded: &Loaded, command: &str) -> Gesture {
     let commands = &loaded.plugin.contributions().commands;
     let mut gesture = Gesture::new(commands.iter().find(|spec| spec.id == command).map_or(command, |spec| spec.title.as_str()));
@@ -140,11 +186,24 @@ pub(crate) struct Gesture {
     label: String,
     keeps_own: bool,
     last: Arc<Mutex<Option<Arc<Project>>>>,
+    pressed: Option<Pressed>,
 }
 
 impl Gesture {
     pub(crate) fn new(label: &str) -> Gesture {
-        Gesture { label: label.to_string(), keeps_own: false, last: Arc::default() }
+        Gesture { label: label.to_string(), keeps_own: false, last: Arc::default(), pressed: None }
+    }
+
+    fn admits(&self, session: &Session) -> Result<(), String> {
+        let Some(pressed) = &self.pressed else { return Ok(()) };
+        let stopped = |why: String| format!("the press of `{}` stopped: {why}", self.label);
+        pressable(session, pressed).map_err(stopped)?;
+        match &*lock(&self.last) {
+            Some(after) if !Arc::ptr_eq(after, &session.project) => {
+                Err(stopped("another edit changed the project while it ran, so its later edits are dropped to keep it one undo step".into()))
+            }
+            _ => Ok(()),
+        }
     }
 
     fn fold(&self, session: &mut Session, before: &Arc<Project>, earlier: History) {
@@ -186,7 +245,11 @@ impl Remote {
         let (bound, gesture) = (self.bound.clone(), self.gesture.clone());
         let project = bound.project.clone();
         let run = Box::new(move |session: &mut Session| {
-            let answered = bound.check().map(|()| {
+            let admitted = gesture.as_ref().map_or(Ok(()), |gesture| gesture.admits(session));
+            if let Err(why) = &admitted {
+                bound.loaded.plugin.warn(why.clone());
+            }
+            let answered = bound.check().and(admitted).map(|()| {
                 let (before, earlier) = (session.project.clone(), gesture.as_ref().map(|_| session.history.clone()));
                 let answered = run(&mut SessionHost::new(session, &bound.loaded));
                 if let Some((gesture, earlier)) = gesture.as_ref().zip(earlier) {
@@ -342,13 +405,16 @@ struct Done {
 fn run(request: &Request, wake: &Waker, forms: bool) -> Result<Reply, String> {
     let mut host = Remote { bound: request.bound.clone(), wake: wake.clone(), gesture: request.gesture.clone(), forms };
     let (plugin, call) = (&request.bound.loaded.plugin, &request.call);
+    if matches!(call, Call::Button { .. }) {
+        host.on_app(|_| ())?;
+    }
     match call {
         Call::Panel { .. } => plugin.call(call, None, &mut host).map(|reply| Reply::Panel(reply, None)),
         Call::Controls { .. } => plugin
             .call(call, None, &mut host)
             .map(|ControlsReply { widgets, value, topics, timers }| Reply::Panel(PanelReply { widgets, topics, timers, legacy: false }, value)),
         Call::Drag { .. } => plugin.call(call, None, &mut host).map(Reply::Value),
-        Call::Command { .. } => plugin.call(call, None, &mut host).map(|()| Reply::Value(None)),
+        Call::Command { .. } | Call::Button { .. } => plugin.call(call, None, &mut host).map(|()| Reply::Value(None)),
         _ => plugin.call(call, None, &mut host).map(Reply::Overlay),
     }
     .map_err(|error| error.to_string())
@@ -525,6 +591,12 @@ impl Panels {
         let gesture = Some(command_gesture(&loaded, command));
         let bound = Bound::of(loaded, session, Arc::downgrade(&self.open));
         self.post(Request { key: Key::Command(plugin.to_string()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture });
+        Ok(())
+    }
+
+    pub fn press(&mut self, session: &Session, layer: u64, prop: u64) -> Result<(), String> {
+        let request = press_request(session, layer, prop, Arc::downgrade(&self.open))?;
+        self.post(request);
         Ok(())
     }
 

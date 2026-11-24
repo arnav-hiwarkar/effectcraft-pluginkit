@@ -8,6 +8,7 @@ pub mod viewer;
 
 pub use craft_plugin_host::ui;
 pub use craft_plugin_host::{ControlsReply, PickFile, PluginImage, TaskState, TaskStatus};
+pub use effects::plugin_param;
 pub use forms::{AskedForm, Values, answer_form, asked_form};
 pub use gate::{FilePicker, set_file_picker};
 pub use manage::{

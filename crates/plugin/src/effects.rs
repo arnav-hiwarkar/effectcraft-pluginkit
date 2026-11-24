@@ -47,6 +47,7 @@ fn register(loaded: &Arc<Loaded>) {
         let (plugin, gpu_spec) = (loaded.clone(), spec.clone());
         let (margin_plugin, margin_spec) = (loaded.clone(), spec.clone());
         let (migrate_plugin, migrate_spec) = (loaded.clone(), spec.clone());
+        let state_params = spec.params.clone();
         let gpu: dynamic::GpuDyn = Box::new(move |ctx: &EffectCtx, grid: Grid, planning| gpu_program(&plugin, &gpu_spec, ctx, grid, planning));
         let id = effect_id(plugin_id, &spec.id);
         dynamic::register(DynamicEffect {
@@ -69,6 +70,9 @@ fn register(loaded: &Arc<Loaded>) {
             margin: Some(Box::new(move |ctx, scale| margin(&margin_plugin, &margin_spec, ctx, scale))),
             state_version: spec.version,
             migrate: Some(Box::new(move |from, values| migrate(&migrate_plugin, &migrate_spec, from, values))),
+            param_state: Some(Box::new(move |id, value| {
+                state_params.iter().find(|param| param.id == id).map_or([true, true], |param| param_state(param, value))
+            })),
             aux: Channel::unique(&spec.reads_aux).iter().flat_map(aux_lookups).collect(),
         });
         if spec.shader.is_none()
@@ -170,6 +174,7 @@ fn declare(param: &Param) -> DynamicParam {
         ParamKind::Curve { default, channels } => {
             (Value::Str(craft_plugin_host::default_curves_text(default, *channels)), ParamUi::Curve { channels: *channels })
         }
+        ParamKind::Button => (Value::Bool(false), ParamUi::Button),
     };
     DynamicParam { id: param.id.clone(), name: param.name.clone(), default, ui }
 }
@@ -221,7 +226,7 @@ impl ParamValues for Placed {
                 Value::Str(text) => Wire::Text(text.clone()),
                 _ => Wire::Text(String::new()),
             },
-            ParamKind::Layer => Wire::Bool(value.as_layer().is_some()),
+            ParamKind::Layer | ParamKind::Button => Wire::Bool(value.as_layer().is_some()),
             ParamKind::Gradient { .. } => match value {
                 Value::Gradient(gradient) => Wire::Gradient(WireGradient {
                     colors: gradient.colors.iter().map(|(at, color)| (*at, color.map(f64::from))).collect(),
@@ -231,6 +236,17 @@ impl ParamValues for Placed {
             },
         }
     }
+}
+
+pub fn plugin_param(effect: &str, param: &str) -> Option<Param> {
+    let (_, loaded, local) = crate::manage::effect_owner(effect).ok()?;
+    let spec = loaded.plugin.contributions().effects.iter().find(|spec| spec.id == local)?;
+    spec.params.iter().find(|declared| declared.id == param).cloned()
+}
+
+fn param_state(param: &Param, value: &dyn Fn(&str) -> Option<Value>) -> [bool; 2] {
+    let wire = |id: &str| value(id).as_ref().and_then(saved_to_wire);
+    [param.visible(wire), param.enabled(wire)]
 }
 
 fn saved_to_wire(value: &Value) -> Option<Wire> {

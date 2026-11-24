@@ -588,6 +588,27 @@ Param::slider("gain", "Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log()
 Param::percent("mix", "Mix", 50.0).range(-100.0..=300.0)
 ```
 
+## Show controls only when they apply, and add a button
+
+```rust
+EffectSpec::new("glow", "Glow", "Stylize").params([
+    Param::popup("mode", "Mode", &["Plain", "Soft"], 0),
+    Param::slider("softness", "Softness", 4.0, 0.0..=10.0).visible_when("mode", Is::Equals(1.0)),
+    Param::checkbox("manual", "Manual", false),
+    Param::slider("amount", "Amount", 1.0, 0.0..=10.0).enabled_when("manual", Is::On),
+    Param::button("reset", "Reset"),
+])
+
+fn button(&self, press: &Press) -> Result<()> {
+    let path = format!("effects/@{}/softness", press.instance);
+    host::command("prop.set", json!({"layer": press.layer, "path": path, "value": 0.0})).map(drop)
+}
+```
+
+Hidden and greyed parameters keep their values and `render` still gets them. Hiding is display only; a
+greyed parameter refuses user edits but not the plugin's own `host::command` writes. Everything `button`
+changes is one undo step.
+
 ## Colour by a gradient
 
 A gradient parameter opens the app's Gradient Editor and can be keyframed; `sample` reads it:

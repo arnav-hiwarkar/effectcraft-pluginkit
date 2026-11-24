@@ -49,9 +49,7 @@ pub fn answer_form(session: &Session, values: Option<Values>) -> Result<(), Stri
     let answer = match values {
         Some(values) => {
             let asked = &forms[at].asked;
-            let mut merged = asked.values.clone();
-            merged.extend(values);
-            Some(asked.form.answer(merged)?)
+            Some(asked.form.answer_over(&asked.values, values)?)
         }
         None => None,
     };

@@ -310,7 +310,10 @@ impl Host for SessionHost<'_> {
     fn command(&mut self, id: &str, params: Value) -> Result<Value, String> {
         self.property_writes_allowed(id, &params)?;
         self.files_allowed(id, &params)?;
-        self.session.execute_checked(id, params).map_err(|e| e.to_string())
+        let outer = std::mem::replace(&mut self.session.plugin_writes, true);
+        let ran = self.session.execute_checked(id, params).map_err(|e| e.to_string());
+        self.session.plugin_writes = outer;
+        ran
     }
 
     fn frame(&mut self, request: &FrameRequest) -> Result<Pixels, String> {

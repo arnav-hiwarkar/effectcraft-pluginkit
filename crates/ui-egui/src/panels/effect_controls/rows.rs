@@ -763,6 +763,19 @@ fn custom_control(
     }
 }
 
+fn button_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, layer: &Layer, prop: &Property, fx: &FxScope, r: Rect) {
+    let param = format!("{}{}", fx.path, prop.match_id);
+    let Some(declared) = effectcraft_plugin::plugin_param(fx.effect, &param) else { return };
+    let mut row = ui.new_child(egui::UiBuilder::new().scope_id(ui.scope_id().with(("ec-button", prop.uid))).max_rect(r.shrink2(vec2(0.0, 1.0))));
+    let enabled = row.is_enabled();
+    let scope = format!("effectControls.prop.{}.button", prop.uid);
+    if crate::panels::plugin_view::param_button(app, &mut row, &declared, enabled, &scope)
+        && let Err(error) = app.plugin_ui.panels.press(&app.session, layer.id.0, prop.uid)
+    {
+        app.ui.status = error;
+    }
+}
+
 fn held_gesture(ui: &egui::Ui, gesture: egui::Id, started: bool) -> bool {
     let live = gesture.with("live");
     let down = ui.input(|i| i.pointer.primary_down());
@@ -787,19 +800,12 @@ impl<'a> FxScope<'a> {
     }
     /// Whether child `m` of the current group is shown.
     pub(super) fn shown(&self, layer: &Layer, ectx: &EvalCtx, m: &str) -> bool {
-        let root = self.root;
-        let value = |id: &str| -> Option<Value> {
-            let mut g = root;
-            let mut parts = id.split('/').peekable();
-            while let Some(part) = parts.next() {
-                if parts.peek().is_none() {
-                    return g.get(part).map(|p| ectx.value(layer, p));
-                }
-                g = g.sub(part)?;
-            }
-            None
-        };
-        effectcraft_engine::effects::catalog::param_shown(self.effect, &format!("{}{m}", self.path), &value)
+        self.state(layer, ectx, m)[0]
+    }
+
+    /// Whether child `m` is shown and whether it is enabled.
+    pub(super) fn state(&self, layer: &Layer, ectx: &EvalCtx, m: &str) -> [bool; 2] {
+        effectcraft_engine::commands::expr_tools::param_state(ectx, layer, self.root, &format!("{}{m}", self.path))
     }
 }
 
@@ -848,10 +854,23 @@ pub(super) fn group_rows(
         let r = Rect::from_min_size(pos2(rect.min.x, *y), vec2(rect.width(), ROW));
         match c {
             Node::Prop(pr) => {
-                if matches!(pr.ui, ParamUi::Hidden) || pr.three_d_only && !layer.is_3d() || !fx.shown(layer, ectx, &pr.match_id) {
+                let [shown, enabled] = fx.state(layer, ectx, &pr.match_id);
+                if matches!(pr.ui, ParamUi::Hidden) || pr.three_d_only && !layer.is_3d() || !shown {
                     continue;
                 }
+                let mut scoped = ui.new_child(egui::UiBuilder::new().id_salt(("ec-prop-scope", pr.uid)).max_rect(ui.max_rect()));
+                if !enabled {
+                    scoped.disable();
+                }
+                let ui = &mut scoped;
                 *y += ROW;
+                if matches!(pr.ui, ParamUi::Button) {
+                    if !(r.max.y < rect.min.y || r.min.y > rect.max.y) {
+                        let indent = PARAM_NAME_X + TREE_INDENT * depth as f32;
+                        button_row(app, ui, layer, pr, fx, r.with_min_x(r.min.x + indent));
+                    }
+                    continue;
+                }
                 let indent = PARAM_NAME_X - 13.0 + TREE_INDENT * depth as f32;
                 let visible = !(r.max.y < rect.min.y || r.min.y > rect.max.y);
                 if visible {

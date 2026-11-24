@@ -261,13 +261,14 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let comp_name = app.session.project.item(cid).map(|i| i.name.clone()).unwrap_or_default();
     let snap_project = app.session.project.clone();
     let snap_expr = app.session.expr.clone();
+    let snap_footage = app.session.footage.clone();
     let ectx = EvalCtx {
         project: &snap_project,
         comp_id: cid,
         comp: &comp,
         time: app.session.time(),
         expr: snap_expr.as_deref(),
-        footage: None,
+        footage: Some(snap_footage.as_ref()),
         property_overrides: &[],
         media_overrides: &[],
         reads: None,

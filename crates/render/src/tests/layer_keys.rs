@@ -123,6 +123,7 @@ fn a_scene_reader_sampling_other_frames_gets_a_key_per_comp_frame_while_the_scen
         margin: None,
         state_version: 0,
         migrate: None,
+        param_state: None,
         aux: Vec::new(),
     });
     let (mut p, cid, comp) = setup();

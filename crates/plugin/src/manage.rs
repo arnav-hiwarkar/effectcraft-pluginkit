@@ -589,6 +589,10 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
             plugins.reload();
             Ok(Value::Null)
         }
+        "plugin.press" => {
+            let number = |key: &str| params.get(key).and_then(Value::as_u64).ok_or_else(|| failed(format!("`plugin.press` needs a `{key}` number")));
+            crate::panels::press_now(session, number("layer")?, number("prop")?).map(|()| Value::Null).map_err(failed)
+        }
         "plugin.run" => run_command(session, text("plugin")?, text("command")?).map(|()| Value::Null).map_err(failed),
         "plugin.startTask" => {
             let args = params.get("args").cloned().unwrap_or(Value::Null);

@@ -1611,6 +1611,7 @@ fn register_gain_effect() {
         margin: None,
         state_version: 0,
         migrate: None,
+        param_state: None,
         aux: Vec::new(),
     });
 }
@@ -1663,6 +1664,7 @@ fn a_plugin_group_row_shows_the_name_its_author_gave_and_twirls_closed() {
         margin: None,
         state_version: 0,
         migrate: None,
+        param_state: None,
         aux: Vec::new(),
     });
     let mut s = Session::default();
@@ -1707,6 +1709,7 @@ fn an_effect_whose_plugin_is_missing_is_marked_in_effect_controls() {
         margin: None,
         state_version: 0,
         migrate: None,
+        param_state: None,
         aux: Vec::new(),
     });
     let mut s = Session::default();

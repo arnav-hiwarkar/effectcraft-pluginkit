@@ -60,6 +60,8 @@ pub enum ParamUi {
     },
     /// Not shown in Effect Controls / the timeline (internal data).
     Hidden,
+    /// A plug-in button: no value of its own; pressing it calls the effect.
+    Button,
 }
 
 /// Expression attached to a property.
