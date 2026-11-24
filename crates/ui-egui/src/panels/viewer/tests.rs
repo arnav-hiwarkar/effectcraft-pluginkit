@@ -223,6 +223,14 @@ type PaneHarness = egui_kittest::Harness<'static, crate::EffectcraftApp>;
 /// A 64×36 comp with a still, the locked viewer and a 4-view layout; footage reads on the UI
 /// thread counted and the layer cache gated.
 fn panes_app() -> (tempfile::TempDir, PaneHarness, effectcraft_engine::project::ItemId, std::sync::Arc<UiThreadReads>) {
+    panes_app_with(None)
+}
+
+/// As [`panes_app`], with `remote` installed before the first frame, so no local worker can
+/// render a frame the test means to see queued.
+fn panes_app_with(
+    remote: Option<std::sync::Arc<dyn crate::frames::RemoteFrames>>,
+) -> (tempfile::TempDir, PaneHarness, effectcraft_engine::project::ItemId, std::sync::Arc<UiThreadReads>) {
     let dir = tempfile::tempdir().unwrap();
     let png = dir.path().join("still.png");
     image::RgbaImage::from_fn(64, 36, |x, y| image::Rgba([(x * 4) as u8, (y * 7) as u8, 90, 255])).save(&png).unwrap();
@@ -236,7 +244,11 @@ fn panes_app() -> (tempfile::TempDir, PaneHarness, effectcraft_engine::project::
     let counter = std::sync::Arc::new(UiThreadReads { inner: session.footage.clone(), ui: std::thread::current().id(), reads: Default::default() });
     session.footage = counter.clone();
     session.layer_cache.set_gate(Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true))));
-    let harness = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_| crate::EffectcraftApp::new(session));
+    let harness = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_| {
+        let mut app = crate::EffectcraftApp::new(session);
+        app.frames.set_remote(remote);
+        app
+    });
     (dir, harness, cid, counter)
 }
 
@@ -247,10 +259,8 @@ fn panes_shown(h: &PaneHarness) -> usize {
 }
 
 fn wait_for_panes(h: &mut PaneHarness) {
-    for _ in 0..400 {
-        if panes_shown(h) == 4 {
-            break;
-        }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while panes_shown(h) != 4 && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(5));
         h.step();
     }
@@ -290,8 +300,7 @@ fn side_and_locked_panes_render_on_the_frame_workers() {
 /// The side panes' frames queue behind the frame the active viewer shows.
 #[test]
 fn the_viewer_frame_queues_before_the_side_panes() {
-    let (_dir, mut harness, _, _) = panes_app();
-    harness.state_mut().frames.set_remote(Some(std::sync::Arc::new(Idle)));
+    let (_dir, mut harness, _, _) = panes_app_with(Some(std::sync::Arc::new(Idle)));
     harness.step();
     let queued = harness.state().frames.queued();
     assert!(queued.len() > 1, "the panes queue frames: {queued:?}");

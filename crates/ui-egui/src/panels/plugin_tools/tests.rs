@@ -85,8 +85,13 @@ fn shown_frame(harness: &mut Harness<'_, EffectcraftApp>) -> Option<Vec<u8>> {
     harness.state_mut().viewer_pixels().map(|image| image.pixels.iter().flat_map(|pixel| pixel.to_array()).collect())
 }
 
+/// The first call into a plugin compiles its module on a worker thread, which takes seconds on a
+/// loaded machine, so the wait is a wall-clock deadline, not a count of steps.
+const SETTLE: std::time::Duration = std::time::Duration::from_secs(60);
+
 fn settle(harness: &mut Harness<'_, EffectcraftApp>, mut done: impl FnMut(&mut Harness<'_, EffectcraftApp>) -> bool) {
-    for _ in 0..600 {
+    let deadline = std::time::Instant::now() + SETTLE;
+    while std::time::Instant::now() < deadline {
         harness.step();
         if done(harness) {
             return;
@@ -99,7 +104,8 @@ fn settle(harness: &mut Harness<'_, EffectcraftApp>, mut done: impl FnMut(&mut H
 fn stable_frame(harness: &mut Harness<'_, EffectcraftApp>) -> Option<Vec<u8>> {
     let mut last = shown_frame(harness);
     let mut same = 0;
-    for _ in 0..600 {
+    let deadline = std::time::Instant::now() + SETTLE;
+    while std::time::Instant::now() < deadline {
         harness.step();
         std::thread::sleep(std::time::Duration::from_millis(5));
         let now = shown_frame(harness);
