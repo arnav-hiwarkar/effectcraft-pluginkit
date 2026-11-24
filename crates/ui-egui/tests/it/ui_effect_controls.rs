@@ -1597,7 +1597,7 @@ fn register_gain_effect() {
             DynamicParam { id: "gain".into(), name: "Gain".into(), default: KV::Scalar(1.0), ui: log },
             DynamicParam { id: "mix".into(), name: "Mix".into(), default: KV::Scalar(50.0), ui: mix },
         ],
-        render: Box::new(|_, buf| buf),
+        render: Box::new(|ctx, buf| ctx.unchanged(buf)),
         shader: None,
         gpu: None,
         time_dependent: false,

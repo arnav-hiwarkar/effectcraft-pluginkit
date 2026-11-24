@@ -374,3 +374,51 @@ fn a_shown_part_of_a_layer_minified_with_a_fractional_offset_equals_that_part_of
         }
     }
 }
+
+#[test]
+fn a_plugin_effect_at_8_bpc_writes_the_pixels_of_a_separate_quantise_pass() {
+    use effectcraft_engine::effects::{self, Buf, EffectCtx, EffectEnv, Params};
+    let _app = app("test.render-quantise", &[]);
+    let (width, height) = (48, 300);
+    let input = || {
+        let mut image = effectcraft_engine::raster::Image::new(width, height);
+        for (i, pixel) in image.data.iter_mut().enumerate() {
+            let v = (i as f32 * 0.0137).fract();
+            *pixel = [v * 0.9, 0.8 - v * 0.7, v * 0.5, 0.25 + v * 0.75];
+        }
+        image
+    };
+    let bits = |pixels: &[[f32; 4]]| pixels.iter().map(|pixel| pixel.map(f32::to_bits)).collect::<Vec<_>>();
+    for effect in ["invert", "shift-down", "host-kernels"] {
+        let spec = effects::find(&format!("test.render-quantise.{effect}")).expect("the probe effect is registered");
+        assert!(spec.quantizes_output(), "{effect} quantises its own output, so the pipeline skips its pass");
+        let size = [f64::from(width), f64::from(height)];
+        let params = Params { values: spec.params.iter().map(|p| (p.id.to_string(), effects::default_value(p, size))).collect() };
+        let run = |quantize_output| {
+            let env = EffectEnv { quantize_output, ..EffectEnv::default() };
+            let ctx = EffectCtx { params: &params, time: 0.0, layer_size: size, seed: 1, adjustment: false, env };
+            effects::apply(spec, &ctx, Buf { img: input(), offset: [0.0, 0.0], scale: 1.0 }).img.data
+        };
+        let unquantised = run(None);
+        let mut separate_pass = unquantised.clone();
+        effectcraft_engine::raster::quantize_slice(&mut separate_pass, 255.0);
+        assert!(bits(&unquantised) != bits(&separate_pass), "{effect} writes values between 8 bpc levels");
+        assert!(bits(&run(Some(255.0))) == bits(&separate_pass), "{effect} at 8 bpc differs from render then quantise");
+    }
+}
+
+#[test]
+fn a_plugin_effect_at_32_bpc_keeps_values_between_8_bpc_levels() {
+    let mut app = app("test.render-float", &[]);
+    app.session.execute("file.projectSettings", json!({"bitDepth": "32"})).unwrap();
+    app.session.execute("layer.newSolid", json!({"name": "Red", "color": "#ff3300", "width": 64, "height": 36})).unwrap();
+    let plain = centre_pixel(&app);
+    app.session.execute("effect.apply", json!({"effect": "test.render-float.invert"})).unwrap();
+    app.session.execute("prop.set", json!({"path": "effects/#1/amount", "value": 0.37})).unwrap();
+    let inverted = centre_pixel(&app);
+    for (channel, (found, before)) in inverted.iter().zip(plain).take(3).enumerate() {
+        let wanted = before + (1.0 - 2.0 * before) * 0.37;
+        assert!((found - wanted).abs() < 1e-6, "channel {channel}: {found}, wanted {wanted}");
+        assert!((found * 255.0 - (found * 255.0).round()).abs() > 0.01, "channel {channel}: {found} lies on an 8 bpc level");
+    }
+}

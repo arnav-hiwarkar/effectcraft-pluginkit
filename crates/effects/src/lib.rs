@@ -723,7 +723,7 @@ impl EffectSpec {
         SKIPS_COVER.contains(&self.id)
     }
     pub fn quantizes_output(&self) -> bool {
-        QUANTIZES_OUTPUT.contains(&self.id) && dynamic::get(self.id).is_none()
+        dynamic::get(self.id).is_some() || QUANTIZES_OUTPUT.contains(&self.id)
     }
 }
 

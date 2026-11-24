@@ -186,10 +186,12 @@ impl Plugin {
                 Call::Render { effect: effect.into(), cx: cx.clone(), frame }
             };
             let shown = &mut pixels[top * width..bottom * width];
-            shown
-                .par_chunks_mut(even_rows * width)
-                .enumerate()
-                .try_for_each(|(band, rows)| self.exchange::<()>(&call(band, rows), Io::InPlace(rows), &mut make_host()))?;
+            shown.par_chunks_mut(even_rows * width).enumerate().try_for_each(|(band, rows)| {
+                let mut host = make_host();
+                self.exchange::<()>(&call(band, rows), Io::InPlace(rows), &mut host)?;
+                host.finish(rows);
+                Ok(())
+            })?;
             pixels.truncate(bottom * width);
             pixels.drain(..top * width);
             return Ok(area);
@@ -220,24 +222,28 @@ impl Plugin {
             let needed = needed.union(out).clipped(cx.size);
             let (first, last) = (needed.top as usize, needed.bottom as usize);
             let held = &input[first * width..last * width];
+            let mut host = make_host();
+            let spread = !self.engine.copies_pixels();
             if !separate {
                 let frame = FrameDesc { width: cx.size[0], height: (last - first) as u32, origin: [0, first as u32], ..Default::default() };
                 let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
                 let io = Io::Region { input: held, output: written, skip: (top as usize - first) * width };
-                return self.exchange::<()>(&call, io, &mut make_host());
-            }
-            let spread = !self.engine.copies_pixels();
-            let window = Window { size: cx.size, first_row: first as u32, rows: (last - first) as u32 };
-            let origin = [area.left as u32, top as u32];
-            let frame = FrameDesc { width: out_width as u32, height: (written.len() / out_width) as u32, origin, input: Some(window), spread };
-            let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
-            if spread {
-                let address = |pixels: &[Pixel]| [pixels.as_ptr() as u64, pixels.len() as u64];
-                let mut table: [Pixel; 3] = bytemuck::cast([address(held), address(&[]), [written.as_mut_ptr() as u64, written.len() as u64]]);
-                self.exchange::<()>(&call, Io::InPlace(&mut table), &mut make_host())
+                self.exchange::<()>(&call, io, &mut host)?;
             } else {
-                self.exchange::<()>(&call, Io::Render { input: held, out: written }, &mut make_host())
+                let window = Window { size: cx.size, first_row: first as u32, rows: (last - first) as u32 };
+                let origin = [area.left as u32, top as u32];
+                let frame = FrameDesc { width: out_width as u32, height: (written.len() / out_width) as u32, origin, input: Some(window), spread };
+                let call = Call::Render { effect: effect.into(), cx: cx.clone(), frame };
+                if spread {
+                    let address = |pixels: &[Pixel]| [pixels.as_ptr() as u64, pixels.len() as u64];
+                    let mut table: [Pixel; 3] = bytemuck::cast([address(held), address(&[]), [written.as_mut_ptr() as u64, written.len() as u64]]);
+                    self.exchange::<()>(&call, Io::InPlace(&mut table), &mut host)?;
+                } else {
+                    self.exchange::<()>(&call, Io::Render { input: held, out: written }, &mut host)?;
+                }
             }
+            host.finish(written);
+            Ok(())
         })?;
         *pixels = output;
         Ok(area)

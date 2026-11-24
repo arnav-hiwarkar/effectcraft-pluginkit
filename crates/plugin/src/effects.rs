@@ -242,6 +242,10 @@ impl RenderHost<'_, '_> {
 }
 
 impl Host for RenderHost<'_, '_> {
+    fn finish(&mut self, written: &mut [craft_plugin_host::Pixel]) {
+        self.ctx.quantize_chunk(written);
+    }
+
     fn layer(&mut self, param: &str, comp_time: Option<f64>) -> Option<Pixels> {
         let other = match comp_time {
             None => self.ctx.layer_param(param, true)?,
@@ -322,7 +326,8 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
     let grid = grid_of(&buf);
     let cx = render_cx(spec, ctx, grid);
     let host = || RenderHost { ctx, grid, spec };
-    let rendered = match layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu()) {
+    let passes = layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu());
+    let rendered = match passes {
         Some(plan) => loaded.plugin.run_passes(&spec.id, &cx, plan, &mut buf.img.data, host),
         None => loaded.plugin.render(&spec.id, &cx, &layout, shown_area(ctx, grid), &mut buf.img.data, host).map(|area| {
             buf.img.width = area.width();
@@ -333,8 +338,9 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
             }
         }),
     };
+    let finished_in_bands = passes.is_none() && rendered.is_ok();
     loaded.report(&spec.id, rendered.err().map(|e| e.to_string()));
-    buf
+    if finished_in_bands { buf } else { ctx.quantized(buf) }
 }
 
 fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Option<GpuProgram> {
