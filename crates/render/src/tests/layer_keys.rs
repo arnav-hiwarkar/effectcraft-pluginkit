@@ -98,3 +98,37 @@ fn every_edit_that_changes_a_layers_pixels_changes_its_key() {
         assert_eq!(key(&q, cid), base, "{what}");
     }
 }
+
+#[test]
+fn a_scene_reader_sampling_other_frames_gets_a_key_per_comp_frame_while_the_scene_holds() {
+    use effectcraft_effects::dynamic::{self, DynamicEffect};
+    let id = "test.keys.scene-ahead";
+    dynamic::register(DynamicEffect {
+        owner: "test.keys".into(),
+        version: "1.0.0".into(),
+        id: id.into(),
+        name: id.into(),
+        category: "Test".into(),
+        params: Vec::new(),
+        render: Box::new(|_, buf| buf),
+        shader: None,
+        gpu: None,
+        time_dependent: false,
+        reads_other_frames: true,
+        reads_comp_scene: true,
+        reads_param_history: false,
+        presets: Vec::new(),
+        revision: 1,
+        files: None,
+        margin: None,
+    });
+    let (mut p, cid, comp) = setup();
+    let mut l = solid(&mut p, &comp, [0.4, 0.5, 0.6], 200, 100);
+    add_effect_200(&mut p, &mut l, id, &[]);
+    p.comp_mut(cid).unwrap().layers.push(l);
+    let r = Renderer::new(&p, &NoFootage, RenderOpts::default());
+    let comp = p.comp(cid).unwrap();
+    let key_at = |frame: i64| cache::layer_key(&r.ctx(cid, comp, Tick::from_seconds_f64(frame as f64 / 30.0)), &comp.layers[0], 1.0, false, false);
+    let keys: std::collections::BTreeSet<_> = (10..13).map(key_at).collect();
+    assert_eq!(keys.len(), 3, "three frames with an unchanged scene share a key: {keys:?}");
+}
