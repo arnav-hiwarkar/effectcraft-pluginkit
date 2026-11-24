@@ -207,6 +207,10 @@ fn answer(cx: &mut HostCx, call: HostCall, bulk: &[u8]) -> Result<(Value, Bulk),
         HostCall::Source { time } => image(cx.host.source(time)),
         HostCall::Masks => plain(json!(cx.host.masks())),
         HostCall::Scene => cx.host.scene().map(|scene| (json!(scene), Bulk::None)).ok_or("no scene here".into()),
+        HostCall::SceneAt { time } => cx.host.scene_at(time).map(|scene| (json!(scene), Bulk::None)).ok_or("no scene here".into()),
+        HostCall::Placement { param, time } => {
+            cx.host.placement(&param, time).map(|placement| (json!(placement), Bulk::None)).ok_or(format!("no layer is chosen in {param}"))
+        }
         HostCall::ReadFile { root, path, error_kind } => {
             let read = if root == Root::User && !cx.plugin.grants.contains(&Permission::FilesRead) {
                 cx.plugin.open_picked(&path, false).and_then(|mut file| {

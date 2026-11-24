@@ -118,3 +118,10 @@ fn an_effect_that_changes_with_time_must_say_so() {
     let error = plugin.render("silent-drift").time_check().unwrap_err();
     assert!(error.contains("effect `silent-drift` renders differently at 0 s and at 0.5 s") && error.contains("`.time_dependent()`"), "{error}");
 }
+
+#[test]
+fn an_effect_that_reads_the_scene_at_another_time_without_declaring_other_frames_fails_and_says_what_to_declare() {
+    let (_bundle, plugin) = probe();
+    let error = plugin.render("scene-later").size(8, 8).run().unwrap_err();
+    assert!(error.contains("effect `scene-later` must declare `.reads_other_frames()`"), "{error}");
+}

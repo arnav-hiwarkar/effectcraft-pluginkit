@@ -1,4 +1,4 @@
-use craft_plugin::{HostCall, Permission, Root};
+use craft_plugin::{EffectSpec, HostCall, Permission, Root};
 
 use super::serve::Identity;
 use crate::host::{Access, Host, Origin};
@@ -17,7 +17,14 @@ fn access(call: &HostCall, host: &dyn Host, plugin: &Identity, origin: Origin) -
         HostCall::PickFile { .. } => Access::Free,
         HostCall::ReadFile { root: Root::User, path, .. } | HostCall::ListFiles { root: Root::User, path } if plugin.picked(path, false) => Access::Free,
         HostCall::WriteFile { root: Root::User, path } if plugin.picked(path, true) => Access::Free,
-        HostCall::Log { .. } | HostCall::Notify { .. } | HostCall::Layer { .. } | HostCall::Source { .. } | HostCall::Masks | HostCall::Scene => Access::Free,
+        HostCall::Log { .. }
+        | HostCall::Notify { .. }
+        | HostCall::Layer { .. }
+        | HostCall::Source { .. }
+        | HostCall::Masks
+        | HostCall::Scene
+        | HostCall::SceneAt { .. }
+        | HostCall::Placement { .. } => Access::Free,
         HostCall::CacheGet { .. } | HostCall::CachePut { .. } | HostCall::CacheRemove { .. } | HostCall::CacheHas { .. } | HostCall::UploadImage { .. } => {
             Access::Free
         }
@@ -31,7 +38,28 @@ fn access(call: &HostCall, host: &dyn Host, plugin: &Identity, origin: Origin) -
     }
 }
 
+fn undeclared(call: &HostCall, spec: &EffectSpec) -> Option<&'static str> {
+    let other_time = match call {
+        HostCall::SceneAt { .. } => true,
+        HostCall::Placement { time, .. } => time.is_some(),
+        _ => return None,
+    };
+    match (spec.reads_scene, spec.reads_other_frames || !other_time) {
+        (false, _) => Some(if other_time { ".reads_scene().reads_other_frames()" } else { ".reads_scene()" }),
+        (true, false) => Some(".reads_other_frames()"),
+        (true, true) => None,
+    }
+}
+
 pub(crate) fn check(call: &HostCall, host: &dyn Host, plugin: &Identity, origin: Origin) -> Result<(), String> {
+    if let Some(spec) = host.effect()
+        && let Some(missing) = undeclared(call, spec)
+    {
+        return Err(format!(
+            "refused: effect `{}` must declare `{missing}` in its EffectSpec to read this, so its cached frames redraw when it changes",
+            spec.id
+        ));
+    }
     let grants = &plugin.grants;
     match access(call, host, plugin, origin) {
         Access::Free => Ok(()),

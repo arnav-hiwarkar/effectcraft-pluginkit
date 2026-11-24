@@ -76,8 +76,8 @@ pooled instance, so values stored outside `cx` are not shared between calls.
 | `.params([Param, …])` | Adds parameters, such as the list `params!` makes. |
 | `.group(name, [Param, …])` | Adds parameters under a twirl-down that shows `name`. Their ids become `<group id>/<id>`, see [Parameter ids](#parameter-ids). |
 | `.time_dependent()` | The output changes with `cx.time` when no parameter is animated. |
-| `.reads_other_frames()` | The effect calls `cx.source_at` or `cx.layer_at`. |
-| `.reads_scene()` | The effect calls `cx.scene`. |
+| `.reads_other_frames()` | The effect calls `cx.source_at`, `cx.layer_at`, `cx.scene_at` or `cx.placement_at`. |
+| `.reads_scene()` | The effect calls `cx.scene`, `cx.scene_at` or `cx.placement`. |
 | `.reads_param_history()` | The effect calls `cx.at` or `cx.param_history`. A layer whose other effects or masks have expressions is then not cached, because the key cannot see what an expression returned at another time. |
 | `.preset(name, [(id, Value), …])` | A named set of parameter values, see [Presets](#presets). |
 | `.shader(wgsl)` | WGSL kernels for GPU passes. See [Passes](plugin-gpu.md). |
@@ -216,6 +216,9 @@ four times the frame, every side is cut by one factor, so a frame 16384 wide is 
 | `cx.param_history()` | A hash of everything that sets this effect's parameters over time (values, keyframes, expression text), the same in every frame and session. `None` when a parameter has an expression, whose values at other times the hash cannot see, or outside the app. Use it to key caches of a simulation. |
 | `cx.masks()` | The layer's masks as polylines in frame pixels. |
 | `cx.scene()` | The comp's camera and lights, see [Scene](#scene). Declare `.reads_scene()`. |
+| `cx.scene_at(comp_time)` | The same at another comp time. Declare `.reads_scene()` and `.reads_other_frames()`. |
+| `cx.placement("target")` | Where the layer chosen in a layer parameter sits, see [Placement](#placement). Declare `.reads_scene()`. |
+| `cx.placement_at("target", comp_time)` | The same at another comp time. Declare `.reads_scene()` and `.reads_other_frames()`. |
 
 These calls also work in `layout`, for example to size the padding from the masks.
 
@@ -242,13 +245,34 @@ with the layer on the plane z = 0. They do not change with `cx.scale` or padding
 | `scene.project(point)` | That layer pixel, or `None` behind the camera. |
 | `scene.view_projection(cx)` | The same camera as a column-major 4x4 clip matrix for a draw pass on a frame of `cx.size`. It lands a point on the pixel `project` gives, times `cx.scale`, plus `cx.offset`. Depth is 1 at `Scene::NEAR` (one layer pixel from the camera) and falls towards 0 with distance, which is what the depth buffer expects. |
 | `scene.camera_layer` | The camera is a camera layer, not the comp's default view. |
-| `scene.camera` | `view` (rows of a 4x4 matrix from layer pixels to camera space, which has its origin at the camera, x right, y down and z along the view, in the same pixel units), `position` (the camera in layer pixels), and `zoom` (the distance in pixels at which one unit covers one pixel). The app has no near or far distance. |
+| `scene.camera` | `view` (rows of a 4x4 matrix from layer pixels to camera space, which has its origin at the camera, x right, y down and z along the view, in the same pixel units), `position` (the camera in layer pixels), `zoom` (the distance in pixels at which one unit covers one pixel), and `focus`, `Some` when depth of field is on: `distance` and `aperture` in pixels, `blur` (1 is 100 %). The app has no near or far distance. |
 | `scene.lights` | Every light layer that is switched on. |
 | `Scene::centred(cx.layer_size)` | A camera facing the middle of the layer that leaves the plane z = 0 where it is. Use it when `cx.scene()` is `None`. |
 
 A `Light` has `kind` (`Ambient`, `Point`, `Spot`, `Parallel`), `position`, `direction` (the way the
 light travels, unit length), `colour`, `intensity` (1 is 100 %), `cone_angle` (the full angle in
 degrees) and `feather` (0 to 1). Light a surface with `colour` times `intensity`.
+
+`cx.scene_at(comp_time)` gives the scene at another comp time, for motion blur or a camera move
+between frames. It returns an error for a time that is not finite, and when the spec lacks
+`.reads_scene()` or `.reads_other_frames()`: the layer cache keys such an effect on every camera,
+light and layer of the comp, which it would otherwise miss. A comp with an expression on any layer
+is then not cached.
+
+### Placement
+
+`cx.placement("target")` returns an error when no layer is chosen or the spec lacks `.reads_scene()`
+(and `.reads_other_frames()` for `cx.placement_at`). A `LayerPlacement` has:
+
+| Field or call | Meaning |
+|---|---|
+| `matrix` | Rows of a 4x4 matrix from the target's own pixels (x right, y down, z away from the viewer) to this layer's pixels, through the parents of both layers. It includes 3D rotation and scale. Like the scene it does not change with `cx.scale` or padding. |
+| `apply(point)` | A target pixel `[x, y, z]` in this layer's pixels. |
+| `opacity` | The target's own opacity, 0 to 1. |
+| `size` | The target's size in its pixels; its corners are `[0, 0]` and `size`. |
+
+The matrix maps the target's layer onto this layer's 3D space, not through the camera: to see where
+it shows on screen, pass `apply(point)` to `scene.project`.
 
 ### Frame
 

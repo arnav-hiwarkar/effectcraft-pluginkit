@@ -353,6 +353,7 @@ pub struct CompCamera {
     pub layer_to_camera_rows: [[f64; 4]; 4],
     pub eye: [f64; 3],
     pub zoom: f64,
+    pub focus: Option<[f64; 3]>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
@@ -373,6 +374,13 @@ pub struct SceneLight {
     pub intensity: f32,
     pub cone_degrees: f32,
     pub feather: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
+pub struct LayerPlacement {
+    pub matrix: [[f64; 4]; 4],
+    pub opacity: f64,
+    pub size: [f64; 2],
 }
 
 impl CompScene {

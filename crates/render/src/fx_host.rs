@@ -1,3 +1,5 @@
+use effectcraft_geom::{Mat4, vec3};
+
 use super::frames::frame_blend_mode;
 use super::{Arc, Buf, EffectHost, EvalCtx, FrameBlend, ItemKind, Layer, LayerPixels, LayerSource, Params, Renderer, Tick, three_d};
 
@@ -57,7 +59,8 @@ pub(crate) fn comp_scene(ctx: &EvalCtx, layer: &Layer) -> Option<effectcraft_eff
     let active = three_d::active_camera(ctx);
     let view = inv.as_ref().map(|inv| {
         let eye = inv.apply(active.eye);
-        effectcraft_effects::CompCamera { layer_to_camera_rows: (active.view * world).0, eye: [eye.x, eye.y, eye.z], zoom: active.zoom }
+        let focus = active.dof.map(|dof| [dof.focus, dof.aperture, dof.blur_level]);
+        effectcraft_effects::CompCamera { layer_to_camera_rows: (active.view * world).0, eye: [eye.x, eye.y, eye.z], zoom: active.zoom, focus }
     });
     let lights = three_d::light::lights_at(ctx)
         .iter()
@@ -85,6 +88,10 @@ pub(crate) fn comp_scene(ctx: &EvalCtx, layer: &Layer) -> Option<effectcraft_eff
         })
         .collect();
     Some(effectcraft_effects::CompScene { camera: Some(camera), camera_layer, light, view, lights })
+}
+
+fn finite_time(seconds: f64) -> Option<Tick> {
+    seconds.is_finite().then(|| Tick::from_seconds_f64(seconds))
 }
 
 /// Nesting limit for effects that render layers (other layers, other times).
@@ -207,6 +214,20 @@ impl EffectHost for FxHost<'_, '_, '_> {
 
     fn comp_scene(&self) -> Option<effectcraft_effects::CompScene> {
         Some(comp_scene(self.ctx, self.layer)?.rebased(self.origin))
+    }
+
+    fn comp_scene_at(&self, comp_time: f64) -> Option<effectcraft_effects::CompScene> {
+        let ctx = self.ctx.at(finite_time(comp_time)?);
+        Some(comp_scene(&ctx, self.layer)?.rebased(self.origin))
+    }
+
+    fn placement(&self, id: u64, comp_time: Option<f64>) -> Option<effectcraft_effects::LayerPlacement> {
+        let ctx = self.ctx.at(comp_time.map_or(Some(self.ctx.time), finite_time)?);
+        let other = ctx.layer(effectcraft_project::LayerId(id))?;
+        let (size, other_origin) = ctx.effect_bounds(other);
+        let shift = |origin: [f64; 2]| Mat4::translate(vec3(origin[0], origin[1], 0.0));
+        let matrix = shift(self.origin.map(|o| -o)) * ctx.world_matrix(self.layer).inverse()? * ctx.world_matrix(other) * shift(other_origin);
+        Some(effectcraft_effects::LayerPlacement { matrix: matrix.0, opacity: ctx.opacity(other), size })
     }
 
     fn layer_at(&self, id: u64, comp_time: f64, masks_and_effects: bool) -> Option<LayerPixels> {

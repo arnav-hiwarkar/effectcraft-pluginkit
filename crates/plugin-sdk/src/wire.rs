@@ -1024,6 +1024,8 @@ pub enum HostCall {
     RemoveImage { key: String },
     ClipboardRead,
     ClipboardWrite { text: String },
+    Placement { param: String, time: Option<f64> },
+    SceneAt { time: f64 },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -1151,6 +1153,31 @@ pub struct Camera {
     pub view: [[f64; 4]; 4],
     pub position: [f64; 3],
     pub zoom: f64,
+    #[serde(default)]
+    pub focus: Option<Focus>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Focus {
+    pub distance: f64,
+    pub aperture: f64,
+    pub blur: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct LayerPlacement {
+    pub matrix: [[f64; 4]; 4],
+    pub opacity: f64,
+    pub size: [f64; 2],
+}
+
+impl LayerPlacement {
+    pub fn apply(&self, point: [f64; 3]) -> [f64; 3] {
+        let row = |r: [f64; 4]| r[0] * point[0] + r[1] * point[1] + r[2] * point[2] + r[3];
+        let w = row(self.matrix[3]);
+        let w = if w.abs() > 1e-12 { w } else { 1.0 };
+        [row(self.matrix[0]) / w, row(self.matrix[1]) / w, row(self.matrix[2]) / w]
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
@@ -1182,7 +1209,7 @@ impl Scene {
         let centre = [layer_size[0] / 2.0, layer_size[1] / 2.0];
         let projection = [[1.0, 0.0, centre[0] / zoom, 0.0], [0.0, 1.0, centre[1] / zoom, 0.0], [0.0, 0.0, 1.0 / zoom, 1.0]];
         let view = [[1.0, 0.0, 0.0, -centre[0]], [0.0, 1.0, 0.0, -centre[1]], [0.0, 0.0, 1.0, zoom], [0.0, 0.0, 0.0, 1.0]];
-        let camera = Camera { view, position: [centre[0], centre[1], -zoom], zoom };
+        let camera = Camera { view, position: [centre[0], centre[1], -zoom], zoom, focus: None };
         Scene { projection: Some(projection), camera_layer: false, camera: Some(camera), lights: Vec::new() }
     }
 
@@ -1552,6 +1579,19 @@ mod tests {
         assert!(matches!(older, HostCall::ReadFile { error_kind: None, .. }));
         let failed = ReadFailed { failed: FileError { kind: FileErrorKind::NotFound, message: "a: gone".into() } };
         assert_eq!(serde_json::to_string(&failed).unwrap(), r#"{"failed":{"kind":"not_found","message":"a: gone"}}"#);
+    }
+
+    #[test]
+    fn a_scene_from_an_older_host_has_no_focus_and_a_placement_moves_points() {
+        let older = r#"{"camera":{"view":[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]],"position":[0,0,-50],"zoom":50},"lights":[{"kind":"spot","position":[1,2,3],"direction":[0,0,1],"colour":[1,1,1],"intensity":1,"cone_angle":90,"feather":0}]}"#;
+        let scene: Scene = serde_json::from_str(older).unwrap();
+        assert_eq!(scene.camera.unwrap().focus, None);
+        let placed = LayerPlacement {
+            matrix: [[0.0, -1.0, 0.0, 47.0], [1.0, 0.0, 0.0, 8.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+            opacity: 1.0,
+            size: [20.0, 10.0],
+        };
+        assert_eq!(placed.apply([20.0, 10.0, 3.0]), [37.0, 28.0, 3.0]);
     }
 
     #[test]

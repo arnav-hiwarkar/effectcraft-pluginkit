@@ -414,6 +414,25 @@ fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
 Declare `.reads_param_history()` in the spec. When `param_history` is `None` (an expression is
 involved), do not reuse checkpoints between frames. `plugins/ember` does this.
 
+## Follow another layer and the camera
+
+`cx.placement("target")` says where the layer chosen in a layer parameter sits, through both layers'
+parents, and `cx.scene_at(comp_time)` gives the camera and lights at any time:
+
+```rust
+fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+    let target = cx.placement("target")?;
+    let [x, y, _] = target.apply([target.size[0] / 2.0, target.size[1] / 2.0, 0.0]);
+    let centre = [x * cx.scale + cx.offset[0], y * cx.scale + cx.offset[1]];
+    let blur = cx.scene().and_then(|scene| scene.camera?.focus).map_or(0.0, |focus| focus.aperture);
+    let next = cx.scene_at(cx.comp_time + 1.0 / cx.frame_rate)?;
+    Ok(())
+}
+```
+
+Declare `.reads_scene().reads_other_frames()` in the spec; without them these calls return an error
+that names the missing declaration. See [Placement](plugin-reference.md#placement).
+
 ## Offer presets
 
 `.preset(name, values)` on the spec names a set of parameter values, for example a look popup that
