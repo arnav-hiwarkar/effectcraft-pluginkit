@@ -108,11 +108,15 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 
 ## Found by the region work, not fixed
 
-- **Only the last plugin effects of a stack render a part.** A plugin effect gets the shown part grown by
-  the margins of the effects after it, and built-in effects declare a margin only for a few 3D channel
-  effects (`pixel_margin` in `crates/effects/src/channel3d.rs`), so a plugin effect followed by a blur or a
-  colour effect renders the whole layer. Plugin effects declare no margin to the pipeline either, so the
-  first of two plugin effects renders whole. The shown part also ignores the layer's masks.
+- **A built-in effect that reaches its neighbours makes the plugin effects before it render whole.** Plugin
+  effects, the colour effects in `POINTWISE` (`crates/effects/src/lib.rs`), Fill without feather and Gaussian
+  Blur on its sampled path (sigma under 3 grid pixels) declare their margin in `pixel_margin`. A plugin
+  effect declares one only when it is pointwise: `Layout::neighbourhood(n)` promises rows, and its columns
+  are whole rows, so an effect before a neighbourhood plugin effect renders whole. Every other
+  built-in, a larger Gaussian Blur (its running box sums are not bit-identical on a part), Fast Box Blur and
+  Glow among them, declares none. A plugin margin is read at the layer's raster scale, so a solid above 16
+  million pixels (made at a lower scale) underestimates a fixed reach in pixels. The shown part also ignores
+  the layer's masks.
 - **A light sandboxed effect is slower than with in-place frames.** Its band now has an input region and a
   separate output region in plugin memory, and the output region is zeroed before the call, so Probe
   sandboxed at 1080p went from 1.64 to 2.55 ms (minimum of three interleaved runs, load 34 to 40). Heavy

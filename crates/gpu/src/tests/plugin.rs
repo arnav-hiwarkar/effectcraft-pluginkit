@@ -31,6 +31,7 @@ fn effect(id: &str, wgsl: &str, program: GpuProgram) -> DynamicEffect {
     DynamicEffect {
         owner: "test".into(),
         files: None,
+        margin: None,
         id: id.into(),
         name: id.into(),
         category: "Test".into(),

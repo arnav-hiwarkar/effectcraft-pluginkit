@@ -1360,7 +1360,7 @@ impl<'a> Renderer<'a> {
         {
             return None;
         }
-        let fx_margin = effects_margin(ctx, layer)?;
+        let fx_margin = effects_margin(ctx, layer, self.raster_scale(ctx, layer))?;
         // (a source that reads whole frames anyway: the whole frame, which the layer cache keeps)
         if comp_reads_pixels(ctx) || !self.footage.reads_rows(f, ctx.source_time(layer)) {
             return None;
@@ -1751,28 +1751,36 @@ impl Renderer<'_> {
     ) -> Vec<Option<Shown>> {
         let mut parts = vec![None; stack.len()];
         let mut part = shown;
+        let scale = self.raster_scale(ctx, layer);
         for (slot, (_, g, spec)) in parts.iter_mut().zip(stack).rev() {
             *slot = part;
-            let margin = part.and_then(|_| effectcraft_effects::pixel_margin(spec.id, &self.effect_params(ctx, layer, g)));
+            let margin = part.and_then(|_| effect_margin(ctx, layer, g, spec.id, scale));
             part = part.zip(margin).map(|(Shown { part: p, grid }, m)| Shown { part: [p[0] - m, p[1] - m, p[2] + m, p[3] + m], grid });
         }
         parts
     }
 }
 
-/// How far the enabled effects of `layer` reach around a pixel (layer pixels), `None` when one
-/// doesn't declare it (`effectcraft_effects::pixel_margin`).
-fn effects_margin(ctx: &EvalCtx, layer: &Layer) -> Option<f64> {
+/// How far the enabled effects of `layer` reach around a pixel (layer pixels) on a grid of
+/// `scale`, `None` when one doesn't declare it (`effectcraft_effects::pixel_margin`).
+fn effects_margin(ctx: &EvalCtx, layer: &Layer, scale: f64) -> Option<f64> {
     if !layer.switches.effects {
         return Some(0.0);
     }
     let mut most: f64 = 0.0;
     for g in layer.effects().into_iter().flat_map(|fx| fx.groups()).filter(|g| g.enabled) {
         let effectcraft_project::GroupKind::Effect { effect } = &g.kind else { return None };
-        let params = effectcraft_effects::flatten_params(g, &mut |p| ctx.value(layer, p));
-        most = most.max(effectcraft_effects::pixel_margin(effect, &params)?);
+        most = most.max(effect_margin(ctx, layer, g, effect, scale)?);
     }
     Some(most)
+}
+
+fn effect_margin(ctx: &EvalCtx, layer: &Layer, g: &effectcraft_project::PropGroup, effect: &str, scale: f64) -> Option<f64> {
+    let params = effectcraft_effects::flatten_params(g, &mut |p| ctx.value(layer, p));
+    let time = layer.layer_time(ctx.time).seconds();
+    let effect_ctx =
+        EffectCtx { params: &params, time, layer_size: ctx.effect_bounds(layer).0, seed: g.uid as u32, adjustment: false, env: EffectEnv::default() };
+    effectcraft_effects::pixel_margin(effect, &effect_ctx, scale)
 }
 
 /// Does anything in the comp read layers' pixels where it likes: an enabled effect with a layer

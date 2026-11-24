@@ -422,3 +422,26 @@ fn a_plugin_effect_at_32_bpc_keeps_values_between_8_bpc_levels() {
         assert!((found * 255.0 - (found * 255.0).round()).abs() > 0.01, "channel {channel}: {found} lies on an 8 bpc level");
     }
 }
+
+#[test]
+fn a_plugin_effect_followed_by_a_small_blur_and_a_colour_effect_renders_only_the_shown_part_grown_by_their_margins() {
+    let mut app = app("test.render-margins", &[]);
+    app.session.execute("comp.new", json!({"name": "Wide", "width": 640, "height": 100, "frameRate": 24, "duration": 2})).unwrap();
+    app.session.execute("layer.newSolid", json!({"name": "Grey", "color": "#808080", "width": 640, "height": 100})).unwrap();
+    for effect in ["test.render-margins.checks", "test.render-margins.tally", "ec.blur.gaussian", "ec.color.levels"] {
+        app.session.execute("effect.apply", json!({"effect": effect})).unwrap();
+    }
+    app.session.execute("prop.set", json!({"path": "effects/#3/blurriness", "value": 5.9})).unwrap();
+    app.session.execute("prop.set", json!({"path": "effects/#4/gamma", "value": 2.2})).unwrap();
+    let whole = frame(&app, None);
+    assert_eq!(tally(&app), 64_000, "a layer inside the comp renders whole");
+
+    let shown = frame(&app, Some([256.0, 32.0, 64.0, 32.0]));
+    assert_eq!(tally(&app) - 64_000, 210 * 100, "the 64x32 part snapped out to 192x128 and grown by 9 pixels of blur on each side, within the 100 rows");
+    for y in 0..32 {
+        for x in 0..64 {
+            let (part, full) = (shown.data[(y * 64 + x) as usize], whole.data[((y + 32) * 640 + x + 256) as usize]);
+            assert!(part == full, "pixel ({x}, {y}): {part:?} shown, {full:?} whole");
+        }
+    }
+}

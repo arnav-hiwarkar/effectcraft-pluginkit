@@ -48,6 +48,11 @@ fn gaussian(ctx: &EffectCtx, mut b: Buf) -> Buf {
     b
 }
 
+pub(crate) fn gaussian_margin(params: &crate::Params, scale: f64) -> Option<f64> {
+    let s = blur_sigma(params.f("blurriness")) * scale;
+    effectcraft_raster::gaussian_is_exact(s, s).then(|| (s * 3.0).ceil() / scale)
+}
+
 fn box_blur(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let radius = (ctx.params.f("radius") * b.scale).max(0.0);
     let r = radius.floor() as usize;
