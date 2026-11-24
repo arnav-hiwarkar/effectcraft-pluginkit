@@ -201,6 +201,7 @@ fn reported_camera(id: &str, camera: Option<serde_json::Value>) -> ([f32; 3], f3
 
 #[test]
 fn the_scene_camera_a_plugin_reads_is_the_camera_layer_in_the_layer_pixels() {
+    let _shared = crate::shared();
     let camera = json!({"name": "Shot", "type": "twoNode", "position": [10.0, 5.0, -300.0], "poi": [40.0, 20.0, 0.0], "zoom": 250.0});
     let (position, zoom, _) = reported_camera("test.camera-layer", Some(camera));
     assert_eq!((position, zoom), ([10.0, 5.0, -300.0], 250.0));
@@ -208,6 +209,7 @@ fn the_scene_camera_a_plugin_reads_is_the_camera_layer_in_the_layer_pixels() {
 
 #[test]
 fn without_a_camera_layer_the_scene_camera_is_the_comp_default_view() {
+    let _shared = crate::shared();
     let (position, zoom, view) = reported_camera("test.default-view", None);
     let eye: Vec<f32> = view["camera"]["eye"].as_array().expect("an eye").iter().map(|c| c.as_f64().expect("a number") as f32).collect();
     let default_zoom = view["camera"]["zoom"].as_f64().expect("a zoom") as f32;
@@ -260,6 +262,7 @@ fn a_cached_layer_reading_placement_and_the_scene_at_another_time_redraws_when_t
 
 #[test]
 fn a_plugin_reads_where_a_parented_layer_sits_and_the_camera_focus_and_scene_at_another_time() {
+    let _shared = crate::shared();
     let camera = json!({"name": "Shot", "type": "oneNode", "position": [10.0, 5.0, -300.0], "zoom": 250.0, "dof": true, "focusDistance": 400.0, "aperture": 30.0, "blurLevel": 50.0});
     let report = placed_report("test.placed", camera);
     let wanted: [[f32; 4]; 5] = [[0.0, -1.0, 0.0, 47.0], [1.0, 0.0, 0.0, 8.0], [0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.5, 1.0]];

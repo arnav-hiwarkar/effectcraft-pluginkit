@@ -81,6 +81,7 @@ fn pixel(image: &Image, x: u32, y: u32) -> [f32; 4] {
 
 #[test]
 fn a_lit_sphere_shows_the_key_light_on_its_centre() {
+    let _shared = crate::shared();
     let matte = [
         ("model", SPHERE),
         ("Transform/size", Value::Scalar(40.0)),
@@ -104,6 +105,7 @@ fn a_lit_sphere_shows_the_key_light_on_its_centre() {
 
 #[test]
 fn of_two_overlapping_copies_the_nearer_one_wins() {
+    let _shared = crate::shared();
     let two = [
         ("model", SPHERE),
         ("Transform/size", Value::Scalar(30.0)),
@@ -125,6 +127,7 @@ fn of_two_overlapping_copies_the_nearer_one_wins() {
 
 #[test]
 fn the_bundled_obj_model_renders() {
+    let _shared = crate::shared();
     let Some(gem) = render(&[("model", GEM), ("Transform/size", Value::Scalar(40.0))]) else { return };
     let covered = gem.data.iter().filter(|pixel| pixel[3] > 0.5).count();
     let disc = std::f64::consts::PI * 40.0 * 40.0;
@@ -133,6 +136,7 @@ fn the_bundled_obj_model_renders() {
 
 #[test]
 fn a_ring_of_models_draws_over_the_layer_at_1080p() {
+    let _shared = crate::shared();
     const FRAME: [u32; 2] = [1920, 1080];
     let mut backdrop = Image::new(FRAME[0], FRAME[1]);
     for y in 0..FRAME[1] {
@@ -173,6 +177,7 @@ fn a_ring_of_models_draws_over_the_layer_at_1080p() {
 
 #[test]
 fn a_comp_light_replaces_the_key_light_in_a_rendered_composition() {
+    let _shared = crate::shared();
     let Some(gpu) = gpu() else { return };
     spec();
     let mut session = effectcraft_host::session();
@@ -271,6 +276,7 @@ fn halves(image: &Image) -> [f64; 4] {
 
 #[test]
 fn a_point_light_on_the_right_lights_the_right_half() {
+    let _shared = crate::shared();
     let Some(image) = sphere_lit_by(json!({"kind": "Point", "name": "Right", "position": [400.0, 80.0, 0.0]})) else { return };
     let [left, right, _, _] = halves(&image);
     assert!(right > left + 0.05, "right {right:.3} against left {left:.3}");
@@ -278,6 +284,7 @@ fn a_point_light_on_the_right_lights_the_right_half() {
 
 #[test]
 fn a_point_light_above_lights_the_top_half() {
+    let _shared = crate::shared();
     let Some(image) = sphere_lit_by(json!({"kind": "Point", "name": "Above", "position": [80.0, -240.0, 0.0]})) else { return };
     let [_, _, top, bottom] = halves(&image);
     assert!(top > bottom + 0.05, "top {top:.3} against bottom {bottom:.3}");
@@ -285,6 +292,7 @@ fn a_point_light_above_lights_the_top_half() {
 
 #[test]
 fn a_point_light_in_front_lights_the_sphere_and_one_behind_does_not() {
+    let _shared = crate::shared();
     let in_front = sphere_lit_by(json!({"kind": "Point", "name": "Front", "position": [80.0, 80.0, -400.0]}));
     let behind = sphere_lit_by(json!({"kind": "Point", "name": "Behind", "position": [80.0, 80.0, 400.0]}));
     let (Some(in_front), Some(behind)) = (in_front, behind) else { return };
@@ -295,6 +303,7 @@ fn a_point_light_in_front_lights_the_sphere_and_one_behind_does_not() {
 
 #[test]
 fn a_spot_light_lights_only_where_it_points_and_inside_its_cone() {
+    let _shared = crate::shared();
     let at_sphere = sphere_lit_by(json!({"kind": "Spot", "name": "At", "position": [400.0, 80.0, 0.0], "poi": [80.0, 80.0, 0.0], "coneAngle": 60.0}));
     let away = sphere_lit_by(json!({"kind": "Spot", "name": "Away", "position": [400.0, 80.0, 0.0], "poi": [800.0, 80.0, 0.0], "coneAngle": 60.0}));
     let narrow = sphere_lit_by(
@@ -312,6 +321,7 @@ fn a_spot_light_lights_only_where_it_points_and_inside_its_cone() {
 
 #[test]
 fn a_parallel_light_shines_along_its_direction() {
+    let _shared = crate::shared();
     let from_right = sphere_lit_by(json!({"kind": "Parallel", "name": "Right", "position": [400.0, 80.0, 0.0], "poi": [80.0, 80.0, 0.0]}));
     let from_below = sphere_lit_by(json!({"kind": "Parallel", "name": "Below", "position": [80.0, 400.0, 0.0], "poi": [80.0, 80.0, 0.0]}));
     let (Some(from_right), Some(from_below)) = (from_right, from_below) else { return };
@@ -374,6 +384,7 @@ fn assert_within_two_pixels((solid, forge): ([f64; 2], [f64; 2]), case: &str) {
 
 #[test]
 fn forge_3d_lines_up_with_a_3d_layer_under_a_moved_camera() {
+    let _shared = crate::shared();
     let camera = json!({"name": "Off axis", "type": "twoNode", "position": [60.0, 20.0, -450.0], "poi": [190.0, 110.0, 80.0], "zoom": 400.0});
     let Some(centres) = aligned_centres(Some(camera), [210.0, 70.0, 140.0]) else { return };
     assert_within_two_pixels(centres, "a moved and rotated camera");
@@ -381,6 +392,7 @@ fn forge_3d_lines_up_with_a_3d_layer_under_a_moved_camera() {
 
 #[test]
 fn forge_3d_starts_at_the_centre_of_its_layer() {
+    let _shared = crate::shared();
     let Some(gpu) = gpu() else { return };
     let mut comp = Comp::new([120, 80]);
     comp.forge(&[("model", json!(1)), ("Transform/size", json!(10.0)), ("show_layer", json!(false))]);
@@ -390,12 +402,14 @@ fn forge_3d_starts_at_the_centre_of_its_layer() {
 
 #[test]
 fn forge_3d_lines_up_with_a_3d_layer_in_the_default_view() {
+    let _shared = crate::shared();
     let Some(centres) = aligned_centres(None, [230.0, 50.0, 300.0]) else { return };
     assert_within_two_pixels(centres, "the comp's default view");
 }
 
 #[test]
 fn a_mesh_dropped_from_the_plugin_cache_is_stored_again_on_the_next_frame() {
+    let _shared = crate::shared();
     let Some(gpu) = gpu() else { return };
     let mut comp = Comp::new([120, 80]);
     comp.forge(&[("model", json!(0)), ("Transform/size", json!(20.0)), ("show_layer", json!(false))]);
@@ -413,6 +427,7 @@ fn a_mesh_dropped_from_the_plugin_cache_is_stored_again_on_the_next_frame() {
 
 #[test]
 fn a_comp_point_light_from_the_upper_right_lights_a_row_seen_by_a_moved_camera() {
+    let _shared = crate::shared();
     let Some(gpu) = gpu() else { return };
     let mut comp = Comp::new([960, 540]);
     comp.forge(&[

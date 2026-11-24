@@ -14,7 +14,7 @@ mod viewer;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
 
 use effectcraft_engine::Session;
 use effectcraft_plugin::Plugins;
@@ -34,14 +34,63 @@ fn probe_wasm() -> &'static Path {
     })
 }
 
+static SHARED_PLUGINS: Gate = Gate { readers: Mutex::new(Some(0)), changed: Condvar::new() };
+
+struct Gate {
+    readers: Mutex<Option<usize>>,
+    changed: Condvar,
+}
+
+struct Hold(bool);
+
+impl Gate {
+    fn enter(&'static self, exclusive: bool) -> Hold {
+        let mut readers = self.readers.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            match (*readers, exclusive) {
+                (Some(_), false) => break,
+                (Some(0), true) => break,
+                _ => readers = self.changed.wait(readers).unwrap_or_else(PoisonError::into_inner),
+            }
+        }
+        *readers = if exclusive { None } else { readers.map(|count| count + 1) };
+        Hold(exclusive)
+    }
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        let mut readers = SHARED_PLUGINS.readers.lock().unwrap_or_else(PoisonError::into_inner);
+        *readers = if self.0 { Some(0) } else { readers.map(|count| count - 1) };
+        SHARED_PLUGINS.changed.notify_all();
+    }
+}
+
+fn shared() -> Hold {
+    SHARED_PLUGINS.enter(false)
+}
+
+fn exclusive() -> Hold {
+    SHARED_PLUGINS.enter(true)
+}
+
 struct App {
     session: Session,
     plugins: &'static Plugins,
     bundle: tempfile::TempDir,
     id: String,
+    _hold: Hold,
 }
 
 fn app(id: &str, permissions: &[&str]) -> App {
+    open(shared(), id, permissions)
+}
+
+fn app_exclusive(id: &str, permissions: &[&str]) -> App {
+    open(exclusive(), id, permissions)
+}
+
+fn open(hold: Hold, id: &str, permissions: &[&str]) -> App {
     static CONFIG: OnceLock<tempfile::TempDir> = OnceLock::new();
     let config = CONFIG.get_or_init(|| tempfile::tempdir().expect("temp dir"));
     let mut session = effectcraft_host::session();
@@ -54,7 +103,7 @@ fn app(id: &str, permissions: &[&str]) -> App {
     plugins.load_for_session(bundle.path()).expect("the probe loads");
 
     session.execute("comp.new", json!({"name": "Test", "width": 64, "height": 36, "frameRate": 24, "duration": 2})).expect("comp.new");
-    App { session, plugins, bundle, id: id.to_string() }
+    App { session, plugins, bundle, id: id.to_string(), _hold: hold }
 }
 
 impl App {

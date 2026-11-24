@@ -57,6 +57,7 @@ fn worst_difference(a: &Image, b: &Image) -> f32 {
 
 #[test]
 fn probe_gpu_effects_render_on_the_gpu_as_their_cpu_render_does() {
+    let _shared = crate::shared();
     let app = app("test.gpu-probe", &[]);
     let Some(gpu) = gpu() else { return };
     let chain = [("gpu-invert", vec![("amount", 0.8)]), ("gpu-soften", vec![("strength", 0.6)])];
@@ -84,6 +85,7 @@ fn probe_gpu_effects_render_on_the_gpu_as_their_cpu_render_does() {
 
 #[test]
 fn a_draw_pass_fills_the_frame_and_a_plan_with_an_index_past_its_vertices_is_declined() {
+    let _shared = crate::shared();
     let app = app("test.gpu-fill", &[]);
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.gpu-fill", app.id)).expect("the probe registered its draw effect");
@@ -98,6 +100,7 @@ fn a_draw_pass_fills_the_frame_and_a_plan_with_an_index_past_its_vertices_is_dec
 
 #[test]
 fn a_draw_that_keeps_its_target_draws_over_what_the_passes_before_it_wrote() {
+    let _shared = crate::shared();
     let app = app("test.gpu-keep", &[]);
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.gpu-fill", app.id)).expect("the probe registered its draw effect");
@@ -110,6 +113,7 @@ fn a_draw_that_keeps_its_target_draws_over_what_the_passes_before_it_wrote() {
 
 #[test]
 fn an_effect_without_wgsl_reaches_the_gpu_at_the_settings_its_plan_allows() {
+    let _shared = crate::shared();
     let app = app("test.gpu-swap", &[]);
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.swap", app.id)).expect("the probe registered its swap effect");
@@ -131,6 +135,7 @@ fn an_effect_without_wgsl_reaches_the_gpu_at_the_settings_its_plan_allows() {
 
 #[test]
 fn a_gpu_pass_reads_the_layer_a_layer_parameter_names() {
+    let _shared = crate::shared();
     let mut app = app("test.gpu-matte", &[]);
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.gpu-matte", app.id)).expect("the probe registered its matte effect");
@@ -173,6 +178,7 @@ fn a_gpu_pass_reads_the_layer_a_layer_parameter_names() {
 
 #[test]
 fn a_layer_input_stays_on_the_gpu_after_the_first_frame() {
+    let _shared = crate::shared();
     let mut app = app("test.gpu-layer-frames", &[]);
     if gpu().is_none() {
         return;
@@ -231,6 +237,7 @@ fn a_layer_input_stays_on_the_gpu_after_the_first_frame() {
 
 #[test]
 fn a_gpu_pass_reads_a_layer_whose_video_is_off_as_its_pixels() {
+    let _shared = crate::shared();
     let mut app = app("test.gpu-hidden-matte", &[]);
     let Some(gpu) = gpu() else { return };
     let session = &mut app.session;
@@ -259,6 +266,7 @@ fn a_gpu_pass_reads_a_layer_whose_video_is_off_as_its_pixels() {
 
 #[test]
 fn every_host_kernel_renders_on_the_gpu_within_two_levels_of_the_cpu() {
+    let _shared = crate::shared();
     let app = app("test.gpu-kernels", &[]);
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
@@ -283,6 +291,7 @@ fn every_host_kernel_renders_on_the_gpu_within_two_levels_of_the_cpu() {
 
 #[test]
 fn host_kernel_edge_cases_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() {
+    let _shared = crate::shared();
     let app = app("test.gpu-kernel-edges", &[]);
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
@@ -321,6 +330,7 @@ fn host_kernel_edge_cases_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() 
 
 #[test]
 fn extreme_values_and_negative_colour_give_the_same_literal_pixels_on_the_cpu_and_the_gpu() {
+    let _shared = crate::shared();
     let app = app("test.gpu-kernel-extremes", &[]);
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
@@ -350,6 +360,7 @@ fn extreme_values_and_negative_colour_give_the_same_literal_pixels_on_the_cpu_an
 
 #[test]
 fn plugins_are_told_the_padding_the_app_applies_on_the_cpu_and_the_gpu() {
+    let _shared = crate::shared();
     let sizes = [[1, 1], [7, 3000], [1920, 1080], [3840, 2160], [16000, 100], [16384, 1], [1, 16384], [4097, 4097], [9000, 9000]];
     let paddings = [[0, 0, 0, 0], [1, 1, 1, 1], [5, 0, 2, 0], [300, 300, 300, 300], [4096, 4096, 4096, 4096], [5000, 7, 5000, 7]];
     for size in sizes {
@@ -364,6 +375,7 @@ fn plugins_are_told_the_padding_the_app_applies_on_the_cpu_and_the_gpu() {
 
 #[test]
 fn a_shader_the_gpu_turned_off_is_the_effects_error_and_in_the_plugins_log_once() {
+    let _shared = crate::shared();
     let app = app("test.gpu-stopped", &[]);
     let spec = effects::find(&format!("{}.gpu-invert", app.id)).expect("the probe registered its GPU effect");
     let registered = effects::dynamic::get(spec.id).expect("registered");

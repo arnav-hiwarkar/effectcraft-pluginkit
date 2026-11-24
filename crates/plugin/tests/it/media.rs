@@ -1,9 +1,7 @@
 use effectcraft_plugin::TaskStatus;
 use serde_json::{Value, json};
 
-use crate::{App, app};
-
-static ONE_SESSION_PUMPS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+use crate::{App, app_exclusive};
 
 fn finished(app: &mut App, task: &str, args: Value) -> Value {
     let id = effectcraft_plugin::start_task(&mut app.session, &app.id, task, args).expect("the task starts");
@@ -20,8 +18,7 @@ fn solid(app: &mut App, name: &str, color: &str, size: u32) -> u64 {
 
 #[test]
 fn a_task_renders_the_comp_or_one_layer_with_its_effects() {
-    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut app = app("test.media-frame", &["document.read"]);
+    let mut app = app_exclusive("test.media-frame", &["document.read"]);
     solid(&mut app, "Red", "#ff0000", 64);
     solid(&mut app, "Green", "#00ff00", 16);
 
@@ -35,8 +32,7 @@ fn a_task_renders_the_comp_or_one_layer_with_its_effects() {
 
 #[test]
 fn a_task_reads_the_comp_mix_or_one_layer_of_audio() {
-    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut app = app("test.media-audio", &["document.read"]);
+    let mut app = app_exclusive("test.media-audio", &["document.read"]);
     let loud = solid(&mut app, "Loud", "#808080", 8);
     solid(&mut app, "Quiet", "#808080", 8);
     app.session.execute("effect.apply", json!({"layers": [loud], "effect": "ec.audio.tone"})).unwrap();
@@ -51,8 +47,7 @@ fn a_task_reads_the_comp_mix_or_one_layer_of_audio() {
 
 #[test]
 fn a_task_cannot_ask_for_a_frame_larger_than_the_host_will_render() {
-    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut app = app("test.media-huge", &["document.read"]);
+    let mut app = app_exclusive("test.media-huge", &["document.read"]);
     let mut failure = |width: u32, height: u32, scale: f64| {
         app.session.execute("comp.new", json!({"name": format!("Wide {width}"), "width": width, "height": height, "frameRate": 24, "duration": 1})).unwrap();
         let id = effectcraft_plugin::start_task(&mut app.session, &app.id, "frame", json!({"time": 0.0, "scale": scale})).unwrap();
@@ -70,8 +65,7 @@ fn a_task_cannot_ask_for_a_frame_larger_than_the_host_will_render() {
 
 #[test]
 fn a_task_started_in_one_project_cannot_edit_the_project_opened_after_it() {
-    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut app = app("test.media-closed", &["document.write"]);
+    let mut app = app_exclusive("test.media-closed", &["document.write"]);
     let id = effectcraft_plugin::start_task(&mut app.session, &app.id, "edit", json!({})).unwrap();
     app.session.execute("file.newProject", json!({})).unwrap();
     app.session.execute("comp.new", json!({"name": "Next", "width": 64, "height": 36, "frameRate": 24, "duration": 2})).unwrap();
@@ -83,8 +77,7 @@ fn a_task_started_in_one_project_cannot_edit_the_project_opened_after_it() {
 
 #[test]
 fn a_frame_of_one_layer_keeps_its_track_matte() {
-    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut app = app("test.media-solo", &["document.read"]);
+    let mut app = app_exclusive("test.media-solo", &["document.read"]);
     let plate = solid(&mut app, "Plate", "#0000ff", 64);
     let matte = solid(&mut app, "Matte", "#ff0000", 8);
     app.session.execute("prop.set", json!({"layer": matte, "path": "transform/position", "value": [4, 4]})).unwrap();
@@ -99,8 +92,7 @@ fn a_frame_of_one_layer_keeps_its_track_matte() {
 
 #[test]
 fn a_frame_of_one_3d_layer_is_lit_by_the_comp_lights() {
-    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut app = app("test.media-solo-lit", &["document.read"]);
+    let mut app = app_exclusive("test.media-solo-lit", &["document.read"]);
     let plate = solid(&mut app, "Plate", "#ffffff", 64);
     app.session.execute("layer.setSwitch", json!({"layers": [plate], "switch": "threeD", "value": true})).unwrap();
     app.session.execute("layer.newLight", json!({"kind": "Ambient", "intensity": 25})).unwrap();
@@ -113,8 +105,7 @@ fn a_frame_of_one_3d_layer_is_lit_by_the_comp_lights() {
 
 #[test]
 fn a_frame_of_one_layer_whose_video_is_off_shows_its_pixels() {
-    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut app = app("test.media-solo-hidden", &["document.read"]);
+    let mut app = app_exclusive("test.media-solo-hidden", &["document.read"]);
     let hidden = solid(&mut app, "Hidden", "#00ff00", 64);
     app.session.execute("layer.setSwitch", json!({"layers": [hidden], "switch": "video", "value": false})).unwrap();
     assert_eq!(finished(&mut app, "frame", json!({"time": 0.0, "scale": 1.0}))["center"], json!([0.0, 0.0, 0.0, 0.0]));
