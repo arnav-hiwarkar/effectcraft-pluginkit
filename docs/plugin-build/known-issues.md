@@ -115,8 +115,6 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
   separate output region in plugin memory, and the output region is zeroed before the call, so Probe
   sandboxed at 1080p went from 1.64 to 2.55 ms (minimum of three interleaved runs, load 34 to 40). Heavy
   effects gain: sandboxed Retro Neon 46.6 to 30.2 ms in the same runs.
-- **A moving layer that is partly outside the frame is rendered again on every frame.** Its cache key holds
-  the shown rectangle, which moves with it. A layer wholly inside the frame keeps one key.
 
 - **A layer cache entry may be kept for a layer whose built-in effect reads another frame while an
   expression is present.** Built-in effects that read other frames are not counted as reading other times
