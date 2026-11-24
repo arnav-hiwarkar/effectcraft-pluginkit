@@ -5,10 +5,10 @@ use std::sync::{Arc, OnceLock};
 use craft_plugin_host::kernels::{self, Lowered, StepImage};
 use craft_plugin_host::{
     AuxPlanes, Blend, Call, Camera, Channel, Cull, Draw, EffectRegistry, EffectSpec, Focus, Gradient as WireGradient, Host, LayerPlacement, Layout, Light,
-    LightKind, MaskPath, Param, ParamKind, ParamValues, ParamsAt, Pixels, Place, PlanData, PlanImage, Rect, RenderCx, Scene, Value as Wire,
+    LightKind, MaskPath, Memo, Param, ParamKind, ParamValues, ParamsAt, Pixels, Place, PlanData, PlanImage, Rect, RenderCx, Scene, Value as Wire,
 };
 use effectcraft_engine::effects::dynamic::{
-    self, DynamicEffect, DynamicParam, GpuBlend, GpuBytes, GpuCull, GpuDraw, GpuPass, GpuPicture, GpuProgram, GpuSlot, Grid,
+    self, DynamicEffect, DynamicParam, GpuBlend, GpuBytes, GpuCull, GpuDraw, GpuPass, GpuPicture, GpuProgram, GpuSlot, Grid, Planning,
 };
 use effectcraft_engine::effects::{Buf, EffectCtx, Image, LayerPixels, MaskShape, Params, SceneLightKind, util};
 use effectcraft_engine::keyframe::{Gradient, Value};
@@ -47,7 +47,7 @@ fn register(loaded: &Arc<Loaded>) {
         let (plugin, gpu_spec) = (loaded.clone(), spec.clone());
         let (margin_plugin, margin_spec) = (loaded.clone(), spec.clone());
         let (migrate_plugin, migrate_spec) = (loaded.clone(), spec.clone());
-        let gpu: dynamic::GpuDyn = Box::new(move |ctx: &EffectCtx, grid: Grid| gpu_program(&plugin, &gpu_spec, ctx, grid));
+        let gpu: dynamic::GpuDyn = Box::new(move |ctx: &EffectCtx, grid: Grid, planning| gpu_program(&plugin, &gpu_spec, ctx, grid, planning));
         let id = effect_id(plugin_id, &spec.id);
         dynamic::register(DynamicEffect {
             owner: plugin_id.clone(),
@@ -496,8 +496,17 @@ fn wire_scene(scene: effectcraft_engine::effects::CompScene) -> Scene {
 }
 
 fn layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid, aux: &SourceAux) -> Layout {
+    staged_layout(loaded, spec, ctx, grid, aux, None)
+}
+
+fn staged_layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid, aux: &SourceAux, memo: Option<&Memo>) -> Layout {
     let call = Call::Layout { effect: spec.id.clone(), cx: render_cx(loaded, spec, ctx, grid) };
-    let mut layout: Layout = loaded.plugin.call(&call, None, &mut RenderHost { ctx, grid, spec, aux }).unwrap_or_default();
+    let mut host = RenderHost { ctx, grid, spec, aux };
+    let layout = match memo {
+        Some(memo) => loaded.plugin.call_staged(&call, &mut host, memo),
+        None => loaded.plugin.call(&call, None, &mut host),
+    };
+    let mut layout: Layout = layout.unwrap_or_default();
     layout.padding = craft_plugin_host::applied_padding(layout.padding, [grid.width, grid.height]);
     layout
 }
@@ -568,8 +577,17 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
     if finished_in_bands { buf } else { ctx.quantized(buf) }
 }
 
-fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Option<GpuProgram> {
-    let layout = layout(loaded, spec, ctx, grid, &SourceAux::new());
+fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid, planning: Planning) -> Option<GpuProgram> {
+    let memo = Memo::default();
+    let program = planned(loaded, spec, ctx, grid, &memo);
+    if planning == Planning::Frame {
+        loaded.plugin.keep(memo);
+    }
+    program
+}
+
+fn planned(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid, memo: &Memo) -> Option<GpuProgram> {
+    let layout = staged_layout(loaded, spec, ctx, grid, &SourceAux::new(), Some(memo));
     let plan = layout.gpu.filter(|plan| plan_runs_on_gpu(spec, plan))?;
     let [left, top, right, bottom] = layout.padding;
     let frame = [grid.width.saturating_add(left).saturating_add(right), grid.height.saturating_add(top).saturating_add(bottom)];
@@ -640,7 +658,7 @@ fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) 
         })
         .collect();
     let cached = |key: &str| {
-        let bytes = loaded.plugin.cached(key);
+        let bytes = loaded.plugin.cached_in(memo, key);
         if bytes.is_none() {
             loaded.report(&spec.id, Some(format!("the GPU plan names {key:?}, which is not in the plugin's cache")));
         }

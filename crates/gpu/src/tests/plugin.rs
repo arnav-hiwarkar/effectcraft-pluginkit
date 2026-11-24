@@ -50,7 +50,7 @@ fn effect(id: &str, wgsl: &str, program: GpuProgram) -> DynamicEffect {
             ctx.quantized(buf)
         }),
         shader: Some(wgsl.into()),
-        gpu: Some(Box::new(move |_, _| Some(program.clone()))),
+        gpu: Some(Box::new(move |_, _, _| Some(program.clone()))),
         time_dependent: false,
         reads_other_frames: false,
         reads_comp_scene: false,
@@ -395,7 +395,7 @@ fn warming_up_leaves_the_buffers_of_a_live_render_alone() {
     let triangles = |n: usize| [-1.0f32, -1.0, 3.0, -1.0, -1.0, 3.0].repeat(n).iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
     let draw = dynamic::GpuDraw { layout: vec![2], clear: true, ..Default::default() };
     let mut effect = effect("test.gpu.warm-draw", TRIANGLE_WGSL, GpuProgram::default());
-    effect.gpu = Some(Box::new(move |ctx: &EffectCtx, _| {
+    effect.gpu = Some(Box::new(move |ctx: &EffectCtx, _, _| {
         Some(GpuProgram {
             buffers: vec![dynamic::GpuBytes { name: "mesh".into(), bytes: triangles(if ctx.seed == 1 { 1 } else { 2 }).into() }],
             passes: vec![GpuPass { draw: Some(draw.clone()), ..pass("tri", GpuSlot::Source, GpuSlot::Output) }],

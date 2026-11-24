@@ -1,5 +1,5 @@
 use effectcraft_effects::EffectCtx;
-use effectcraft_effects::dynamic::{GpuPass, GpuProgram, GpuSlot, Grid, Registered};
+use effectcraft_effects::dynamic::{GpuPass, GpuProgram, GpuSlot, Grid, Planning, Registered};
 
 use crate::context::{Enc, GpuContext, GpuImage, Kernel, KernelImages, Params};
 use crate::effects::GBuf;
@@ -14,7 +14,7 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
     let (Some(wgsl), Some(plan)) = (effect.shader.as_deref(), effect.gpu.as_ref()) else { return None };
     let (id, revision) = (registered.spec.id, effect.revision);
     let g = e.g;
-    let program = plan(ctx, Grid { width: b.img.width, height: b.img.height, offset: b.offset, scale: b.scale })?;
+    let program = plan(ctx, Grid { width: b.img.width, height: b.img.height, offset: b.offset, scale: b.scale }, Planning::Frame)?;
     let guard = g.plugin_guard(id, revision, wgsl);
     if let Some(Err(why)) = guard.as_ref().ok().map(|guard| guard.check()) {
         g.plugin_declined(id, &why);
@@ -69,7 +69,7 @@ pub(crate) fn warm(g: &GpuContext, registered: &Registered) {
         values: registered.spec.params.iter().map(|p| (p.id.to_string(), effectcraft_effects::default_value(p, layer_size))).collect(),
     };
     let ctx = EffectCtx { params: &params, time: 0.0, layer_size, seed: 0, adjustment: false, env: Default::default() };
-    let Some(program) = plan(&ctx, Grid { width: size[0], height: size[1], offset: [0.0, 0.0], scale: 1.0 }) else { return };
+    let Some(program) = plan(&ctx, Grid { width: size[0], height: size[1], offset: [0.0, 0.0], scale: 1.0 }, Planning::WarmUp) else { return };
     let id = registered.spec.id;
     if compute_pipelines(g, id, effect.revision, wgsl, &program).is_ok() && Stage::new(id, effect.revision, wgsl, &program, None).pipelines(g).is_ok() {
         registered.gpu_planned.store(true, std::sync::atomic::Ordering::Relaxed);
