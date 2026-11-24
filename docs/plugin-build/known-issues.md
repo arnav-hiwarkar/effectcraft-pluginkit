@@ -29,7 +29,6 @@ measured speed before and after.
 
 - **Engine: `keys.setEase` changes the side you did not set.** On a continuous key it copies the speed to the other side, and it turns off auto-Bezier so the other side falls back to a stored ease. Glide works around both. (`crates/engine/src/cmd/anim.rs`)
 - **Engine: influence cannot go below 0.1 %.** A curve handle exactly on its anchor's column is stored about 6.6e-4 of the value range off.
-- **CLI: `bench` does not load plugins**, so plugin effects are missing from its timings. (`bench_cmd` in `apps/effectcraft-cli/src/main.rs`)
 - **GPU: on WebGPU a bad plugin shader is not contained.**
 - **GPU: a plugin kernel that runs for seconds stalls the GPU for as long as that frame takes.** A wgpu dispatch cannot be cancelled and plugin GPU work has no time limit of its own; the OS GPU watchdog and the 10 s readback deadline are the only limits, and every other GPU effect waits meanwhile. A time limit was removed on 2026-11-22 because a wall clock around a shared queue kept charging the wrong plugin. The cure is per-plan GPU timestamps where the device has them, or running plugin GPU work in the helper process.
 

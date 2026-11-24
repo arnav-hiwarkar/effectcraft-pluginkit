@@ -24,7 +24,7 @@
 //! effectcraft-cli render --template T.ectemplate [--values V.json] --out FILE
 //! effectcraft-cli render-frame --template T.ectemplate [--values V.json] [--time S] [--out F.png]
 //! effectcraft-cli render F.ecproj --queue                    render the project's Render Queue
-//! effectcraft-cli bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--cached] [--gpu [--adv3d]]   render timings
+//! effectcraft-cli bench [--comp C] [--time S] [--scale K] [--roi X,Y,W,H] [--n N] [--play N] [--cached] [--gpu [--adv3d]]   render timings
 //!     (--gpu: CPU vs GPU ms/frame for every comp at Full and Half)
 //! effectcraft-cli bench --ops [--small] [--layers N] [--comps N] [--footage N]   everyday-operation timings
 //!     on a large generated project (open, save, auto-save, undo/redo, timeline, Project panel)
@@ -127,7 +127,7 @@ const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|se
                                            --progress: progress lines on stderr when it is not a terminal
                                            (progress <frames done> <total> <seconds elapsed> <seconds left|->)
   render/render-frame --template T.ectemplate [--values V.json]   render one template instance
-  bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--cached] [--gpu [--adv3d]]   per-layer/effect render timings;
+  bench [--comp C] [--time S] [--scale K] [--roi X,Y,W,H] [--n N] [--play N] [--cached] [--gpu [--adv3d]]   per-layer/effect render timings;
                                            --play N renders N consecutive frames with/without the layer cache;
                                            --gpu compares CPU and GPU ms/frame for every comp at Full and Half
   bench --ops [--small] [--layers N] [--comps N] [--footage N]
@@ -158,6 +158,7 @@ const VALUED: &[&str] = &[
     "--sam2",
     "--mobilesam",
     "--play",
+    "--roi",
     "--layers",
     "--comps",
     "--footage",
@@ -1094,7 +1095,8 @@ fn bench_cmd(args: &Args) -> Result<(), Failure> {
     }
     let cid = s.active_comp_id().ok_or_else(|| Failure::Error("no composition".into()))?;
     let t = Tick::from_seconds_f64(args.num("--time")?.unwrap_or(3.0));
-    let opts = RenderOpts { scale: args.num("--scale")?.unwrap_or(1.0), ..Default::default() };
+    let roi = args.opt("--roi").map(parse_roi).transpose().map_err(Failure::Usage)?;
+    let opts = RenderOpts { scale: args.num("--scale")?.unwrap_or(1.0), roi, ..Default::default() };
     bench(&s, cid, t, opts, args.num("--n")?.unwrap_or(10.0).max(1.0) as usize);
     if let Some(n) = args.num("--play")? {
         bench_play(&s, cid, t, opts, n.max(1.0) as usize);
@@ -1103,6 +1105,11 @@ fn bench_cmd(args: &Args) -> Result<(), Failure> {
         bench_cached(&s, cid, t, opts, args.num("--n")?.unwrap_or(10.0).max(1.0) as usize);
     }
     Ok(())
+}
+
+fn parse_roi(text: &str) -> Result<[f64; 4], String> {
+    let parts = text.split(',').map(|p| p.trim().parse::<f64>()).collect::<Result<Vec<_>, _>>().map_err(|_| format!("--roi: not four numbers: {text}"))?;
+    <[f64; 4]>::try_from(parts).map_err(|_| format!("--roi needs x,y,w,h: {text}"))
 }
 
 /// The model a bench option asks for: the file named on the command line, where failing to read or
@@ -1663,6 +1670,13 @@ fn value_text(p: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bench_region_is_four_numbers() {
+        assert_eq!(parse_roi("1280, 720,640,360"), Ok([1280.0, 720.0, 640.0, 360.0]));
+        assert!(parse_roi("1,2,3").is_err());
+        assert!(parse_roi("a,b,c,d").is_err());
+    }
 
     fn parse(args: &[&str]) -> Result<Args, String> {
         Args::parse(args.iter().map(|a| a.to_string()).collect())
