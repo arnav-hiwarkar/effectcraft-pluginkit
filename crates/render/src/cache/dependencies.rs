@@ -8,12 +8,11 @@ use std::hash::Hash;
 
 pub(super) fn hash(h: &mut KeyHasher, ctx: &EvalCtx, layer: &Layer, effects: super::EffectScope) -> Option<()> {
     // A footprint runs no effects: nothing they read is in its pixels or its key.
-    let limit = match effects {
-        super::EffectScope::Footprint => return Some(()),
-        super::EffectScope::All => None,
-        super::EffectScope::First(n) => Some(n),
-    };
-    let mut deps = Dependencies { h, path: vec![(ctx.comp_id, layer.id)], remaining: 1024, other_times: super::reads_other_times(layer, None) };
+    let limit = effects.count();
+    if limit == 0 {
+        return Some(());
+    }
+    let mut deps = Dependencies { h, path: vec![(ctx.comp_id, layer.id)], remaining: 1024, other_times: super::reads_other_times(layer, Some(limit)) };
     deps.effects(ctx, layer, limit)
 }
 
@@ -25,18 +24,18 @@ struct Dependencies<'a> {
 }
 
 impl Dependencies<'_> {
-    fn effects(&mut self, ctx: &EvalCtx, layer: &Layer, limit: Option<usize>) -> Option<()> {
+    fn effects(&mut self, ctx: &EvalCtx, layer: &Layer, limit: usize) -> Option<()> {
         let previous = self.other_times;
-        self.other_times |= super::reads_other_times(layer, None);
+        self.other_times |= super::reads_other_times(layer, Some(limit));
         if layer.switches.effects
             && let Some(fx) = layer.effects()
         {
-            for g in fx.groups().take(limit.unwrap_or(usize::MAX)).filter(|g| g.enabled) {
+            for g in fx.groups().take(limit).filter(|g| g.enabled) {
                 self.group(ctx, layer, g, 0)?;
                 // A LUT file edited on disk changes the pixels without an edit (#3493).
                 crate::reads::lut_files(ctx, layer, g).hash(self.h);
             }
-            super::effect_revisions(layer).for_each(|revision| revision.hash(self.h));
+            super::effect_revisions(layer, limit).for_each(|revision| revision.hash(self.h));
         }
         self.other_times = previous;
         Some(())
@@ -154,10 +153,10 @@ impl Dependencies<'_> {
         hash_value(self.h, &ctx.world_matrix(layer));
         // A cached owner never runs this layer's effects, so the comp camera and lights its
         // scene-reading effects see belong in the owner's key too (#1252).
-        if super::reads_comp_scene(layer) {
+        if super::reads_comp_scene(layer, usize::MAX) {
             super::hash_scene(self.h, ctx, layer)?;
         }
-        if super::time_dependent(layer, true) {
+        if super::time_dependent(layer, usize::MAX) {
             layer.layer_time(ctx.time).0.hash(self.h);
         }
         match layer.source {
@@ -196,7 +195,7 @@ impl Dependencies<'_> {
             }
             _ => {}
         }
-        self.effects(ctx, layer, None)?;
+        self.effects(ctx, layer, usize::MAX)?;
         self.path.pop();
         Some(())
     }

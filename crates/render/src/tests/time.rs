@@ -157,3 +157,32 @@ fn input_keys_ignore_later_effects() {
     set(&mut p, "effects/#1/blurriness", 8.0);
     assert_ne!(key(&p).0, one);
 }
+
+/// A static source under an animated effect (Noise): its input before the effect is built once
+/// across frames, while the output still changes per frame and matches an uncached render. An
+/// animated mask, or the time-dependent effect inside the prefix, still keys every frame.
+#[test]
+fn a_static_input_under_an_animated_effect_is_built_once() {
+    let (mut p, cid) = scene(Some(("ec.noise.noise", &[("amount", Value::Scalar(50.0))])));
+    let input_key = |p: &Project, t: f64, effects| {
+        let comp = p.comp(cid).unwrap();
+        let ctx = crate::EvalCtx::new(p, cid, comp, Tick::from_seconds_f64(t));
+        crate::cache::input_key(&ctx, &comp.layers[0], 1.0, false, false, effects).unwrap()
+    };
+    assert_ne!(input_key(&p, 0.2, 0), input_key(&p, 0.3, 0), "an animated mask keys the input per frame");
+    assert_ne!(input_key(&p, 1.2, 1), input_key(&p, 1.3, 1), "a time-dependent effect in the prefix keys it per frame");
+    p.comp_mut(cid).unwrap().layers[0].props.prop_mut("masks/#1/opacity").unwrap().keys.clear();
+    let cache = crate::LayerCache::default();
+    let mut r = crate::Renderer::new(&p, &crate::NoFootage, crate::RenderOpts::default());
+    r.cache = Some(&cache);
+    let comp = p.comp(cid).unwrap();
+    let times = [0.0, 1.0 / 30.0, 2.0 / 30.0, 3.0 / 30.0];
+    let inputs: Vec<_> =
+        times.iter().map(|t| r.layer_input(&crate::EvalCtx::new(&p, cid, comp, Tick::from_seconds_f64(*t)), &comp.layers[0], 0).unwrap()).collect();
+    assert!(inputs.iter().all(|b| std::sync::Arc::ptr_eq(b, &inputs[0])), "the source is built once");
+    let frames: Vec<_> = times.iter().map(|t| render(&p, cid, *t, Some(&cache))).collect();
+    for (t, frame) in times.iter().zip(&frames) {
+        assert!(*frame == render(&p, cid, *t, None), "t={t}: the cached frame equals a fresh render");
+    }
+    assert!(frames[0] != frames[1], "the noise still changes per frame");
+}
