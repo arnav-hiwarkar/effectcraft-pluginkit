@@ -1,4 +1,4 @@
-import json, os, shutil, sys
+import hashlib, json, os, shutil, struct, sys
 
 template, out, count, mode = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
 shutil.rmtree(out, ignore_errors=True)
@@ -28,5 +28,15 @@ for i in range(count):
     name = b"unique"
     payload = leb(len(name)) + name + f"{i:08d}".encode()
     open(os.path.join(dest, wasm_name), "wb").write(wasm + b"\x00" + leb(len(payload)) + payload)
-    consents[pid] = {"enabled": True, "granted": sorted(base.get("permissions", [])), "unsandboxed": base["version"] if mode == "native" else None}
+    digest = hashlib.sha256()
+    files = sorted(os.path.relpath(os.path.join(d, f), dest).replace(os.sep, "/").encode() for d, _, fs in os.walk(dest) for f in fs)
+    for relative in files:
+        data = open(os.path.join(dest, relative.decode()), "rb").read()
+        digest.update(relative + b"\0" + struct.pack("<Q", len(data)) + data)
+    consents[pid] = {
+        "enabled": True,
+        "granted": sorted(base.get("permissions", [])),
+        "unsandboxed": base["version"] if mode == "native" else None,
+        "approved": {"version": base["version"], "digest": digest.hexdigest()},
+    }
 json.dump(consents, open(os.path.join(plugins, "state.json"), "w"))

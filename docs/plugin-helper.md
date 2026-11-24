@@ -204,8 +204,10 @@ allocation, as the ABI requires, so it pays one extra copy.
 - The helper engine uses `Config::new()` with `epoch_interruption(false)`. `cache_name` already hashes
   `precompile_compatibility_hash`, so its compiled files are cached apart from the in-process ones.
 - The app compiles and writes the cache, as it does today. The helper gets the cache folder read-only,
-  so a plugin cannot plant a compiled module. Each entry ends with an HMAC-SHA-256 under the install's
-  owner-only key (`.compiled/key`) over the entry's cache name and body; an entry that fails the check, or one copied over another's name, is compiled again.
+  so a plugin cannot plant a compiled module. Each entry `<name>.cwasm` has a `<name>.mac` holding an
+  HMAC-SHA-256 under the install's owner-only key (`.compiled/key`) over the cache name and the entry's file
+  identity (device, inode, size, modification and change times, read after the entry is read); an entry
+  that was replaced, changed in place or copied over another's name is compiled again.
 - `StoreLimits` stay. Nothing else limits time, because the deadline lives in the app.
 - To keep the frame copies at today's two (app into linear memory, and back), give the helper engine
   `Config::with_host_memory(Arc<SlabMemory>)` (wasmtime 51 `MemoryCreator` / `LinearMemory`). Each
