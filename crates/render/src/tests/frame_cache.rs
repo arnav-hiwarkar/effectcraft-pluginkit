@@ -46,17 +46,53 @@ fn a_frame_of_a_comp_where_nothing_animates_comes_from_the_cache_without_composi
     assert!(img == render_cached(&p, cid, t, None));
 }
 
-#[test]
-fn a_comp_with_animation_composites_every_frame() {
+fn moving(from: [f64; 3], to: [f64; 3]) -> Vec<Keyframe> {
+    vec![Keyframe::new(Tick::ZERO, Value::Vec3(from)), Keyframe::new(Tick::from_seconds_f64(1.0), Value::Vec3(to))]
+}
+
+fn static_stack_under_a_moving_layer() -> (Project, ItemId) {
     let (mut p, cid) = static_scene();
-    p.comp_mut(cid).unwrap().layers[1].props.prop_mut("transform/position").unwrap().keys =
-        vec![Keyframe::new(Tick::ZERO, Value::Vec3([20.0, 20.0, 0.0])), Keyframe::new(Tick::from_seconds_f64(1.0), Value::Vec3([180.0, 80.0, 0.0]))];
+    let comp = p.comp(cid).unwrap().clone();
+    let mut layers: Vec<_> = comp.layers.iter().cloned().collect();
+    for c in [[0.2, 0.2, 0.7], [0.9, 0.9, 0.1]] {
+        let mut l = solid(&mut p, &comp, c, 90, 40);
+        l.props.prop_mut("transform/opacity").unwrap().value = Value::Scalar(60.0);
+        layers.push(l);
+    }
+    let mut top = solid(&mut p, &comp, [1.0, 1.0, 1.0], 30, 30);
+    top.props.prop_mut("transform/position").unwrap().keys = moving([20.0, 20.0, 0.0], [180.0, 80.0, 0.0]);
+    layers.insert(0, top);
+    p.comp_mut(cid).unwrap().layers = layers.into();
+    (p, cid)
+}
+
+#[test]
+fn a_comp_with_animation_composites_only_the_layers_from_the_first_animated_one_up() {
+    let (p, cid) = static_stack_under_a_moving_layer();
+    let cache = LayerCache::default();
+    let (_, drawn) = profiled(&p, cid, Tick::ZERO, &cache);
+    assert_eq!(drawn, 6);
+    for t in [0.25, 0.5] {
+        let t = Tick::from_seconds_f64(t);
+        let (img, drawn) = profiled(&p, cid, t, &cache);
+        assert_eq!(drawn, 1);
+        assert!(img == render_cached(&p, cid, t, None));
+    }
+    let (img, _) = profiled(&p, cid, Tick::from_seconds_f64(0.5), &cache);
+    assert_eq!((img.get(100, 50), img.get(5, 95)), ([1.0; 4], [0.0; 4]));
+}
+
+#[test]
+fn a_static_layer_with_a_moving_parent_is_composited_every_frame() {
+    let (mut p, cid) = static_stack_under_a_moving_layer();
+    let c = p.comp_mut(cid).unwrap();
+    let parent = c.layers[0].id;
+    c.layers[5].parent = Some(parent);
     let cache = LayerCache::default();
     profiled(&p, cid, Tick::ZERO, &cache);
     let t = Tick::from_seconds_f64(0.5);
     let (img, drawn) = profiled(&p, cid, t, &cache);
-    assert_eq!(drawn, 3);
-    assert_eq!(img.get(5, 45), [102.0, 39.0, 26.0, 128.0].map(|v| v * (1.0 / 255.0)));
+    assert_eq!(drawn, 6);
     assert!(img == render_cached(&p, cid, t, None));
 }
 
