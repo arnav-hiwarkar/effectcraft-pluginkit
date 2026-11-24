@@ -97,6 +97,8 @@ pub struct EffectSpec {
     pub reads_param_history: bool,
     #[serde(default)]
     pub presets: Vec<Preset>,
+    #[serde(default)]
+    pub groups: BTreeMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -120,9 +122,13 @@ impl EffectSpec {
         self
     }
 
-    pub fn group(mut self, group: &str, params: impl IntoIterator<Item = Param>) -> Self {
+    pub fn group(mut self, name: &str, params: impl IntoIterator<Item = Param>) -> Self {
+        let id = group_id(name);
+        if id != name {
+            self.groups.insert(id.clone(), name.into());
+        }
         self.params.extend(params.into_iter().map(|mut p| {
-            p.id = format!("{group}/{}", p.id);
+            p.id = format!("{id}/{}", p.id);
             p
         }));
         self
@@ -163,6 +169,18 @@ impl EffectSpec {
         self.presets.push(Preset { name: name.into(), values });
         self
     }
+}
+
+pub(crate) fn id_segment(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+pub(crate) fn group_id(name: &str) -> String {
+    if id_segment(name) {
+        return name.into();
+    }
+    let lower = name.to_ascii_lowercase();
+    lower.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')).filter(|word| !word.is_empty()).collect::<Vec<_>>().join("_")
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

@@ -1002,6 +1002,7 @@ pub fn layer_source_id(id: &str) -> String {
 pub fn instantiate(spec: &EffectSpec, ids: &mut Ids, instance_name: &str, layer_size: [f64; 2]) -> PropGroup {
     let mut g = ids.group(spec.id, instance_name);
     g.kind = GroupKind::Effect { effect: spec.id.to_string() };
+    let names = plugin_group_names(spec.id);
     for ps in &spec.params {
         let default = default_value(ps, layer_size);
         // `group/sub/param` ids nest the parameter in twirl-down groups (Warp Stabilizer's
@@ -1016,7 +1017,7 @@ pub fn instantiate(spec: &EffectSpec, ids: &mut Ids, instance_name: &str, layer_
         }
         // (the channels an effect reads: not animatable, as in After Effects)
         pr.static_only = channel3d::selects_channels(spec.id, ps.id);
-        match path.and_then(|path| nested_group(&mut g, ids, path)) {
+        match path.and_then(|path| nested_group(&mut g, ids, path, &names)) {
             Some(sub) => sub.children.push(pr.into()),
             None => g.children.push(pr.into()),
         }
@@ -1028,7 +1029,7 @@ pub fn instantiate(spec: &EffectSpec, ids: &mut Ids, instance_name: &str, layer_
         if matches!(ps.ui, ParamUi::Layer) && !spec.params.iter().any(|q| q.id == sid) {
             let mut src = Property::new(ids.alloc(), &layer_source_id(leaf), &format!("{} Source", ps.name), Value::Enum(2)).with_ui(ParamUi::Hidden);
             src.hold_only = true;
-            match path.and_then(|path| nested_group(&mut g, ids, path)) {
+            match path.and_then(|path| nested_group(&mut g, ids, path, &names)) {
                 Some(sub) => sub.children.push(src.into()),
                 None => g.children.push(src.into()),
             }
@@ -1238,18 +1239,27 @@ fn group_name(m: &str) -> &str {
         .unwrap_or(m)
 }
 
+/// The display names of a plugin effect's twirl-down groups, by group id.
+pub(crate) fn plugin_group_names(effect: &str) -> Vec<(String, String)> {
+    dynamic::get(effect).map(|registered| registered.effect.groups.clone()).unwrap_or_default()
+}
+
+pub(crate) fn group_name_in<'a>(names: &'a [(String, String)], m: &'a str) -> &'a str {
+    names.iter().find(|(id, _)| id == m).map_or_else(|| group_name(m), |(_, name)| name.as_str())
+}
+
 /// The nested group at `path` (`borders/autoScale`) under `g`, created on first use.
-fn nested_group<'a>(g: &'a mut PropGroup, ids: &mut Ids, path: &str) -> Option<&'a mut PropGroup> {
+pub(crate) fn nested_group<'a>(g: &'a mut PropGroup, ids: &mut Ids, path: &str, names: &[(String, String)]) -> Option<&'a mut PropGroup> {
     let (first, rest) = match path.split_once('/') {
         Some((a, b)) => (a, Some(b)),
         None => (path, None),
     };
     if g.sub(first).is_none() {
-        g.children.push(ids.group(first, group_name(first)).into());
+        g.children.push(ids.group(first, group_name_in(names, first)).into());
     }
     let sub = g.sub_mut(first)?;
     match rest {
-        Some(r) => nested_group(sub, ids, r),
+        Some(r) => nested_group(sub, ids, r, names),
         None => Some(sub),
     }
 }

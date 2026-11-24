@@ -549,6 +549,14 @@ impl Effect for Plain {
     }
 }
 
+struct Tuned;
+
+impl Effect for Tuned {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("tuned", "Tuned", "Probe").group("Fine Tuning", [Param::slider("detail", "Detail", 2.0, 0.0..=10.0)])
+    }
+}
+
 struct Checks;
 
 impl Effect for Checks {
@@ -952,6 +960,7 @@ fn make() -> Plugin {
         .effect(GpuFill)
         .effect(GpuMatte)
         .effect(Aim)
+        .effect(Tuned)
         .tool("stamp", "Stamp", Stamp::default())
         .panel("counter", "Counter", Counter::default())
         .panel("watch", "Watch", Watch::default())

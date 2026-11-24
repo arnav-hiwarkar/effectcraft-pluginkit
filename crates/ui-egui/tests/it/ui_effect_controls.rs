@@ -1605,6 +1605,7 @@ fn register_gain_effect() {
         reads_comp_scene: false,
         reads_param_history: false,
         presets: Vec::new(),
+        groups: Vec::new(),
         revision: 1,
         files: None,
         margin: None,
@@ -1633,4 +1634,46 @@ fn a_log_slider_row_maps_the_track_by_ratio() {
     let value = layer(&h.state().session, layer_id).effects().unwrap().find(gain).unwrap().value.as_f64();
     let geometric_mean = (1000.0_f64).sqrt();
     assert!((value - geometric_mean).abs() < 1.5, "the middle of a log slider from 1 to 1000 is {geometric_mean}, got {value}");
+}
+
+#[test]
+fn a_plugin_group_row_shows_the_name_its_author_gave_and_twirls_closed() {
+    use effectcraft_engine::effects::dynamic::{self, DynamicEffect, DynamicParam};
+    use effectcraft_engine::project::ParamUi;
+    dynamic::register(DynamicEffect {
+        owner: "test.ui.tuned".into(),
+        id: "test.ui.tuned.tuned".into(),
+        name: "Tuned Test".into(),
+        category: "Test".into(),
+        params: vec![DynamicParam { id: "fine_tuning/on".into(), name: "On".into(), default: KV::Bool(true), ui: ParamUi::Checkbox }],
+        render: Box::new(|ctx, buf| ctx.unchanged(buf)),
+        shader: None,
+        gpu: None,
+        time_dependent: false,
+        reads_other_frames: false,
+        reads_comp_scene: false,
+        reads_param_history: false,
+        presets: Vec::new(),
+        groups: vec![("fine_tuning".into(), "Fine Tuning".into())],
+        revision: 1,
+        files: None,
+        margin: None,
+    });
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Main", "width": 640, "height": 360, "frameRate": 30, "duration": 10})).unwrap();
+    let layer_id = s.execute("layer.newSolid", json!({"name": "Small", "color": "#ff0000", "width": 200, "height": 100})).unwrap()["layer"].as_u64().unwrap();
+    let fx = s.execute("effect.apply", json!({"layers": [layer_id], "effect": "test.ui.tuned.tuned"})).unwrap()["effects"][0].as_u64().unwrap();
+    let group = layer(&s, layer_id).effects().unwrap().groups().find(|g| g.uid == fx).and_then(|g| g.sub("fine_tuning")).map(|g| g.uid).unwrap();
+    s.state.selected_layers = vec![LayerId(layer_id)];
+    let mut app = EffectcraftApp::new(s);
+    app.show_panel(PanelKind::EffectControls);
+    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| app);
+    settle(&mut h);
+    let twirl = format!("effectControls.group.{group}.twirl");
+    let label = h.state().auto.elements.iter().find(|e| e.id == twirl).map(|e| e.label.clone());
+    assert_eq!(label.as_deref(), Some("Fine Tuning"));
+    let at = rect_of(&h, &twirl).center();
+    click(&mut h, at);
+    h.run_steps(2);
+    assert!(h.state().ui.fx_closed.contains(&group), "clicking the named group's twirl closes it");
 }
