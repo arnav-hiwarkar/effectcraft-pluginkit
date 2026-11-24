@@ -17,7 +17,14 @@ fn access(call: &HostCall, host: &dyn Host, plugin: &Identity, origin: Origin) -
         HostCall::PickFile { .. } => Access::Free,
         HostCall::ReadFile { root: Root::User, path, .. } | HostCall::ListFiles { root: Root::User, path } if plugin.picked(path, false) => Access::Free,
         HostCall::WriteFile { root: Root::User, path } if plugin.picked(path, true) => Access::Free,
-        HostCall::Log { .. } | HostCall::Notify { .. } | HostCall::Layer { .. } | HostCall::Source { .. } | HostCall::Masks | HostCall::Scene => Access::Free,
+        HostCall::Log { .. }
+        | HostCall::Notify { .. }
+        | HostCall::Layer { .. }
+        | HostCall::Source { .. }
+        | HostCall::Masks
+        | HostCall::Scene
+        | HostCall::SceneAt { .. }
+        | HostCall::Placement { .. } => Access::Free,
         HostCall::CacheGet { .. } | HostCall::CachePut { .. } | HostCall::CacheRemove { .. } | HostCall::CacheHas { .. } | HostCall::UploadImage { .. } => {
             Access::Free
         }

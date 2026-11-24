@@ -5,7 +5,7 @@ use crate::abi::Buffer;
 use crate::host;
 use crate::ui::Ui;
 use crate::viewer::Overlay;
-use crate::wire::{EffectSpec, HostCall, ImageDesc, Layout, MaskPath, ParamsAt, Pixel, Rect, RenderCx, Scene, Value, applied_padding};
+use crate::wire::{EffectSpec, HostCall, ImageDesc, LayerPlacement, Layout, MaskPath, ParamsAt, Pixel, Rect, RenderCx, Scene, Value, applied_padding};
 
 pub trait Effect: Send + Sync + 'static {
     fn spec(&self) -> EffectSpec;
@@ -194,6 +194,22 @@ impl Cx {
     pub fn scene(&self) -> Option<Scene> {
         host::call(&HostCall::Scene, &[]).ok().map(|(scene, _)| scene)
     }
+
+    pub fn scene_at(&self, comp_time: f64) -> Option<Scene> {
+        host::call(&HostCall::SceneAt { time: comp_time }, &[]).ok().map(|(scene, _)| scene)
+    }
+
+    pub fn placement(&self, param: &str) -> Option<LayerPlacement> {
+        placement(param, None)
+    }
+
+    pub fn placement_at(&self, param: &str, comp_time: f64) -> Option<LayerPlacement> {
+        placement(param, Some(comp_time))
+    }
+}
+
+fn placement(param: &str, time: Option<f64>) -> Option<LayerPlacement> {
+    host::call(&HostCall::Placement { param: param.into(), time }, &[]).ok().map(|(placement, _)| placement)
 }
 
 fn params_at(time: f64) -> Option<ParamsAt> {

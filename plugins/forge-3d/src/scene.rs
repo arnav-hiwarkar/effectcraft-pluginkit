@@ -62,7 +62,7 @@ pub fn instances(placement: &Placement, replicator: Replicator, first: [f32; 4],
 pub fn lights(scene: &Scene, use_comp_lights: bool) -> Vec<f32> {
     let comp: &[Light] = if use_comp_lights { &scene.lights } else { &[] };
     let key = Light { kind: LightKind::Parallel, direction: KEY_LIGHT_DIRECTION.map(f64::from), colour: [1.0; 3], intensity: 1.0, ..Default::default() };
-    let lit: Vec<Light> = if comp.is_empty() { vec![key] } else { comp.iter().take(MAX_LIGHTS).copied().collect() };
+    let lit: Vec<Light> = if comp.is_empty() { vec![key] } else { comp.iter().take(MAX_LIGHTS).cloned().collect() };
     let mut out = Vec::with_capacity(lit.len() * FLOATS_PER_LIGHT);
     for light in lit {
         let kind = match light.kind {
@@ -144,6 +144,7 @@ mod tests {
             intensity: 2.0,
             cone_angle: 90.0,
             feather: 0.5,
+            ..Default::default()
         };
         let scene = Scene { lights: vec![spot], ..Default::default() };
         let data = lights(&scene, true);

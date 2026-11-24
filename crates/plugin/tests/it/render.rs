@@ -215,6 +215,39 @@ fn without_a_camera_layer_the_scene_camera_is_the_comp_default_view() {
     assert!((zoom - default_zoom).abs() < 1e-3, "zoom {zoom} against the view's {default_zoom}");
 }
 
+fn placed_report(id: &str, camera: serde_json::Value) -> Vec<[f32; 4]> {
+    let mut app = app(id, &[]);
+    let session = &mut app.session;
+    session.execute("file.projectSettings", json!({"bitDepth": 32})).expect("32 bit");
+    let camera = session.execute("layer.newCamera", camera).expect("layer.newCamera")["layer"].as_u64();
+    session.execute("prop.addKey", json!({"layer": camera, "path": "transform/position", "time": 0.0, "value": [10.0, 5.0, -300.0]})).expect("key at 0 s");
+    session.execute("prop.addKey", json!({"layer": camera, "path": "transform/position", "time": 1.0, "value": [20.0, 7.0, -250.0]})).expect("key at 1 s");
+    let parent = session.execute("layer.newSolid", json!({"name": "Parent", "color": "#000000", "width": 64, "height": 36})).expect("parent")["layer"].as_u64();
+    session.execute("prop.set", json!({"layer": parent, "path": "transform/position", "value": [42.0, 18.0]})).expect("parent position");
+    session.execute("prop.set", json!({"layer": parent, "path": "transform/rotation", "value": 90.0})).expect("parent rotation");
+    let child = session.execute("layer.newSolid", json!({"name": "Child", "color": "#000000", "width": 20, "height": 10})).expect("child")["layer"].as_u64();
+    session.execute("layer.setParent", json!({"layers": [child], "parent": parent, "compensate": false})).expect("parent the child");
+    session.execute("prop.set", json!({"layer": child, "path": "transform/opacity", "value": 50.0})).expect("child opacity");
+    let plate = session.execute("layer.newSolid", json!({"name": "Plate", "color": "#000000", "width": 64, "height": 36})).expect("plate")["layer"].as_u64();
+    session.execute("effect.apply", json!({"layer": plate, "effect": format!("{id}.placed")})).expect("effect.apply");
+    session.execute_checked("prop.set", json!({"layer": plate, "path": "effects/#1/other", "value": child})).expect("choose the child");
+    let comp = session.active_comp_id().expect("an active comp");
+    let image = Renderer::new(&session.project, session.footage.as_ref(), RenderOpts::default()).comp_frame(comp, Tick::from_seconds_f64(0.0));
+    image.data[..8].to_vec()
+}
+
+#[test]
+fn a_plugin_reads_where_a_parented_layer_sits_and_the_camera_focus_and_scene_at_another_time() {
+    let camera = json!({"name": "Shot", "type": "oneNode", "position": [10.0, 5.0, -300.0], "zoom": 250.0, "dof": true, "focusDistance": 400.0, "aperture": 30.0, "blurLevel": 50.0});
+    let report = placed_report("test.placed", camera);
+    let wanted: [[f32; 4]; 5] = [[0.0, -1.0, 0.0, 47.0], [1.0, 0.0, 0.0, 8.0], [0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.5, 1.0]];
+    let near = report[..5].iter().flatten().zip(wanted.iter().flatten()).all(|(a, b)| (a - b).abs() < 1e-4);
+    assert!(near, "the child's corner (0, 0) lands at (47, 8), turned a quarter, at half opacity: {:?}", &report[..5]);
+    assert_eq!(report[5], [20.0, 10.0, 0.0, 1.0], "size");
+    assert_eq!(report[6], [400.0, 30.0, 0.5, 1.0], "focus distance, aperture and blur level");
+    assert_eq!(report[7], [20.0, 7.0, -250.0, 1.0], "the camera at 1 s, not at 0 s");
+}
+
 #[test]
 fn a_layer_parameter_reads_a_layer_whose_video_is_off_as_its_pixels() {
     let mut app = app("test.render-hidden-input", &[]);

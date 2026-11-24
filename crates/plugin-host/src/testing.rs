@@ -355,6 +355,10 @@ impl Host for TestHost<'_> {
         Some(Scene::centred(self.layer_size))
     }
 
+    fn scene_at(&mut self, _comp_time: f64) -> Option<Scene> {
+        Some(Scene::centred(self.layer_size))
+    }
+
     fn params_at(&mut self, _layer_time: f64) -> Option<ParamsAt> {
         Some(ParamsAt { params: self.params?.clone(), history: Some(0) })
     }

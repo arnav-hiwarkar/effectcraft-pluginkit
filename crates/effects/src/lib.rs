@@ -77,7 +77,7 @@ use std::sync::OnceLock;
 
 use rayon::prelude::*;
 
-pub use card3d::{CompCamera, CompLight, CompScene, SceneLight, SceneLightKind};
+pub use card3d::{CompCamera, CompLight, CompScene, LayerPlacement, SceneLight, SceneLightKind};
 pub use color_fx::{
     BW_TINT_LUMA, EXPOSURE_LINEAR_GAMMA, HUESAT_CHANNELS, HUESAT_RANGES, LEVELS_CHANNELS, LUMA_601, PHOTO_FILTER_CUSTOM, PHOTO_FILTERS, exposure_settings,
     fill_uses_masks, huesat_ranges_identity, levels_channel_ids, levels_channel_settings, levels_channels_identity, levels_clip,
@@ -625,6 +625,12 @@ pub trait EffectHost: Sync {
     /// The composition's camera and first light relative to the effect's layer (Card
     /// Dance / Shatter / Card Wipe's Comp Camera and First Comp Light). `None` when unknown.
     fn comp_scene(&self) -> Option<CompScene> {
+        None
+    }
+    fn comp_scene_at(&self, _comp_time: f64) -> Option<CompScene> {
+        None
+    }
+    fn placement(&self, _id: u64, _comp_time: Option<f64>) -> Option<LayerPlacement> {
         None
     }
     /// The running effect's own parameters evaluated at another **layer time** (Radio Waves'

@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use craft_plugin_host::kernels::{self, Lowered, StepImage};
 use craft_plugin_host::{
-    Blend, Call, Camera, Cull, Draw, EffectSpec, Host, Layout, Light, LightKind, MaskPath, Param, ParamKind, ParamsAt, Pixels, PlanData, PlanImage, Rect,
-    RenderCx, Scene, Value as Wire,
+    Blend, Call, Camera, Cull, Draw, EffectSpec, Focus, Host, LayerPlacement, Layout, Light, LightKind, MaskPath, Param, ParamKind, ParamsAt, Pixels, PlanData,
+    PlanImage, Rect, RenderCx, Scene, Value as Wire,
 };
 use effectcraft_engine::effects::dynamic::{
     self, DynamicEffect, DynamicParam, GpuBlend, GpuBytes, GpuCull, GpuDraw, GpuPass, GpuPicture, GpuProgram, GpuSlot, Grid,
@@ -282,24 +282,43 @@ impl Host for RenderHost<'_, '_> {
     }
 
     fn scene(&mut self) -> Option<Scene> {
-        let scene = self.ctx.env.host?.comp_scene()?;
-        let camera = scene.view.map(|camera| Camera { view: camera.layer_to_camera_rows, position: camera.eye, zoom: camera.zoom });
-        let light = |light: &effectcraft_engine::effects::SceneLight| Light {
-            kind: match light.kind {
-                SceneLightKind::Parallel => LightKind::Parallel,
-                SceneLightKind::Ambient => LightKind::Ambient,
-                SceneLightKind::Spot => LightKind::Spot,
-                SceneLightKind::Point => LightKind::Point,
-            },
-            position: light.pos,
-            direction: light.travel_direction,
-            colour: light.color,
-            intensity: light.intensity,
-            cone_angle: light.cone_degrees,
-            feather: light.feather,
-        };
-        Some(Scene { projection: scene.camera, camera_layer: scene.camera_layer, camera, lights: scene.lights.iter().map(light).collect() })
+        Some(wire_scene(self.ctx.env.host?.comp_scene()?))
     }
+
+    fn scene_at(&mut self, comp_time: f64) -> Option<Scene> {
+        Some(wire_scene(self.ctx.env.host?.comp_scene_at(comp_time)?))
+    }
+
+    fn placement(&mut self, param: &str, comp_time: Option<f64>) -> Option<LayerPlacement> {
+        let layer = self.ctx.params.get(param)?.as_layer()?;
+        let placement = self.ctx.env.host?.placement(layer, comp_time)?;
+        Some(LayerPlacement { matrix: placement.matrix, opacity: placement.opacity, size: placement.size })
+    }
+}
+
+fn wire_scene(scene: effectcraft_engine::effects::CompScene) -> Scene {
+    let camera = scene.view.map(|camera| Camera {
+        view: camera.layer_to_camera_rows,
+        position: camera.eye,
+        zoom: camera.zoom,
+        focus: camera.focus.map(|[distance, aperture, blur]| Focus { distance, aperture, blur }),
+    });
+    let light = |light: &effectcraft_engine::effects::SceneLight| Light {
+        name: light.name.clone(),
+        kind: match light.kind {
+            SceneLightKind::Parallel => LightKind::Parallel,
+            SceneLightKind::Ambient => LightKind::Ambient,
+            SceneLightKind::Spot => LightKind::Spot,
+            SceneLightKind::Point => LightKind::Point,
+        },
+        position: light.pos,
+        direction: light.travel_direction,
+        colour: light.color,
+        intensity: light.intensity,
+        cone_angle: light.cone_degrees,
+        feather: light.feather,
+    };
+    Scene { projection: scene.camera, camera_layer: scene.camera_layer, camera, lights: scene.lights.iter().map(light).collect() }
 }
 
 fn layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Layout {
