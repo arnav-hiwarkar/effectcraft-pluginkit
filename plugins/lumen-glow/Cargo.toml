@@ -8,7 +8,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "768cbcd53302ea0891bc762d5b35842de6330205" }
+craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "d4453b9a7bc001770a0ae2346e760c6efc0bc066" }
 
 [profile.release]
 opt-level = 3
