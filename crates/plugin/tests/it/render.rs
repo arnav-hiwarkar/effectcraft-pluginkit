@@ -603,6 +603,26 @@ fn a_generator_that_ignores_its_input_and_reports_what_it_drew_renders_the_same_
 }
 
 #[test]
+fn a_generator_after_one_that_reports_what_it_drew_still_draws_outside_that_rectangle() {
+    let mut app = app("test.render-sprite-then-circle", &[]);
+    app.session.execute("comp.new", json!({"name": "Dots", "width": 300, "height": 260, "frameRate": 24, "duration": 2})).unwrap();
+    app.session.execute("layer.newSolid", json!({"name": "Grey", "color": "#808080", "width": 300, "height": 260})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "test.render-sprite-then-circle.sprite"})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "ec.generate.circle"})).unwrap();
+    app.session.execute("prop.set", json!({"path": "effects/#2/center", "value": [20.0, 20.0]})).unwrap();
+    app.session.execute("prop.set", json!({"path": "effects/#2/radius", "value": 10.0})).unwrap();
+    app.session.execute("prop.set", json!({"path": "effects/#2/blendingMode", "value": 1})).unwrap();
+    let mut render = |drawn: bool| {
+        app.session.execute("prop.set", json!({"path": "effects/#1/drawn", "value": drawn})).unwrap();
+        frame(&app, None)
+    };
+    let (full, drawn) = (render(false), render(true));
+    assert_eq!(full.data[20 * 300 + 20], [1.0; 4], "the circle is drawn in the fresh full render");
+    assert_eq!((drawn.width, drawn.height), (full.width, full.height));
+    assert!(drawn.data == full.data, "the circle outside the sprite's rectangle is lost once the sprite reports what it drew");
+}
+
+#[test]
 fn a_gradient_past_the_stop_limit_warns_when_only_the_gpu_plans_the_effect() {
     use effectcraft_engine::effects::{EffectCtx, Params, dynamic};
     use effectcraft_engine::keyframe::{Gradient, Value};

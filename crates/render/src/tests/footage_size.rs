@@ -397,3 +397,44 @@ fn footage_kept_as_8_bit_levels_is_noted_as_read() {
     assert_eq!(src.outside.load(Ordering::SeqCst), 0, "8-bit levels read outside the render's recording");
     assert!(log.files().files().iter().any(|f| &*f.path == "clip.mov"), "the movie is not in the frame's files");
 }
+
+#[test]
+fn a_region_reads_the_rows_two_stacked_blurs_reach_together() {
+    struct Rows;
+    impl FootageSource for Rows {
+        fn frame(&self, item: ItemId, f: &Footage, t: Tick) -> Option<Arc<Image>> {
+            Clip { sizes: None }.frame(item, f, t)
+        }
+        fn frame_rows(&self, item: ItemId, f: &Footage, t: Tick, _: Option<(u32, u32)>, _: crate::FloatCurve, rows: (i64, i64)) -> Option<Arc<Image>> {
+            let mut img = (*Clip { sizes: None }.frame(item, f, t)?).clone();
+            img.rows_mut().filter(|(y, _)| !(rows.0..rows.1).contains(&(*y as i64))).for_each(|(_, row)| row.fill([1000.0, 1000.0, 1000.0, 1.0]));
+            Some(Arc::new(img))
+        }
+        fn reads_rows(&self, _: &Footage, _: Tick) -> bool {
+            true
+        }
+    }
+    use effectcraft_keyframe::Value;
+    let (mut p, cid) = project(BitDepth::Bpc32, false);
+    let Some(LayerSource::Footage { item }) = p.comp(cid).map(|c| c.layers[0].source.clone()) else { panic!("footage layer") };
+    if let Some(ItemKind::Footage(f)) = p.item_mut(item).map(|it| &mut it.kind) {
+        f.kind = FootageKind::Still;
+        f.path = "/still.exr".into();
+    }
+    let mut l = p.comp(cid).unwrap().layers[0].clone();
+    let spec = effectcraft_effects::find("ec.blur.gaussian").unwrap();
+    for _ in 0..2 {
+        let mut next = p.next_id;
+        let mut g = effectcraft_effects::instantiate(spec, &mut build::Ids(&mut next), spec.name, [96.0, 54.0]);
+        p.next_id = next;
+        g.prop_mut("blurriness").unwrap().value = Value::Scalar(5.0);
+        l.props.sub_mut("effects").unwrap().children.push(g.into());
+    }
+    p.comp_mut(cid).unwrap().layers = vec![l].into();
+    let full = Renderer::new(&p, &Rows, RenderOpts::default()).comp_frame(cid, Tick::ZERO);
+    let region = Renderer::new(&p, &Rows, RenderOpts { roi: Some([0.0, 0.0, 96.0, 10.0]), ..Default::default() }).comp_frame(cid, Tick::ZERO);
+    assert_eq!((region.width, region.height), (96, 10));
+    for (i, (a, b)) in region.data.iter().zip(&full.data[..96 * 10]).enumerate() {
+        assert!((0..4).all(|c| (a[c] - b[c]).abs() < 1e-5), "pixel {i}: the region {a:?}, the full frame {b:?}");
+    }
+}
