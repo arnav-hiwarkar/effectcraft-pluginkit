@@ -102,11 +102,16 @@ pub struct Plugins {
 }
 
 fn load(bundle: &Bundle, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Result<Arc<Loaded>, String> {
-    let entry = bundle.entry_path().map_err(|e| e.to_string())?;
-    let bytes = std::fs::read(&entry).map_err(|e| format!("{}: {e}", entry.display()))?;
-    let mut hasher = DefaultHasher::new();
-    (&bundle.manifest.version, &bytes).hash(&mut hasher);
     let plugin = Plugin::load(bundle, grants, data_dir.clone(), Limits::default()).map_err(|e| e.to_string())?;
+    let mut hasher = DefaultHasher::new();
+    bundle.manifest.version.hash(&mut hasher);
+    match plugin.module_digest() {
+        Some(digest) => digest.hash(&mut hasher),
+        None => {
+            let entry = bundle.entry_path().map_err(|e| e.to_string())?;
+            std::fs::read(&entry).map_err(|e| format!("{}: {e}", entry.display()))?.hash(&mut hasher);
+        }
+    }
     craft_plugin_host::validate(&bundle.manifest, plugin.contributions())?;
     effects::Engine.admit(plugin.contributions())?;
     let loaded = Loaded { bundle: bundle.clone(), plugin, data_dir, revision: hasher.finish(), render_errors: Mutex::new(BTreeMap::new()) };
