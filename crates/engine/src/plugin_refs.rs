@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use effectcraft_effects::dynamic;
-use effectcraft_project::{GroupKind, Node, PluginUse, Project};
+use effectcraft_project::{GroupKind, ItemId, Node, PluginUse, Project};
 use serde_json::{Value, json};
 
 fn effect_ids(p: &Project) -> BTreeSet<&str> {
@@ -69,7 +69,13 @@ pub fn missing_owner(p: &Project, effect: &str) -> Option<String> {
 }
 
 fn missing_effects(p: &Project) -> BTreeMap<&str, Option<String>> {
-    let groups = p.comps().flat_map(|(_, c)| c.layers.iter()).filter_map(|l| l.effects()).flat_map(|fx| &fx.children);
+    let heard = p.heard_layers();
+    let reached: Option<BTreeSet<ItemId>> = p.render_queue.iter().filter(|item| item.is_queued()).try_fold(BTreeSet::new(), |mut reached, item| {
+        reached.extend(p.pixel_reach(item.comp, &heard).items?);
+        Some(reached)
+    });
+    let rendered = |id: &ItemId| reached.as_ref().is_none_or(|reached| reached.contains(id));
+    let groups = p.comps().filter(|(id, _)| rendered(id)).flat_map(|(_, c)| c.layers.iter()).filter_map(|l| l.effects()).flat_map(|fx| &fx.children);
     groups
         .filter_map(|n| match n {
             Node::Group(g) if g.enabled => match &g.kind {

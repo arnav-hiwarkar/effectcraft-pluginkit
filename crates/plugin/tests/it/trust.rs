@@ -64,3 +64,33 @@ fn a_plugin_whose_files_changed_after_approval_waits_for_approval_again() {
     assert_eq!(info.state, PluginState::NeedsApproval);
     assert!(info.error.as_deref().unwrap_or_default().starts_with("its files changed since you approved them (approved 1.0.0 "), "{:?}", info.error);
 }
+
+fn effect_ids(plugins: &Plugins, id: &str) -> Option<Vec<String>> {
+    plugins.get(id).map(|loaded| loaded.plugin.contributions().effects.iter().map(|effect| effect.id.clone()).collect())
+}
+
+#[test]
+fn a_bundle_replaced_while_it_loads_never_runs_as_the_approved_one() {
+    let lumen = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/fixtures/lumen-glow-before-host-kernels.wasm")).unwrap();
+    let id = "test.trust-replaced";
+    for delay in 0..40u64 {
+        let root = tempfile::tempdir().unwrap();
+        let (plugins, _source) = installed(root.path(), id);
+        let approved = effect_ids(&plugins, id).unwrap();
+        let target = listed(&plugins, id).path;
+        let (replacement, retired) = (root.path().join(".replacement"), root.path().join(".retired"));
+        std::fs::create_dir(&replacement).unwrap();
+        std::fs::copy(target.join("plugin.json"), replacement.join("plugin.json")).unwrap();
+        std::fs::write(replacement.join("probe.wasm"), &lumen).unwrap();
+        let swap = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_micros(delay * 250));
+            std::fs::rename(&target, &retired).unwrap();
+            std::fs::rename(&replacement, &target).unwrap();
+        });
+        plugins.reload();
+        swap.join().unwrap();
+        if let Some(running) = effect_ids(&plugins, id) {
+            assert_eq!(running, approved, "the replacement ran as the approved plugin (swap after {delay} × 250 µs)");
+        }
+    }
+}

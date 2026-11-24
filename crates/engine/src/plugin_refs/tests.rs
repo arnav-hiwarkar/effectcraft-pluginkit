@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use effectcraft_effects::dynamic::{self, DynamicEffect, DynamicParam};
 use effectcraft_keyframe::Value as KV;
@@ -11,7 +11,9 @@ use crate::rq_tests::MockExporter;
 const OWNER: &str = "test.refs.glow";
 const EFFECT: &str = "test.refs.glow.glow";
 
-fn register() {
+fn register() -> MutexGuard<'static, ()> {
+    static REGISTERED: Mutex<()> = Mutex::new(());
+    let serial = REGISTERED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     dynamic::register(DynamicEffect {
         owner: OWNER.into(),
         version: "2.1.0".into(),
@@ -31,6 +33,7 @@ fn register() {
         files: None,
         margin: None,
     });
+    serial
 }
 
 fn effect_group(path: &std::path::Path) -> Value {
@@ -54,7 +57,7 @@ fn collect(v: &Value, found: &mut Vec<Value>) {
 fn a_project_names_its_missing_plugin_refuses_a_final_render_and_keeps_the_values() {
     let dir = tempfile::tempdir().unwrap();
     let (first, second) = (dir.path().join("first.ecproj"), dir.path().join("second.ecproj"));
-    register();
+    let _registered = register();
     let mut s = Session::new();
     s.execute("comp.new", json!({"name": "Main"})).unwrap();
     let layer = s.execute("layer.newSolid", json!({})).unwrap()["layer"].clone();
@@ -85,7 +88,7 @@ fn a_project_names_its_missing_plugin_refuses_a_final_render_and_keeps_the_value
 fn an_old_project_without_a_plugin_record_is_refused_for_a_missing_plugin_effect_and_renders_with_the_option() {
     let dir = tempfile::tempdir().unwrap();
     let (saved, old) = (dir.path().join("saved.ecproj"), dir.path().join("old.ecproj"));
-    register();
+    let _registered = register();
     let mut s = Session::new();
     s.execute("comp.new", json!({"name": "Main"})).unwrap();
     let layer = s.execute("layer.newSolid", json!({})).unwrap()["layer"].clone();
@@ -105,4 +108,32 @@ fn an_old_project_without_a_plugin_record_is_refused_for_a_missing_plugin_effect
     assert!(refused.contains(EFFECT) && refused.contains("withoutMissingPlugins"), "{refused}");
     let rendered = s.execute("renderQueue.render", json!({"withoutMissingPlugins": true})).unwrap();
     assert_eq!(rendered["items"][0]["status"], "Done", "{rendered}");
+}
+
+#[test]
+fn a_missing_effect_counts_only_in_the_queued_comps_and_the_comps_they_nest() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = dir.path().join("saved.ecproj");
+    let _registered = register();
+    let mut s = Session::new();
+    let inner = s.execute("comp.new", json!({"name": "Inner"})).unwrap()["comp"].clone();
+    let layer = s.execute("layer.newSolid", json!({})).unwrap()["layer"].clone();
+    s.execute("effect.apply", json!({"layer": layer, "effect": EFFECT})).unwrap();
+    let outer = s.execute("comp.new", json!({"name": "Outer"})).unwrap()["comp"].clone();
+    s.execute("layer.addItem", json!({"comp": outer, "item": inner})).unwrap();
+    let clean = s.execute("comp.new", json!({"name": "Clean"})).unwrap()["comp"].clone();
+    s.execute("layer.newSolid", json!({"comp": clean})).unwrap();
+    s.execute("file.saveAs", json!({"path": saved})).unwrap();
+
+    dynamic::unregister(OWNER);
+    let mut s = Session::new();
+    s.exporter = Some(Arc::new(MockExporter { log: Default::default() }));
+    s.execute("file.open", json!({"path": saved})).unwrap();
+    s.execute("renderQueue.add", json!({"comp": clean, "output": dir.path().join("clean.mp4")})).unwrap();
+    let rendered = s.execute("renderQueue.render", json!({})).unwrap();
+    assert_eq!(rendered["items"][0]["status"], "Done", "{rendered}");
+
+    s.execute("renderQueue.add", json!({"comp": outer, "output": dir.path().join("outer.mp4")})).unwrap();
+    let refused = s.execute("renderQueue.render", json!({})).unwrap_err().to_string();
+    assert!(refused.contains(EFFECT), "{refused}");
 }

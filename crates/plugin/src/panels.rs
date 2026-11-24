@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use craft_plugin_host::ui::{AppEvent, ControlsReply, PanelReply, UiEvent, UiInput, Widget};
 use craft_plugin_host::viewer::{Overlay, ToolEventKind};
 use craft_plugin_host::{Access, AudioRequest, Call, FrameRequest, Host, MAX_BACKLOG, PickFile, Pixels, Place, Retained, Samples};
-use effectcraft_engine::Session;
 use effectcraft_engine::project::{ItemId, Project};
+use effectcraft_engine::{History, Session};
 use serde_json::{Value, json};
 
 use crate::gate::SessionHost;
@@ -144,18 +144,16 @@ impl Gesture {
         Gesture { label: label.to_string(), last: Arc::default() }
     }
 
-    fn fold(&self, session: &mut Session, before: &Arc<Project>) {
+    fn fold(&self, session: &mut Session, before: &Arc<Project>, earlier: History) {
         if Arc::ptr_eq(&session.project, before) {
             return;
         }
         let mut last = lock(&self.last);
         let joined = last.as_ref().is_some_and(|after| Arc::ptr_eq(after, before));
-        let undo = &mut session.history.undo;
-        if let Some(first) = undo.iter().rposition(|(_, state)| Arc::ptr_eq(state, before)) {
-            undo.truncate(if joined { first } else { first + 1 });
-            if let Some(step) = undo.last_mut().filter(|_| !joined) {
-                step.0.clone_from(&self.label);
-            }
+        session.history = earlier;
+        if !joined {
+            let levels = session.prefs.general.undo_levels.max(1) as usize;
+            session.history.record(&self.label, before.clone(), levels);
         }
         session.history.merge_key = None;
         *last = Some(session.project.clone());
@@ -176,10 +174,10 @@ impl Remote {
         let project = bound.project.clone();
         let run = Box::new(move |session: &mut Session| {
             let answered = bound.check().map(|()| {
-                let before = session.project.clone();
+                let (before, earlier) = (session.project.clone(), gesture.as_ref().map(|_| session.history.clone()));
                 let answered = run(&mut SessionHost::new(session, &bound.loaded));
-                if let Some(gesture) = &gesture {
-                    gesture.fold(session, &before);
+                if let Some((gesture, earlier)) = gesture.as_ref().zip(earlier) {
+                    gesture.fold(session, &before, earlier);
                 }
                 answered
             });
