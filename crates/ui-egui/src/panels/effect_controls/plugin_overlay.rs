@@ -1,86 +1,22 @@
 use std::sync::Arc;
 
-use effectcraft_plugin::ui::{Paint, Shape};
 use effectcraft_plugin::viewer::{Bind, Mark, Shown, Space};
 
 use super::common::{Actions, gesture_key};
 use super::{Color32, EffectcraftApp, EvalCtx, Layer, Mat3, PropGroup, Rect, Sense, Stroke, Tokens, fw, vec2};
 use crate::panels::viewer::ViewerMap;
 
-const CURVE_STEPS: usize = 48;
 const HANDLE_REACH: f32 = 16.0;
 
-fn colour(t: &Tokens, paint: Paint) -> Color32 {
-    match paint {
-        Paint::Text => t.text,
-        Paint::Weak => t.text_dim,
-        Paint::Accent => t.accent,
-        Paint::Background => t.panel_bg,
-        Paint::Surface => t.field_bg,
-        Paint::Border => t.field_border,
-        Paint::Error => t.danger,
-        Paint::Rgba([r, g, b, a]) => Color32::from_rgba_unmultiplied(r, g, b, a),
-    }
-}
-
 pub(crate) fn draw_marks(t: &Tokens, painter: &egui::Painter, map: &ViewerMap, marks: &[Mark], layer: Option<&Mat3>) {
-    for mark in marks {
-        let to_screen = |p: [f32; 2]| -> Option<egui::Pos2> {
-            let p = [f64::from(p[0]), f64::from(p[1])];
-            let comp = match mark.space {
-                Space::Comp => p,
-                Space::Layer => fw::layer_to_comp(layer?, p),
-            };
-            let s = map.to_screen(comp);
-            s.is_finite().then_some(s)
+    let theme = crate::panels::plugin_view::theme(t);
+    craft_plugin_ui::draw_marks(&theme, painter, marks, crate::panels::plugin_view::triangulate, |space, p| {
+        let comp = match space {
+            Space::Comp => p,
+            Space::Layer => fw::layer_to_comp(layer?, p),
         };
-        let path = |points: Vec<[f32; 2]>, least: usize| {
-            let mut screen = points.into_iter().map(to_screen).collect::<Option<Vec<_>>>()?;
-            screen.dedup();
-            (screen.len() >= least).then_some(screen)
-        };
-        let outline = |points: Vec<[f32; 2]>, fill: Option<Paint>, stroke: Option<(Paint, f32)>| {
-            let Some(points) = path(points, 3) else { return };
-            let fill = fill.map_or(Color32::TRANSPARENT, |paint| colour(t, paint));
-            let stroke = stroke.map_or(Stroke::NONE, |(paint, width)| Stroke::new(width.clamp(0.0, 16.0), colour(t, paint)));
-            painter.add(egui::Shape::Path(egui::epaint::PathShape { points, closed: true, fill, stroke: stroke.into() }));
-        };
-        match &mark.shape {
-            Shape::Line { points, color, width } => {
-                if let Some(points) = path(points.clone(), 2) {
-                    painter.add(egui::Shape::line(points, Stroke::new(width.clamp(0.0, 16.0), colour(t, *color))));
-                }
-            }
-            Shape::Bezier { points: [a, b, c, d], color, width } => {
-                let at = |s: f32| {
-                    let r = 1.0 - s;
-                    std::array::from_fn(|i| r * r * r * a[i] + 3.0 * r * r * s * b[i] + 3.0 * r * s * s * c[i] + s * s * s * d[i])
-                };
-                if let Some(points) = path((0..=CURVE_STEPS).map(|i| at(i as f32 / CURVE_STEPS as f32)).collect(), 2) {
-                    painter.add(egui::Shape::line(points, Stroke::new(width.clamp(0.0, 16.0), colour(t, *color))));
-                }
-            }
-            Shape::Rect { min, max, fill, stroke, .. } => outline(vec![*min, [max[0], min[1]], *max, [min[0], max[1]]], *fill, *stroke),
-            Shape::Circle { center, radius, fill, stroke } => {
-                let around = (0..CURVE_STEPS).map(|i| {
-                    let a = i as f32 / CURVE_STEPS as f32 * std::f32::consts::TAU;
-                    [center[0] + radius * a.cos(), center[1] + radius * a.sin()]
-                });
-                outline(around.collect(), *fill, *stroke)
-            }
-            Shape::Polygon { points, fill } => {
-                if let Some(points) = path(points.clone(), 3) {
-                    painter.add(crate::panels::plugin_view::filled_polygon(points, colour(t, *fill)));
-                }
-            }
-            Shape::Text { pos, text, color, size } => {
-                if let Some(at) = to_screen(*pos) {
-                    painter.text(at, egui::Align2::LEFT_TOP, text, Tokens::ui(size.clamp(6.0, 48.0)), colour(t, *color));
-                }
-            }
-            Shape::Image { .. } => {}
-        }
-    }
+        Some(map.to_screen(comp))
+    });
 }
 
 #[derive(Clone)]

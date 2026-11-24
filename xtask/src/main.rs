@@ -66,6 +66,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("engine", 4),
     ("script", 4),
     ("host", 4),
+    ("craft-plugin-ui", 5),
     ("ui-egui", 5),
     ("automation", 5),
     ("effectcraft", 6),
@@ -96,6 +97,7 @@ const SAME_LAYER: &[(&str, &str)] = &[
     ("craft-plugin-host", "craft-plugin"),
     ("plugin", "automation"),
     ("ui-egui", "plugin"),
+    ("ui-egui", "craft-plugin-ui"),
     ("cli", "effectcraft"),
 ];
 
