@@ -22,6 +22,7 @@ craft-plugin-host = { workspace = true, features = ["testing"] }
 effectcraft-host = { workspace = true }
 effectcraft-gpu = { workspace = true }
 tempfile = { workspace = true }
+exr = { workspace = true }
 
 [[test]]
 name = "it"

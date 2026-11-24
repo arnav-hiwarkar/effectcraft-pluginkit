@@ -121,6 +121,7 @@ pub struct DynamicEffect {
     pub margin: Option<MarginDyn>,
     pub state_version: u32,
     pub migrate: Option<MigrateDyn>,
+    pub aux: Vec<effectcraft_raster::channels3d::AuxLookup>,
 }
 
 pub struct Registered {

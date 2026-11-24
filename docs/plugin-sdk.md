@@ -493,6 +493,33 @@ fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
 Declare `.reads_scene().reads_other_frames()` in the spec; without them these calls return an error
 that names the missing declaration. See [Placement](plugin-reference.md#placement).
 
+## Read depth and normals
+
+On a layer from a multi-layer OpenEXR file or a precomp of a 3D comp, `cx.aux` gives its 3D channels
+on the frame's pixels. This fog fades pixels by their distance:
+
+```rust
+fn spec(&self) -> EffectSpec {
+    EffectSpec::new("fog", "Depth Fog", "3D").reads_aux([Channel::Depth])
+}
+
+fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+    let Some(aux) = cx.aux(&[Channel::Depth])? else { return Ok(()) };
+    let x0 = frame.origin[0];
+    for (y, row) in frame.rows_in_place() {
+        for (x, pixel) in row.iter_mut().enumerate() {
+            let depth = aux.at(&Channel::Depth, x0 + x, y).map_or(0.0, |d| d[0]);
+            let (fog, alpha) = ((depth / 2000.0).clamp(0.0, 1.0), pixel[3]);
+            pixel[..3].iter_mut().for_each(|c| *c += (alpha - *c) * fog);
+        }
+    }
+    Ok(())
+}
+```
+
+Asking for a channel the spec does not declare returns an error naming the declaration. See
+[3D channels](plugin-reference.md#3d-channels).
+
 ## Offer presets
 
 `.preset(name, values)` on the spec names a set of parameter values, for example a look popup that

@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use effectcraft_keyframe::Value;
 use effectcraft_project::ParamUi;
-use effectcraft_raster::channels3d::{AuxLookup, BACKGROUND_DEPTH, crypto_hash};
+use effectcraft_raster::channels3d::{AuxLookup, BACKGROUND_DEPTH, BACKGROUND_NAMES, NORMAL_NAMES, UV_NAMES, crypto_hash};
 use effectcraft_raster::{AuxChannels, Image, Px, gaussian_blur};
 use rayon::prelude::*;
 
@@ -64,7 +64,7 @@ pub fn selects_channels(effect: &str, param: &str) -> bool {
 /// Does effect `id` read its layer's auxiliary channels ([`crate::EffectHost::aux`])? The media
 /// layer then decodes the footage's picture together with its channels (#474).
 pub fn reads_aux(id: &str) -> bool {
-    READS_AUX.contains(&id)
+    READS_AUX.contains(&id) || crate::dynamic::get(id).is_some_and(|registered| !registered.effect.aux.is_empty())
 }
 
 /// What effect `id` reads of its layer's auxiliary channels with `params`, declared before the
@@ -83,9 +83,9 @@ pub fn aux_needs(id: &str, params: &crate::Params) -> Option<Vec<AuxLookup>> {
             1 => vec![find(&OBJECT_ID_NAMES)],
             7 => vec![find(&MATERIAL_ID_NAMES)],
             4 => vec![find(&COVERAGE_NAMES)],
-            2 => vec![find(&["UV.U", "U", "uv.x"]), find(&["UV.V", "V", "uv.y"]), find(&["UV.W", "W", "uv.z"])],
-            3 => vec![find(&["N.X", "Normal.X", "normals.x"]), find(&["N.Y", "Normal.Y", "normals.y"]), find(&["N.Z", "Normal.Z", "normals.z"])],
-            5 => vec![find(&["BG.R", "Background.R"]), find(&["BG.G", "Background.G"]), find(&["BG.B", "Background.B"])],
+            2 => UV_NAMES.map(find).into(),
+            3 => NORMAL_NAMES.map(find).into(),
+            5 => BACKGROUND_NAMES.map(find).into(),
             _ => vec![find(&["R"]), find(&["G"]), find(&["B"])],
         },
         "ec.3d.depthmatte" | "ec.3d.depthoffield" | "ec.3d.fog3d" => vec![find(&DEPTH_NAMES)],
@@ -104,7 +104,7 @@ pub fn aux_needs(id: &str, params: &crate::Params) -> Option<Vec<AuxLookup>> {
                 .map(|n| AuxLookup::Name(n.to_string()))
                 .collect()
         }
-        _ => return None,
+        _ => return crate::dynamic::get(id).map(|registered| registered.effect.aux.clone()).filter(|aux| !aux.is_empty()),
     })
 }
 
@@ -197,13 +197,11 @@ fn channel_extract_at(ctx: &EffectCtx, b: &Buf, a: &AuxChannels, idx: &[Option<u
         1 => a.object_id().map(|c| map_grey(b, idx, |i| lv(c[i]))),
         7 => a.material_id().map(|c| map_grey(b, idx, |i| lv(c[i]))),
         4 => a.coverage().map(|c| map_grey(b, idx, |i| lv(c[i]))),
-        2 => get3([&["UV.U", "U", "uv.x"], &["UV.V", "V", "uv.y"], &["UV.W", "W", "uv.z"]])
-            .or_else(|| Some([a.find(&["UV.U", "U", "uv.x"])?, a.find(&["UV.V", "V", "uv.y"])?, a.find(&["UV.V", "V", "uv.y"])?]))
+        2 => get3(UV_NAMES)
+            .or_else(|| Some([a.find(UV_NAMES[0])?, a.find(UV_NAMES[1])?, a.find(UV_NAMES[1])?]))
             .map(|c| map_rgb(b, idx, |i| [lv(c[0][i]), lv(c[1][i]), 0.0])),
-        3 => get3([&["N.X", "Normal.X", "normals.x"], &["N.Y", "Normal.Y", "normals.y"], &["N.Z", "Normal.Z", "normals.z"]])
-            .map(|c| map_rgb(b, idx, |i| [lv(c[0][i] * 0.5 + 0.5), lv(c[1][i] * 0.5 + 0.5), lv(c[2][i] * 0.5 + 0.5)])),
-        5 => get3([&["BG.R", "Background.R"], &["BG.G", "Background.G"], &["BG.B", "Background.B"]])
-            .map(|c| map_rgb(b, idx, |i| [lv(c[0][i]), lv(c[1][i]), lv(c[2][i])])),
+        3 => get3(NORMAL_NAMES).map(|c| map_rgb(b, idx, |i| [lv(c[0][i] * 0.5 + 0.5), lv(c[1][i] * 0.5 + 0.5), lv(c[2][i] * 0.5 + 0.5)])),
+        5 => get3(BACKGROUND_NAMES).map(|c| map_rgb(b, idx, |i| [lv(c[0][i]), lv(c[1][i]), lv(c[2][i])])),
         _ => get3([&["R"], &["G"], &["B"]]).map(|c| map_rgb(b, idx, |i| [c[0][i], c[1][i], c[2][i]])),
     }
 }

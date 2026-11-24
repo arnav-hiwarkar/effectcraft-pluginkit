@@ -28,6 +28,12 @@ pub const OBJECT_ID_NAMES: [&str; 4] = ["ObjectID", "object_id", "objectId", "id
 pub const MATERIAL_ID_NAMES: [&str; 3] = ["MaterialID", "material_id", "materialId"];
 /// The names [`AuxChannels::coverage`] looks for.
 pub const COVERAGE_NAMES: [&str; 2] = ["Coverage", "coverage"];
+/// The names of the surface normal's X, Y and Z channels.
+pub const NORMAL_NAMES: [&[&str]; 3] = [&["N.X", "Normal.X", "normals.x"], &["N.Y", "Normal.Y", "normals.y"], &["N.Z", "Normal.Z", "normals.z"]];
+/// The names of the texture coordinates' U, V and W channels.
+pub const UV_NAMES: [&[&str]; 3] = [&["UV.U", "U", "uv.x"], &["UV.V", "V", "uv.y"], &["UV.W", "W", "uv.z"]];
+/// The names of the background colour's red, green and blue channels.
+pub const BACKGROUND_NAMES: [&[&str]; 3] = [&["BG.R", "Background.R"], &["BG.G", "Background.G"], &["BG.B", "Background.B"]];
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AuxChannels {

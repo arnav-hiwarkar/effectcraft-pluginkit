@@ -2644,6 +2644,7 @@ dependencies = [
  "effectcraft-engine",
  "effectcraft-gpu",
  "effectcraft-host",
+ "exr",
  "log",
  "serde",
  "serde_json",

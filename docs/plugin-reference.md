@@ -101,6 +101,7 @@ pooled instance, so values stored outside `cx` are not shared between calls.
 | `.time_dependent()` | The output changes with `cx.time` when no parameter is animated. |
 | `.reads_other_frames()` | The effect calls `cx.source_at`, `cx.layer_at`, `cx.scene_at` or `cx.placement_at`. |
 | `.reads_scene()` | The effect calls `cx.scene`, `cx.scene_at` or `cx.placement`. |
+| `.reads_aux([Channel::Depth, …])` | The effect calls `cx.aux` for these channels, see [3D channels](#3d-channels). |
 | `.reads_param_history()` | The effect calls `cx.at` or `cx.param_history`. A layer whose other effects or masks have expressions is then not cached, because the key cannot see what an expression returned at another time. |
 | `.preset(name, [(id, Value), …])` | A named set of parameter values, see [Presets](#presets). |
 | `.shader(wgsl)` | WGSL kernels for GPU passes. Each invocation may run 1 048 576 loop iterations; past that the app turns the shader off and renders on the CPU (see [Time](plugin-gpu.md#time)). See [Passes](plugin-gpu.md). |
@@ -311,6 +312,39 @@ between frames. It returns an error for a time that is not finite, and when the 
 `.reads_scene()` or `.reads_other_frames()`: the layer cache keys such an effect on every camera,
 light and layer of the comp, which it would otherwise miss. A comp with an expression on any layer
 is then not cached.
+
+### 3D channels
+
+`cx.aux(&[Channel::Depth, Channel::Normal])` returns the layer's 3D channels on the frame's pixel
+grid: `Ok(None)` when the layer has none, an error when the spec does not declare every channel
+asked for (the message names the missing `.reads_aux([…])`). A layer has them when its source is a
+multi-layer OpenEXR file with such channels, or a precomp of a comp with 3D layers (the app renders
+depth, normals, UVs, IDs and coverage for it). The declaration lets the app read only those
+channels from the file and redraw the cached layer when its source changes.
+
+| Channel | Values per pixel |
+|---|---|
+| `Depth` | 1: distance from the camera in pixels; 1e10 where nothing was drawn |
+| `Normal` | 3: the surface normal, x right, y down, z away from the viewer (a plane facing the camera is `[0, 0, -1]`) |
+| `Uv` | 2: texture coordinates |
+| `ObjectId`, `MaterialId` | 1: a small integer, 0 for the background |
+| `Coverage` | 1: 0 to 1 |
+| `Background` | 3: the background colour |
+| `Named("layer.channel")` | 1: any channel of the file by its name |
+
+An `Aux` holds the rows of the band being rendered: `aux.at(&Channel::Depth, x, y)` takes frame
+coordinates (as `frame.origin` and `frame.rows_mut()` give them) and returns that pixel's values, or
+`None` outside the band or for a channel the layer lacks; `aux.plane(&channel)` is the whole plane,
+row by row from `aux.first_row`, `aux.width` pixels wide. Values are looked up at each pixel's
+centre without interpolation, so ids stay whole. Channels are read on the CPU; a GPU pass cannot
+bind them yet.
+
+A read is built from one copy of the layer's channels per render, shared by the layout and every
+band. It may take at most `MAX_AUX_BYTES` (256 MiB); a larger one fails with an error, so read
+fewer channels at a time or read them in `render`, where a band reads only its own rows. In a CPU
+pass, `cx.aux` covers the pass's output band on the output image's grid: a scratch image of another
+size gets the channels at its pixel centres scaled onto the frame. An effect that declares
+`.reads_aux` has no known margin, so the effects before it render the whole layer.
 
 ### Placement
 
@@ -730,6 +764,7 @@ All are in `craft_plugin::host`.
 | `read_file`, `write_file`, `list_files` with `Root::Data` | None |
 | `read_file(Root::User, path)`, `list_files(Root::User, path)` | `files.read` |
 | `write_file(Root::User, path, bytes)` | `files.write` |
+| `cx.aux(channels)`: the layer's 3D channels, see [3D channels](#3d-channels). Declare `.reads_aux(…)` | None |
 | `log(level, message)`, `info(message)` | None |
 | `notify(message)`: shows a short message to the user | None |
 | `start(task, args)`: starts a task, returns its id | None |
