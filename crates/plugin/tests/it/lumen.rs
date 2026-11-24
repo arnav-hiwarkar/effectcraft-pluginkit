@@ -161,6 +161,7 @@ fn cases() -> [(&'static str, Vec<(&'static str, f64)>); 10] {
 
 #[test]
 fn lumen_glow_on_host_kernels_matches_the_build_before_them_and_that_build_still_renders() {
+    let _shared = crate::shared();
     let (spec, before) = (spec(), before_spec());
     for (name, values) in cases() {
         let params = params(spec, &values);
@@ -178,6 +179,7 @@ fn lumen_glow_on_host_kernels_matches_the_build_before_them_and_that_build_still
 
 #[test]
 fn negative_colour_screens_and_encodes_as_the_build_before_host_kernels_did() {
+    let _shared = crate::shared();
     let (spec, before) = (spec(), before_spec());
     let flat = |pixel: [f32; 4]| Buf { img: Image { width: 32, height: 32, data: vec![pixel; 32 * 32] }, offset: [0.0, 0.0], scale: 1.0 };
     let plain = [("Glow/radius", 1.0), ("Glow/threshold", 0.0), ("Output/gamma", 0.0)];
@@ -195,6 +197,7 @@ fn negative_colour_screens_and_encodes_as_the_build_before_host_kernels_did() {
 
 #[test]
 fn a_frame_as_wide_as_the_app_grows_one_glows_at_the_largest_radius_on_the_cpu_and_the_gpu() {
+    let _shared = crate::shared();
     let spec = spec();
     let mut img = Image::new(16384, 1);
     img.set(8000, 0, [4.0, 4.0, 4.0, 1.0]);
@@ -212,6 +215,7 @@ fn a_frame_as_wide_as_the_app_grows_one_glows_at_the_largest_radius_on_the_cpu_a
 
 #[test]
 fn a_stored_radius_of_zero_asks_for_no_padding() {
+    let _shared = crate::shared();
     let spec = spec();
     let params = params(spec, &[("Glow/radius", 0.0)]);
     let out = effects::apply(spec, &ctx(&params), picture());
@@ -221,6 +225,7 @@ fn a_stored_radius_of_zero_asks_for_no_padding() {
 
 #[test]
 fn lumen_glow_renders_on_the_gpu_as_its_cpu_render_does() {
+    let _shared = crate::shared();
     let spec = spec();
     let Some(gpu) = gpu() else { return };
     assert!(spec.gpu && gpu.supports_effect(spec.id), "Lumen Glow is offered to the GPU");
@@ -270,6 +275,7 @@ fn at(img: &Image, dx: isize, dy: isize) -> f32 {
 
 #[test]
 fn a_single_bright_pixel_glows_radially_symmetric() {
+    let _shared = crate::shared();
     let glow = glow_of_point(1.0, &[("Glow/radius", 120.0)]);
     for d in [8, 20, 50, 90] {
         let axis = [at(&glow, d, 0), at(&glow, -d, 0), at(&glow, 0, d), at(&glow, 0, -d)];
@@ -283,6 +289,7 @@ fn a_single_bright_pixel_glows_radially_symmetric() {
 
 #[test]
 fn glow_falls_off_monotonically_from_the_core() {
+    let _shared = crate::shared();
     let glow = glow_of_point(1.0, &[("Glow/radius", 120.0), ("Output/gamma", 0.0)]);
     let profile: Vec<f32> = (0..120).map(|d| at(&glow, d, 0)).collect();
     assert!(profile.windows(2).all(|w| w[1] <= w[0]), "{profile:?}");
@@ -290,6 +297,7 @@ fn glow_falls_off_monotonically_from_the_core() {
 
 #[test]
 fn hdr_sources_glow_in_proportion_to_their_energy() {
+    let _shared = crate::shared();
     let linear = [("Glow/radius", 60.0), ("Output/gamma", 0.0)];
     let (dim, hot) = (glow_of_point(1.0, &linear), glow_of_point(16.0, &linear));
     for d in [4, 15, 40] {
@@ -314,6 +322,7 @@ fn disc(size: u32, radius: f32) -> Image {
 
 #[test]
 fn half_resolution_matches_the_full_resolution_glow() {
+    let _shared = crate::shared();
     let values = [("Glow/radius", 80.0), ("Output/gamma", 0.0)];
     let full = glow(&values, disc(256, 24.0), 1.0, 256);
     let half = glow(&values, disc(128, 12.0), 0.5, 256);

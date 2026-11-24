@@ -53,6 +53,7 @@ fn safe_mode_starts_no_plugin() {
 
 #[test]
 fn a_plugin_whose_files_changed_after_approval_waits_for_approval_again() {
+    let _exclusive = super::exclusive();
     let root = tempfile::tempdir().unwrap();
     let id = "test.trust-changed";
     let (plugins, _source) = installed(root.path(), id);
@@ -71,6 +72,7 @@ fn effect_ids(plugins: &Plugins, id: &str) -> Option<Vec<String>> {
 
 #[test]
 fn a_bundle_replaced_while_it_loads_never_runs_as_the_approved_one() {
+    let _exclusive = super::exclusive();
     let lumen = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/fixtures/lumen-glow-before-host-kernels.wasm")).unwrap();
     let id = "test.trust-replaced";
     for delay in 0..40u64 {

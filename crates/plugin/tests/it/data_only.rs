@@ -77,7 +77,7 @@ fn dir_of(dir: &Path, file: &str) -> String {
 #[test]
 fn a_data_only_bundle_survives_a_restart_without_asking_again() {
     let id = "test.data-restart";
-    let app = super::app("test.data-only-restart", &[]);
+    let app = super::app_exclusive("test.data-only-restart", &[]);
     let (_source, dir) = pack(id, &[("swap.cube", SWAP_RED_AND_BLUE)], json!([]));
     app.plugins.install(&dir).unwrap();
     contributed::remove(id);
