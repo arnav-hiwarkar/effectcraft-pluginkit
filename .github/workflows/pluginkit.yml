@@ -51,7 +51,9 @@ jobs:
       - name: Adapter tests
         run: cargo test -p effectcraft-plugin
       - name: Engine, project, effects, render, raster, automation, script, CLI and xtask
-        run: cargo test -p effectcraft-engine --lib -p effectcraft-project --lib -p effectcraft-effects --lib -p effectcraft-render -p effectcraft-raster -p effectcraft-automation -p effectcraft-script -p effectcraft-cli -p xtask
+        run: |
+          cargo test -p effectcraft-engine -p effectcraft-project -p effectcraft-effects --lib
+          cargo test -p effectcraft-render -p effectcraft-raster -p effectcraft-automation -p effectcraft-script -p effectcraft-cli -p xtask
       - name: GPU plugin tests
         run: cargo test -p effectcraft-gpu --lib plugin
 
