@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use craft_plugin_host::kernels::{self, Lowered, StepImage};
 use craft_plugin_host::{
@@ -69,7 +69,7 @@ fn register(loaded: &Arc<Loaded>) {
             margin: Some(Box::new(move |ctx, scale| margin(&margin_plugin, &margin_spec, ctx, scale))),
             state_version: spec.version,
             migrate: Some(Box::new(move |from, values| migrate(&migrate_plugin, &migrate_spec, from, values))),
-            aux: spec.reads_aux.iter().flat_map(aux_lookups).collect(),
+            aux: Channel::unique(&spec.reads_aux).iter().flat_map(aux_lookups).collect(),
         });
         if spec.shader.is_none() && default_plan_runs_on_gpu(loaded, spec) {
             mark_gpu_planned(&id);
@@ -328,10 +328,17 @@ fn render_cx(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) ->
     }
 }
 
+type SourceAux = OnceLock<Option<Arc<AuxChannels>>>;
+
 struct RenderHost<'a, 'b> {
     ctx: &'a EffectCtx<'b>,
     grid: Grid,
     spec: &'a EffectSpec,
+    aux: &'a SourceAux,
+}
+
+fn source_aux(cell: &SourceAux, ctx: &EffectCtx) -> Option<Arc<AuxChannels>> {
+    cell.get_or_init(|| ctx.env.host.and_then(|host| host.aux())).clone()
 }
 
 impl RenderHost<'_, '_> {
@@ -382,28 +389,36 @@ impl Host for RenderHost<'_, '_> {
         self.ctx.env.masks.iter().map(convert).collect()
     }
 
-    fn aux(&mut self, channels: &[Channel], rows: Option<[u32; 2]>) -> Option<AuxPlanes> {
-        let aux = self.ctx.env.host?.aux()?;
-        let Grid { width, height, offset, scale } = self.grid;
+    fn aux(&mut self, channels: &[Channel], rows: Option<[u32; 2]>, size: Option<[u32; 2]>) -> Result<Option<AuxPlanes>, String> {
+        let Some(aux) = source_aux(self.aux, self.ctx) else { return Ok(None) };
+        let Grid { width: frame_width, height: frame_height, offset, scale } = self.grid;
+        let [width, height] = size.unwrap_or([frame_width, frame_height]);
         let [first, count] = rows.unwrap_or([0, height]);
         let rows = first.min(height)..first.saturating_add(count).min(height);
-        let w = width as usize;
-        let index: Vec<Option<usize>> = (rows.start as usize * w..rows.end as usize * w)
-            .map(|i| {
-                let [x, y] = effectcraft_engine::effects::aux_point(scale, offset, [(i % w) as f64 + 0.5, (i / w) as f64 + 0.5]);
-                aux.index_at(x, y)
-            })
+        let found: Vec<(Channel, Vec<&[f32]>)> = channels
+            .iter()
+            .filter_map(|channel| Some((channel.clone(), aux_lookups(channel).iter().map(|lookup| aux_plane(&aux, lookup)).collect::<Option<_>>()?)))
             .collect();
-        let sample = |channel: &Channel| {
-            let sources: Vec<&[f32]> = aux_lookups(channel).iter().map(|lookup| aux_plane(&aux, lookup)).collect::<Option<_>>()?;
-            let outside = if *channel == Channel::Depth { channels3d::BACKGROUND_DEPTH } else { 0.0 };
-            let mut plane = Vec::with_capacity(index.len() * sources.len());
-            for at in &index {
-                plane.extend(sources.iter().map(|source| at.and_then(|i| source.get(i).copied()).unwrap_or(outside)));
+        let bytes = Channel::read_bytes(width, rows.len() as u32, &found.iter().map(|(channel, _)| channel.clone()).collect::<Vec<_>>())?;
+        let mut planes: Vec<(Channel, Vec<f32>)> = Vec::with_capacity(found.len());
+        for (channel, sources) in &found {
+            let mut plane = Vec::new();
+            plane.try_reserve_exact(width as usize * rows.len() * sources.len()).map_err(|_| format!("no memory for {bytes} bytes of channels"))?;
+            planes.push((channel.clone(), plane));
+        }
+        let step = [f64::from(frame_width) / f64::from(width.max(1)), f64::from(frame_height) / f64::from(height.max(1))];
+        for y in rows.clone() {
+            for x in 0..width {
+                let centre = [(f64::from(x) + 0.5) * step[0], (f64::from(y) + 0.5) * step[1]];
+                let [ax, ay] = effectcraft_engine::effects::aux_point(scale, offset, centre);
+                let at = aux.index_at(ax, ay);
+                for ((channel, sources), (_, plane)) in found.iter().zip(&mut planes) {
+                    let outside = if *channel == Channel::Depth { channels3d::BACKGROUND_DEPTH } else { 0.0 };
+                    plane.extend(sources.iter().map(|source| at.and_then(|i| source.get(i).copied()).unwrap_or(outside)));
+                }
             }
-            Some((channel.clone(), plane))
-        };
-        Some(AuxPlanes { width, height: rows.len() as u32, planes: channels.iter().filter_map(sample).collect() })
+        }
+        Ok(Some(AuxPlanes { width, height: rows.len() as u32, planes }))
     }
 
     fn params_at(&mut self, layer_time: f64) -> Option<ParamsAt> {
@@ -477,19 +492,19 @@ fn wire_scene(scene: effectcraft_engine::effects::CompScene) -> Scene {
     Scene { projection: scene.camera, camera_layer: scene.camera_layer, camera, lights: scene.lights.iter().map(light).collect() }
 }
 
-fn layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Layout {
+fn layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid, aux: &SourceAux) -> Layout {
     let call = Call::Layout { effect: spec.id.clone(), cx: render_cx(loaded, spec, ctx, grid) };
-    let mut layout: Layout = loaded.plugin.call(&call, None, &mut RenderHost { ctx, grid, spec }).unwrap_or_default();
+    let mut layout: Layout = loaded.plugin.call(&call, None, &mut RenderHost { ctx, grid, spec, aux }).unwrap_or_default();
     layout.padding = craft_plugin_host::applied_padding(layout.padding, [grid.width, grid.height]);
     layout
 }
 
 fn margin(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, scale: f64) -> Option<f64> {
-    if spec.reads_other_frames {
+    if spec.reads_other_frames || !spec.reads_aux.is_empty() {
         return None;
     }
     let [width, height] = ctx.layer_size.map(|side| (side * scale).ceil().clamp(1.0, f64::from(u32::MAX)) as u32);
-    let layout = layout(loaded, spec, ctx, Grid { width, height, offset: [0.0; 2], scale });
+    let layout = layout(loaded, spec, ctx, Grid { width, height, offset: [0.0; 2], scale }, &SourceAux::new());
     if layout.reach != Some(0) || layout.maps_input || layout.gpu.is_some_and(|plan| !plan.layers.is_empty()) {
         return None;
     }
@@ -507,14 +522,18 @@ fn shown_area(ctx: &EffectCtx, grid: Grid) -> Option<Rect> {
 }
 
 fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> Buf {
-    let layout = layout(loaded, spec, ctx, grid_of(&buf));
+    let aux = SourceAux::new();
+    let layout = layout(loaded, spec, ctx, grid_of(&buf), &aux);
+    if !spec.reads_aux.is_empty() {
+        source_aux(&aux, ctx);
+    }
     if spec.shader.is_none() && layout.gpu.as_ref().is_some_and(|plan| plan_runs_on_gpu(spec, plan)) {
         mark_gpu_planned(&effect_id(&loaded.bundle.manifest.id, &spec.id));
     }
     buf.pad_sides(layout.padding);
     let grid = grid_of(&buf);
     let cx = render_cx(loaded, spec, ctx, grid);
-    let host = || RenderHost { ctx, grid, spec };
+    let host = || RenderHost { ctx, grid, spec, aux: &aux };
     let passes = layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu());
     let shown = shown_area(ctx, grid);
     let size = [grid.width, grid.height];
@@ -547,7 +566,7 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
 }
 
 fn gpu_program(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Option<GpuProgram> {
-    let layout = layout(loaded, spec, ctx, grid);
+    let layout = layout(loaded, spec, ctx, grid, &SourceAux::new());
     let plan = layout.gpu.filter(|plan| plan_runs_on_gpu(spec, plan))?;
     let [left, top, right, bottom] = layout.padding;
     let frame = [grid.width.saturating_add(left).saturating_add(right), grid.height.saturating_add(top).saturating_add(bottom)];

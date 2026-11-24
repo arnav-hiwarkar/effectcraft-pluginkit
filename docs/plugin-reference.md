@@ -339,6 +339,13 @@ row by row from `aux.first_row`, `aux.width` pixels wide. Values are looked up a
 centre without interpolation, so ids stay whole. Channels are read on the CPU; a GPU pass cannot
 bind them yet.
 
+A read is built from one copy of the layer's channels per render, shared by the layout and every
+band. It may take at most `MAX_AUX_BYTES` (256 MiB); a larger one fails with an error, so read
+fewer channels at a time or read them in `render`, where a band reads only its own rows. In a CPU
+pass, `cx.aux` covers the pass's output band on the output image's grid: a scratch image of another
+size gets the channels at its pixel centres scaled onto the frame. An effect that declares
+`.reads_aux` has no known margin, so the effects before it render the whole layer.
+
 ### Placement
 
 `cx.placement("target")` returns an error when no layer is chosen or the spec lacks `.reads_scene()`
