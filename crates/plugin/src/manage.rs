@@ -117,16 +117,23 @@ impl Inner {
         let id = bundle.manifest.id.clone();
         self.stop(&id);
         let (bundle, grants, digest) = if self.is_session_only(&id) {
-            match bundle.digest() {
-                Ok(digest) => (bundle.clone().with_mode(RunMode::Sandboxed), bundle.manifest.permissions.clone(), digest),
+            match Bundle::read(&bundle.dir) {
+                Ok((read, digest)) if read.manifest.id == id => {
+                    self.session_only.iter_mut().filter(|kept| kept.manifest.id == id).for_each(|kept| *kept = read.clone());
+                    (read.clone().with_mode(RunMode::Sandboxed), read.manifest.permissions.clone(), digest)
+                }
+                Ok(_) => {
+                    self.failed.insert(id, "its manifest now names another plug-in; load it for this session again".into());
+                    return;
+                }
                 Err(error) => {
                     self.failed.insert(id, error.to_string());
                     return;
                 }
             }
         } else {
-            match self.registry.grants_and_digest(bundle) {
-                Ok((grants, digest)) => (self.registry.running(bundle), grants, digest),
+            match self.registry.approved(bundle) {
+                Ok(approved) => (approved.bundle, approved.grants, approved.digest),
                 Err(refusal) => {
                     self.refused.insert(id, refusal);
                     return;
@@ -234,8 +241,8 @@ impl Inner {
     fn info(&self, bundle: &Bundle, session_only: bool) -> PluginInfo {
         let manifest = &bundle.manifest;
         let loaded = self.loaded.get(&manifest.id);
-        let failed = self.failed.get(&manifest.id).cloned();
-        let running = loaded.is_some() || self.data.contains(&manifest.id);
+        let failed = self.failed.get(&manifest.id).cloned().or_else(|| loaded.and_then(|loaded| loaded.plugin.failure()));
+        let running = (loaded.is_some() || self.data.contains(&manifest.id)) && failed.is_none();
         let (state, error) = match (running, failed, self.refused.get(&manifest.id)) {
             (true, ..) => (PluginState::Running, None),
             (false, Some(error), _) => (PluginState::Failed, Some(error)),

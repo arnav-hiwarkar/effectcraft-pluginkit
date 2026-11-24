@@ -117,3 +117,50 @@ fn a_warm_start_runs_no_plugin_and_the_first_use_runs_only_the_one_used() {
     assert_eq!(ids.map(|id| warm.get(id).unwrap().plugin.started()), [false, true, false]);
     drop(sources);
 }
+
+#[test]
+fn a_session_plugin_reloads_the_entry_its_changed_manifest_names() {
+    let plugins = Plugins::open(tempfile::tempdir().unwrap().path(), false);
+    let source = tempfile::tempdir().unwrap();
+    let id = "test.trust-session-entry";
+    std::fs::copy(super::probe_wasm(), source.path().join("probe.wasm")).unwrap();
+    std::fs::write(source.path().join("other.wasm"), b"not a module").unwrap();
+    let manifest = |entry: &str| json!({"id": id, "name": "Trust", "version": "1.0.0", "entry": {"wasm": entry}}).to_string();
+    std::fs::write(source.path().join("plugin.json"), manifest("probe.wasm")).unwrap();
+    assert_eq!(plugins.load_for_session(source.path()).unwrap().state, PluginState::Running);
+
+    std::fs::write(source.path().join("plugin.json"), manifest("other.wasm")).unwrap();
+    plugins.reload();
+    assert_eq!(listed(&plugins, id).state, PluginState::Failed, "the old entry ran under the new manifest");
+}
+
+#[test]
+fn a_first_use_that_cannot_load_its_module_shows_the_plugin_as_failed_with_the_reason() {
+    struct NoHost;
+    impl craft_plugin_host::Host for NoHost {}
+    let root = tempfile::tempdir().unwrap();
+    let id = "test.trust-first-use";
+    let (first, _source) = installed(root.path(), id);
+    drop(first);
+    let compiled: Vec<_> = walk(root.path()).into_iter().filter(|path| path.extension().is_some_and(|extension| extension == "cwasm")).collect();
+    compiled.iter().for_each(|path| std::fs::remove_file(path).unwrap());
+    let warm = Plugins::open(root.path(), false);
+    std::fs::write(listed(&warm, id).path.join("notes.txt"), "added after start").unwrap();
+    let used = warm.get(id).unwrap();
+    let cx = craft_plugin_host::RenderCx { size: [1, 1], scale: 1.0, ..Default::default() };
+    let mut pixels = vec![[0.25, 0.5, 1.0, 1.0]];
+    let failed = used.plugin.render("invert", &cx, &craft_plugin_host::Layout::pointwise(), None, &mut pixels, || NoHost).unwrap_err();
+    let info = listed(&warm, id);
+    assert_eq!(info.state, PluginState::Failed);
+    assert_eq!(info.error, Some(failed.to_string()));
+}
+
+fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .flat_map(|entry| {
+            let path = entry.unwrap().path();
+            if path.is_dir() { walk(&path) } else { vec![path] }
+        })
+        .collect()
+}

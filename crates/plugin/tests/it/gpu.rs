@@ -375,3 +375,15 @@ fn a_shader_the_gpu_turned_off_is_the_effects_error_and_in_the_plugins_log_once(
     let logs: Vec<String> = app.plugins.get(&app.id).expect("loaded").plugin.logs(0).into_iter().map(|line| line.message).collect();
     assert_eq!(logs, ["effect `gpu-invert` on the GPU: a loop ran past the cap"]);
 }
+
+#[test]
+fn an_effect_without_wgsl_whose_plan_covers_small_frames_is_offered_to_the_gpu() {
+    let app = app("test.gpu-small-swap", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.small-swap", app.id)).expect("the probe registered its small swap effect");
+    assert!(spec.gpu && gpu.supports_effect(spec.id), "a plan at the probe's frame size offers the effect to the GPU");
+    let params = params(spec, &[]);
+    let out = gpu.effects(&[FxStep { spec, ctx: ctx(&params) }], &picture(), None).expect("the plan of host kernels runs on the GPU");
+    assert_eq!(out.img.data[0], effects::apply(spec, &ctx(&params), picture()).img.data[0]);
+    assert_ne!(out.img.data[0], picture().img.data[0], "the effect swapped the picture");
+}

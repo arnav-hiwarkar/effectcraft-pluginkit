@@ -62,7 +62,12 @@ The app asks `describe` once per approved bundle: the reply is kept under the bu
 plugin's effects, panels, commands, tools and tasks from it without running the plugin. A sandboxed plugin's
 module is loaded and run on its first use (a render, a panel, a command, a task). Changed files make a new
 digest, so the plugin is described again. Each start reads and hashes every bundle file once; that one digest
-checks the approval and names the compiled module and the kept description.
+checks the approval and names the compiled module and the kept description, and the manifest the start uses is
+parsed from the bytes it hashed. A first use that has to compile does so on the kit's own compile threads, never
+on the render workers, so renders waiting for it cannot starve it; a first use that fails shows the plugin as
+failed with the reason. The GPU builds pipelines ahead of time only for plugin effects the open project uses
+(when it opens or an effect is applied), and a plugin effect without WGSL is offered to the GPU when its default
+plan at 256 px runs there, checked the first time the GPU asks about it.
 
 A task runs on its own thread and instance. Its calls that need the document wait in a queue that the
 app answers on the main thread once per UI frame (`effectcraft_plugin::pump`) and in the headless
