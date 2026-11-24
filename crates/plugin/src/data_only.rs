@@ -1,3 +1,5 @@
+use std::path::{Component, Path};
+
 use craft_plugin_host::{Bundle, Value as Wire};
 use effectcraft_engine::effects::{self, contributed};
 use effectcraft_engine::keyframe::Value;
@@ -16,7 +18,7 @@ pub(crate) fn check(bundle: &Bundle) -> Result<Checked, String> {
         .contributes
         .presets
         .iter()
-        .map(|preset| Ok((preset.effect.clone(), preset.name.clone(), preset_values(preset)?)))
+        .map(|preset| Ok((preset.effect.clone(), preset.name.clone(), preset_values(bundle, preset)?)))
         .collect::<Result<_, String>>()?;
     let luts = manifest.contributes.luts.iter().map(|file| lut(bundle, file)).collect::<Result<_, String>>()?;
     Ok(Checked { presets, luts })
@@ -30,7 +32,7 @@ pub(crate) fn unregister(owner: &str) {
     contributed::remove(owner);
 }
 
-fn preset_values(preset: &craft_plugin_host::ContributedPreset) -> Result<contributed::PresetValues, String> {
+fn preset_values(bundle: &Bundle, preset: &craft_plugin_host::ContributedPreset) -> Result<contributed::PresetValues, String> {
     let (effect, name) = (&preset.effect, &preset.name);
     let spec = effects::find(effect)
         .ok_or_else(|| format!("preset `{name}` is for effect `{effect}`, which is not a built-in effect or an installed plugin's effect"))?;
@@ -44,6 +46,11 @@ fn preset_values(preset: &craft_plugin_host::ContributedPreset) -> Result<contri
             })?;
             let value = typed(&param.default, &param.ui, wire)
                 .ok_or_else(|| format!("preset `{name}`: `{id}` of effect `{effect}` needs {}", wanted(&param.default)))?;
+            let reads_file = matches!(param.ui, ParamUi::File { .. }) || effects::lut_params(effect).contains(&id.as_str());
+            let value = match value {
+                Value::Str(text) if reads_file => Value::Str(bundle_file(bundle, &text).map_err(|e| format!("preset `{name}`: `{id}`: {e}"))?),
+                other => other,
+            };
             Ok((id.clone(), value))
         })
         .collect()
@@ -92,4 +99,25 @@ fn lut(bundle: &Bundle, file: &str) -> Result<(String, String), String> {
     })?;
     let stem = file.strip_suffix(".cube").or_else(|| file.strip_suffix(".CUBE")).unwrap_or(file);
     Ok((format!("{} / {stem}", bundle.manifest.name), path.to_string_lossy().into_owned()))
+}
+
+fn bundle_file(bundle: &Bundle, text: &str) -> Result<String, String> {
+    if text.trim().is_empty() || text.contains('\n') {
+        return Ok(text.to_string());
+    }
+    let relative = Path::new(text.trim());
+    if relative.is_absolute() || relative.components().any(|part| !matches!(part, Component::Normal(_))) {
+        return Err(format!("`{text}` is not a file path inside the bundle"));
+    }
+    let outside = |_| format!("`{text}` is not a file inside the bundle");
+    let root = bundle.dir.canonicalize().map_err(outside)?;
+    let path = root.join(relative).canonicalize().map_err(outside)?;
+    if !path.starts_with(&root) || !path.is_file() {
+        return Err(format!("`{text}` is not a file inside the bundle"));
+    }
+    let size = std::fs::metadata(&path).map_err(outside)?.len();
+    if size > MAX_LUT_BYTES {
+        return Err(format!("`{text}` is {size} bytes; the limit is {MAX_LUT_BYTES}"));
+    }
+    Ok(path.to_string_lossy().into_owned())
 }

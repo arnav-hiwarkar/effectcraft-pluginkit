@@ -218,7 +218,7 @@ impl Inner {
     }
 
     fn reload(&mut self) {
-        let running: Vec<String> = self.loaded.keys().cloned().collect();
+        let running: Vec<String> = self.loaded.keys().chain(&self.data).cloned().collect();
         running.iter().for_each(|id| self.stop(id));
         self.failed.clear();
         self.refused.clear();
@@ -273,6 +273,16 @@ impl Inner {
             path: bundle.dir.clone(),
         }
     }
+}
+
+fn approve_snapshot(registry: &mut Registry, snapshot: &Bundle, digest: &str) -> Result<(), String> {
+    registry.approve(snapshot).map_err(|e| e.to_string())?;
+    let recorded = registry.consent(&snapshot.manifest.id).and_then(|consent| consent.approved.as_ref()).map(|approved| approved.digest.as_str());
+    if recorded == Some(digest) {
+        return Ok(());
+    }
+    registry.disable(&snapshot.manifest.id).map_err(|e| e.to_string())?;
+    Err(format!("plugin `{}` changed while it was installed, so it was not approved", snapshot.manifest.id))
 }
 
 fn local_effect<'a>(plugin: &str, loaded: &'a Loaded, effect_id: &str) -> Option<&'a str> {
@@ -366,11 +376,12 @@ impl Plugins {
         inner.session_only.retain(|b| b.manifest.id != incoming.id);
         let rejects = |bundle: &Bundle| if bundle.manifest.is_data_only() { data_only::check(bundle).map(drop) } else { Ok(()) };
         let bundle = inner.registry.install_checked(source, rejects).map_err(|e| e.to_string())?;
-        if bundle.manifest.is_data_only() {
-            inner.registry.approve(&bundle).map_err(|e| e.to_string())?;
+        let (snapshot, digest) = Bundle::read(&bundle.dir).map_err(|e| e.to_string())?;
+        if snapshot.manifest.is_data_only() {
+            approve_snapshot(&mut inner.registry, &snapshot, &digest)?;
         }
-        inner.start(&bundle);
-        Ok(inner.info(&bundle, false))
+        inner.start(&snapshot);
+        Ok(inner.info(&snapshot, false))
     }
 
     pub fn approve(&self, id: &str) -> Result<PluginInfo, String> {
@@ -614,4 +625,26 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approval_refuses_a_bundle_replaced_after_it_was_classified() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("pack");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = r#"{"id": "test.swapped", "name": "Swapped", "version": "1.0.0", "contributes": {"luts": ["a.cube"]}}"#;
+        std::fs::write(dir.join("plugin.json"), manifest).unwrap();
+        std::fs::write(dir.join("a.cube"), "").unwrap();
+        let mut registry = Registry::open(&root.path().join("registry"));
+        let installed = registry.install(&dir).unwrap().dir;
+        let (snapshot, digest) = Bundle::read(&installed).unwrap();
+        std::fs::write(installed.join("plugin.wasm"), b"\0asm").unwrap();
+        let error = approve_snapshot(&mut registry, &snapshot, &digest).unwrap_err();
+        assert!(error.contains("changed while it was installed"), "{error}");
+        assert!(registry.consent("test.swapped").is_none_or(|consent| !consent.enabled));
+    }
 }
