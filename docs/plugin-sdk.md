@@ -411,6 +411,27 @@ let plan = plan
 `craft_plugin::histogram(pixels)` counts straight values per channel in the plugin itself, for example
 for auto levels in `render`.
 
+A time effect reads other frames into the plan with `plan.source_at(layer_time)` (declare
+`.reads_other_frames()`) and can track motion between them with `PlanPass::flow`. A frame halfway between
+two source frames, each pulled along its motion vectors (`plugins/timewarp` does this with a speed):
+
+```rust
+let mut plan = Plan::new();
+let (before, after) = (plan.source_at(t0), plan.source_at(t1));
+let (forward, backward, later) = (plan.scratch(cx.size), plan.scratch(cx.size), plan.scratch(cx.size));
+let half = [[0.5, 0.0, 0.0, 0.0], [0.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 0.5]];
+let plan = plan
+    .pass(PlanPass::flow(before, after, forward))
+    .pass(PlanPass::flow(after, before, backward))
+    .pass(PlanPass::warp(before, backward, PlanImage::Output, [0.5, 0.5]))
+    .pass(PlanPass::warp(after, forward, later, [0.5, 0.5]))
+    .pass(PlanPass::matrix(PlanImage::Output, PlanImage::Output, half))
+    .pass(PlanPass::matrix(later, later, half))
+    .pass(PlanPass::blend_images(PlanImage::Output, later, PlanImage::Output, BlendMode::Add, 1.0));
+```
+
+In tests, `plugin.render(..).source_at(|layer_time| picture)` gives the frames at other times.
+
 Light that can go negative (a glow of signed colour) keeps the sRGB curve's straight segment below zero
 instead of mirroring it, and `BlendMode::ScreenHdr` screens a base outside 0 to 1 without darkening it:
 

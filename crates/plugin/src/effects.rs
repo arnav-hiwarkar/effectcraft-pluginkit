@@ -591,7 +591,14 @@ fn planned(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid, memo
     let plan = layout.gpu.filter(|plan| plan_runs_on_gpu(spec, plan))?;
     let [left, top, right, bottom] = layout.padding;
     let frame = [grid.width.saturating_add(left).saturating_add(right), grid.height.saturating_add(top).saturating_add(bottom)];
-    if let Err(why) = plan.validate(frame) {
+    let refused = plan.validate(frame).and_then(|()| {
+        if plan.sources.is_empty() || spec.reads_other_frames {
+            Ok(())
+        } else {
+            Err("the plan reads source frames at other times; declare `.reads_other_frames()` on the effect".to_string())
+        }
+    });
+    if let Err(why) = refused {
         loaded.report(&spec.id, Some(format!("the GPU plan was refused: {why}")));
         return None;
     }
@@ -601,6 +608,7 @@ fn planned(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid, memo
         PlanImage::Scratch(index) => GpuSlot::Scratch(index as usize),
         PlanImage::Texture(index) => GpuSlot::Texture(index as usize),
         PlanImage::Layer(index) => GpuSlot::Layer(index as usize),
+        PlanImage::SourceAt(index) => GpuSlot::SourceAt(index as usize),
     };
     let draw = |draw: Draw| GpuDraw {
         vertices: draw.vertices as usize,
@@ -681,5 +689,5 @@ fn planned(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid, memo
         .into_iter()
         .map(|texture| Some(GpuPicture { bytes: cached(&texture.key)?, name: texture.key, size: texture.size }))
         .collect::<Option<_>>()?;
-    Some(GpuProgram { padding: layout.padding, images, buffers, textures, layers: plan.layers, passes })
+    Some(GpuProgram { padding: layout.padding, images, buffers, textures, layers: plan.layers, sources: plan.sources, passes })
 }

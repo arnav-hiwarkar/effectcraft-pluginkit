@@ -33,6 +33,7 @@ pub struct GpuProgram {
     pub buffers: Vec<GpuBytes>,
     pub textures: Vec<GpuPicture>,
     pub layers: Vec<String>,
+    pub sources: Vec<f64>,
     pub passes: Vec<GpuPass>,
 }
 
@@ -99,6 +100,7 @@ pub enum GpuSlot {
     Scratch(usize),
     Texture(usize),
     Layer(usize),
+    SourceAt(usize),
 }
 
 pub struct DynamicParam {

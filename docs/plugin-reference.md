@@ -272,6 +272,7 @@ four times the frame, every side is cut by one factor, so a frame 16384 wide is 
 | `cx.layer("matte")` | The layer chosen in a layer parameter, resampled onto this frame's grid. |
 | `cx.layer_at("matte", comp_time)` | The same at another time. |
 | `cx.source_at(layer_time)` | This effect's input at another time. Declare `.reads_other_frames()`. |
+| `plan.source_at(layer_time)` | The same frame as an image a plan reads, on the CPU and the GPU: the padded frame's size, transparent when there is no frame. Declare `.reads_other_frames()`; the app refuses the plan otherwise. Counts towards the plan's textures and layers. |
 | `cx.at(layer_time)` | The same `Cx` with every parameter evaluated at another layer time, keyframes and expressions applied as the app renders that time. `time` becomes `layer_time` and `comp_time` moves by the same amount; the frame fields stay. `None` outside the app. Declare `.reads_param_history()`. |
 | `cx.param_history()` | A hash of everything that sets this effect's parameters over time (values, keyframes, expression text), the same in every frame and session. `None` when a parameter has an expression, whose values at other times the hash cannot see, or outside the app. Use it to key caches of a simulation. |
 | `cx.masks()` | The layer's masks as polylines in frame pixels. |
@@ -473,6 +474,7 @@ each other. See [Host kernels](plugin-gpu.md#host-kernels) for what each compute
 | `PlanPass::noise(out, scale, octaves, seed, origin)` | `HostKernel::Noise { scale: f32, octaves: u32, seed: u32, origin: [i64; 2] }`, `scale` above 0 pixels, 1 to `MAX_NOISE_OCTAVES` (12) octaves. Its `src` is `PlanImage::Source` and is not read. |
 | `PlanPass::hsl_range(src, out, hue, saturation, lightness, softness)` | `HostKernel::HslRange { hue: [f32; 2], saturation: [f32; 2], lightness: [f32; 2], softness: f32 }`, `hue` 0 to 360 degrees, the others 0 to 1. `src` and `out` the same size. |
 | `PlanPass::splat(src, out, dabs)` | `HostKernel::Splat { dabs: Vec<Dab> }`, `Dab { at: [f32; 2], radius: f32, colour: [f32; 3], opacity: f32, hardness: f32 }`: at most `MAX_DABS` (65536), `radius` 0 to `MAX_DAB_RADIUS` (256), colour 0 or more, `opacity` and `hardness` 0 to 1, and together covering at most `MAX_DAB_TILES` (2²¹) tiles of 16×16 pixels. `src` and `out` the same size. |
+| `PlanPass::flow(from, to, out)` | `HostKernel::Flow { levels: u32, radius: u32, iterations: u32 }` (the builder uses 6, 3 and 2), `to` as `aux`: 1 to `MAX_FLOW_LEVELS` (8) levels, `radius` 1 to `MAX_FLOW_RADIUS` (8), 1 to `MAX_FLOW_ITERATIONS` (8). All three the same size. Its working images (three per level) count towards the plan's scratch limit. |
 | `PlanPass::host(kernel, src, out)` | Any `HostKernel`. |
 
 Every value must be finite. `kernel.check(src_size, aux_size, out_size)` is the check `plan.validate`

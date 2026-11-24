@@ -49,6 +49,7 @@ A pass reads `src` and, optionally, `aux`, and writes `out`. Each names one of:
 | `PlanImage::Output` | The effect's result, the size of the frame. The last pass to write it gives the result. |
 | `plan.scratch([w, h])` | A working image of that size, declared on the plan. |
 | `plan.texture(key, [w, h])` | A picture the plugin stored with `host::cache_put(key, bytes)`: RGBA, four little-endian `f32` for each pixel, row 0 at the top. Read only. |
+| `plan.source_at(layer_time)` | This effect's input at another layer time (the layer with the effects above this one), on the padded frame: the same pixels `cx.source_at` gives `render`. The size of the frame, transparent when there is no frame, read only. Needs `.reads_other_frames()`. Unlike textures and layers it also runs on the CPU. |
 | `plan.layer(param)` | The layer chosen in layer parameter `param`, resampled onto the padded frame: the same pixels `cx.layer(param)` gives `render`. The size of the frame. Transparent when no layer is chosen or it has nothing to show. Read only. The app binds the texture it already keeps for that layer and resamples it on the GPU, so an unchanged layer is neither rendered nor uploaded again. |
 
 `layout` runs before the frame is padded, so there `cx.size`, `cx.offset` and point parameters describe
@@ -264,14 +265,15 @@ own. Mix host kernel passes and plugin passes freely in one plan.
 | `PlanPass::noise(out, scale, octaves, seed, origin)` | Smooth value noise as opaque grey in 0 to 1: `octaves` layers (1 to 12), each at twice the frequency and half the weight of the one before, the first with features `scale` pixels apart. The same for a seed and a pixel position minus `origin` on the CPU and the GPU; animate it by moving `origin` or changing `seed`. Combine it with the source through `blend_images`. |
 | `PlanPass::hsl_range(src, out, hue, saturation, lightness, softness)` | A soft selection as opaque grey: 1 where the pixel's straight hue, saturation and lightness are inside `hue` (`[from, to]` degrees, wrapping past 360, so `[340, 20]` is the reds), `saturation` and `lightness` (`[low, high]`, 0 to 1), falling linearly to 0 over `softness` (0 to 1; times 360 degrees for hue) outside each range, multiplied by alpha. Feed it to `blend_images` as the top image to apply something only to those colours. |
 | `PlanPass::splat(src, out, dabs)` | The source plus up to 65536 soft round `Dab`s added as light, in order: inside `radius` pixels of `at` (pixel centres are at `x + 0.5`), weight `opacity * smoothstep(fall)`, full inside `hardness * radius` and falling to 0 at the rim; colour `+= colour * weight`, alpha `+= weight` up to 1. `Dab::new(at, radius, colour)` is opaque and fully soft. For particles, sparks and brush dabs. |
+| `PlanPass::flow(from, to, out)` | Optical flow: for each pixel of `from`, the motion `[dx, dy]` in pixels to where it is in `to`, written as `[dx, dy, 0, 1]`, so `warp(to, out, ..., [1.0, 1.0])` pulls `to` back onto `from`. Coarse-to-fine Lucas-Kanade on luma: `levels` halvings (each side kept at 8 pixels or more), a window of `2 * radius + 1` pixels and `iterations` steps per level. Mean error on a moving, turning texture is about 0.04 pixels; it is unreliable where the picture has no texture and within a few times the motion of the frame edge. At 1080p it takes about 40 ms on the GPU and 0.25 s on the CPU. |
 | `PlanPass::host(HostKernel::..., src, out)` | Any kernel with all its fields, for example `HostKernel::Resample { filter, scale: Some([2.0, 2.0]) }` to fix the source pixels per output pixel instead of taking it from the sizes. |
 
 Rules shared by all of them:
 
 - Pixels outside an image read as transparent, as for plugin passes.
 - `blur`, `convolve`, `curves`, `matrix`, `blend_images`, `warp`, `dilate`, `erode`, `directional_blur`,
-  `bilateral`, `noise`, `hsl_range` and `splat` write an image of their source's size,
-  and `blend_images` and `warp` an `aux` of that size too. `resample` maps any size to any size, shrinking
+  `bilateral`, `noise`, `hsl_range`, `splat` and `flow` write an image of their source's size,
+  and `blend_images`, `warp` and `flow` an `aux` of that size too. `resample` maps any size to any size, shrinking
   at most 64 times in one pass.
 - The `BlendMode`s are `Over` (premultiplied over), `Add`, `Subtract`, `Multiply`, `Screen`, `Overlay`,
   `Darken`, `Lighten`, `Difference` and `ScreenHdr` (`base + top * (1 - clamp(base, 0, 1))`). All but
