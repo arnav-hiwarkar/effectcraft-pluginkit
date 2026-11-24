@@ -15,12 +15,20 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
     let (id, revision) = (registered.spec.id, effect.revision);
     let g = e.g;
     let program = plan(ctx, Grid { width: b.img.width, height: b.img.height, offset: b.offset, scale: b.scale })?;
-    let mut stage = Stage::new(id, revision, wgsl, &program);
-    let prepared = padded_frame(&b, program.padding)
-        .and_then(|frame| check(&program, frame, |w, h| g.fits(w, h)).map(|()| frame))
-        .and_then(|frame| Ok((frame, compute_pipelines(g, id, revision, wgsl, &program)?)))
+    let guard = g.plugin_guard(id, revision, wgsl);
+    if let Some(Err(why)) = guard.as_ref().ok().map(|guard| guard.check()) {
+        g.plugin_declined(id, &why);
+        let _ = registered.gpu_stopped.set(why);
+        return None;
+    }
+    let mut stage = Stage::new(id, revision, wgsl, &program, guard.as_ref().ok().map(|guard| guard.bind.clone()));
+    let prepared = guard
+        .clone()
+        .and_then(|guard| padded_frame(&b, program.padding).map(|frame| (frame, guard)))
+        .and_then(|(frame, guard)| check(&program, frame, |w, h| g.fits(w, h)).map(|()| (frame, guard)))
+        .and_then(|(frame, guard)| Ok((frame, guard, compute_pipelines(g, id, revision, wgsl, &program)?)))
         .and_then(|prepared| stage.prepare(g).map(|()| prepared));
-    let (frame, pipelines) = match prepared {
+    let (frame, guard, pipelines) = match prepared {
         Ok(prepared) => prepared,
         Err(why) => {
             g.plugin_declined(id, &why);
@@ -42,13 +50,30 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
     for (layer, param) in program.layers.iter().enumerate() {
         *images.get_mut(index(GpuSlot::Layer(layer), &program)?)? = Some(layer_image(e, ctx, &b, param)?);
     }
-    if let Err(why) = record(e, &program, &pipelines, &mut stage, &mut images, &sizes) {
+    if let Err(why) = record(e, &program, &pipelines, &guard.bind, &mut stage, &mut images, &sizes) {
         g.plugin_declined(id, &why);
         return None;
     }
+    e.read_loop_flag(&guard);
     b.img = images.get_mut(OUTPUT)?.take()?;
     log::debug!("gpu {}: plugin effect {id} ran {} passes at {}x{}", g.name, program.passes.len(), frame[0], frame[1]);
     Some(b)
+}
+
+pub(crate) fn warm(g: &GpuContext, registered: &Registered) {
+    let effect = &registered.effect;
+    let (Some(plan), Some(wgsl)) = (effect.gpu.as_ref(), effect.shader.as_deref()) else { return };
+    let size = [1920, 1080];
+    let layer_size = size.map(f64::from);
+    let params = effectcraft_effects::Params {
+        values: registered.spec.params.iter().map(|p| (p.id.to_string(), effectcraft_effects::default_value(p, layer_size))).collect(),
+    };
+    let ctx = EffectCtx { params: &params, time: 0.0, layer_size, seed: 0, adjustment: false, env: Default::default() };
+    let Some(program) = plan(&ctx, Grid { width: size[0], height: size[1], offset: [0.0, 0.0], scale: 1.0 }) else { return };
+    let id = registered.spec.id;
+    if compute_pipelines(g, id, effect.revision, wgsl, &program).is_ok() && Stage::new(id, effect.revision, wgsl, &program, None).prepare(g).is_ok() {
+        registered.gpu_planned.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 fn padded_frame(b: &GBuf, padding: [u32; 4]) -> Result<[u32; 2], String> {
@@ -66,6 +91,7 @@ fn record(
     e: &mut Enc,
     program: &GpuProgram,
     pipelines: &[wgpu::ComputePipeline],
+    guard: &wgpu::BindGroup,
     stage: &mut Stage,
     images: &mut [Option<GpuImage>],
     sizes: &[[u32; 2]],
@@ -84,7 +110,13 @@ fn record(
                 let out = e.image(w, h);
                 let images_bound = KernelImages { src: &src, aux: aux.as_ref(), out: &out };
                 let data = (!pass.data.is_empty()).then(|| e.data(&pass.data));
-                e.dispatch(Kernel::Plugin { pipeline, label: &pass.kernel }, &params(pass), images_bound, data.as_ref(), (w.div_ceil(16), h.div_ceil(16)));
+                e.dispatch(
+                    Kernel::Plugin { pipeline, label: &pass.kernel, guard: pass.host.is_none().then_some(guard) },
+                    &params(pass),
+                    images_bound,
+                    data.as_ref(),
+                    (w.div_ceil(16), h.div_ceil(16)),
+                );
                 Some(out)
             }
             Some(_) => {

@@ -119,6 +119,7 @@ struct PluginShader {
     pipelines: HashMap<String, Result<wgpu::ComputePipeline, String>>,
     draws: HashMap<crate::plugin_draw::DrawKey, Result<wgpu::RenderPipeline, String>>,
     reported: BTreeSet<String>,
+    guard: Option<Arc<crate::guard::ShaderGuard>>,
 }
 
 struct HostModule {
@@ -767,6 +768,7 @@ pub struct GpuContext {
     effect_pipelines: EffectPipelines,
     plugin_shaders: Mutex<PluginShaders>,
     pub(crate) plugin_draw: crate::plugin_draw::Store,
+    loop_guard: crate::guard::Layouts,
     display_bgl: wgpu::BindGroupLayout,
     display: wgpu::ComputePipeline,
     /// The display texture's next mip level from the one above (`display.wgsl` `mip`).
@@ -1098,6 +1100,7 @@ impl GpuContext {
             effect_pipelines,
             plugin_shaders: Default::default(),
             plugin_draw: Default::default(),
+            loop_guard: Default::default(),
             display_bgl,
             display,
             display_mip,
@@ -1614,11 +1617,16 @@ impl GpuContext {
         }
         let compile = || {
             let source: String = PLUGIN_PRELUDE.iter().copied().chain([wgsl]).collect();
-            let module = init_resource(&self.device, effect, || {
-                self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(effect), source: wgpu::ShaderSource::Wgsl(source.into()) })
-            })
+            let build =
+                |source| init_resource(&self.device, effect, || self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(effect), source }));
+            let plain = || build(wgpu::ShaderSource::Wgsl(source.as_str().into()));
+            let module = match crate::guard::cap_loops(&source) {
+                Ok(capped) => build(wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(capped))).map_err(|why| plain().err().unwrap_or(why)),
+                Err(_) => plain(),
+            }
             .map_err(|why| plugin_source_lines(&why, plugin_prelude_lines()));
-            PluginShader { revision, module, pipelines: HashMap::new(), draws: HashMap::new(), reported: BTreeSet::new() }
+            let guard = module.is_ok().then(|| Arc::new(crate::guard::ShaderGuard::new(&self.device, &self.loop_guard().0, crate::guard::digest(wgsl))));
+            PluginShader { revision, module, pipelines: HashMap::new(), draws: HashMap::new(), reported: BTreeSet::new(), guard }
         };
         let shader = plugins.shaders.entry(effect.to_string()).or_insert_with(compile);
         if shader.revision != revision {
@@ -1645,12 +1653,20 @@ impl GpuContext {
                 if !shader.pipelines.contains_key(*kernel) && shader.pipelines.len() >= MAX_PLUGIN_KERNELS {
                     return Err(format!("more than {MAX_PLUGIN_KERNELS} kernel names"));
                 }
-                let pipeline =
-                    shader.pipelines.entry(kernel.to_string()).or_insert_with(|| build_pipeline(&self.device, module, &self.layout, kernel)).clone()?;
+                let layout = &self.loop_guard().1;
+                let pipeline = shader.pipelines.entry(kernel.to_string()).or_insert_with(|| build_pipeline(&self.device, module, layout, kernel)).clone()?;
                 built.push(pipeline);
             }
             Ok(built)
         })
+    }
+
+    pub(crate) fn loop_guard(&self) -> &(wgpu::BindGroupLayout, wgpu::PipelineLayout) {
+        self.loop_guard.get(&self.device, &self.bgl)
+    }
+
+    pub(crate) fn plugin_guard(&self, effect: &str, revision: u64, wgsl: &str) -> Result<Arc<crate::guard::ShaderGuard>, String> {
+        self.plugin_shader(effect, revision, wgsl, |shader, _| shader.guard.clone().ok_or_else(|| "the shader has no loop guard".to_string()))
     }
 
     #[cfg(test)]
@@ -1786,6 +1802,7 @@ impl GpuContext {
             effect_pipelines,
             plugin_shaders: Default::default(),
             plugin_draw: Default::default(),
+            loop_guard: Default::default(),
             display_bgl: self.display_bgl.clone(),
             display: self.display.clone(),
             display_mip: self.display_mip.clone(),
@@ -2125,12 +2142,13 @@ pub(crate) struct Enc<'g> {
     owner: u64,
     /// `owner` is lent ([`Enc::lent`]) and outlives this `Enc`.
     lent: bool,
+    guards: Vec<Arc<crate::guard::ShaderGuard>>,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) enum Kernel<'a> {
     Entry(&'a str),
-    Plugin { pipeline: &'a wgpu::ComputePipeline, label: &'a str },
+    Plugin { pipeline: &'a wgpu::ComputePipeline, label: &'a str, guard: Option<&'a wgpu::BindGroup> },
 }
 
 impl<'a> From<&'a str> for Kernel<'a> {
@@ -2149,6 +2167,7 @@ pub(crate) struct KernelImages<'a> {
 impl Drop for Enc<'_> {
     fn drop(&mut self) {
         // Unsubmitted work is discarded, so nothing recorded will read pooled textures.
+        self.guards.iter().for_each(|guard| guard.dropped());
         if let Ok(mut p) = self.g.pool.lock() {
             if let Some((_, id)) = self.enc.take() {
                 p.close(id);
@@ -2165,7 +2184,7 @@ impl Drop for Enc<'_> {
 impl<'g> Enc<'g> {
     pub fn new(g: &'g GpuContext) -> Enc<'g> {
         let owner = g.pool.lock().map(|mut p| p.register()).unwrap_or(0);
-        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: false }
+        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: false, guards: Vec::new() }
     }
 
     /// An `Enc` for self-contained work (an effect chain): once it is dropped, its working
@@ -2177,7 +2196,7 @@ impl<'g> Enc<'g> {
     /// effect's intermediates stayed allocated until the frame ended.
     pub(crate) fn lent(g: &'g GpuContext) -> Enc<'g> {
         let owner = g.pool.lock().map(|mut p| p.lend()).unwrap_or(0);
-        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: true }
+        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: true, guards: Vec::new() }
     }
 
     /// `img` is used by this `Enc`: if another `Enc` made it, that one must not reuse it at once
@@ -2205,6 +2224,12 @@ impl<'g> Enc<'g> {
             self.uses(img);
         }
         self.encoder()
+    }
+
+    pub(crate) fn read_loop_flag(&mut self, guard: &Arc<crate::guard::ShaderGuard>) {
+        if guard.copy(self.encoder()) {
+            self.guards.push(guard.clone());
+        }
     }
 
     /// The raw encoder: within this module only, after [`Enc::uses`] on every pooled image.
@@ -2273,15 +2298,15 @@ impl<'g> Enc<'g> {
     ) {
         let KernelImages { src, aux, out } = images;
         let g = self.g;
-        let (pipe, entry) = match kernel.into() {
+        let (pipe, entry, guard) = match kernel.into() {
             Kernel::Entry(entry) => match g.pipeline(entry) {
-                Some(pipe) => (pipe, entry),
+                Some(pipe) => (pipe, entry, None),
                 None => {
                     self.missing = true;
                     return;
                 }
             },
-            Kernel::Plugin { pipeline, label } => (pipeline, label),
+            Kernel::Plugin { pipeline, label, guard } => (pipeline, label, guard),
         };
         let ub = g.buffer_init(None, &p.bytes(), wgpu::BufferUsages::UNIFORM);
         let sv = src.texture.create_view(&Default::default());
@@ -2316,7 +2341,7 @@ impl<'g> Enc<'g> {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(entry), timestamp_writes: None });
             pass.set_pipeline(pipe);
             pass.set_bind_group(0, &bg, &[]);
-            if let Some(b) = &bg_ext {
+            if let Some(b) = bg_ext.as_ref().or(guard) {
                 pass.set_bind_group(1, b, &[]);
             }
             pass.dispatch_workgroups(groups.0.max(1), groups.1.max(1), 1);
@@ -2376,6 +2401,7 @@ impl<'g> Enc<'g> {
     pub fn submit(&mut self) {
         if let Some((enc, id)) = self.enc.take() {
             self.last_submit = Some(self.g.queue.submit([enc.finish()]));
+            self.guards.drain(..).for_each(|guard| guard.submitted());
             if let Ok(mut p) = self.g.pool.lock() {
                 p.close(id);
             }

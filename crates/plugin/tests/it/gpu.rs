@@ -361,3 +361,17 @@ fn plugins_are_told_the_padding_the_app_applies_on_the_cpu_and_the_gpu() {
     }
     assert_eq!(craft_plugin_host::applied_padding([300; 4], [16384, 1]), [0; 4], "a frame as wide as the app grows one is not padded");
 }
+
+#[test]
+fn a_shader_the_gpu_turned_off_is_the_effects_error_and_in_the_plugins_log_once() {
+    let app = app("test.gpu-stopped", &[]);
+    let spec = effects::find(&format!("{}.gpu-invert", app.id)).expect("the probe registered its GPU effect");
+    let registered = effects::dynamic::get(spec.id).expect("registered");
+    registered.gpu_stopped.set("a loop ran past the cap".into()).expect("not stopped before");
+    let params = params(spec, &[("amount", 0.8)]);
+    effects::apply(spec, &ctx(&params), picture());
+    effects::apply(spec, &ctx(&params), picture());
+    assert_eq!(app.plugins.render_error(spec.id).as_deref(), Some("on the GPU: a loop ran past the cap"));
+    let logs: Vec<String> = app.plugins.get(&app.id).expect("loaded").plugin.logs(0).into_iter().map(|line| line.message).collect();
+    assert_eq!(logs, ["effect `gpu-invert` on the GPU: a loop ran past the cap"]);
+}

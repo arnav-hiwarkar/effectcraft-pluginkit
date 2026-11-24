@@ -420,7 +420,14 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
         }),
     };
     let finished_in_bands = passes.is_none() && rendered.is_ok();
-    loaded.report(&spec.id, rendered.err().map(|e| e.to_string()));
+    let stopped = dynamic::get(&effect_id(&loaded.bundle.manifest.id, &spec.id)).and_then(|r| r.gpu_stopped.get().map(|why| format!("on the GPU: {why}")));
+    let error = rendered.err().map(|e| e.to_string()).or_else(|| stopped.clone());
+    if loaded.report(&spec.id, error.clone())
+        && error == stopped
+        && let Some(stop) = stopped
+    {
+        loaded.plugin.warn(format!("effect `{}` {stop}", spec.id));
+    }
     if finished_in_bands { buf } else { ctx.quantized(buf) }
 }
 
