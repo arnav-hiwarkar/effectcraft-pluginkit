@@ -315,10 +315,10 @@ fn margin(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, scale: f64) -> Op
     }
     let [width, height] = ctx.layer_size.map(|side| (side * scale).ceil().clamp(1.0, f64::from(u32::MAX)) as u32);
     let layout = layout(loaded, spec, ctx, Grid { width, height, offset: [0.0; 2], scale });
-    if layout.maps_input || layout.gpu.is_some_and(|plan| !plan.layers.is_empty()) {
+    if layout.reach != Some(0) || layout.maps_input || layout.gpu.is_some_and(|plan| !plan.layers.is_empty()) {
         return None;
     }
-    Some(f64::from(layout.reach?.saturating_add(layout.padding.into_iter().max().unwrap_or(0))) / scale)
+    Some(f64::from(layout.padding.into_iter().max().unwrap_or(0)) / scale)
 }
 
 fn shown_area(ctx: &EffectCtx, grid: Grid) -> Option<Rect> {

@@ -110,7 +110,9 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 
 - **A built-in effect that reaches its neighbours makes the plugin effects before it render whole.** Plugin
   effects, the colour effects in `POINTWISE` (`crates/effects/src/lib.rs`), Fill without feather and Gaussian
-  Blur on its sampled path (sigma under 3 grid pixels) declare their margin in `pixel_margin`. Every other
+  Blur on its sampled path (sigma under 3 grid pixels) declare their margin in `pixel_margin`. A plugin
+  effect declares one only when it is pointwise: `Layout::neighbourhood(n)` promises rows, and its columns
+  are whole rows, so an effect before a neighbourhood plugin effect renders whole. Every other
   built-in, a larger Gaussian Blur (its running box sums are not bit-identical on a part), Fast Box Blur and
   Glow among them, declares none. A plugin margin is read at the layer's raster scale, so a solid above 16
   million pixels (made at a lower scale) underestimates a fixed reach in pixels. The shown part also ignores
