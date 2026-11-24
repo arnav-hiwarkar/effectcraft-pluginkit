@@ -128,11 +128,7 @@ pub(super) fn generate(name: &str, kind: &Kind) -> Result<Vec<(&'static str, Str
     if !kind.code {
         let next = "  check it:     cargo xtask plugin plugins/{{name}}   (packs plugins/dist/<id>-0.1.0.craftplugin; installing it checks every preset and LUT)\n  then ";
         let next = fill_in(&substitutions, &format!("{next}{}", kind.next));
-        return Ok(vec![
-            ("plugin.json", fill_in(&substitutions, TEMPLATE_DATA_MANIFEST)),
-            ("warm.cube", TEMPLATE_DATA_LUT.to_string()),
-            ("next", next),
-        ]);
+        return Ok(vec![("plugin.json", fill_in(&substitutions, TEMPLATE_DATA_MANIFEST)), ("warm.cube", TEMPLATE_DATA_LUT.to_string()), ("next", next)]);
     }
     let fill = |template: &str| substitutions.iter().fold(template.to_string(), |text, (key, value)| text.replace(key, value));
     let mut next = vec!["  test it:      cargo test --manifest-path plugins/{{name}}/Cargo.toml"];
