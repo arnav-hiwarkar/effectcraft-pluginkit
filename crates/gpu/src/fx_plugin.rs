@@ -41,6 +41,7 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
         .chain(program.images.iter().copied())
         .chain(program.textures.iter().map(|texture| texture.size))
         .chain(program.layers.iter().map(|_| frame))
+        .chain(program.sources.iter().map(|_| frame))
         .collect();
     let mut images: Vec<Option<GpuImage>> = vec![None; sizes.len()];
     *images.get_mut(SOURCE)? = Some(b.img.clone());
@@ -49,6 +50,9 @@ pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b
     }
     for (layer, param) in program.layers.iter().enumerate() {
         *images.get_mut(index(GpuSlot::Layer(layer), &program)?)? = Some(layer_image(e, ctx, &b, param)?);
+    }
+    for (source, time) in program.sources.iter().enumerate() {
+        *images.get_mut(index(GpuSlot::SourceAt(source), &program)?)? = Some(source_image(e, ctx, &b, *time)?);
     }
     if let Err(why) = record(e, &program, &pipelines, &guard.bind, &mut stage, &mut images, &sizes) {
         g.plugin_declined(id, &why);
@@ -160,6 +164,14 @@ fn layer_image(e: &mut Enc, ctx: &EffectCtx, frame: &GBuf, param: &str) -> Optio
     Some(fitted.unwrap_or_else(|| e.zeros(w, h)))
 }
 
+fn source_image(e: &mut Enc, ctx: &EffectCtx, frame: &GBuf, layer_time: f64) -> Option<GpuImage> {
+    let Some(other) = ctx.env.host.and_then(|host| host.self_at(layer_time, ctx.env.effect_index)).filter(|other| !other.img.is_empty()) else {
+        return Some(e.zeros(frame.img.width, frame.img.height));
+    };
+    let src = e.g.upload_image(&other.img)?;
+    Some(fit(e, ctx, frame, &src, Placed { offset: other.offset, scale: other.scale, size: ctx.layer_size }, false))
+}
+
 fn index(slot: GpuSlot, program: &GpuProgram) -> Option<usize> {
     let scratch = program.images.len();
     match slot {
@@ -168,7 +180,8 @@ fn index(slot: GpuSlot, program: &GpuProgram) -> Option<usize> {
         GpuSlot::Scratch(i) if i < scratch => Some(2 + i),
         GpuSlot::Texture(i) if i < program.textures.len() => Some(2 + scratch + i),
         GpuSlot::Layer(i) if i < program.layers.len() => Some(2 + scratch + program.textures.len() + i),
-        GpuSlot::Scratch(_) | GpuSlot::Texture(_) | GpuSlot::Layer(_) => None,
+        GpuSlot::SourceAt(i) if i < program.sources.len() => Some(2 + scratch + program.textures.len() + program.layers.len() + i),
+        GpuSlot::Scratch(_) | GpuSlot::Texture(_) | GpuSlot::Layer(_) | GpuSlot::SourceAt(_) => None,
     }
 }
 
@@ -192,8 +205,9 @@ fn check(program: &GpuProgram, frame: [u32; 2], fits: impl Fn(u32, u32) -> bool)
         return Err(format!("image {i} of the plan is {w}x{h}, larger than this GPU holds"));
     }
     check_data(program, &fits)?;
-    let mut written: Vec<usize> =
-        std::iter::once(SOURCE).chain(2 + program.images.len()..2 + program.images.len() + program.textures.len() + program.layers.len()).collect();
+    let mut written: Vec<usize> = std::iter::once(SOURCE)
+        .chain(2 + program.images.len()..2 + program.images.len() + program.textures.len() + program.layers.len() + program.sources.len())
+        .collect();
     for (n, pass) in program.passes.iter().enumerate() {
         let read_before_written = |slot: GpuSlot| index(slot, program).is_none_or(|at| !written.contains(&at));
         if read_before_written(pass.src) || pass.aux.is_some_and(read_before_written) {

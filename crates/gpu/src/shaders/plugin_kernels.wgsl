@@ -389,3 +389,85 @@ fn craft_splat(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     store(id.xy, p);
 }
+
+fn craft_clamped(t: texture_2d<f32>, p: vec2<i32>) -> vec4<f32> {
+    return texel(t, clamp(p, vec2<i32>(0), vec2<i32>(textureDimensions(t)) - vec2<i32>(1)));
+}
+
+fn craft_clamped_bilinear(t: texture_2d<f32>, at: vec2<f32>) -> vec4<f32> {
+    let base = floor(at);
+    let f = at - base;
+    let b = vec2<i32>(base);
+    let top = mix(craft_clamped(t, b), craft_clamped(t, b + vec2<i32>(1, 0)), f.x);
+    let bottom = mix(craft_clamped(t, b + vec2<i32>(0, 1)), craft_clamped(t, b + vec2<i32>(1, 1)), f.x);
+    return mix(top, bottom, f.y);
+}
+
+fn craft_luma(p: vec4<f32>) -> f32 {
+    return 0.2126 * p.r + 0.7152 * p.g + 0.0722 * p.b;
+}
+
+@compute @workgroup_size(16, 16)
+fn craft_flow_pack(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    let p = vec2<i32>(id.xy);
+    store(id.xy, vec4<f32>(craft_luma(texel(src, p)), craft_luma(texel(aux, p)), 0.0, 0.0));
+}
+
+@compute @workgroup_size(16, 16)
+fn craft_flow_gradient(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    let p = vec2<i32>(id.xy);
+    let c = craft_clamped(src, p);
+    let gx = (craft_clamped(src, p + vec2<i32>(1, 0)).r - craft_clamped(src, p - vec2<i32>(1, 0)).r) * 0.5;
+    let gy = (craft_clamped(src, p + vec2<i32>(0, 1)).r - craft_clamped(src, p - vec2<i32>(0, 1)).r) * 0.5;
+    store(id.xy, vec4<f32>(c.r, c.g, gx, gy));
+}
+
+@compute @workgroup_size(16, 16)
+fn craft_flow_track(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    let r = i32(pass_u(0u));
+    let init = pass_u(1u);
+    let p = vec2<i32>(id.xy);
+    let size = vec2<i32>(src_size());
+    var start = vec2<f32>(0.0);
+    if (init == 1u) {
+        let ratio = vec2<f32>(aux_size()) / vec2<f32>(size);
+        start = craft_clamped_bilinear(aux, (vec2<f32>(p) + 0.5) * ratio - 0.5).rg / ratio;
+    } else if (init == 2u) {
+        start = texel(aux, p).rg;
+    }
+    var xx = 0.0;
+    var xy = 0.0;
+    var yy = 0.0;
+    var xt = 0.0;
+    var yt = 0.0;
+    for (var dy = -r; dy <= r; dy++) {
+        for (var dx = -r; dx <= r; dx++) {
+            let q = clamp(p + vec2<i32>(dx, dy), vec2<i32>(0), size - vec2<i32>(1));
+            let c = texel(src, q);
+            let t = craft_clamped_bilinear(src, vec2<f32>(q) + start).g - c.r;
+            xx += c.b * c.b;
+            xy += c.b * c.a;
+            yy += c.a * c.a;
+            xt += c.b * t;
+            yt += c.a * t;
+        }
+    }
+    let steady = 1e-4 * f32((2 * r + 1) * (2 * r + 1)) + 1e-4 * (xx + yy);
+    let sxx = xx + steady;
+    let syy = yy + steady;
+    let det = sxx * syy - xy * xy;
+    let nu = xy * yt - syy * xt;
+    let nv = xy * xt - sxx * yt;
+    let largest = 3.40282347e+38;
+    if (!(det > 0.0 && det <= largest && abs(nu) <= largest && abs(nv) <= largest)) {
+        store(id.xy, vec4<f32>(start, 0.0, 1.0));
+        return;
+    }
+    let limit = f32(r + 1);
+    let du = clamp(nu / det, -limit, limit);
+    let dv = clamp(nv / det, -limit, limit);
+    store(id.xy, vec4<f32>(start.x + du, start.y + dv, 0.0, 1.0));
+}

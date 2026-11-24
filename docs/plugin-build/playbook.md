@@ -67,7 +67,7 @@ twice.
 
 **Host kernels and fusion.** A plan names built-in kernels (blur, resample, blend, curves, convolve, warp,
 colour matrix, transfer curves, brightness curve, dither, light alpha, dilate and erode, directional blur,
-bilateral, noise, HSL range, splat). The host runs them natively with
+bilateral, noise, HSL range, splat, optical flow). The host runs them natively with
 SIMD on the CPU and as its own WGSL on the GPU. Consecutive pointwise kernels fuse into one row loop on the
 CPU and one generated shader on the GPU. A sandboxed plugin whose render is all host kernels runs at native
 speed with no copies.

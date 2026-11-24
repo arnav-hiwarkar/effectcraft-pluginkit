@@ -271,7 +271,7 @@ fn every_host_kernel_renders_on_the_gpu_within_two_levels_of_the_cpu() {
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
     assert!(spec.gpu && gpu.supports_effect(spec.id), "a plan of host kernels needs no plugin WGSL to run on the GPU");
-    let cases = (0..16).chain(26..33).map(|kernel| (kernel, 0)).chain((1..10).map(|mode| (3, mode)));
+    let cases = (0..16).chain(26..34).map(|kernel| (kernel, 0)).chain((1..10).map(|mode| (3, mode)));
     for (kernel, mode) in cases {
         let params = params(spec, &[("kernel", f64::from(kernel)), ("mode", f64::from(mode))]);
         let cpu = effects::apply(spec, &ctx(&params), picture());
@@ -398,4 +398,117 @@ fn an_effect_without_wgsl_whose_plan_covers_small_frames_is_offered_to_the_gpu()
     let out = gpu.effects(&[FxStep { spec, ctx: ctx(&params) }], &picture(), None).expect("the plan of host kernels runs on the GPU");
     assert_eq!(out.img.data[0], effects::apply(spec, &ctx(&params), picture()).img.data[0]);
     assert_ne!(out.img.data[0], picture().img.data[0], "the effect swapped the picture");
+}
+
+fn textured(shift: f32) -> Buf {
+    let [w, h] = SIZE;
+    let mut img = Image::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = (x as f32 - shift, y as f32);
+            let v = 0.5 + 0.2 * (0.4 * fx).sin() * (0.3 * fy).cos() + 0.1 * (0.15 * fx + 0.1 * fy).sin();
+            img.set(x, y, [v, v, v, 1.0]);
+        }
+    }
+    Buf { img, offset: [0.0, 0.0], scale: 1.0 }
+}
+
+struct HalfSecondAgo;
+
+impl effects::EffectHost for HalfSecondAgo {
+    fn layer(&self, _id: u64, _masks_and_effects: bool) -> Option<effects::LayerPixels> {
+        None
+    }
+
+    fn audio(&self, _id: u64, _time: f64, _frames: usize, _rate: u32) -> Option<Vec<f32>> {
+        None
+    }
+
+    fn self_at(&self, layer_time: f64, _effects: usize) -> Option<Buf> {
+        Some(textured(if layer_time < 0.75 { 0.0 } else { 3.0 }))
+    }
+}
+
+#[test]
+fn a_plan_that_reads_an_earlier_source_frame_and_tracks_it_runs_on_the_gpu_like_the_cpu() {
+    let _shared = crate::shared();
+    let app = app("test.gpu-rewind", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.rewind", app.id)).expect("the probe registered its rewind effect");
+    let params = params(spec, &[]);
+    let ctx = || EffectCtx { time: 1.0, env: effects::EffectEnv { host: Some(&HalfSecondAgo), ..Default::default() }, ..ctx(&params) };
+    let cpu = effects::apply(spec, &ctx(), textured(3.0));
+    assert_eq!(app.plugins.render_error(spec.id), None, "the CPU render succeeded");
+    let out = gpu.effects(&[FxStep { spec, ctx: ctx() }], &textured(3.0), None).expect("the GPU ran the plan with its earlier frame");
+    let worst = worst_difference(&cpu.img, &out.img);
+    eprintln!("rewind: GPU and CPU differ by at most {worst:.2e}");
+    assert!(worst < 2.0 / 255.0, "GPU and CPU differ by {worst}");
+    let pad = cpu.offset[0] as i64;
+    let mean_error = |shift: f32| {
+        let expected = textured(shift).img;
+        let inner: Vec<f32> = (8..i64::from(SIZE[1]) - 8)
+            .flat_map(|y| (8..i64::from(SIZE[0]) - 8).map(move |x| (x, y)))
+            .map(|(x, y)| (out.img.get(x + pad, y + pad)[0] - expected.get(x, y)[0]).abs())
+            .collect();
+        inner.iter().sum::<f32>() / inner.len() as f32
+    };
+    assert!(mean_error(3.0) < 0.01 && mean_error(0.0) > 0.05, "the earlier frame warped by the flow rebuilds the current one");
+    let silent = effects::find(&format!("{}.silent-rewind", app.id)).expect("the probe registered its undeclared rewind effect");
+    assert!(gpu.effects(&[FxStep { spec: silent, ctx: ctx() }], &textured(3.0), None).is_none(), "an undeclared read of other frames does not run on the GPU");
+    let refused = app.plugins.render_error(silent.id).unwrap_or_default();
+    assert!(refused.contains("declare `.reads_other_frames()`"), "{refused}");
+}
+
+fn bright_ramp(step: f32) -> Buf {
+    let (w, h) = (SIZE[0], SIZE[1]);
+    let mut img = Image::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            img.set(x, y, [0.0, step * (x + y) as f32, 0.0, 1.0]);
+        }
+    }
+    Buf { img, offset: [0.0, 0.0], scale: 1.0 }
+}
+
+struct StillBright(f32);
+
+impl effects::EffectHost for StillBright {
+    fn layer(&self, _id: u64, _masks_and_effects: bool) -> Option<effects::LayerPixels> {
+        None
+    }
+
+    fn audio(&self, _id: u64, _time: f64, _frames: usize, _rate: u32) -> Option<Vec<f32>> {
+        None
+    }
+
+    fn self_at(&self, _layer_time: f64, _effects: usize) -> Option<Buf> {
+        Some(bright_ramp(self.0))
+    }
+}
+
+#[test]
+fn flow_between_two_identical_bright_frames_is_still_on_the_cpu_and_the_gpu() {
+    let _shared = crate::shared();
+    let app = app("test.gpu-still-bright", &[]);
+    let Some(gpu) = gpu() else { return };
+    let spec = effects::find(&format!("{}.rewind", app.id)).expect("the probe registered its rewind effect");
+    let params = params(spec, &[]);
+    for step in [128.0, 1e19] {
+        let host = StillBright(step);
+        let ctx = || EffectCtx { time: 1.0, env: effects::EffectEnv { host: Some(&host), ..Default::default() }, ..ctx(&params) };
+        let cpu = effects::apply(spec, &ctx(), bright_ramp(step));
+        let out = gpu.effects(&[FxStep { spec, ctx: ctx() }], &bright_ramp(step), None).expect("the GPU ran the plan");
+        let expected = bright_ramp(step).img;
+        for (backend, got) in [("CPU", &cpu), ("GPU", &out)] {
+            let pad = got.offset[0] as i64;
+            let moved = (0..i64::from(SIZE[1]))
+                .flat_map(|y| (0..i64::from(SIZE[0])).map(move |x| (x, y)))
+                .filter(|&(x, y)| {
+                    (got.img.get(x + pad, y + pad)[1] - expected.get(x, y)[1]).abs().partial_cmp(&(1e-2 * expected.get(x, y)[1].max(1.0)))
+                        != Some(std::cmp::Ordering::Less)
+                })
+                .count();
+            assert_eq!(moved, 0, "{backend} at {step} per pixel: pixels of a still frame moved");
+        }
+    }
 }

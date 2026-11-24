@@ -16,6 +16,7 @@ from craft-libs at the `rev` the workspace `Cargo.toml` pins. They are the refer
 | [Cookbook](cookbook) | Effects, panels, a command, a task and a tool | Every recipe of [the cookbook](../docs/plugin-cookbook.md), each with its test; the page's code is checked against it |
 | [Generate](generate) | Effects | Reference generators that draw without reading the layer: a linear or radial gradient ramp, a noise field from the host noise kernel (CPU and GPU from one plan) and a grid of soft dots that reports only the rectangle it drew |
 | [Pulse](pulse) | Panel and task | Analyses a frequency band of a layer's audio in a cancellable background task and writes its energy per frame as slider keyframes in one undo step |
+| [Time Warp](timewarp) | Effect | Plays the layer at another speed; frames in between come from host optical flow both ways and two warps (CPU and GPU from one plan), with frame blending and nearest frame as simpler methods |
 | [Tracker](tracker) | Effect, panel and task | Tracks a box through a layer's frames by block matching in a cancellable task, stores the track on the layer, stabilises the layer on it and writes it as position keyframes on another layer in one undo step |
 
 ## Tracker

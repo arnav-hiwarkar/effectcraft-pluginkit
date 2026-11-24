@@ -135,3 +135,44 @@ fn a_scene_reader_sampling_other_frames_gets_a_key_per_comp_frame_while_the_scen
     let keys: std::collections::BTreeSet<_> = (10..13).map(key_at).collect();
     assert_eq!(keys.len(), 3, "three frames with an unchanged scene share a key: {keys:?}");
 }
+
+#[test]
+fn a_frame_reader_above_an_effect_that_reads_another_layer_is_not_cached() {
+    use effectcraft_effects::dynamic::{self, DynamicEffect};
+    let id = "test.keys.rewind-over-matte";
+    dynamic::register(DynamicEffect {
+        owner: "test.keys".into(),
+        version: "1.0.0".into(),
+        id: id.into(),
+        name: id.into(),
+        category: "Test".into(),
+        params: Vec::new(),
+        render: Box::new(|_, buf| buf),
+        shader: None,
+        gpu: None,
+        time_dependent: false,
+        reads_other_frames: true,
+        reads_comp_scene: false,
+        reads_param_history: false,
+        presets: Vec::new(),
+        revision: 1,
+        files: None,
+        margin: None,
+        state_version: 0,
+        migrate: None,
+        aux: Vec::new(),
+    });
+    let (mut p, cid, comp) = setup();
+    let matte = solid(&mut p, &comp, [0.9, 0.1, 0.1], 200, 100);
+    let matte_id = matte.id;
+    let mut owner = solid(&mut p, &comp, [0.4, 0.5, 0.6], 200, 100);
+    add_effect_200(&mut p, &mut owner, "ec.channel.setmatte", &[("takeMatteFromLayer", Value::Layer(Some(matte_id.0)))]);
+    add_effect_200(&mut p, &mut owner, id, &[]);
+    p.comp_mut(cid).unwrap().layers.extend([owner, matte]);
+    let r = Renderer::new(&p, &NoFootage, RenderOpts::default());
+    let comp = p.comp(cid).unwrap();
+    let ctx = r.ctx(cid, comp, Tick::from_seconds_f64(2.0));
+    assert_eq!(cache::layer_key(&ctx, &comp.layers[0], 1.0, false, false), None, "the matte at other times is not in the key");
+    assert_eq!(cache::input_key(&ctx, &comp.layers[0], 1.0, false, false, 2), None);
+    assert!(cache::input_key(&ctx, &comp.layers[0], 1.0, false, false, 1).is_some(), "the prefix before the reader keeps its key");
+}
