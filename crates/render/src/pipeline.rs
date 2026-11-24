@@ -916,7 +916,7 @@ impl<'a> Renderer<'a> {
         // Effects not known to stay inside their own margins (Twirl, Bulge, Transform, ...) still
         // get the cover: they move content past the painted bounds without growing the buffer.
         let video = || {
-            fx.groups().filter(|g| g.enabled).filter_map(|g| match &g.kind {
+            fx.groups().take(limit).filter(|g| g.enabled).filter_map(|g| match &g.kind {
                 GroupKind::Effect { effect } => effectcraft_effects::find(effect).filter(|s| !effectcraft_effects::audio_fx::is_audio_effect(s.id)),
                 _ => None,
             })
