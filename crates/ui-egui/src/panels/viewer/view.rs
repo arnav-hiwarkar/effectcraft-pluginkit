@@ -73,7 +73,9 @@ pub(super) fn aux_views(
         let opts = pane_opts(app, scale, (comp.has_3d() && !through_active).then_some(cam), true);
         let b = comp.background;
         p.rect_filled(cr, 0.0, Color32::from_rgb((b[0] * 255.0) as u8, (b[1] * 255.0) as u8, (b[2] * 255.0) as u8));
-        if let Some((tex, uv)) = crate::panels::viewers::pane(app, &ctx, crate::panels::viewers::aux_pane(i), cid, opts, None) {
+        if let Some((tex, uv)) =
+            crate::panels::viewers::pane(app, &ctx, crate::panels::viewers::aux_pane(i), cid, opts, effectcraft_engine::viewer::DisplayColor::of(&app.session))
+        {
             p.image(tex, cr, uv, Color32::WHITE);
         }
         p.rect_stroke(cr, 0.0, Stroke::new(1.0, Color32::from_black_alpha(160)), StrokeKind::Outside);
