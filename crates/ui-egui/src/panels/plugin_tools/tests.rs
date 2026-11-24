@@ -235,6 +235,8 @@ fn tool_texts(harness: &mut Harness<'_, EffectcraftApp>) -> Vec<String> {
         .collect()
 }
 
+static STAMP_TOOL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn probe_session() -> Session {
     static PROBE: OnceLock<tempfile::TempDir> = OnceLock::new();
     let session = session();
@@ -248,6 +250,7 @@ fn probe_session() -> Session {
 
 #[test]
 fn a_plugin_tool_receives_its_gesture_in_comp_coordinates_at_half_and_double_zoom() {
+    let _one_at_a_time = STAMP_TOOL.lock().unwrap_or_else(|e| e.into_inner());
     let mut harness = harness(probe_session());
     settle(&mut harness, |h| h.state().auto.find("tools.plugin.test.viewer-tool-ui.stamp").is_some());
     let button = element(&harness, "tools.plugin.test.viewer-tool-ui.stamp").center();
@@ -326,4 +329,46 @@ fn clicking_a_plugin_gradient_strip_in_effect_controls_opens_the_gradient_editor
     assert_eq!(harness.state().dialog, Some(crate::Dialog::GradientEditor));
     let target = harness.state().gradient_draft().target.as_ref().expect("the editor edits a property");
     assert_eq!((target.layer, target.prop), (layer.id.0, ramp));
+}
+
+fn control(harness: &mut Harness<'_, EffectcraftApp>, method: &str, params: Value) -> crate::control::Outcome {
+    let ctx = harness.ctx.clone();
+    let (request, _reply) = crate::control::ControlRequest::new(method, params);
+    crate::control::handle(harness.state_mut(), &ctx, &request, 0.0)
+}
+
+fn failure(outcome: crate::control::Outcome) -> String {
+    match outcome {
+        crate::control::Outcome::Done(value) => value["error"].as_str().unwrap_or_default().to_string(),
+        _ => String::new(),
+    }
+}
+
+#[test]
+fn ui_set_and_the_tool_command_pick_a_plugin_tool_and_a_drag_through_the_control_path_reaches_it() {
+    let _one_at_a_time = STAMP_TOOL.lock().unwrap_or_else(|e| e.into_inner());
+    let mut harness = harness(probe_session());
+    harness.run_steps(2);
+    let missing = failure(control(&mut harness, "ui.set", json!({"tool": "test.viewer-tool-ui/nope"})));
+    assert!(missing.contains("unknown plugin tool `test.viewer-tool-ui/nope`") && missing.contains("test.viewer-tool-ui/stamp"), "{missing}");
+    assert!(super::active(harness.state()).is_none());
+
+    control(&mut harness, "ui.set", json!({"tool": "test.viewer-tool-ui/stamp"}));
+    assert!(super::active(harness.state()).is_some_and(|pick| pick.tool == "stamp"), "ui.set picks the plugin tool");
+    control(&mut harness, "ui.set", json!({"tool": "hand"}));
+    assert!(super::active(harness.state()).is_none(), "a built-in tool puts the plugin tool away");
+    control(&mut harness, "engine.execute", json!({"command": "tool.test.viewer-tool-ui/stamp"}));
+    assert!(super::active(harness.state()).is_some_and(|pick| pick.tool == "stamp"), "the tool command picks it too");
+
+    harness.state_mut().ui.viewer.zoom = Some(1.0);
+    harness.run_steps(2);
+    let (a, b) = (comp_point(&harness, [40.0, 30.0]), comp_point(&harness, [60.0, 45.0]));
+    control(&mut harness, "ui.drag", json!({"from": {"x": a.x, "y": a.y}, "to": {"x": b.x, "y": b.y}, "steps": 2}));
+    let queued = std::mem::take(&mut harness.state_mut().synthetic);
+    for event in queued {
+        harness.input_mut().events.push(event);
+        settle(&mut harness, |h| h.state().plugin_ui.panels.idle());
+    }
+    let texts = tool_texts(&mut harness);
+    assert!(texts.first().is_some_and(|t| t.starts_with("Down 40.0 30.0")) && texts.last().is_some_and(|t| t.starts_with("Up 60.0 45.0")), "{texts:?}");
 }

@@ -352,6 +352,9 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
         return frontend(app, ctx, "window.workspace", json!({"name": ws}));
     }
     if let Some(t) = id.strip_prefix("tool.") {
+        if t.contains('/') {
+            return crate::panels::plugin_tools::pick(app, ctx, t).map(|()| json!({"tool": t}));
+        }
         app.ui.plugin_tool = None;
         // C cycles through the camera tools.
         if t == "camera" {

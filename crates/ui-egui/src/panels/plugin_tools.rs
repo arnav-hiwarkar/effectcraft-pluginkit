@@ -21,6 +21,18 @@ pub(crate) fn active(app: &EffectcraftApp) -> Option<&PluginTool> {
     app.ui.plugin_tool.as_ref().filter(|pick| pick.under == app.ui.tool)
 }
 
+pub(crate) fn pick(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str) -> Result<(), String> {
+    let known = effectcraft_plugin::viewer::tools();
+    let found = id.split_once('/').and_then(|(plugin, tool)| known.iter().find(|(p, spec)| p == plugin && spec.id == tool));
+    let Some((plugin, spec)) = found else {
+        let names: Vec<String> = known.iter().map(|(plugin, spec)| format!("{plugin}/{}", spec.id)).collect();
+        return Err(format!("unknown plugin tool `{id}` (plugin/tool; loaded: {})", names.join(", ")));
+    };
+    app.ui.plugin_tool = Some(PluginTool { plugin: plugin.clone(), tool: spec.id.clone(), under: app.ui.tool });
+    put_away(app, ctx);
+    Ok(())
+}
+
 fn pressed_id() -> egui::Id {
     egui::Id::unique("viewer-plugin-tool-pressed")
 }
