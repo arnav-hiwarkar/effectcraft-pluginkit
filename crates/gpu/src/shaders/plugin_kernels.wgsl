@@ -355,7 +355,8 @@ fn craft_hsl_range(at: u32, p: vec4<f32>) -> vec4<f32> {
         s = clamp(d / max(1.0 - abs(2.0 * l - 1.0), 1.1920929e-7), 0.0, 1.0);
     }
     let softness = craft_data(at + 6u);
-    let width = craft_wrap_degrees(craft_data(at + 1u) - craft_data(at));
+    let span = craft_data(at + 1u) - craft_data(at);
+    let width = select(craft_wrap_degrees(span), 360.0, span >= 360.0);
     let offset = craft_wrap_degrees(h - craft_data(at));
     var outside = 0.0;
     if (offset > width) {
