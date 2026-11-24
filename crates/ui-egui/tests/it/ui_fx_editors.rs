@@ -301,3 +301,47 @@ fn composition_tabs_and_scrolling_preview() {
     assert!(!h.state().session.state.open_comps.contains(&shown));
     assert!(h.state().ui.dock.is_docked(PanelKind::Timeline));
 }
+
+#[test]
+fn a_plugin_curve_parameter_edits_one_channel_in_the_curves_graph_and_undoes() {
+    use effectcraft_engine::effects::dynamic::{self, DynamicEffect, DynamicParam};
+    use effectcraft_engine::project::ParamUi;
+    dynamic::register(DynamicEffect {
+        owner: "test.ui.curve".into(),
+        id: "test.ui.curve.grade".into(),
+        name: "Curve Test".into(),
+        category: "Test".into(),
+        params: vec![DynamicParam {
+            id: "grade".into(),
+            name: "Grade".into(),
+            default: KV::Str("0,0 1,1 | 0,0 1,1 | 0,0 1,1 | 0,0 1,1".into()),
+            ui: ParamUi::Curve { channels: true },
+        }],
+        render: Box::new(|ctx, buf| ctx.unchanged(buf)),
+        shader: None,
+        gpu: None,
+        time_dependent: false,
+        reads_other_frames: false,
+        reads_comp_scene: false,
+        reads_param_history: false,
+        presets: Vec::new(),
+        groups: Vec::new(),
+        revision: 1,
+        files: None,
+        margin: None,
+    });
+    let (s0, l, fx) = with_effect("test.ui.curve.grade");
+    let mut h = harness(s0);
+    let uid = group(&h, l, fx).get("grade").unwrap().uid;
+    let pre = format!("effectControls.prop.{uid}.curve");
+    click_id(&mut h, &format!("{pre}.channel.1"));
+    let gr = rect(&h, &format!("{pre}.graph"));
+    let top = rect(&h, &format!("{pre}.point.1")).center();
+    drag(&mut h, top, at(gr, 0.98, 0.5));
+    let edited = s(value(&h, l, fx, "grade"));
+    let channels: Vec<&str> = edited.split(" | ").collect();
+    assert_eq!((channels.len(), channels[0], channels[2], channels[3]), (4, "0,0 1,1", "0,0 1,1", "0,0 1,1"), "{edited}");
+    assert_ne!(channels[1], "0,0 1,1", "{edited}");
+    undo(&mut h);
+    assert_eq!(s(value(&h, l, fx, "grade")), "0,0 1,1 | 0,0 1,1 | 0,0 1,1 | 0,0 1,1");
+}

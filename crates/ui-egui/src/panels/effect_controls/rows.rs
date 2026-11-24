@@ -851,6 +851,13 @@ pub(super) fn group_rows(
                         custom_control(app, ui, layer, pr, &param, fx.effect, ectx, block.intersect(rect), block);
                     }
                 }
+                if let ParamUi::Curve { channels } = pr.ui {
+                    let block = Rect::from_min_size(pos2(rect.min.x, *y), vec2(rect.width(), crate::panels::fx_editors::curve_height(rect.width())));
+                    *y += block.height();
+                    if block.max.y >= rect.min.y && block.min.y <= rect.max.y {
+                        crate::panels::fx_editors::curve_param(app, ui, p, layer, pr, channels, ectx, block, actions);
+                    }
+                }
                 if app.ui.fx_slider_open.contains(&pr.uid) {
                     if matches!(pr.ui, ParamUi::Angle) {
                         let sr = Rect::from_min_size(pos2(rect.min.x, *y), vec2(rect.width(), DIAL_ROW));

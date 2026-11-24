@@ -22,7 +22,7 @@ use crate::i18n::{tr, tr_args};
 use effectcraft_engine::effects::{ColoramaPalette, OffsetCurve};
 use effectcraft_engine::geom::Mat3;
 use effectcraft_engine::keyframe::Value;
-use effectcraft_engine::project::{GroupKind, Layer, PropGroup};
+use effectcraft_engine::project::{GroupKind, Layer, PropGroup, Property};
 use effectcraft_engine::render::EvalCtx;
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::json;
@@ -123,7 +123,7 @@ fn graph_size(width: f32) -> f32 {
 /// of `effect` (0 when none).
 pub fn inline_height(effect: &str, path: &str, width: f32) -> f32 {
     match (effect, path) {
-        (LUMETRI, "curves/rgbCurves/") => 30.0 + graph_size(width) + 22.0,
+        (LUMETRI, "curves/rgbCurves/") => curve_height(width),
         (LUMETRI, "curves/hueSaturationCurves/") => 30.0 + graph_size(width) * 0.6 + 34.0,
         (COLORAMA, "outputCycle/") => 30.0 + wheel_size(width) + 34.0,
         _ => 0.0,
@@ -171,33 +171,78 @@ fn rgb_curves(
     r: Rect,
     actions: &mut Actions,
 ) {
+    let prefix = format!("effectControls.effect.{}.lumetri.rgbCurves", root.uid);
+    let curves: Vec<String> = RGB_CURVES.iter().map(|(id, _)| str_value(layer, ectx, g, id)).collect();
+    if let Some((ch, text, merge)) = curve_channels(app, ui, p, r, &prefix, g.uid, &curves) {
+        set_str(actions, layer, g, RGB_CURVES[ch].0, text, merge);
+    }
+}
+
+pub fn curve_height(width: f32) -> f32 {
+    30.0 + graph_size(width) + 22.0
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn curve_param(
+    app: &mut EffectcraftApp,
+    ui: &mut egui::Ui,
+    p: &egui::Painter,
+    layer: &Layer,
+    prop: &Property,
+    channels: bool,
+    ectx: &EvalCtx,
+    r: Rect,
+    actions: &mut Actions,
+) {
+    let text = match ectx.value(layer, prop) {
+        Value::Str(text) => text,
+        _ => String::new(),
+    };
+    let mut curves: Vec<String> = text.split('|').map(|curve| curve.trim().to_string()).collect();
+    curves.resize(if channels { RGB_CURVES.len() } else { 1 }, fw::CurvePoints::identity().format());
+    if let Some((ch, edited, merge)) = curve_channels(app, ui, p, r, &format!("effectControls.prop.{}.curve", prop.uid), prop.uid, &curves) {
+        curves[ch] = edited;
+        actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": prop.uid, "value": curves.join(" | "), "merge": merge})));
+    }
+}
+
+fn curve_channels(
+    app: &mut EffectcraftApp,
+    ui: &mut egui::Ui,
+    p: &egui::Painter,
+    r: Rect,
+    prefix: &str,
+    memo: u64,
+    curves: &[String],
+) -> Option<(usize, String, Option<String>)> {
     let t = app.tokens;
-    let euid = root.uid;
-    let prefix = format!("effectControls.effect.{euid}.lumetri.rgbCurves");
-    let ch = app.ui.fx_curve_channel.get(&g.uid).copied().unwrap_or(0).min(3);
+    let ch = app.ui.fx_curve_channel.get(&memo).copied().unwrap_or(0).min(curves.len().saturating_sub(1));
     let x0 = r.min.x + 38.0;
     let cy = r.min.y + 15.0;
-    let cols = [Color32::from_gray(0xe8), Color32::from_rgb(0xf0, 0x50, 0x50), Color32::from_rgb(0x50, 0xd0, 0x60), Color32::from_rgb(0x50, 0x80, 0xff)];
-    let names: Vec<&str> = RGB_CURVES.iter().map(|c| c.1).collect();
-    if let Some(n) = tabs(app, ui, p, pos2(x0, cy), ch, (&names, &cols), &format!("{prefix}.channel")) {
-        app.ui.fx_curve_channel.insert(g.uid, n);
+    if curves.len() > 1 {
+        let cols = [Color32::from_gray(0xe8), Color32::from_rgb(0xf0, 0x50, 0x50), Color32::from_rgb(0x50, 0xd0, 0x60), Color32::from_rgb(0x50, 0x80, 0xff)];
+        let names: Vec<&str> = RGB_CURVES.iter().map(|c| c.1).collect();
+        if let Some(n) = tabs(app, ui, p, pos2(x0, cy), ch, (&names, &cols), &format!("{prefix}.channel")) {
+            app.ui.fx_curve_channel.insert(memo, n);
+        }
     }
-    let id = RGB_CURVES[ch].0;
-    let cur = fw::CurvePoints::parse(&str_value(layer, ectx, g, id));
+    let cur = fw::CurvePoints::parse(curves.get(ch).map_or("", String::as_str));
     let size = graph_size(r.width());
+    let mut edited = None;
     if reset_link(app, ui, p, Rect::from_min_size(pos2(x0 + size - 44.0, cy - 9.0), vec2(44.0, 18.0)), &format!("{prefix}.reset")) {
-        set_str(actions, layer, g, id, fw::CurvePoints::identity().format(), None);
+        edited = Some((ch, fw::CurvePoints::identity().format(), None));
     }
     let gr = Rect::from_min_size(pos2(x0, r.min.y + 30.0), vec2(size, size));
-    let gid = egui::Id::unique(("lumetri-rgb", euid, ch));
+    let gid = egui::Id::unique((prefix, ch));
     let (resp, edit) = fw::curves_graph(ui, gr, &cur, ch, fw::CurveMode { pencil: false, natural: false }, gid, &t);
-    app.auto.add(&format!("{prefix}.graph"), gr, "RGB Curves");
-    register_points(app, &prefix, gr, &cur.0);
+    app.auto.add(&format!("{prefix}.graph"), gr, "Curves");
+    register_points(app, prefix, gr, &cur.0);
     let key = gesture_key(ui, gid, resp.drag_started() || resp.clicked());
     if let Some(np) = edit.changed {
-        set_str(actions, layer, g, id, np.format(), Some(key));
+        edited = Some((ch, np.format(), Some(key)));
     }
     p.text(pos2(gr.min.x, gr.max.y + 11.0), Align2::LEFT_CENTER, tr("Click adds a point; drag one off to remove"), Tokens::ui(10.5), t.text_faint);
+    edited
 }
 
 /// A hue / saturation curve's points (`x,y` in 0..1, y = ½ neutral), any count (empty = flat).

@@ -708,6 +708,8 @@ impl Effect for Report {
         EffectSpec::new("report", "Report", "Probe")
             .param(Param::slider("level", "Level", 10.0, 0.0..=100.0))
             .param(Param::point("spot", "Spot", [0.5, 0.5]))
+            .param(Param::curve("tone", "Tone", &[[0.0, 0.0], [1.0, 1.0]]))
+            .param(Param::curve("grade", "Grade", &[[0.0, 0.2], [1.0, 1.0]]).channels())
             .reads_param_history()
             .preset("Loud", [("level", craft_plugin::Value::Number(90.0)), ("spot", craft_plugin::Value::List(vec![0.25, 0.75]))])
     }
@@ -715,7 +717,8 @@ impl Effect for Report {
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
         let at_zero = cx.at(0.0).ok_or("no parameters at time 0")?;
         let history = cx.param_history();
-        let report = json!({"instance": cx.instance.to_string(), "now": cx.f("level"), "at_zero": at_zero.f("level"), "at_zero_time": at_zero.time, "history": history.map(|h| h.to_string())});
+        let grade = cx.curves("grade");
+        let report = json!({"instance": cx.instance.to_string(), "tone": cx.curve("tone").at(0.5), "grade": grade.iter().map(|c| c.at(0.0)).collect::<Vec<_>>(), "now": cx.f("level"), "at_zero": at_zero.f("level"), "at_zero_time": at_zero.time, "history": history.map(|h| h.to_string())});
         host::write_file(Root::Data, &format!("report-{}.json", cx.instance), report.to_string().as_bytes())?;
         frame.pixels[0] = [cx.f("level") as f32, at_zero.f("level") as f32, at_zero.time as f32, f32::from(u8::from(history.is_some()))];
         Ok(())

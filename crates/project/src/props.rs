@@ -55,6 +55,9 @@ pub enum ParamUi {
     },
     Gradient,
     Custom,
+    Curve {
+        channels: bool,
+    },
     /// Not shown in Effect Controls / the timeline (internal data).
     Hidden,
 }
