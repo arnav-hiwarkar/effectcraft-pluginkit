@@ -42,7 +42,9 @@ workspace `Cargo.toml`: the app then builds the kit from that checkout. The refe
 workspaces of their own and keep the git `rev`; add the same block to a plugin's `Cargo.toml` to build it
 against the checkout too. When the change is done, push craft-libs `pluginkit`, set the new `rev` in the
 workspace `Cargo.toml`, in `plugins/*/Cargo.toml` and in `xtask/tests/check-fixture/Cargo.toml`, let cargo
-update the `Cargo.lock` files, and comment the block again. The kit's own tests run in craft-libs:
+update the `Cargo.lock` files, and comment the block again. `cargo xtask kit-rev <sha>` does the rev and lockfile
+steps for every manifest at once (refreshing only the kit packages in each lockfile), and `cargo xtask kit-rev --check`,
+which CI runs, fails and names the manifests when any of them pins a different rev than the workspace `Cargo.toml`. The kit's own tests run in craft-libs:
 `cargo test -p craft-plugin -p craft-plugin-host -p craft-plugin-ui`.
 
 ## How the app and a plugin talk

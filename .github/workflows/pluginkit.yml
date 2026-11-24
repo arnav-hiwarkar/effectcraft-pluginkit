@@ -39,6 +39,8 @@ jobs:
         run: cargo run --quiet --package xtask -- layers
       - name: Assets are attributed
         run: cargo run --quiet --package xtask -- assets
+      - name: Kit rev is pinned once
+        run: cargo run --quiet --package xtask -- kit-rev --check
       - name: Format
         run: cargo fmt --check -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-ui-egui -p effectcraft-engine -p effectcraft-automation -p xtask
       - name: Adapter tests (the kit job tests the kit crates)
