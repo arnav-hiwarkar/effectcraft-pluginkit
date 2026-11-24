@@ -1469,6 +1469,34 @@ fn adjustment_footprint_uploads_once_under_time_dependent_effects() {
     }
 }
 
+/// A static layer under a time-dependent effect (Noise) keeps the input it starts from, so the
+/// GPU uploads its source once and nothing on later frames; every frame matches the CPU.
+#[test]
+fn a_static_layer_under_a_time_dependent_effect_uploads_once() {
+    let mut s = Scene::new(BitDepth::Bpc8);
+    let mut l = s.solid([1.0, 1.0, 1.0], 80, 50);
+    s.effect(&mut l, "ec.noise.noise", &[("amount", n(30.0))]);
+    s.push(l);
+    let Some(g) = gpu() else { return };
+    let cache = effectcraft_render::cache::LayerCache::new(64 << 20);
+    let mut r = Renderer::new(&s.p, &Pattern, RenderOpts { backend: Backend::Gpu, ..opts() });
+    r.accel = Some(g);
+    r.cache = Some(&cache);
+    let t = |k: u64| Tick::from_seconds_f64(k as f64 / 30.0);
+    let mut prev = None;
+    for k in 0..4 {
+        let before = g.ctx.transfer_stats().upload_bytes;
+        let img = g.render(&r, s.cid, t(k)).expect("the GPU renders the frame");
+        let up = g.ctx.transfer_stats().upload_bytes - before;
+        if k >= 1 {
+            assert_eq!(up, 0, "frame {k} uploaded {up} bytes: the source was re-keyed");
+        }
+        assert!(prev.as_ref() != Some(&img.data), "frame {k} repeats the previous one");
+        prev = Some(img.data);
+        check(&format!("noise layer frame {k}"), compare_at(&s, opts(), t(k)), 0.0);
+    }
+}
+
 /// An `Enc` reuses a working texture it released at once (`Pool::owned`); another `Enc` does
 /// not get it while the first is alive.
 #[test]

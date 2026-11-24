@@ -695,13 +695,12 @@ impl Hasher for KeyHasher {
 
 /// Time-based layer content: does any part of the source/effects read the clock directly
 /// (rather than through property values)?
-/// `effects: false` ignores the effects (a key of the source and masks only).
-fn time_dependent(layer: &Layer, effects: bool) -> bool {
-    if effects
-        && layer.switches.effects
+/// Only the first `effects` effects count (0: a key of the source and masks only).
+fn time_dependent(layer: &Layer, effects: usize) -> bool {
+    if layer.switches.effects
         && let Some(fx) = layer.effects()
     {
-        for g in fx.groups() {
+        for g in fx.groups().take(effects) {
             if let effectcraft_project::GroupKind::Effect { effect } = &g.kind
                 && g.enabled
                 && effectcraft_effects::is_time_dependent(effect)
@@ -870,7 +869,7 @@ fn animated(g: &PropGroup) -> bool {
 }
 
 pub(crate) fn timeless(layer: &Layer) -> bool {
-    !animated(&layer.props) && !time_dependent(layer, true)
+    !animated(&layer.props) && !time_dependent(layer, usize::MAX)
 }
 
 pub(crate) fn frame_key(ctx: &EvalCtx, contents: &[u64], visible: &[effectcraft_project::LayerId], opts: &crate::RenderOpts) -> u64 {
@@ -904,6 +903,16 @@ pub(super) enum EffectScope {
     Footprint,
 }
 
+impl EffectScope {
+    fn count(self) -> usize {
+        match self {
+            EffectScope::All => usize::MAX,
+            EffectScope::First(n) => n,
+            EffectScope::Footprint => 0,
+        }
+    }
+}
+
 /// Cache key for an adjustment layer's footprint (its source through its masks, see
 /// `Renderer::adjustment_footprint`): the GPU compositor then uploads it once, not every frame.
 pub fn footprint_key(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool) -> Option<u64> {
@@ -924,6 +933,7 @@ fn key_with(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, f
 /// `blur`: the layer is motion blurred in this render (`Renderer::mb_on`). `effects`: how far
 /// the effect stack reaches into the key (see [`EffectScope`]).
 fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, footage: bool, effects: EffectScope) -> Option<u64> {
+    let executed = effects.count();
     let mut h = KeyHasher(0xcbf2_9ce4_8422_2325);
     ctx.comp.frame_rate.as_f64().to_bits().hash(&mut h);
     ctx.comp.enable_frame_blending.hash(&mut h);
@@ -986,8 +996,7 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
     // Mask motion blur and effects that read the shutter depend on whether the layer is motion
     // blurred in this render and on the comp's shutter. A footprint has no effects, so only its
     // masks put the shutter in the key.
-    if layer.masks().is_some_and(|m| !m.children.is_empty()) || (effects != EffectScope::Footprint && layer.effects().is_some_and(|fx| !fx.children.is_empty()))
-    {
+    if layer.masks().is_some_and(|m| !m.children.is_empty()) || (executed > 0 && layer.effects().is_some_and(|fx| !fx.children.is_empty())) {
         blur.hash(&mut h);
         ctx.comp.enable_motion_blur.hash(&mut h);
         ctx.comp.shutter_angle.to_bits().hash(&mut h);
@@ -1033,12 +1042,11 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
     }
     // Paint strokes appear and disappear with their Duration spans (not property values).
     // A footprint does not include them.
-    if effects != EffectScope::Footprint
-        && layer.switches.effects
+    if layer.switches.effects
         && let Some(fx) = layer.effects()
     {
         let lt = layer.layer_time(ctx.time).seconds();
-        for g in fx.groups().filter(|g| g.enabled && effectcraft_effects::paint::is_paint(g)) {
+        for g in fx.groups().take(executed).filter(|g| g.enabled && effectcraft_effects::paint::is_paint(g)) {
             effectcraft_effects::paint::cache_key(g, lt).0.hash(&mut h);
         }
     }
@@ -1047,19 +1055,17 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
     if mask_motion_blur(ctx, layer, blur) {
         layer.layer_time(ctx.time).0.hash(&mut h);
     }
-    if time_dependent(layer, effects != EffectScope::Footprint) {
+    if time_dependent(layer, executed) {
         layer.layer_time(ctx.time).0.hash(&mut h);
         // Effects also see the layer's time mapping.
         layer.start_time.0.hash(&mut h);
         layer.stretch.to_bits().hash(&mut h);
     }
     // Effects that see the comp camera or lights (#397) change when they or the layer move.
-    if effects != EffectScope::Footprint && reads_comp_scene(layer) {
+    if reads_comp_scene(layer, executed) {
         hash_scene(&mut h, ctx, layer)?;
     }
-    if effects != EffectScope::Footprint {
-        effect_revisions(layer).for_each(|revision| revision.hash(&mut h));
-    }
+    effect_revisions(layer, executed).for_each(|revision| revision.hash(&mut h));
     Some(h.finish())
 }
 
@@ -1078,8 +1084,8 @@ pub(crate) fn reads_layers(ctx: &EvalCtx, layer: &Layer) -> bool {
     layer.switches.effects && layer.effects().is_some_and(|fx| fx.groups().any(|g| g.enabled && reads(ctx, layer, g, 0)))
 }
 
-pub(crate) fn effect_revisions(layer: &Layer) -> impl Iterator<Item = u64> {
-    layer.effects().into_iter().flat_map(|fx| fx.groups()).filter_map(|g| match &g.kind {
+pub(crate) fn effect_revisions(layer: &Layer, effects: usize) -> impl Iterator<Item = u64> {
+    layer.effects().into_iter().flat_map(move |fx| fx.groups().take(effects)).filter_map(|g| match &g.kind {
         effectcraft_project::GroupKind::Effect { effect } => Some(effectcraft_effects::revision(effect)).filter(|r| *r != 0),
         _ => None,
     })
@@ -1098,10 +1104,11 @@ fn hash_scene(h: &mut KeyHasher, ctx: &EvalCtx, layer: &Layer) -> Option<()> {
 
 /// Does the layer run an effect that reads the comp camera or lights (Card Dance, CC Particle
 /// World…)?
-fn reads_comp_scene(layer: &Layer) -> bool {
+fn reads_comp_scene(layer: &Layer, effects: usize) -> bool {
     layer.switches.effects
         && layer.effects().is_some_and(|fx| {
             fx.groups()
+                .take(effects)
                 .any(|g| g.enabled && matches!(&g.kind, effectcraft_project::GroupKind::Effect { effect } if effectcraft_effects::reads_comp_scene(effect)))
         })
 }
