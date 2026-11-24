@@ -11,7 +11,6 @@ measured speed before and after.
 - **Plugin files outside the plugin's folders are not in the cache key.** An effect that reads a file through `files.read` keeps its cached frames when that file changes. The key holds only the plugin's own folders, which can be listed cheaply.
 - **Possibly dead branch.** `show_result_errors` in `crates/ui-egui/src/menus/frontend.rs` still formats `{file, error}` items, a shape only the removed bundle install produced. The test near `menus/tests.rs:900` uses the removed command id `effect.installBundle` as a fixture.
 - **ScriptUI panel bundles.** The removed `Install Effect Plug-in Bundle (Folder)` command also copied `.jsx` panels. Single panels still install through `file.installScriptUIPanel`.
-- **SDK gap reported by the Plasma Beam author.** A whole-frame sandboxed effect cannot use more than one core.
 
 - **Viewer tools from automation.** A plugin tool is picked only with its toolbar button. `ui.set` and the `tool.*` commands do not name plugin tools (`crates/ui-egui/src/panels/plugin_tools.rs`).
 - **Viewer tools get no pen pressure.** egui reports no pressure for a pen, so `ToolEvent::pressure` is 1 while the button is down and 0 otherwise.
