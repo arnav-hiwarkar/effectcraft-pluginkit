@@ -40,11 +40,11 @@ jobs:
       - name: Assets are attributed
         run: cargo run --quiet --package xtask -- assets
       - name: Format
-        run: cargo fmt --check -p craft-plugin -p craft-plugin-host -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-ui-egui -p effectcraft-engine -p effectcraft-automation -p xtask
-      - name: Kit and adapter tests
-        run: cargo test -p craft-plugin -p craft-plugin-host -p effectcraft-plugin
+        run: cargo fmt --check -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-ui-egui -p effectcraft-engine -p effectcraft-automation -p xtask
+      - name: Adapter tests (craft-libs tests the kit crates)
+        run: cargo test -p effectcraft-plugin
       - name: Lint
-        run: cargo clippy -p craft-plugin -p craft-plugin-host -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-engine -p effectcraft-automation -p effectcraft-ui-egui -p xtask --all-targets --keep-going -- -D warnings
+        run: cargo clippy -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-engine -p effectcraft-automation -p effectcraft-ui-egui -p xtask --all-targets --keep-going -- -D warnings
       - name: Tests of the crates the plugin system changed
         run: |
           cargo test -p effectcraft-effects --lib

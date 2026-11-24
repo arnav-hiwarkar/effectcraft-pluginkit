@@ -37,7 +37,7 @@ measured speed before and after.
 
 ## From the second build and its reviews, not fixed
 
-- **A process of the same user that reads the cache key can still sign a compiled module.** Compiled cache entries carry an HMAC-SHA-256 under `Plugins/.compiled/key` (mode 0600, made from OS randomness), so a planted entry without the key is compiled again (`cached` in `crates/plugin-host/src/runtime/wasm.rs`). The key file is readable by every process of the same user; only the helper process with an OS sandbox would close this.
+- **A process of the same user that reads the cache key can still sign a compiled module.** Compiled cache entries carry an HMAC-SHA-256 under `Plugins/.compiled/key` (mode 0600, made from OS randomness), so a planted entry without the key is compiled again (`cached` in craft-libs `crates/plugin-host/src/runtime/wasm.rs`). The key file is readable by every process of the same user; only the helper process with an OS sandbox would close this.
 - **A native task that ignores cancel keeps its thread.** Only a sandboxed task can be interrupted.
 - **A pointwise effect can leave a partly written frame.** An effect with `Layout::pointwise()` changes the layer's frame in place, so when one band fails the bands that finished keep their changes. Keeping a copy to undo them cost every frame of every light effect (native Probe 0.30 to 0.70 ms at 1080p), and native code is code the user approved. In the sandbox, holding each band in its instance and copying all of them out only after every band succeeded cost about 0.3 ms (20 %) on sandboxed Probe at 1080p, because the copies then read bands that had left the cache; swapping each band out at once and back on failure cost the same. Every other layout leaves the frame as it was.
 - **Effects cannot read audio.** The render path reaches footage audio, not the comp mix.
@@ -74,7 +74,7 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 
 - **Lumen Glow on the GPU is still about 7 % slower than with its own shaders.** 1080p, in-process median
   of 21 runs, minimum of six alternating runs at load 5 to 6: 8.0 ms with each fused loop generated as
-  straight-line WGSL (`pointwise` in `crates/plugin-host/src/kernels/gpu.rs`), 9.7 ms with the interpreter
+  straight-line WGSL (`pointwise` in craft-libs `crates/plugin-host/src/kernels/gpu.rs`), 9.7 ms with the interpreter
   it replaced; the build with its own shaders (`pk/kernels`) measured 7.5 ms at load 3 to 4 and was not
   measured again. The rest is the emission, stored at full size before the first halving. Running the
   generated program on each of the halving's 16 taps instead removed that image and made four chained
@@ -86,7 +86,7 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
   temporary for the resample and convolve kernels instead of zeroing a new one per call was tried and not
   kept: `sample` put all zeroing at 3 % of the render before and 2.4 % after (patch in
   `pluginkit/reports/w5-lumen-temp-reuse.patch`). About 75 % of the samples are in the fused pointwise rows
-  and the transfer rows (`crates/plugin-host/src/kernels/pointwise.rs`), 19 % in the resample.
+  and the transfer rows (craft-libs `crates/plugin-host/src/kernels/pointwise.rs`), 19 % in the resample.
 - **Native and sandboxed Lumen Glow give different pixels.** Its plan's blur taps and level gains use
   `f32::exp`, `exp2` and `log2`, which differ in the last bits between the native and the WebAssembly
   standard library (`plugins/lumen-glow/src/blur.rs`, `settings.rs`, `profile.rs`). `craft_plugin::math`
@@ -99,7 +99,7 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 
 - **The test kit's band check renders a pointwise effect whole with `frame.pixels` transparent.** An effect
   that changes `frame.pixels` directly (not through `rows_in_place`, `map` or `rows`) passes in the app but
-  fails `TestPlugin` renders taller than one band (`timed` in `crates/plugin-host/src/testing.rs`). The
+  fails `TestPlugin` renders taller than one band (`timed` in craft-libs `crates/plugin-host/src/testing.rs`). The
   whole render needs separate input so that an effect reading rows it did not declare is still caught
   (`plugins/cookbook`, `Smear`); one in-place band would not catch it.
 - **A native plugin call that never returns keeps its worker thread.** The app never waits for it: its later panel calls, overlays and menu commands queue behind it, and a host request it is waiting on is released with an error when its panel, overlay or tool closes or the plugin is unloaded. A call stuck inside the plugin's own code cannot be stopped in one process; that needs the helper process (`docs/plugin-helper.md`). A sandboxed call stops at its time limit. A synchronous `plugin.run` (CLI, scripts, `engine.execute`) waits for the plugin like any other command.
@@ -129,5 +129,5 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **`Camera` gained a `focus` field.** Plugin code that builds a `craft_plugin::Camera` field by field no longer compiles; built plugins still load. Plugins normally only read the camera the app sends.
 - **`cx.scene()` without `.reads_scene()` is not refused.** `cx.placement`, `cx.placement_at` and `cx.scene_at` are refused without their declarations; the older `cx.scene()` is not, so an undeclared call can still show a stale cached frame.
 - **An effect that reads the scene at other times is not cached in a comp with any expression.** Its cache key covers every layer's keyframes but cannot cover expression results (`cache::hash_scene`).
-- **A gradient edited past 64 stops reaches the plugin as its first 64.** The editor allows more; the adapter cuts without a warning (`crates/plugin-sdk/src/gradient.rs`, `limited`).
+- **A gradient edited past 64 stops reaches the plugin as its first 64.** The editor allows more; the adapter cuts without a warning (craft-libs `crates/plugin-sdk/src/gradient.rs`, `limited`).
 - **A plugin curve's Reset button sets a straight line, not the curve the plugin declared.** The editor is shared with Lumetri, whose default is the straight line (`crates/ui-egui/src/panels/effect_controls`).

@@ -240,7 +240,7 @@ mod tests {
     }
 
     fn probe_bundle(id: &str) -> tempfile::TempDir {
-        let probe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugin-host/tests/probe");
+        let probe = craft_plugin_host::testing::probe_dir();
         let status = std::process::Command::new(env!("CARGO"))
             .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
             .arg(probe.join("Cargo.toml"))

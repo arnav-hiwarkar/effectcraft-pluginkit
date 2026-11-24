@@ -2,6 +2,7 @@ use std::path::Path;
 
 const TEMPLATE_CARGO: &str = include_str!("../../templates/Cargo.toml");
 const TEMPLATE_MANIFEST: &str = include_str!("../../templates/plugin.json");
+const WORKSPACE_CARGO: &str = include_str!("../../../Cargo.toml");
 
 pub(super) struct Kind {
     pub name: &'static str,
@@ -63,6 +64,14 @@ fn valid_name(name: &str) -> bool {
         && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
+fn kit_source() -> Result<&'static str, String> {
+    WORKSPACE_CARGO
+        .lines()
+        .find_map(|line| line.strip_prefix("craft-plugin = {")?.strip_suffix('}'))
+        .map(str::trim)
+        .ok_or_else(|| "the workspace Cargo.toml has no `craft-plugin = { ... }` line to take the plugin kit's source from".into())
+}
+
 fn words(name: &str) -> Vec<String> {
     name.split('-')
         .filter(|word| !word.is_empty())
@@ -93,6 +102,7 @@ pub(super) fn generate(name: &str, kind: &Kind) -> Result<Vec<(&'static str, Str
         ("{{Title}}", title.clone()),
         ("{{permissions}}", permissions),
         ("{{description}}", format!("{title}: {}.", kind.description)),
+        ("{{kit}}", kit_source()?.to_string()),
     ];
     let fill = |template: &str| substitutions.iter().fold(template.to_string(), |text, (key, value)| text.replace(key, value));
     let mut next = vec!["  test it:      cargo test --manifest-path plugins/{{name}}/Cargo.toml"];
@@ -150,6 +160,15 @@ mod tests {
         }
         let gpu: BTreeMap<_, _> = generate("soft-glow", kind("gpu-effect").unwrap()).unwrap().into_iter().collect();
         assert!(gpu["src/lib.rs"].contains("fn soft_glow_tint("));
+    }
+
+    #[test]
+    fn a_new_plugin_depends_on_the_same_plugin_kit_as_the_app() {
+        let cargo = generate("soft-glow", &KINDS[0]).unwrap().into_iter().find(|(path, _)| *path == "Cargo.toml").unwrap().1;
+        let sdk = |text: &str| text.lines().find(|line| line.starts_with("craft-plugin = ")).map(str::to_string);
+        assert_eq!(sdk(&cargo), sdk(WORKSPACE_CARGO));
+        let host = format!("craft-plugin-host = {{ {}, features = [\"testing\"] }}", kit_source().unwrap());
+        assert!(cargo.lines().any(|line| line == host), "{cargo}");
     }
 
     fn type_names(lib: &str) -> Vec<String> {

@@ -448,7 +448,7 @@ impl Effect for Soften {
 equals `cx.size[0]`. A whole-frame effect still reads every input row, but writes only the rectangle that
 shows, which may be smaller than the frame.
 
-The probe plugin in `crates/plugin-host/tests/probe` carries both effects with CPU renders that match
+The probe plugin in craft-libs `crates/plugin-host/tests/probe` carries both effects with CPU renders that match
 their kernels, and `crates/plugin/tests/it/gpu.rs` checks that the two paths agree. `plugins/forge-3d` is a
 whole effect built on draw passes: indexed meshes from the cache, instancing, depth, and the comp's camera
 and lights.

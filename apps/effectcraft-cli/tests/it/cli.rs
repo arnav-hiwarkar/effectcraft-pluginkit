@@ -1276,7 +1276,7 @@ fn replay_accepts_a_utf8_bom() {
 }
 
 fn probe_bundle(id: &str, permissions: &[&str]) -> PathBuf {
-    let probe = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/plugin-host/tests/probe");
+    let probe = craft_plugin_host::testing::probe_dir();
     let status = Command::new(env!("CARGO"))
         .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
         .arg(probe.join("Cargo.toml"))

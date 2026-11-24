@@ -5,8 +5,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
-craft-plugin = { path = "../../../crates/plugin-sdk" }
-craft-plugin-host = { path = "../../../crates/plugin-host" }
+craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "5e60bed8599b8550cd069ae55fd3ccc8f47f742a" }
+craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "5e60bed8599b8550cd069ae55fd3ccc8f47f742a" }
 effectcraft-engine = { path = "../../../crates/engine" }
 effectcraft-gpu = { path = "../../../crates/gpu" }
 effectcraft-host = { path = "../../../crates/host" }
