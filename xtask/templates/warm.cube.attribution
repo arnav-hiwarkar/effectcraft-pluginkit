@@ -1,0 +1,8 @@
+asset:        warm.cube
+title:        Sample 2x2x2 warming LUT for the data-only plugin template
+author:       EffectCraft contributors
+source:       original work
+license:      MIT OR Apache-2.0
+license-file: LICENSE-MIT
+added:        2026-11-24 by EffectCraft contributors (Claude agent, data-only plugin template)
+notes:        Eight hand-written lattice values that lift red and lower blue; copied into a new pack by `cargo xtask plugin new --kind data`.
