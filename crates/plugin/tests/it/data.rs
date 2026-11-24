@@ -33,6 +33,18 @@ fn saved_data(path: &std::path::Path) -> Vec<Value> {
 }
 
 #[test]
+fn with_one_undo_level_a_command_that_writes_twice_is_still_one_undo_step() {
+    let mut app = app("test.data-one-level", &["document.read", "document.write"]);
+    let layer = plate(&mut app);
+    app.session.prefs.general.undo_levels = 1;
+    write(&mut app, json!({"place": {"layer": layer}, "key": "track", "value": "points", "null": true})).unwrap();
+    assert_eq!(app.layer_names(), ["Marker", "Plate"]);
+    assert_eq!(app.session.history.undo.len(), 1);
+    assert!(app.session.undo());
+    assert_eq!((on_plate(&app), app.layer_names()), (None, vec!["Plate".to_string()]));
+}
+
+#[test]
 fn a_command_writes_layer_data_as_one_undo_step_and_saving_keeps_it_with_or_without_the_plugin() {
     let mut app = app("test.data-undo", &["document.read", "document.write"]);
     let layer = plate(&mut app);
