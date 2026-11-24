@@ -403,6 +403,10 @@ each other. See [Host kernels](plugin-gpu.md#host-kernels) for what each compute
 | `PlanPass::brightness_curve(src, out, measure, curve, range)` | `HostKernel::BrightnessCurve { measure: Measure::MaxChannel | Luma, curve: Vec<f32>, range: f32 }`, 2 to `MAX_CURVE_POINTS` (4096) entries, `range` above 0. |
 | `PlanPass::dither(src, out, seed, origin)` | `HostKernel::Dither { seed: u32, origin: [i64; 2] }`. |
 | `PlanPass::light_alpha(src, out)` | `HostKernel::LightAlpha`. |
+| `PlanPass::dilate(src, out, radius)`, `PlanPass::erode(..)` | `HostKernel::Dilate { radius: [u32; 2] }`, `HostKernel::Erode { .. }`, each axis 0 to `MAX_MORPHOLOGY_RADIUS` (512). `src` and `out` the same size. |
+| `PlanPass::directional_blur(src, out, angle, length)` | `HostKernel::DirectionalBlur { angle: f32, length: f32 }`, `angle` in degrees, `length` 0 to `MAX_DIRECTIONAL_LENGTH` (1024) pixels. `src` and `out` the same size. |
+| `PlanPass::bilateral(src, out, radius, tolerance)` | `HostKernel::Bilateral { radius: u32, tolerance: f32 }`, `radius` 0 to `MAX_BILATERAL_RADIUS` (32), `tolerance` above 0. `src` and `out` the same size. |
+| `PlanPass::noise(out, scale, octaves, seed, origin)` | `HostKernel::Noise { scale: f32, octaves: u32, seed: u32, origin: [i64; 2] }`, `scale` above 0 pixels, 1 to `MAX_NOISE_OCTAVES` (12) octaves. Its `src` is `PlanImage::Source` and is not read. |
 | `PlanPass::host(kernel, src, out)` | Any `HostKernel`. |
 
 Every value must be finite. `kernel.check(src_size, aux_size, out_size)` is the check `plan.validate`
