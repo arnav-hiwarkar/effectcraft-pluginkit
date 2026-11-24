@@ -589,6 +589,11 @@ overlay it draws starts in `Space::Comp` and stays on screen until the next repl
 | `zoom` | Screen points per comp pixel |
 | `time` | The comp time in seconds |
 
+**From automation.** A tool is named `<plugin id>/<tool id>`. `ui.set {"tool": "plugin/tool"}`
+and the command `tool.plugin/tool` (through `engine.execute` or `ui.menu.invoke`) pick it, like the built-in tools,
+and any built-in tool picked afterwards puts it away. An unknown name is an error that lists the loaded plugin tools.
+`ui.click`, `ui.drag` and `ui.scroll` over the viewer then reach the tool as `Down`, `Move`, `Up` and `Scroll` events.
+
 `Move` comes while the pointer is over the viewer or the button is held. `Scroll` and `Key` come while the
 pointer is over the viewer and no text field has the keyboard. The project changes a tool makes with
 `host::command` between `Down` and `Up` are one undo step named after the tool. An edit made elsewhere in

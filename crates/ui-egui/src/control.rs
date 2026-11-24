@@ -314,14 +314,24 @@ fn focus(ctx: &egui::Context) -> Outcome {
 }
 
 /// Applies `ui.set` in order: tool, workspace, theme, focused panel, viewer settings, then the
-/// layout fields ([`set_ui_layout`]). An unknown tool, workspace or theme name, or an invalid
+/// layout fields ([`set_ui_layout`]). A `tool` of the form `plugin/tool` picks that plugin's viewer
+/// tool. An unknown tool, workspace or theme name, or an invalid
 /// viewer value, replies with an error after the earlier fields were already applied.
 fn set_ui(app: &mut EffectcraftApp, ctx: &egui::Context, p: &Value) -> Outcome {
     let s = |k: &str| p.get(k).and_then(Value::as_str);
     if let Some(t) = s("tool") {
-        match Tool::from_name(t) {
-            Some(t) => app.ui.tool = t,
-            None => return err(format!("unknown tool `{t}`")),
+        if t.contains('/') {
+            if let Err(e) = crate::panels::plugin_tools::pick(app, ctx, t) {
+                return err(e);
+            }
+        } else {
+            match Tool::from_name(t) {
+                Some(t) => {
+                    app.ui.plugin_tool = None;
+                    app.ui.tool = t;
+                }
+                None => return err(format!("unknown tool `{t}`")),
+            }
         }
     }
     if let Some(w) = s("workspace") {
