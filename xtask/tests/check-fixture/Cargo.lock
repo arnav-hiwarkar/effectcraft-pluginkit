@@ -12,7 +12,7 @@ dependencies = [
 [[package]]
 name = "craft-plugin"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=d6dc6a81f070cfca7d7775705f315e2e49d8d4af#d6dc6a81f070cfca7d7775705f315e2e49d8d4af"
+source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=3484c56991fb51dde5a25664f8c34ce57bfcccfe#3484c56991fb51dde5a25664f8c34ce57bfcccfe"
 dependencies = [
  "serde",
  "serde_json",
