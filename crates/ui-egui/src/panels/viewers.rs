@@ -22,7 +22,8 @@ use crate::theme::Tokens;
 pub enum PassiveTexture {
     Cpu(egui::TextureHandle),
     Gpu(egui::TextureId, Arc<effectcraft_gpu::DisplayFrame>),
-    /// A half-float frame (32 bpc) through the display pass on egui-wgpu's device.
+    /// A half-float frame (32 bpc), or a GPU frame with a display conversion, through the display
+    /// pass on egui-wgpu's device.
     Baked(Box<crate::display_gpu::Bake>),
 }
 
@@ -165,7 +166,18 @@ pub(crate) fn set_texture(
     let opts = super::viewer::zoom_texture_options(smooth);
     let pass = |encoding| passive_pass(encoding, dc.as_ref());
     let gpu = app.display_gpu();
+    let converted = !pass(super::viewer_tools::rgba8_encoding(app)).is_identity();
     let img = match img {
+        FrameImage::Gpu(f) if converted && gpu.is_none() => {
+            match app.gpu.as_ref().filter(|_| cfg!(not(target_arch = "wasm32"))).and_then(|g| g.read_display(&f)) {
+                Some(rgba) => cpu_passive_image(
+                    app,
+                    FrameImage::Cpu(Arc::new(egui::ColorImage::from_rgba_premultiplied([f.width as usize, f.height as usize], &rgba))),
+                    dc.as_ref(),
+                ),
+                None => FrameImage::Gpu(f),
+            }
+        }
         // Frames past the display texture limit take the CPU pass (display conversion first, then
         // the averaging down), which the GPU bake leaves out.
         FrameImage::CpuF16(f)
@@ -186,20 +198,7 @@ pub(crate) fn set_texture(
             free(app, old.map(|(_, t)| t));
             PassiveTexture::Cpu(crate::frames::load_fitted(ctx, format!("viewer-{id}"), (*img).clone(), opts))
         }
-        (FrameImage::CpuF16(f), old) => {
-            let Some(gpu) = gpu else { return };
-            let mut bake = match old {
-                Some((_, PassiveTexture::Baked(b))) => b,
-                old => {
-                    free(app, old.map(|(_, t)| t));
-                    Box::default()
-                }
-            };
-            let Some(rs) = &app.window_wgpu else { return };
-            bake.show(rs, &gpu, &crate::display_gpu::Source::F16(f.clone()), &pass(f.encoding), smooth);
-            PassiveTexture::Baked(bake)
-        }
-        (FrameImage::Gpu(f), old) => {
+        (FrameImage::Gpu(f), old) if !converted || gpu.is_none() => {
             let Some(rs) = &app.wgpu else { return };
             let view = f.texture.create_view(&Default::default());
             let sampler = || super::viewer::zoom_sampler(smooth);
@@ -212,6 +211,24 @@ pub(crate) fn set_texture(
                 _ => ren.register_native_texture_with_sampler_options(&rs.device, &view, sampler()),
             };
             PassiveTexture::Gpu(tid, f)
+        }
+        (img, old) => {
+            let Some(gpu) = gpu else { return };
+            let (src, encoding) = match img {
+                FrameImage::CpuF16(f) => (crate::display_gpu::Source::F16(f.clone()), f.encoding),
+                FrameImage::Gpu(f) => (crate::display_gpu::Source::Gpu(f), super::viewer_tools::rgba8_encoding(app)),
+                FrameImage::Cpu(_) => return,
+            };
+            let mut bake = match old {
+                Some((_, PassiveTexture::Baked(b))) => b,
+                old => {
+                    free(app, old.map(|(_, t)| t));
+                    Box::default()
+                }
+            };
+            let Some(rs) = &app.window_wgpu else { return };
+            bake.show(rs, &gpu, &src, &pass(encoding), smooth);
+            PassiveTexture::Baked(bake)
         }
     };
     app.passive_tex.insert(id, (key, tex));
