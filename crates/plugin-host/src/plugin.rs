@@ -207,7 +207,11 @@ impl Plugin {
         let input: &[Pixel] = pixels;
         let mut output = match pointwise {
             true => {
-                input.chunks_exact(width).skip(area.top as usize).take(rows).flat_map(|row| &row[area.left as usize..area.right as usize]).copied().collect()
+                let mut shown = Vec::with_capacity(out_width * rows);
+                for row in input.chunks_exact(width).skip(area.top as usize).take(rows) {
+                    shown.extend_from_slice(&row[area.left as usize..area.right as usize]);
+                }
+                shown
             }
             false => vec![[0.0; 4]; out_width * rows],
         };
