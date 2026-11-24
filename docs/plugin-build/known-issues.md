@@ -161,3 +161,4 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 
 - **A form field's condition is not validated.** `visible_when("missing", Is::On)` on a form field opens a form that silently hides the field, while the same condition on an effect parameter stops the plugin from loading. `Form::check` (craft-libs `crates/plugin-sdk/src/wire.rs`) should reuse the effect's source, kind and self-reference checks.
 - **A greyed plugin parameter is judged at the playhead.** `prop.set` and the keyframe commands that go through `with_prop` (`crates/engine/src/cmd/prop.rs`) evaluate the condition at the current time, not at the `time` of the write, and `keys.*` commands that move or paste keys do not check it.
+- **`Frame` gained a private field (`drawn`).** Plugin test code that built a `Frame` with a struct literal no longer compiles; use `Frame::new(width, height, origin, pixels, input)` or `Frame::whole`.

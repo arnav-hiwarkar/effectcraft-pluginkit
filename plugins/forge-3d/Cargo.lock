@@ -167,7 +167,7 @@ dependencies = [
 [[package]]
 name = "craft-plugin"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=a75b29d172e15183655e8d600c086d82130faa2c#a75b29d172e15183655e8d600c086d82130faa2c"
+source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=dadea5666e514e5724f9fa7aa02c51d6a5218bed#dadea5666e514e5724f9fa7aa02c51d6a5218bed"
 dependencies = [
  "serde",
  "serde_json",
@@ -176,7 +176,7 @@ dependencies = [
 [[package]]
 name = "craft-plugin-host"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=a75b29d172e15183655e8d600c086d82130faa2c#a75b29d172e15183655e8d600c086d82130faa2c"
+source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=dadea5666e514e5724f9fa7aa02c51d6a5218bed#dadea5666e514e5724f9fa7aa02c51d6a5218bed"
 dependencies = [
  "bytemuck",
  "craft-plugin",

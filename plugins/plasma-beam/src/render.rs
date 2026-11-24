@@ -98,7 +98,7 @@ mod tests {
         for pair in cuts.windows(2) {
             let band = &mut pixels[pair[0] * 160..pair[1] * 160];
             let input = craft_plugin::Rows { width: 160, height: 90, first_row: 0, pixels: &source };
-            let mut frame = Frame { width: 160, height: pair[1] - pair[0], origin: [0, pair[0]], pixels: band, input };
+            let mut frame = Frame::new(160, pair[1] - pair[0], [0, pair[0]], band, input);
             render(settings, paths, [160, 90], &mut frame);
         }
         pixels
