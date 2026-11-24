@@ -78,6 +78,7 @@ pub trait Effect: Send + Sync + 'static {
     fn pass(&self, cx: &Cx, pass: &Pass, out: &mut Frame) -> Result<()>; // default: an error naming the kernel
     fn overlay(&self, cx: &Cx, overlay: &mut Overlay);          // default: draws nothing
     fn drag(&self, cx: &Cx, key: &str, to: [f64; 2], value: &mut String); // default: leaves the value
+    fn migrate(&self, from: u32, values: &mut BTreeMap<String, Value>); // default: leaves the values
 }
 ```
 
@@ -104,6 +105,7 @@ pooled instance, so values stored outside `cx` are not shared between calls.
 | `.preset(name, [(id, Value), …])` | A named set of parameter values, see [Presets](#presets). |
 | `.shader(wgsl)` | WGSL kernels for GPU passes. Each invocation may run 1 048 576 loop iterations; past that the app turns the shader off and renders on the CPU (see [Time](plugin-gpu.md#time)). See [Passes](plugin-gpu.md). |
 | `.designer(panel_id)` | Effect Controls shows a button that opens this panel. |
+| `.version(n)` | The effect's state version (0 when not set), see [State versions](#state-versions). |
 
 The render cache uses the four declarations. An effect that omits one shows stale frames. The
 layer's cache key already holds every keyframe and expression of the effect, not only the values at
@@ -462,6 +464,24 @@ without the list opens as before.
 | `renderQueue.render`, Watch Folder | Refused with an error naming the plugins of the project's effects that are not loaded, unless `{"withoutMissingPlugins": true}` (CLI `render --without-missing-plugins`); the effects are then skipped. |
 | Preview, Effect Controls | The effect is skipped and its header shows a warning: "Plug-in `<id>` is not installed". |
 
+### State versions
+
+Each saved instance of an effect records the effect's state version (`"state_version"` on its group,
+left out at 0). When a project saved with an older version opens, or the plugin starts while it is open,
+the app calls `Effect::migrate(from, values)` once per instance before anything else reads it. `values` holds
+the instance's saved static values by full parameter id, ids the effect no longer declares included, in the
+form `cx` reads them, except points, which are in layer pixels; layer and mask values are not passed.
+Change, add or remove entries: a removed id whose value reappears under a new id moves there with its
+keyframes and expression, a changed value replaces the static value, a removed id is deleted. The instance
+is then stamped with the current version. An effect that never calls `.version` is never asked.
+
+An instance saved by a newer version of the plugin than the one installed is left exactly as saved,
+unknown parameters included, and saving writes it back unchanged; opening it shows a notification
+naming the layer, the effect and both versions (and `file.importProject` lists it in its warnings). A migration
+that returns an error, or a value the parameter cannot hold, also leaves the instance unchanged and is
+reported the same way. Layer and project [plugin data](#plugin-data) are not versioned; keep a version
+in the data itself.
+
 ### Plugin data
 
 A plugin keeps its own bytes in the project and on layers: `host::data(place, key)` returns
@@ -805,6 +825,7 @@ the app uses, with the permissions `plugin.json` asks for. Commands the plugin r
 | `render.run()`, `render.timed(rounds)` | The output `Picture` (padded by the layout's padding), and the best time. When the layout or a pass of its plan has a reach, the render in bands is also compared with a whole render, and a difference is an error naming the first pixel. |
 | `render.layout()`, `render.overlay()`, `render.source()` | The effect's `Layout`, its `Overlay` (in layer pixels), and the input picture. |
 | `plugin.panel(id)` | A `PanelTest`: `.click(label)`, `.send(label, UiEventKind)`, `.app_event(AppEvent)`, `.timer(name)`, `.redraw()`, `.texts()`, `.widgets()`. |
+| `plugin.migrate(effect, from, values)` | Calls the effect's `migrate` with saved values and returns what it made of them. |
 | `plugin.command(id)`, `plugin.task(id, args)`, `plugin.tool(id, event)` | Runs a command; runs a task to its end (60 s at most) and returns its result; sends a `ToolEvent` (`testing::pointer(kind, comp)` makes one) and returns the overlay. |
 | `plugin.commands()`, `plugin.answer(command, json)`, `plugin.notes()`, `plugin.logs()` | The commands run so far with their parameters; what a command returns (null by default); the `notify` messages; the log. |
 | `Pattern` | `Photo`, `Gradient`, `Checker`, `Shapes`, `Text`, `Empty`; `.picture(w, h)`. |

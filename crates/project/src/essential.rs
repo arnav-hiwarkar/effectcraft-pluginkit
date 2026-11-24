@@ -496,6 +496,7 @@ fn build_group(project: &Project, comp: ItemId, eg: &EssentialGraphics, old: Opt
         enabled: true,
         label: None,
         children,
+        state_version: 0,
     }
 }
 

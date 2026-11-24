@@ -30,6 +30,8 @@ fn register() {
         revision: 1,
         files: None,
         margin: None,
+        state_version: 0,
+        migrate: None,
     });
 }
 

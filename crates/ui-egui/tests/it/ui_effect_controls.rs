@@ -1609,6 +1609,8 @@ fn register_gain_effect() {
         revision: 1,
         files: None,
         margin: None,
+        state_version: 0,
+        migrate: None,
     });
 }
 
@@ -1658,6 +1660,8 @@ fn a_plugin_group_row_shows_the_name_its_author_gave_and_twirls_closed() {
         revision: 1,
         files: None,
         margin: None,
+        state_version: 0,
+        migrate: None,
     });
     let mut s = Session::default();
     s.execute("comp.new", json!({"name": "Main", "width": 640, "height": 360, "frameRate": 30, "duration": 10})).unwrap();
@@ -1699,6 +1703,8 @@ fn an_effect_whose_plugin_is_missing_is_marked_in_effect_controls() {
         revision: 1,
         files: None,
         margin: None,
+        state_version: 0,
+        migrate: None,
     });
     let mut s = Session::default();
     s.execute("comp.new", json!({"name": "Refs", "width": 32, "height": 18, "frameRate": 30, "duration": 2})).unwrap();

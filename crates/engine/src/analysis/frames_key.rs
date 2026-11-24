@@ -589,7 +589,7 @@ impl Text {
     fn group(&mut self, g: &PropGroup, depth: usize) {
         // Expressions find effects and groups by name (`effect("Blur")`, `propertyGroup(1).name`).
         // The uid and colour label never change pixels.
-        let PropGroup { uid: _, match_id, name, kind, enabled, label: _, children } = g;
+        let PropGroup { uid: _, match_id, name, kind, enabled, label: _, children, state_version: _ } = g;
         if depth >= MAX_DEPTH {
             self.word("tooDeep");
             return;

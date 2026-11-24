@@ -33,6 +33,8 @@ fn effect(id: &str, wgsl: &str, program: GpuProgram) -> DynamicEffect {
         version: "1.0.0".into(),
         files: None,
         margin: None,
+        state_version: 0,
+        migrate: None,
         id: id.into(),
         name: id.into(),
         category: "Test".into(),

@@ -331,6 +331,8 @@ fn a_plugin_curve_parameter_edits_one_channel_in_the_curves_graph_and_undoes() {
         revision: 1,
         files: None,
         margin: None,
+        state_version: 0,
+        migrate: None,
     });
     let (s0, l, fx) = with_effect("test.ui.curve.grade");
     let mut h = harness(s0);
@@ -375,6 +377,8 @@ fn a_plugin_curve_at_the_point_limit_takes_no_more_points_from_a_click_or_a_drag
         revision: 1,
         files: None,
         margin: None,
+        state_version: 0,
+        migrate: None,
     });
     let (s0, l, fx) = with_effect("test.ui.curve-full.grade");
     let mut h = harness(s0);

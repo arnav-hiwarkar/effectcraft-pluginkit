@@ -990,6 +990,26 @@ Effect Controls marks it missing. A final render refuses until the plugin is ins
 effectcraft-cli render film.ecproj --queue --without-missing-plugins
 ```
 
+## Rename a parameter without breaking old projects
+
+Raise the effect's state version and move old values in `migrate`. Projects saved before open with the
+value (and its keyframes) under the new id; a project from a newer release opened with this one keeps
+everything it does not know.
+
+```rust
+fn spec(&self) -> EffectSpec {
+    EffectSpec::new("glow", "Glow", "Light").version(1).param(Param::slider("strength", "Strength", 0.5, 0.0..=1.0))
+}
+
+fn migrate(&self, from: u32, values: &mut BTreeMap<String, Value>) {
+    if from < 1 && let Some(amount) = values.remove("amt") {
+        values.insert("strength".into(), amount);
+    }
+}
+```
+
+Test it with `plugin.migrate("glow", 0, saved)`, which returns the migrated values.
+
 ## Add a native build
 
 Add a native build only for work the sandbox cannot do. The source does not change.

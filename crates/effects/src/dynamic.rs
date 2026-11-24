@@ -9,6 +9,7 @@ pub type RenderDyn = Box<dyn Fn(&EffectCtx, Buf) -> Buf + Send + Sync>;
 pub type GpuDyn = Box<dyn Fn(&EffectCtx, Grid) -> Option<GpuProgram> + Send + Sync>;
 pub type StampDyn = Box<dyn Fn() -> u64 + Send + Sync>;
 pub type MarginDyn = Box<dyn Fn(&EffectCtx, f64) -> Option<f64> + Send + Sync>;
+pub type MigrateDyn = Box<dyn Fn(u32, &mut std::collections::BTreeMap<String, Value>) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Grid {
@@ -118,6 +119,8 @@ pub struct DynamicEffect {
     pub revision: u64,
     pub files: Option<StampDyn>,
     pub margin: Option<MarginDyn>,
+    pub state_version: u32,
+    pub migrate: Option<MigrateDyn>,
 }
 
 pub struct Registered {
