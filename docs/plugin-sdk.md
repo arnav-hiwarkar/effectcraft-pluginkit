@@ -388,6 +388,21 @@ let plan = plan
     .pass(PlanPass::blend_images(PlanImage::Source, grain, PlanImage::Output, BlendMode::Multiply, 0.3));
 ```
 
+An HSL range mask fuses with the blend that uses it. To darken everything but the reds and add a few sparks:
+
+```rust
+let mut plan = Plan::new();
+let (reds, darker) = (plan.scratch(cx.size), plan.scratch(cx.size));
+let sparks = (0..200).map(|i| Dab::new([i as f32 * 9.0, 40.0 + (i % 7) as f32 * 30.0], 4.0, [1.0, 0.6, 0.2])).collect();
+let plan = plan
+    .pass(PlanPass::hsl_range(PlanImage::Source, reds, [340.0, 20.0], [0.3, 1.0], [0.1, 0.9], 0.05))
+    .pass(PlanPass::blend_images(PlanImage::Source, reds, darker, BlendMode::Multiply, 0.5))
+    .pass(PlanPass::splat(darker, PlanImage::Output, sparks));
+```
+
+`craft_plugin::histogram(pixels)` counts straight values per channel in the plugin itself, for example
+for auto levels in `render`.
+
 Light that can go negative (a glow of signed colour) keeps the sRGB curve's straight segment below zero
 instead of mirroring it, and `BlendMode::ScreenHdr` screens a base outside 0 to 1 without darkening it:
 

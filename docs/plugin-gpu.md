@@ -12,7 +12,7 @@ textures or layers runs only on the GPU.
   runs them on all cores, and gives each sandboxed instance only the source rows its band reads.
 - A pass can instead name a [host kernel](#host-kernels): a blur, resample, blend, curve, convolution,
   warp, colour matrix, sRGB transfer, brightness curve, dither, light alpha, dilate or erode, directional
-  blur, bilateral filter or noise that the app runs itself,
+  blur, bilateral filter, noise, HSL range mask or splat that the app runs itself,
   natively on the CPU and with its own WGSL on the GPU.
 
 The GPU runs the plan when GPU Acceleration is on (`--gpu` on the command line). Otherwise, and whenever
@@ -262,13 +262,15 @@ own. Mix host kernel passes and plugin passes freely in one plan.
 | `PlanPass::directional_blur(src, out, angle, length)` | The average of `ceil(length) + 1` bilinear samples spread evenly over a line `length` pixels long centred on the pixel, at `angle` degrees (0 runs right, 90 down), 0 to 1024. A length of 0 keeps the image. |
 | `PlanPass::bilateral(src, out, radius, tolerance)` | An edge-keeping blur: neighbours within `radius` (0 to 32) weighed by a Gaussian of their distance (standard deviation half the radius) times `exp(-d² / (2 tolerance²))`, `d` the distance between their premultiplied red, green and blue and the pixel's. Only pixels inside the image count. |
 | `PlanPass::noise(out, scale, octaves, seed, origin)` | Smooth value noise as opaque grey in 0 to 1: `octaves` layers (1 to 12), each at twice the frequency and half the weight of the one before, the first with features `scale` pixels apart. The same for a seed and a pixel position minus `origin` on the CPU and the GPU; animate it by moving `origin` or changing `seed`. Combine it with the source through `blend_images`. |
+| `PlanPass::hsl_range(src, out, hue, saturation, lightness, softness)` | A soft selection as opaque grey: 1 where the pixel's straight hue, saturation and lightness are inside `hue` (`[from, to]` degrees, wrapping past 360, so `[340, 20]` is the reds), `saturation` and `lightness` (`[low, high]`, 0 to 1), falling linearly to 0 over `softness` (0 to 1; times 360 degrees for hue) outside each range, multiplied by alpha. Feed it to `blend_images` as the top image to apply something only to those colours. |
+| `PlanPass::splat(src, out, dabs)` | The source plus up to 65536 soft round `Dab`s added as light, in order: inside `radius` pixels of `at` (pixel centres are at `x + 0.5`), weight `opacity * smoothstep(fall)`, full inside `hardness * radius` and falling to 0 at the rim; colour `+= colour * weight`, alpha `+= weight` up to 1. `Dab::new(at, radius, colour)` is opaque and fully soft. For particles, sparks and brush dabs. |
 | `PlanPass::host(HostKernel::..., src, out)` | Any kernel with all its fields, for example `HostKernel::Resample { filter, scale: Some([2.0, 2.0]) }` to fix the source pixels per output pixel instead of taking it from the sizes. |
 
 Rules shared by all of them:
 
 - Pixels outside an image read as transparent, as for plugin passes.
 - `blur`, `convolve`, `curves`, `matrix`, `blend_images`, `warp`, `dilate`, `erode`, `directional_blur`,
-  `bilateral` and `noise` write an image of their source's size,
+  `bilateral`, `noise`, `hsl_range` and `splat` write an image of their source's size,
   and `blend_images` and `warp` an `aux` of that size too. `resample` maps any size to any size, shrinking
   at most 64 times in one pass.
 - The `BlendMode`s are `Over` (premultiplied over), `Add`, `Subtract`, `Multiply`, `Screen`, `Overlay`,
@@ -279,7 +281,7 @@ Rules shared by all of them:
   values as they are.
 - A pass's `floats`, `uints` and `reach` are ignored; the app knows what each kernel reads.
 - `blend_images`, `curves`, `matrix`, `to_linear`, `to_srgb`, `transfer`, `brightness_curve`, `dither`,
-  `light_alpha` and `noise` are pointwise: each output pixel depends only on the same pixel of its inputs. A pointwise
+  `light_alpha`, `noise` and `hsl_range` are pointwise: each output pixel depends only on the same pixel of its inputs. A pointwise
   pass may write the image it reads, as in `PlanPass::matrix(work, work, rows)`.
 - Consecutive pointwise passes of one size run as one loop over the frame on the CPU and one shader on the
   GPU. An image they write that no later pass reads is never stored. The loop ends before a pass that would
