@@ -1,0 +1,10 @@
+{
+  "id": "org.craftkit.generate",
+  "name": "Generate",
+  "version": "1.0.0",
+  "author": "Craft Plugin Kit",
+  "description": "Reference generators: a gradient ramp, a noise field and a grid of soft dots. Each draws without reading the layer and reports only what it drew.",
+  "license": "MIT OR Apache-2.0",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": []
+}

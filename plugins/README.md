@@ -14,6 +14,7 @@ from craft-libs at the `rev` the workspace `Cargo.toml` pins. They are the refer
 | [Retro](retro) | Effects | CRT Display (curvature, aperture grille, slot or dot mask, rolling scanlines, convergence error, phosphor glow, noise and flicker) and Neon Outline (luma or alpha edges with a three-radius bloom), the CRT's glow runs on the host's convolution kernel and Neon Outline on matching GPU kernels and a banded CPU render; `retro/bench.sh` times both |
 | [Glide](glide) | Panel and commands | A cubic-bezier easing editor with a preset library that applies the curve to the selected keyframes in one undo step |
 | [Cookbook](cookbook) | Effects, panels, a command, a task and a tool | Every recipe of [the cookbook](../docs/plugin-cookbook.md), each with its test; the page's code is checked against it |
+| [Generate](generate) | Effects | Reference generators that draw without reading the layer: a linear or radial gradient ramp, a noise field from the host noise kernel (CPU and GPU from one plan) and a grid of soft dots that reports only the rectangle it drew |
 | [Pulse](pulse) | Panel and task | Analyses a frequency band of a layer's audio in a cancellable background task and writes its energy per frame as slider keyframes in one undo step |
 
 ## Pulse

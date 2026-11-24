@@ -59,6 +59,10 @@ and licence texts are in [`NOTICE`](NOTICE).
 | `plugins/cookbook/tests/frames/glow.png` | EffectCraft contributors | Original work: stored test frame "glow" rendered by the cookbook reference plugin on a built-in test image | MIT OR Apache-2.0 |
 | `plugins/cookbook/tests/frames/tint.png` | EffectCraft contributors | Original work: stored test frame "tint" rendered by the cookbook reference plugin on a built-in test image | MIT OR Apache-2.0 |
 | `xtask/templates/warm.cube` | EffectCraft contributors | Original work: a hand-written 2x2x2 warming LUT copied into new data-only plugin packs | MIT OR Apache-2.0 |
+| `plugins/generate/tests/frames/dots.png` | EffectCraft contributors | Original work: stored test frame "dots" rendered by the generate reference plugin | MIT OR Apache-2.0 |
+| `plugins/generate/tests/frames/field.png` | EffectCraft contributors | Original work: stored test frame "field" rendered by the generate reference plugin | MIT OR Apache-2.0 |
+| `plugins/generate/tests/frames/ramp-linear.png` | EffectCraft contributors | Original work: stored test frame "ramp-linear" rendered by the generate reference plugin | MIT OR Apache-2.0 |
+| `plugins/generate/tests/frames/ramp-radial.png` | EffectCraft contributors | Original work: stored test frame "ramp-radial" rendered by the generate reference plugin | MIT OR Apache-2.0 |
 | `plugins/curves/tests/frames/s-curve-red-lift.png` | EffectCraft contributors | Original work: stored test frame "s-curve-red-lift" rendered by the curves reference plugin on a built-in test image | MIT OR Apache-2.0 |
 | `plugins/ember/tests/frames/fountain.png` | EffectCraft contributors | Original work: stored test frame "fountain" rendered by the ember reference plugin on a built-in test image | MIT OR Apache-2.0 |
 | `plugins/ember/tests/frames/sparks.png` | EffectCraft contributors | Original work: stored test frame "sparks" rendered by the ember reference plugin on a built-in test image | MIT OR Apache-2.0 |
