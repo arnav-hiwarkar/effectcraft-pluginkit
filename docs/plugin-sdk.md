@@ -287,6 +287,35 @@ fn input(&self, _cx: &Cx, out: Rect) -> Rect {
 are always whole rows. A plugin built before frames had separate input keeps working unchanged: the app
 gives it whole rows in place, as before, and copies them for it.
 
+An effect that draws something new without reading its input, such as a shape or a sprite, says so with
+`.ignores_input()` and reports what it drew with `frame.drawn(rect)`. The app copies nothing in, and
+everything outside the rectangle is transparent, so the effect writes only inside it and never clears the
+rest of the frame:
+
+```rust
+fn layout(&self, _cx: &Cx) -> Layout {
+    Layout::pointwise().ignores_input()
+}
+
+fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+    let [x, y] = cx.point("centre").map(|at| at as i32);
+    let dot = Rect { left: x - 50, top: y - 50, right: x + 50, bottom: y + 50 };
+    let x0 = frame.origin[0] as i32;
+    for (row_y, row) in frame.rows_mut() {
+        if (dot.top..dot.bottom).contains(&(row_y as i32)) {
+            for at in dot.left.max(x0)..dot.right.min(x0 + frame.width as i32) {
+                row[(at - x0) as usize] = [1.0, 0.5, 0.0, 1.0];
+            }
+        }
+    }
+    frame.drawn(dot);
+    Ok(())
+}
+```
+
+`frame.pixels` holds leftovers, not the input, so write every pixel inside the rectangle you report. The
+rectangle may reach past the frame; the app clips it.
+
 Scale every distance by `cx.scale`, so a half-resolution preview matches the full render. `cx.px(id)`
 does this for a slider measured in layer pixels.
 

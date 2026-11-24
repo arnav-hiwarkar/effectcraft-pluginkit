@@ -111,6 +111,7 @@ loosened later without breaking plugins, but not added later.
 | Band native neighbourhood effects on all cores | Retro CRT native 1080p 47.2 → 12.3 ms, Neon 54.2 → 16.7 ms | speed.md |
 | A frame with separate rows to read and rows to write, so no band renders its reach rows | a 108-row Retro band rendered 242 rows before | row 53 |
 | Render pointwise effects in place | a new frame per render made native Probe 0.30 → 0.70 ms | row 97 |
+| A generator says it ignores its input and reports the rectangle it drew; the layer is cropped to it | sandboxed 4K sprite 6.33 → 0.42 ms, 89 M → 12.5 M instructions; native 1.28 → 0.14 ms | w8-generator-path |
 | Host kernel plans run natively for sandboxed plugins | Lumen sandboxed 1080p 26.2 → 13.5 ms, equal to native | speed.md |
 | Fused pointwise kernels, generated WGSL per fuse (not a WGSL interpreter) | Lumen GPU 8.88 → 7.80 ms | row 103 |
 | Fast inline maths in the SDK (`math`, `math::fast`) | Plasma sandboxed 2.40x → 1.85x native | row 50 |
