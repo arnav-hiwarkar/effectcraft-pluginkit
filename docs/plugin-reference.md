@@ -136,6 +136,7 @@ Panels, commands, the CLI and automation all use these two commands.
 | `Param::custom(id, name, default)` | `cx.text(id)` | text the plugin owns; `controls` draws its row |
 | `Param::layer(id, name)` | `cx.layer(id)` | another layer's pixels |
 | `Param::mask(id, name)` | `cx.index(id)` | index into `cx.masks()` |
+| `Param::gradient(id, name, &[(at, [r, g, b, a]), …])` | `cx.gradient(id)` | a `Gradient`; `.sample(t)` gives RGBA |
 
 A slider has two ranges. `min..=max` is the hard range: what the user can type and what `cx.f` returns, even
 when an expression or a script pushes the value outside it. `.soft(low..=high)` is what the slider under the
@@ -157,6 +158,21 @@ Param::percent("mix", "Mix", 50.0).range(-100.0..=300.0)
 
 A parameter declared without these behaves as before. `effect.list` reports `sliderMin`, `sliderMax`,
 `log` and `percent` for them.
+
+#### Gradients
+
+A gradient parameter shows its colours as a strip in Effect Controls; clicking it (or Enter on it) opens the
+app's Gradient Editor, and its stopwatch keyframes it like any property. Keyframes with the same number of
+stops blend stop by stop. `Gradient { colors: Vec<(f64, [f64; 4])>, opacities: Vec<(f64, f64)> }` holds
+stops at positions 0 to 1 in order; `Gradient::new(colors)` adds full opacity at both ends.
+`gradient.sample(t)` clamps `t` to 0..=1, blends the two colour stops around it and the two opacity stops
+around it, and returns the colour's alpha times the opacity, exactly as the app samples its own gradients.
+A default needs 1 to `MAX_GRADIENT_STOPS` (64) colour stops, at most 64 opacity stops, positions in
+0..=1 and finite colours, or the plugin does not load:
+`effect `ramp`: gradient `ramp` has 65 colour and 2 opacity stops; give 1 to 64 colour stops and at most 64 opacity stops`.
+A gradient the user edits to more stops reaches the plugin with its first 64. In the test kit pass a
+`Gradient` to `.set`, or `{"colors": [[0, [0, 0, 0, 1]], [1, [1, 1, 1, 1]]]}` to `.with` and to
+`plugin look --set`.
 
 #### Typed parameters
 
@@ -180,6 +196,7 @@ The field type must fit the builder; a `String` field with `slider(...)` stops t
 | `[f32; 4]` | `cx.color` | color |
 | `String` | `cx.text` | text, custom |
 | `LayerParam` | `{ id, connected }`; `.image(cx)` and `.image_at(cx, comp_time)` read the layer | layer |
+| `Gradient` | `cx.gradient` | gradient |
 
 A new version of a plugin may add parameters. Effects already applied in a project gain them with their
 defaults when the project opens, or when the plugin starts while the project is open. The second is one undo step,

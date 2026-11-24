@@ -256,6 +256,12 @@ impl IntoValue for String {
     }
 }
 
+impl IntoValue for craft_plugin::Gradient {
+    fn into_value(self) -> Value {
+        Value::Gradient(self)
+    }
+}
+
 impl<const N: usize> IntoValue for [f64; N] {
     fn into_value(self) -> Value {
         Value::List(self.to_vec())
@@ -274,7 +280,8 @@ pub fn value_of_json(value: &serde_json::Value) -> Option<Value> {
         serde_json::Value::Number(n) => Value::Number(n.as_f64()?),
         serde_json::Value::String(s) => Value::Text(s.clone()),
         serde_json::Value::Array(items) => Value::List(items.iter().map(serde_json::Value::as_f64).collect::<Option<_>>()?),
-        serde_json::Value::Null | serde_json::Value::Object(_) => return None,
+        serde_json::Value::Object(_) => Value::Gradient(serde_json::from_value(value.clone()).ok()?),
+        serde_json::Value::Null => return None,
     })
 }
 
@@ -290,6 +297,7 @@ pub fn default_value(kind: &ParamKind, layer_size: [f64; 2]) -> Option<Value> {
         ParamKind::Text { default } | ParamKind::Custom { default } => Value::Text(default.clone()),
         ParamKind::Layer => Value::Bool(false),
         ParamKind::Mask => Value::Number(0.0),
+        ParamKind::Gradient { default } => Value::Gradient(default.clone()),
     })
 }
 

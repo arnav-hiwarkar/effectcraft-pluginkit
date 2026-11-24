@@ -4,14 +4,14 @@ use std::sync::Arc;
 
 use craft_plugin_host::kernels::{self, Lowered, StepImage};
 use craft_plugin_host::{
-    Blend, Call, Camera, Cull, Draw, EffectSpec, Focus, Host, LayerPlacement, Layout, Light, LightKind, MaskPath, Param, ParamKind, ParamsAt, Pixels, PlanData,
-    PlanImage, Rect, RenderCx, Scene, Value as Wire,
+    Blend, Call, Camera, Cull, Draw, EffectSpec, Focus, Gradient as WireGradient, Host, LayerPlacement, Layout, Light, LightKind, MaskPath, Param, ParamKind,
+    ParamsAt, Pixels, PlanData, PlanImage, Rect, RenderCx, Scene, Value as Wire,
 };
 use effectcraft_engine::effects::dynamic::{
     self, DynamicEffect, DynamicParam, GpuBlend, GpuBytes, GpuCull, GpuDraw, GpuPass, GpuPicture, GpuProgram, GpuSlot, Grid,
 };
 use effectcraft_engine::effects::{Buf, EffectCtx, Image, LayerPixels, MaskShape, Params, SceneLightKind, util};
-use effectcraft_engine::keyframe::Value;
+use effectcraft_engine::keyframe::{Gradient, Value};
 use effectcraft_engine::project::ParamUi;
 
 use crate::manage::Loaded;
@@ -147,8 +147,16 @@ fn declare(param: &Param) -> DynamicParam {
         ParamKind::Custom { default } => (Value::Str(default.clone()), ParamUi::Custom),
         ParamKind::Layer => (Value::Layer(None), ParamUi::Layer),
         ParamKind::Mask => (Value::Enum(0), ParamUi::Mask),
+        ParamKind::Gradient { default } => (Value::Gradient(app_gradient(default)), ParamUi::Gradient),
     };
     DynamicParam { id: param.id.clone(), name: param.name.clone(), default, ui }
+}
+
+fn app_gradient(gradient: &WireGradient) -> Gradient {
+    Gradient {
+        colors: gradient.colors.iter().map(|(at, color)| (*at, color.map(|c| c as f32))).collect(),
+        opacities: gradient.opacities.iter().map(|(at, opacity)| (*at, *opacity as f32)).collect(),
+    }
 }
 
 fn preset_values(spec: &EffectSpec, values: &BTreeMap<String, Wire>) -> Vec<(String, Value)> {
@@ -162,6 +170,7 @@ fn preset_values(spec: &EffectSpec, values: &BTreeMap<String, Wire>) -> Vec<(Str
             (ParamKind::Point3 { .. }, Wire::List(v)) => Value::Vec3([v[0], v[1], v[2]]),
             (_, Wire::List(v)) => Value::Color([v[0], v[1], v[2], v[3]]),
             (_, Wire::Text(text)) => Value::Str(text),
+            (_, Wire::Gradient(gradient)) => Value::Gradient(app_gradient(&gradient)),
         })
     };
     spec.params.iter().filter_map(|param| Some((param.id.clone(), convert(param, values.get(&param.id)?)?))).collect()
@@ -209,6 +218,13 @@ pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 
                 _ => Wire::Text(String::new()),
             },
             ParamKind::Layer => Wire::Bool(value.as_layer().is_some()),
+            ParamKind::Gradient { .. } => match value {
+                Value::Gradient(gradient) => Wire::Gradient(WireGradient {
+                    colors: gradient.colors.iter().map(|(at, color)| (*at, color.map(f64::from))).collect(),
+                    opacities: gradient.opacities.iter().map(|(at, opacity)| (*at, f64::from(*opacity))).collect(),
+                }),
+                _ => Wire::Gradient(WireGradient::default()),
+            },
         }
     };
     spec.params.iter().filter_map(|param| Some((param.id.clone(), param.fit(convert(param)).ok()?))).collect()

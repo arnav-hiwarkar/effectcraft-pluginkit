@@ -165,6 +165,20 @@ fn a_plugin_describes_its_effects_panels_and_commands() {
 }
 
 #[test]
+fn a_gradient_parameter_reaches_the_effect_and_samples_the_same_sandboxed_and_native() {
+    each_kind(|kind| {
+        let loaded = load(kind, &[]);
+        let mut cx = cx(1, 1);
+        let ramp = craft_plugin::Gradient { colors: vec![(0.0, [0.0, 0.0, 0.0, 1.0]), (1.0, [0.5, 0.0, 0.5, 1.0])], opacities: vec![(0.0, 1.0), (1.0, 0.5)] };
+        cx.params.insert("ramp".into(), craft_plugin::Value::Gradient(ramp));
+        cx.params.insert("at".into(), craft_plugin::Value::Number(0.5));
+        let mut pixels: Vec<Pixel> = vec![[1.0; 4]];
+        loaded.plugin.render("ramp", &cx, &Layout::pointwise(), None, &mut pixels, Recorder::default).unwrap();
+        assert_eq!(pixels, [[0.25, 0.0, 0.25, 0.75]], "{kind:?}");
+    });
+}
+
+#[test]
 fn an_effect_changes_the_pixels_it_is_given_using_its_parameters() {
     each_kind(|kind| {
         let loaded = load(kind, &[]);

@@ -17,7 +17,7 @@ mod runtime;
 pub mod testing;
 
 pub use craft_plugin::{
-    AudioRequest, Blend, Call, Camera, CommandSpec, Contributions, ControlsReply, Cull, Draw, EffectSpec, Entry, Focus, FrameDesc, FrameRequest,
+    AudioRequest, Blend, Call, Camera, CommandSpec, Contributions, ControlsReply, Cull, Draw, EffectSpec, Entry, Focus, FrameDesc, FrameRequest, Gradient,
     LayerPlacement, Layout, Light, LightKind, Manifest, MaskPath, PanelReply, PanelSpec, Param, ParamKind, ParamsAt, Permission, PickFile, Pixel, Plan,
     PlanData, PlanImage, PlanPass, Rect, RenderCx, RunMode, Scene, TaskSpec, TaskState, TaskStatus, UiEvent, UiEventKind, UiInput, Value, Widget,
     applied_padding,

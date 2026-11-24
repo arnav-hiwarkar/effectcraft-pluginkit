@@ -456,6 +456,26 @@ Param::slider("gain", "Gain", 1.0, 0.0..=1000.0).soft(0.01..=10.0).log()
 Param::percent("mix", "Mix", 50.0).range(-100.0..=300.0)
 ```
 
+## Colour by a gradient
+
+A gradient parameter opens the app's Gradient Editor and can be keyframed; `sample` reads it:
+
+```rust
+params! {
+    struct Settings {
+        ramp: Gradient = gradient("Ramp", &[(0.0, [0.0, 0.0, 0.0, 1.0]), (1.0, [1.0, 0.6, 0.2, 1.0])]),
+    }
+}
+
+fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+    let ramp = Settings::read(cx).ramp;
+    frame.map(|pixel| ramp.sample(f64::from(0.299 * pixel[0] + 0.587 * pixel[1] + 0.114 * pixel[2])));
+    Ok(())
+}
+```
+
+See [Gradients](plugin-reference.md#gradients).
+
 ## Add a panel
 
 A panel keeps its own state. The app calls `ui` once to draw the panel and keeps what it returned: it
