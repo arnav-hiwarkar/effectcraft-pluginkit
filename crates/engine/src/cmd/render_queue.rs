@@ -706,6 +706,9 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn render(s: &mut Session, p: &Value) -> Result<Value> {
     let wait = b_p(p, "wait").unwrap_or(true);
+    if !b_p(p, "withoutMissingPlugins").unwrap_or(false) {
+        crate::plugin_refs::render_refusal(&s.project).map_err(EngineError::Other)?;
+    }
     // Settings ▸ Project ▸ Auto-Save ▸ Save When Starting Render Queue.
     if s.prefs.auto_save.enabled
         && s.prefs.auto_save.save_on_render_start
@@ -1108,7 +1111,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("render.saveCurrentPreview", "Save Current Preview...", ["Composition"], None, "{comp?, path}", has_comp, save_current_preview),
         cmd!("renderQueue.move", "Move in Render Queue", [], None, "{item?|index?, to: n (1-based)}", has_items, move_item),
         cmd!("renderQueue.duplicate", "Duplicate Render Item", [], None, "{item?|index?}", has_items, duplicate),
-        cmd!("renderQueue.render", "Render", [], None, "{wait?: bool (default true; the UI renders in the background)}", has_queued, render),
+        cmd!(
+            "renderQueue.render",
+            "Render",
+            [],
+            None,
+            "{wait?: bool (default true; the UI renders in the background), withoutMissingPlugins?: bool (render even when plug-ins the project uses are not installed, without their effects)}",
+            has_queued,
+            render
+        ),
         cmd!("renderQueue.stop", "Stop Rendering", [], None, "{}", rendering, stop),
         query!("renderQueue.list", "Render Queue Items", "{}", list),
         query!("renderQueue.templates", "Render Templates", "{}", templates),

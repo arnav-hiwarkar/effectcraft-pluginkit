@@ -48,6 +48,7 @@ fn register(loaded: &Arc<Loaded>) {
         let id = effect_id(plugin_id, &spec.id);
         dynamic::register(DynamicEffect {
             owner: plugin_id.clone(),
+            version: loaded.bundle.manifest.version.clone(),
             id: id.clone(),
             name: spec.name.clone(),
             category: spec.category.clone(),

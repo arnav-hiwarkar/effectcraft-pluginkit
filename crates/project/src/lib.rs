@@ -69,6 +69,18 @@ pub struct Project {
     /// Render Queue preferences (Notify, storage overflow folders).
     #[serde(default, skip_serializing_if = "render_queue::RenderQueuePrefs::is_default")]
     pub render_prefs: render_queue::RenderQueuePrefs,
+    /// The plug-ins whose effects the project uses, as they were when it was saved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<PluginUse>,
+}
+
+/// One plug-in a saved project uses: its id and version, and its digest once plug-ins carry one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginUse {
+    pub id: String,
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
 }
 
 #[cfg(test)]

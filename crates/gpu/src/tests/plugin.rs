@@ -30,6 +30,7 @@ fn register(id: &str, wgsl: &str, program: GpuProgram) {
 fn effect(id: &str, wgsl: &str, program: GpuProgram) -> DynamicEffect {
     DynamicEffect {
         owner: "test".into(),
+        version: "1.0.0".into(),
         files: None,
         margin: None,
         id: id.into(),

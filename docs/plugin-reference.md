@@ -418,6 +418,20 @@ frame of that size and returns the first rule it breaks. The app runs this same 
 plan on the GPU or the CPU, and reports the reason as the effect's error. `plan.check(frame)` also
 refuses a plan the CPU cannot run (one with draw passes, buffers, textures or layers).
 
+## Projects
+
+A saved project records `"plugins": [{"id", "version", "digest"?}]`, one entry for each plugin with an
+effect in the project. The entry comes from the loaded plugin's `plugin.json`; while the plugin is
+missing, the entry saved before is kept for as long as one of its effects is in the project, so saving
+again changes neither the record nor the effect's values. `digest` is not written yet. A project
+without the list opens as before.
+
+| Where | What happens |
+|---|---|
+| `file.open` | Result `plugins`: `[{id, version, installed, status}]` for each recorded plugin that is `missing` (`installed: null`) or a `differentVersion`, plus one notification naming them. |
+| `renderQueue.render`, Watch Folder | Refused with an error naming the plugins of the project's effects that are not loaded, unless `{"withoutMissingPlugins": true}` (CLI `render --without-missing-plugins`); the effects are then skipped. |
+| Preview, Effect Controls | The effect is skipped and its header shows a warning: "Plug-in `<id>` is not installed". |
+
 ## Fast maths
 
 `craft_plugin::math` holds `#[inline(always)]` `f32` functions with no tables and no library calls. Sandboxed and

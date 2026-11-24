@@ -12,7 +12,7 @@
 //! effectcraft-cli get <comp> <layer> <path> [--time S]        read a property
 //! effectcraft-cli set <comp> <layer> <path> <value> [--time S] [--expression E]
 //! effectcraft-cli render-frame [--comp C] [--time S|--frame N] [--max-side PX|--scale K] [--out F.png] [--transparent]
-//! effectcraft-cli render [--comp C] --out FILE [--format h264|hevc|av1|prores|webm|png|jpeg|tiff|exr|tga|gif|wav|aiff] [--start S] [--end S]
+//! effectcraft-cli render [--comp C] --out FILE [--format h264|hevc|av1|prores|webm|png|jpeg|tiff|exr|tga|gif|wav|aiff] [--start S] [--end S] [--without-missing-plugins]
 //!     [--work-area] [--fps N] [--resolution full|half|third|quarter|K] [--quality best|draft] [--channels rgb|rgba]
 //!     [--jpeg-quality N] [--bitrate KBPS] [--prores proxy|lt|standard|hq|4444|4444xq] [--audio auto|on|off]
 //!     [--profile main|main10] [--level auto|4.1] [--rate-control bitrate|quality] [--video-quality 1-100]
@@ -112,7 +112,7 @@ const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|se
   get <comp> <layer> <path> [--time S]     read a property
   set <comp> <layer> <path> <value> [--time S] [--expression E]
   render-frame [--comp C] [--time S | --frame N] [--max-side PX | --scale K] [--out F.png] [--transparent]
-  render [--comp C] --out FILE [--format F] [--start S] [--end S] [--work-area] [--fps N]
+  render [--comp C] --out FILE [--format F] [--start S] [--end S] [--work-area] [--fps N] [--without-missing-plugins]
          [--resolution full|half|third|quarter|K] [--quality best|draft] [--channels rgb|rgba]
          [--jpeg-quality N] [--bitrate KBPS] [--prores PROFILE] [--audio auto|on|off]
          [--profile main|main10] [--level auto|4.1] [--rate-control bitrate|quality] [--video-quality N]
@@ -230,6 +230,7 @@ const FLAGS: &[&str] = &[
     "--autosave",
     "--keep-going",
     "--progress",
+    "--without-missing-plugins",
 ];
 
 struct Args {
@@ -992,7 +993,7 @@ fn render(args: &Args, json_out: bool) -> Result<(), Failure> {
         );
     }
     let attempted: std::collections::HashSet<u64> = s.project.render_queue.iter().filter(|i| i.is_queued()).map(|i| i.id).collect();
-    s.execute("renderQueue.render", json!({"wait": false})).map_err(err)?;
+    s.execute("renderQueue.render", json!({"wait": false, "withoutMissingPlugins": args.flag("--without-missing-plugins")})).map_err(err)?;
     let tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
     // `--progress`: one line per update for a program reading stderr (a terminal gets the live line).
     let lines = args.flag("--progress") && !tty;

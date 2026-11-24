@@ -19,6 +19,7 @@ mod home;
 mod interchange;
 pub mod menus;
 mod output_guard;
+pub mod plugin_refs;
 pub mod preview;
 pub mod render_queue;
 pub mod replay;

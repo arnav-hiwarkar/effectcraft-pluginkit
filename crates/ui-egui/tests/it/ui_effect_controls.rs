@@ -1590,6 +1590,7 @@ fn register_gain_effect() {
     let mix = ParamUi::Scaled { min: -100.0, max: 300.0, slider_min: -100.0, slider_max: 300.0, decimals: 1, log: false, percent: true };
     dynamic::register(DynamicEffect {
         owner: "test.ui.gain".into(),
+        version: "1.0.0".into(),
         id: "test.ui.gain.gain".into(),
         name: "Gain Test".into(),
         category: "Test".into(),
@@ -1641,6 +1642,7 @@ fn a_plugin_group_row_shows_the_name_its_author_gave_and_twirls_closed() {
     use effectcraft_engine::project::ParamUi;
     dynamic::register(DynamicEffect {
         owner: "test.ui.tuned".into(),
+        version: "1.0.0".into(),
         id: "test.ui.tuned.tuned".into(),
         name: "Tuned Test".into(),
         category: "Test".into(),
@@ -1674,4 +1676,43 @@ fn a_plugin_group_row_shows_the_name_its_author_gave_and_twirls_closed() {
     click(&mut h, at);
     h.run_steps(2);
     assert!(h.state().ui.fx_closed.contains(&group), "clicking the named group's twirl closes it");
+}
+
+#[test]
+fn an_effect_whose_plugin_is_missing_is_marked_in_effect_controls() {
+    use effectcraft_engine::effects::dynamic::{self, DynamicEffect};
+    dynamic::register(DynamicEffect {
+        owner: "test.ui.refs".into(),
+        version: "1.0.0".into(),
+        id: "test.ui.refs.tint".into(),
+        name: "Refs Tint".into(),
+        category: "Test".into(),
+        params: Vec::new(),
+        render: Box::new(|ctx, buf| ctx.unchanged(buf)),
+        shader: None,
+        gpu: None,
+        time_dependent: false,
+        reads_other_frames: false,
+        reads_comp_scene: false,
+        reads_param_history: false,
+        presets: Vec::new(),
+        revision: 1,
+        files: None,
+        margin: None,
+    });
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Refs", "width": 32, "height": 18, "frameRate": 30, "duration": 2})).unwrap();
+    let lid = s.execute("layer.newSolid", json!({"name": "Tinted"})).unwrap()["layer"].as_u64().unwrap();
+    let fx = s.execute("effect.apply", json!({"layers": [lid], "effect": "test.ui.refs.tint"})).unwrap()["effects"][0].as_u64().unwrap();
+    std::sync::Arc::make_mut(&mut s.project).plugins =
+        vec![effectcraft_engine::project::PluginUse { id: "test.ui.refs".into(), version: "1.0.0".into(), digest: None }];
+    dynamic::unregister("test.ui.refs");
+    s.state.selected_layers = vec![LayerId(lid)];
+    let mut app = EffectcraftApp::new(s);
+    app.show_panel(PanelKind::EffectControls);
+    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).with_step_dt(1.0 / 60.0).build_eframe(|_| app);
+    h.run_steps(4);
+    let mark = format!("effectControls.effect.{fx}.error");
+    let label = h.state().auto.previous.iter().chain(h.state().auto.elements.iter()).find(|e| e.id == mark).map(|e| e.label.clone());
+    assert!(label.as_deref().is_some_and(|l| l.contains("test.ui.refs") && l.contains("not installed")), "{label:?} in {:?}", ids(&h));
 }
