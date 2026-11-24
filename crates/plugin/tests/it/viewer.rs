@@ -96,6 +96,20 @@ fn an_effect_overlay_arrives_with_its_shapes_and_handles_in_layer_space_and_is_k
 }
 
 #[test]
+fn an_overlay_of_a_hundred_thousand_shapes_reaches_the_viewer_as_its_first_four_thousand_and_ninety_six() {
+    let mut app = app("test.viewer-crowd", &[]);
+    let mut panels = Panels::default();
+    aim_layer(&mut app);
+    app.session.execute_checked("prop.set", json!({"layer": "Aim", "path": "effects/#1/crowd", "value": 100000.0})).unwrap();
+    let crowded = shown(&mut app, &mut panels);
+    assert_eq!(crowded.overlay.marks.len(), 4096);
+    let Shape::Circle { center: first, .. } = crowded.overlay.marks[3].shape else { panic!("the fourth shape is the first of the crowd") };
+    let Shape::Circle { center: last, .. } = crowded.overlay.marks[4095].shape else { panic!("the last kept shape is a crowd circle") };
+    assert_eq!((first, last), ([0.0, 0.0], [4092.0, 0.0]));
+    assert_eq!(crowded.overlay.handles.len(), 7);
+}
+
+#[test]
 fn dragging_each_kind_of_handle_sets_its_parameter_in_one_undo_step() {
     let mut app = app("test.viewer-drag", &[]);
     let mut panels = Panels::default();

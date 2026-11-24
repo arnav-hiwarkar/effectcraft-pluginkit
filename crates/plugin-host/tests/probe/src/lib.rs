@@ -750,6 +750,7 @@ impl Effect for Aim {
             .param(Param::slider("reach", "Reach", 10.0, 0.0..=100.0))
             .group("Box", [Param::point("min", "Box Min", [0.25, 0.25]), Param::point("max", "Box Max", [0.5, 0.5])])
             .param(Param::custom("pin", "Pin", "0,0"))
+            .param(Param::slider("crowd", "Crowd", 0.0, 0.0..=200000.0))
     }
 
     fn overlay(&self, cx: &Cx, overlay: &mut Overlay) {
@@ -761,6 +762,9 @@ impl Effect for Aim {
         overlay.rect(cx, "Box/min", "Box/max");
         overlay.custom("pin", "pin", [1.0, 2.0]).named("Pin");
         overlay.space(Space::Comp).line(&[[0.0, 0.0], [4.0, 4.0]]);
+        for n in 0..cx.f("crowd") as usize {
+            overlay.circle([n as f64, 0.0], 1.0);
+        }
     }
 
     fn drag(&self, _cx: &Cx, key: &str, to: [f64; 2], value: &mut String) {
