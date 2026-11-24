@@ -56,6 +56,7 @@ mod fx_warp;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod init;
 mod inpaint;
+mod mixed_stacks;
 mod particles;
 mod plugin;
 mod three_d;

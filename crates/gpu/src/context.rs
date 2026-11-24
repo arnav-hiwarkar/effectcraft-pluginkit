@@ -1778,6 +1778,11 @@ impl GpuContext {
         Self::drop_from(&mut self.pipelines, &mut self.unavailable, &mut self.effect_pipelines, entry);
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_max_dim(&self, max_dim: u32) -> GpuContext {
+        GpuContext { max_dim: self.max_dim.min(max_dim), ..self.without_kernel("") }
+    }
+
     /// A copy of this context sharing the same [`wgpu::Device`] and [`wgpu::Queue`] with
     /// kernel `entry` left out, as if it had failed to build (tests of the CPU fallback
     /// without opening a second device on `llvmpipe`).
