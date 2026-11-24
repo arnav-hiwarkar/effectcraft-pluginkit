@@ -919,9 +919,19 @@ mod tests {
         let renderer = CountingRenderer { inner: egui_kittest::wgpu::WgpuTestRenderer::new(), uploads: uploads.clone() };
         let mut harness =
             egui_kittest::Harness::builder().with_size(vec2(1200.0, 800.0)).renderer(renderer).build_eframe(|_| crate::EffectcraftApp::new(session));
-        let settle = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>, old: Option<u64>| {
+        let settle = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>, old: Option<u64>, favour_gpu: bool| {
             for _ in 0..1500 {
                 h.step();
+                if favour_gpu
+                    && let (Some(g), Some(cid)) = (h.state().gpu.clone(), h.state().session.active_comp_id())
+                    && let Some(auto) = effectcraft_engine::render::Accelerator::auto_pick(&g)
+                {
+                    let key = effectcraft_engine::render::AutoKey::new(cid, 1.0, true);
+                    for _ in 0..4 {
+                        auto.record(key, false, 1000.0);
+                        auto.record(key, true, 1.0);
+                    }
+                }
                 if !h.state().gpu_initializing() && h.state().frames.inflight() == 0 && h.state().viewer_shown.is_some_and(|(_, k)| Some(k.content) != old) {
                     return h.run_steps(3);
                 }
@@ -929,21 +939,16 @@ mod tests {
             }
             panic!("no new frame reached the viewer");
         };
-        settle(&mut harness, None);
+        settle(&mut harness, None, false);
         let Some(gpu) = harness.state().gpu.clone() else {
             return eprintln!("no GPU compositor on this adapter: skipping");
         };
         let key = harness.state().viewer_shown.unwrap().1;
         assert_eq!(key.scale, 1000);
-        let auto = effectcraft_engine::render::Accelerator::auto_pick(&gpu).unwrap();
-        for _ in 0..4 {
-            auto.record(effectcraft_engine::render::AutoKey::new(cid, 1.0, true), false, 1000.0);
-            auto.record(effectcraft_engine::render::AutoKey::new(cid, 1.0, true), true, 1.0);
-        }
         let before = gpu.context().transfer_stats();
         uploads.lock().unwrap().clear();
         harness.state_mut().session.execute("prop.addKey", gamma(1.0, 0.6)).unwrap();
-        settle(&mut harness, Some(key.content));
+        settle(&mut harness, Some(key.content), true);
         assert!(harness.state().viewer_on_gpu(), "a GPU-composited frame on screen");
         let shown = gpu.context().transfer_stats();
         assert_eq!((shown.readbacks, shown.readback_bytes), (before.readbacks, before.readback_bytes), "nothing read back to show it");
