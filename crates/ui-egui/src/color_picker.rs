@@ -900,8 +900,7 @@ mod tests {
 
     #[test]
     fn gpu_composited_frames_are_shown_in_place_and_read_back_once_for_the_eyedropper() {
-        static ONE_DEVICE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _device = ONE_DEVICE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _slots = crate::frames::gpu_slot_test();
         let instance = eframe::wgpu::Instance::new(eframe::wgpu::InstanceDescriptor::new_without_display_handle());
         if pollster::block_on(instance.enumerate_adapters(eframe::wgpu::Backends::all())).is_empty() {
             return eprintln!("no wgpu adapter: skipping");
@@ -921,7 +920,6 @@ mod tests {
             egui_kittest::Harness::builder().with_size(vec2(1200.0, 800.0)).renderer(renderer).build_eframe(|_| crate::EffectcraftApp::new(session));
         let settle = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>, old: Option<u64>, favour_gpu: bool| {
             for _ in 0..1500 {
-                h.step();
                 if favour_gpu
                     && let (Some(g), Some(cid)) = (h.state().gpu.clone(), h.state().session.active_comp_id())
                     && let Some(auto) = effectcraft_engine::render::Accelerator::auto_pick(&g)
@@ -932,6 +930,7 @@ mod tests {
                         auto.record(key, true, 1.0);
                     }
                 }
+                h.step();
                 if !h.state().gpu_initializing() && h.state().frames.inflight() == 0 && h.state().viewer_shown.is_some_and(|(_, k)| Some(k.content) != old) {
                     return h.run_steps(3);
                 }
@@ -948,8 +947,18 @@ mod tests {
         let before = gpu.context().transfer_stats();
         uploads.lock().unwrap().clear();
         harness.state_mut().session.execute("prop.addKey", gamma(1.0, 0.6)).unwrap();
+        let busy_before = crate::frames::GPU_BUSY_FALLBACKS.load(std::sync::atomic::Ordering::SeqCst);
         settle(&mut harness, Some(key.content), true);
-        assert!(harness.state().viewer_on_gpu(), "a GPU-composited frame on screen");
+        let auto = effectcraft_engine::render::Accelerator::auto_pick(&gpu).and_then(|a| a.stats(effectcraft_engine::render::AutoKey::new(cid, 1.0, true)));
+        assert!(
+            harness.state().viewer_on_gpu(),
+            "a GPU-composited frame on screen: shown {:?}, on the GPU {:?}, GPU Acceleration {}, Auto {auto:?}, GPU slots busy {}, frames sent to the CPU because the GPU slots were busy {}",
+            harness.state().viewer_shown.map(|s| s.1),
+            harness.state().viewer_native.as_ref().map(|n| n.1),
+            harness.state().session.project.settings.gpu_acceleration,
+            crate::frames::gpu_slots_busy(),
+            crate::frames::GPU_BUSY_FALLBACKS.load(std::sync::atomic::Ordering::SeqCst) - busy_before,
+        );
         let shown = gpu.context().transfer_stats();
         assert_eq!((shown.readbacks, shown.readback_bytes), (before.readbacks, before.readback_bytes), "nothing read back to show it");
         let frame_uploads = uploads.lock().unwrap().iter().filter(|s| s[0] * s[1] >= 320 * 180).count();

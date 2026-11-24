@@ -72,6 +72,22 @@ struct GpuRenderSlot<'a>(&'a GpuRenderSlots);
 
 static GPU_RENDER_SLOTS: GpuRenderSlots = GpuRenderSlots::new();
 
+#[cfg(test)]
+pub(crate) static GPU_BUSY_FALLBACKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn gpu_slots_busy() -> usize {
+    *GPU_RENDER_SLOTS.busy.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+static GPU_SLOT_TESTS: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn gpu_slot_test() -> std::sync::MutexGuard<'static, ()> {
+    GPU_SLOT_TESTS.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl GpuRenderSlots {
     const fn new() -> Self {
         Self {
@@ -2333,6 +2349,10 @@ impl Worker {
     }
     /// Busy shared-pool workers retry on the CPU without treating contention as a GPU fault.
     fn gpu_attempt_rejected(&self, gpu: &Gpu, error: &GpuAttemptError) {
+        #[cfg(test)]
+        if matches!(error, GpuAttemptError::Busy) {
+            GPU_BUSY_FALLBACKS.fetch_add(1, Ordering::SeqCst);
+        }
         if let GpuAttemptError::Failed(error) = error {
             self.gpu_attempt_failed(gpu, error);
         }
