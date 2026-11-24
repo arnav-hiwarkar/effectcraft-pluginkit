@@ -647,3 +647,30 @@ fn a_gradient_past_the_stop_limit_warns_when_only_the_gpu_plans_the_effect() {
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].contains("gradient parameter `ramp` has 6 stops beyond the limit of 64"), "{warnings:?}");
 }
+
+#[test]
+fn a_plugin_effect_render_called_off_keeps_nothing_in_the_layer_cache() {
+    use effectcraft_engine::render::{CancellableFootage, LayerCache};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    let mut app = app("test.render-called-off", &[]);
+    app.session.execute("layer.newSolid", json!({"name": "Red", "color": "#ff3300", "width": 64, "height": 36})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "test.render-called-off.invert"})).unwrap();
+    let comp = app.session.active_comp_id().unwrap();
+    let cache = LayerCache::default();
+    let t = Tick::from_seconds_f64(0.0);
+
+    let off = CancellableFootage { inner: app.session.footage.as_ref(), cancel: Arc::new(AtomicBool::new(true)) };
+    let mut renderer = Renderer::new(&app.session.project, &off, RenderOpts::default());
+    renderer.cache = Some(&cache);
+    renderer.comp_frame(comp, t);
+    assert_eq!(cache.stats().entries, 0, "a called-off plugin render kept layers");
+
+    let mut renderer = Renderer::new(&app.session.project, app.session.footage.as_ref(), RenderOpts::default());
+    renderer.cache = Some(&cache);
+    let image = renderer.comp_frame(comp, t);
+    assert!(cache.stats().entries > 0, "a render that runs to the end keeps its layers");
+    let centre = image.data[(image.height / 2 * image.width + image.width / 2) as usize];
+    assert!(close(centre, [0.0, 0.8, 1.0, 1.0]), "the finished render is inverted: {centre:?}");
+}
