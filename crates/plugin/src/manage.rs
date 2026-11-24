@@ -122,7 +122,8 @@ impl Inner {
     fn start(&mut self, bundle: &Bundle) {
         let id = bundle.manifest.id.clone();
         self.stop(&id);
-        let (bundle, grants) = if self.is_session_only(&id) {
+        let session_only = self.is_session_only(&id);
+        let (bundle, grants) = if session_only {
             (bundle.clone().with_mode(RunMode::Sandboxed), bundle.manifest.permissions.clone())
         } else {
             match self.registry.grants(bundle) {
@@ -150,7 +151,17 @@ impl Inner {
         if unsandboxed {
             self.mark(Some(&id));
         }
-        match load(&bundle, grants, self.registry.data_dir(&id)) {
+        let loaded = load(&bundle, grants, self.registry.data_dir(&id));
+        let replaced = if session_only { None } else { loaded.as_ref().ok().and_then(|_| self.registry.grants(&bundle).err()) };
+        if let Some(refusal) = replaced {
+            log::warn!("plugin `{id}` changed while it loaded, so it was not started: {refusal}");
+            self.refused.insert(id, refusal);
+            if unsandboxed {
+                self.mark(None);
+            }
+            return;
+        }
+        match loaded {
             Ok(loaded) => {
                 effects::Engine.register(&loaded);
                 self.loaded.insert(id, loaded);
