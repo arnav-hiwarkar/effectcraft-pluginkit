@@ -453,7 +453,9 @@ fn a_time_dependent_plugin_effect_renders_each_frame_again_through_the_layer_cac
     app.session.execute("effect.apply", json!({"effect": "test.render-drift.drift"})).unwrap();
     let session = &app.session;
     let comp = session.active_comp_id().expect("an active comp");
+    let cache = effectcraft_engine::render::LayerCache::default();
     let mut renderer = Renderer::new(&session.project, session.footage.as_ref(), RenderOpts::default());
+    renderer.cache = Some(&cache);
     let mut green = |seconds: f64| {
         let image = renderer.comp_frame(comp, Tick::from_seconds_f64(seconds));
         image.data[(image.height / 2 * image.width + image.width / 2) as usize][1]
