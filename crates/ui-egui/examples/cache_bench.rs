@@ -22,6 +22,10 @@
 //! playback, and prints the frames shown per second, the time stalled and the scale it played at.
 //! With `--gpu` the app composites on the GPU (Mercury Auto), otherwise on the CPU; `--res N`
 //! sets the comp's Resolution to every N-th pixel instead of Auto.
+//!
+//! `--scrub ROUNDS --plugin DIR --effect ID` instead scrubs a 1080p30 solid carrying that plugin
+//! effect: each round asks for six distant viewer frames `--gap MS` apart (default 40) and prints
+//! how long the last one took to be cached after it was asked for, and when the queue was empty.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -89,6 +93,10 @@ fn main() {
         s.prefs.disk.disk_cache_enabled = true;
         s.prefs.disk.disk_cache_folder = disk.to_string_lossy().to_string();
         s.configure_disk_cache();
+    }
+    if let Some(rounds) = arg("--scrub").and_then(|v| v.parse().ok()) {
+        scrub(s, &dir, rounds);
+        return;
     }
     let cid = match arg("--project") {
         Some(p) => {
@@ -219,6 +227,67 @@ fn main() {
         let d = dc.stats();
         println!("disk cache        {} written, {} dropped, {} entries ({} MB), flushed in {flushed:.2} s", d.writes, d.dropped, d.entries, d.bytes >> 20);
     }
+}
+
+fn scrub(mut s: Session, dir: &std::path::Path, rounds: usize) {
+    let bundle = arg("--plugin").expect("--scrub needs --plugin DIR");
+    let effect = arg("--effect").expect("--scrub needs --effect ID");
+    let plugins = effectcraft_plugin::install(&mut s, Some(&dir.join("scrub-config")));
+    plugins.load_for_session(std::path::Path::new(&bundle)).expect("the plugin loads");
+    let cid = ItemId(
+        run(&mut s, "comp.new", json!({"name": "Scrub", "width": 1920, "height": 1080, "frameRate": 30, "duration": 10}))["comp"].as_u64().expect("comp"),
+    );
+    run(&mut s, "layer.newSolid", json!({"name": "S", "color": "#8a6a40"}));
+    run(&mut s, "effect.apply", json!({"layer": "S", "effect": effect}));
+    let gap = Duration::from_millis(arg("--gap").and_then(|v| v.parse().ok()).unwrap_or(40));
+    let frames = Frames::default();
+    frames.set_budget(64 << 30);
+    let opts = RenderOpts { backend: effectcraft_engine::render::Backend::Cpu, ..Default::default() };
+    let src = RenderSource {
+        project: s.project.clone(),
+        footage: s.footage.clone(),
+        expr: s.expr.clone(),
+        layer_cache: s.layer_cache.clone(),
+        gpu: None,
+        gpu_display: false,
+        disk: None,
+    };
+    let fr = s.project.comp(cid).expect("comp").frame_rate;
+    let series = FrameKey {
+        revision: s.revision,
+        content: frames.content_of(&src.project, s.revision, cid),
+        comp: cid.0,
+        frame: 0,
+        scale: 1000,
+        view: 0,
+        opts: opts_hash(&opts),
+    };
+    let mut latest = Vec::new();
+    for round in 0..rounds {
+        frames.clear();
+        let mut asked = Instant::now();
+        let mut last = series;
+        for jump in 0..6 {
+            if jump > 0 {
+                std::thread::sleep(gap);
+            }
+            last = FrameKey { frame: ((round * 7 + jump * 47) % 300) as i64, ..series };
+            asked = Instant::now();
+            frames.request_urgent(&src, last, cid, fr.tick_of(last.frame), opts);
+        }
+        while !frames.is_cached(&last) && asked.elapsed() < Duration::from_secs(120) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let shown = asked.elapsed().as_secs_f64() * 1000.0;
+        while frames.inflight() > 0 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let idle = asked.elapsed().as_secs_f64() * 1000.0;
+        println!("round {round:<3}        latest frame {shown:.0} ms, queue empty {idle:.0} ms");
+        latest.push(shown);
+    }
+    latest.sort_by(f64::total_cmp);
+    println!("latest frame      min {:.0} ms, median {:.0} ms, max {:.0} ms", latest[0], latest[latest.len() / 2], latest[latest.len() - 1]);
 }
 
 /// `--play`: a first playback of `cid` in the app, as someone pressing play in it would see.

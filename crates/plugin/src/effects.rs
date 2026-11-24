@@ -294,6 +294,10 @@ impl Host for RenderHost<'_, '_> {
         Some(self.spec)
     }
 
+    fn cancel(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        self.ctx.env.host?.cancel()
+    }
+
     fn finish(&mut self, written: &mut [craft_plugin_host::Pixel]) {
         self.ctx.quantize_chunk(written);
     }
@@ -424,6 +428,9 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
             }
         }),
     };
+    if matches!(rendered, Err(craft_plugin_host::PluginError::Cancelled)) {
+        return buf;
+    }
     let finished_in_bands = passes.is_none() && rendered.is_ok();
     let stopped = dynamic::get(&effect_id(&loaded.bundle.manifest.id, &spec.id)).and_then(|r| r.gpu_stopped.get().map(|why| format!("on the GPU: {why}")));
     let error = rendered.err().map(|e| e.to_string()).or_else(|| stopped.clone());

@@ -439,6 +439,63 @@ fn a_newer_viewer_frame_calls_off_the_one_rendering() {
     assert_eq!(f.inflight(), 0, "released");
 }
 
+#[test]
+fn a_newer_viewer_frame_calls_off_a_plugin_effect_rendering_and_renders_first() {
+    use effectcraft_engine::time::FrameRate;
+    use serde_json::json;
+    static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let probe = craft_plugin_host::testing::probe_dir();
+    let built = std::process::Command::new(env!("CARGO"))
+        .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
+        .arg(probe.join("Cargo.toml"))
+        .status()
+        .expect("cargo runs");
+    assert!(built.success(), "the probe builds");
+    let bundle = tempfile::tempdir().unwrap();
+    std::fs::copy(probe.join("target/wasm32-unknown-unknown/release/probe.wasm"), bundle.path().join("probe.wasm")).unwrap();
+    let manifest = json!({"id": "test.scrub-probe", "name": "Probe", "version": "1.0.0", "entry": {"wasm": "probe.wasm"}, "permissions": []});
+    std::fs::write(bundle.path().join("plugin.json"), manifest.to_string()).unwrap();
+    let mut s = effectcraft_host::session();
+    let plugins = effectcraft_plugin::install(&mut s, Some(CONFIG.get_or_init(|| tempfile::tempdir().unwrap()).path()));
+    plugins.load_for_session(bundle.path()).unwrap();
+    let cid =
+        ItemId(s.execute("comp.new", json!({"name": "A", "width": 64, "height": 36, "frameRate": 30, "duration": 10})).unwrap()["comp"].as_u64().unwrap());
+    let layer = s.execute("layer.newSolid", json!({"comp": cid.0, "name": "Spin", "color": "#808080"})).unwrap()["layer"].clone();
+    s.execute("layer.timing", json!({"layers": [layer], "out": 1.0})).unwrap();
+    s.execute("effect.apply", json!({"layer": "Spin", "effect": "test.scrub-probe.spin"})).unwrap();
+    let src = RenderSource {
+        project: s.project.clone(),
+        footage: Arc::new(effectcraft_engine::render::NoFootage),
+        expr: None,
+        layer_cache: Arc::default(),
+        gpu: None,
+        gpu_display: false,
+        disk: None,
+    };
+    let f = Frames::default();
+    let content = f.content_of(&s.project, s.revision, cid);
+    let key = |frame| FrameKey { revision: s.revision, content, comp: cid.0, frame, scale: 1000, view: 0, opts: 0 };
+    let wait = |done: &dyn Fn() -> bool| {
+        for _ in 0..2000 {
+            if done() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    f.request_urgent(&src, key(0), cid, Tick::ZERO, RenderOpts::default());
+    wait(&|| f.queue.lock().unwrap().running.contains(&key(0)));
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let asked = std::time::Instant::now();
+    f.request_urgent(&src, key(150), cid, FrameRate::FPS_30.tick_of(150), RenderOpts::default());
+    wait(&|| f.inflight() == 0);
+    assert_eq!(f.inflight(), 0, "the spinning frame stopped long before its 60 s time limit");
+    assert!(asked.elapsed() < std::time::Duration::from_secs(10), "{:?}", asked.elapsed());
+    assert!(f.is_cached(&key(150)), "the newest frame rendered");
+    assert!(!f.is_cached(&key(0)), "a called-off frame is not cached");
+    assert_eq!(plugins.render_error("test.scrub-probe.spin"), None, "a call-off is not a plugin error");
+}
+
 /// #284: scrubbing asks for a viewer frame at every step; a newer one drops the comp's viewer
 /// frames still waiting (they would all render first), but not prefetch frames or another
 /// comp's viewer frame.
