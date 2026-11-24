@@ -601,3 +601,20 @@ fn a_generator_that_ignores_its_input_and_reports_what_it_drew_renders_the_same_
     assert!(close(at(150, 130), [0.5, 0.5, 0.75, 1.0]), "the sprite's centre is {:?}", at(150, 130));
     assert_eq!(at(10, 10), [0.0; 4], "outside the sprite the comp is empty");
 }
+
+#[test]
+fn a_gradient_past_the_stop_limit_warns_when_only_the_gpu_plans_the_effect() {
+    use effectcraft_engine::effects::{EffectCtx, Params, dynamic};
+    use effectcraft_engine::keyframe::{Gradient, Value};
+    let app = app("test.render-stops-gpu", &[]);
+    let id = format!("{}.ramp", app.id);
+    let colors = (0..70).map(|i| (f64::from(i) / 69.0, [i as f32 / 69.0, 0.0, 0.0, 1.0])).collect();
+    let params = Params { values: [("ramp".to_string(), Value::Gradient(Gradient { colors, opacities: vec![(0.0, 1.0), (1.0, 1.0)] }))].into() };
+    let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [64.0, 36.0], seed: 0, adjustment: false, env: Default::default() };
+    let registered = dynamic::get(&id).expect("the probe registered its ramp");
+    let plan = registered.effect.gpu.as_ref().expect("a GPU planner");
+    plan(&ctx, dynamic::Grid { width: 64, height: 36, offset: [0.0; 2], scale: 1.0 });
+    let warnings: Vec<String> = app.plugins.get("test.render-stops-gpu").unwrap().plugin.logs(0).into_iter().map(|line| line.message).collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("gradient parameter `ramp` has 6 stops beyond the limit of 64"), "{warnings:?}");
+}
