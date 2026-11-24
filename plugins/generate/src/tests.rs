@@ -48,3 +48,11 @@ fn every_effect_renders_the_same_in_bands_as_whole_at_an_odd_height() {
         assert_eq!(plugin.render(effect).size(40, 257).run().err(), None, "{effect}");
     }
 }
+
+#[test]
+fn every_effect_that_renders_differently_over_time_says_so() {
+    let plugin = TestPlugin::of(crate::plugin);
+    for effect in ["ramp", "field", "dots"] {
+        assert_eq!(plugin.render(effect).size(160, 90).time_check(), Ok(()), "{effect}");
+    }
+}

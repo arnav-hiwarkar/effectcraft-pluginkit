@@ -14,7 +14,7 @@ pub struct Field;
 
 impl Effect for Field {
     fn spec(&self) -> EffectSpec {
-        EffectSpec::new("field", "Noise Field", "Generate").params(Settings::params())
+        EffectSpec::new("field", "Noise Field", "Generate").params(Settings::params()).time_dependent()
     }
 
     fn layout(&self, cx: &Cx) -> Layout {
