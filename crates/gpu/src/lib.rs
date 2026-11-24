@@ -101,6 +101,7 @@ use effectcraft_project::ItemId;
 use effectcraft_raster::Image;
 use effectcraft_render::{Accelerator, FxStep, Renderer};
 use effectcraft_time::Tick;
+pub use guard::LoopCheck;
 pub use wgpu;
 
 use crate::context::Enc;
@@ -148,6 +149,8 @@ pub struct DisplayFrame {
     pub texture: wgpu::Texture,
     pub width: u32,
     pub height: u32,
+    /// Whether a plugin loop in this frame ran past the cap: read once its GPU work finishes.
+    pub loop_check: LoopCheck,
 }
 
 impl Gpu {
@@ -264,18 +267,16 @@ impl Gpu {
         let img = walk::render(&mut e, r, comp, t)?;
         let texture = e.display(&img);
         e.submit();
-        if e.loop_capped() {
-            return None;
-        }
+        let loop_check = e.loop_check();
         // Reject failures observed during rendering/submission before publishing the frame.
         // A later device fault still requires the presentation host's lifecycle handling.
         self.ctx.check_health().map_err(|e| log::error!("gpu display: {e}")).ok()?;
-        Some(DisplayFrame { texture, width: img.width, height: img.height })
+        Some(DisplayFrame { texture, width: img.width, height: img.height, loop_check })
     }
 
     /// Read a display frame back as premultiplied RGBA8 (Info panel sampling, eyedroppers).
     pub fn read_display(&self, f: &DisplayFrame) -> Option<Vec<u8>> {
-        Enc::new(&self.ctx).read_texture(&f.texture, f.width, f.height, 4)
+        Enc::new(&self.ctx).read_texture(&f.texture, f.width, f.height, 4).filter(|_| f.loop_check.capped() == Some(false))
     }
 
     /// [`Gpu::read_display`] without blocking (the browser's main thread): `done` gets the bytes
@@ -286,7 +287,8 @@ impl Gpu {
             crate::readback::reject(done, e);
             return;
         }
-        Enc::new(&self.ctx).read_texture_async(&f.texture, f.width, f.height, 4, done);
+        let check = f.loop_check.clone();
+        Enc::new(&self.ctx).read_texture_async(&f.texture, f.width, f.height, 4, move |bytes| done(bytes.filter(|_| check.capped() == Some(false))));
     }
 
     /// Render a frame on the GPU and read it back (`None` = not handled).

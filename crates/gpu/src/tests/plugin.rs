@@ -332,7 +332,7 @@ fn a_capped_frame_declines_while_another_encoder_holds_a_flag_read_of_the_same_s
 }
 
 #[test]
-fn a_capped_frame_never_reaches_the_viewer() {
+fn a_capped_frame_goes_on_screen_at_once_then_is_turned_away_and_never_read_back() {
     let Some(g) = gpu() else { return };
     register_spin("test.gpu.spin-display", "\n\n");
     crate::fx_plugin::warm(&g.ctx, &dynamic::get("test.gpu.spin-display").expect("registered"));
@@ -346,9 +346,25 @@ fn a_capped_frame_never_reaches_the_viewer() {
         effectcraft_render::RenderOpts { backend: effectcraft_render::Backend::Gpu, ..crate::tests::opts() },
     );
     r.accel = Some(g);
-    let shown =
-        g.render_display(&r, scene.cid, effectcraft_time::Tick::ZERO).and_then(|f| g.read_display(&f)).map(|bytes| bytes[(30 * 97 + 48) * 4..][..4].to_vec());
-    assert_eq!(shown, None, "the capped frame renders on the CPU");
+    let shown = g.render_display(&r, scene.cid, effectcraft_time::Tick::ZERO).expect("the frame goes on screen without waiting for its loop flag");
+    let capped = (0..50).find_map(|_| {
+        g.poll();
+        let read = shown.loop_check.capped();
+        if read.is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        read
+    });
+    assert_eq!(capped, Some(true), "its loop flag arrives within a few steps and says capped");
+    assert_eq!(g.read_display(&shown), None, "no readback publishes the capped frame");
+    let again = g.render_display(&r, scene.cid, effectcraft_time::Tick::ZERO);
+    assert!(
+        again.is_none_or(|f| {
+            g.wait();
+            f.loop_check.capped() == Some(false)
+        }),
+        "the frame renders again with the shader turned off"
+    );
 }
 
 #[test]

@@ -465,6 +465,20 @@ impl Cache {
             self.forget(&i.img);
         }
     }
+    /// The frame of `k`, shown again; a GPU frame whose plugin loop ran past the cap is dropped
+    /// instead, so it renders again on the CPU.
+    fn shown(&mut self, k: &FrameKey) -> Option<FrameImage> {
+        let img = self.map.get(k).map(|c| c.img.clone())?;
+        if let FrameImage::Gpu(f) = &img
+            && f.loop_check.capped() == Some(true)
+        {
+            self.remove(k);
+            self.order.retain(|o| o != k);
+            return None;
+        }
+        self.touch(k);
+        Some(img)
+    }
     /// Shown again: last in line for eviction.
     fn touch(&mut self, k: &FrameKey) {
         if let Some(c) = self.map.get_mut(k) {
@@ -1125,10 +1139,7 @@ impl Frames {
 
     /// The cached frame, which becomes the most recently used.
     pub fn get(&self, k: &FrameKey) -> Option<FrameImage> {
-        let mut c = self.cache.lock().ok()?;
-        let img = c.map.get(k).map(|c| c.img.clone())?;
-        c.touch(k);
-        Some(img)
+        self.cache.lock().ok()?.shown(k)
     }
 
     /// Prefer the exact requested frame. While an edit renders, advance to the newest completed
@@ -1162,9 +1173,7 @@ impl Frames {
             })
             .max_by_key(|k| k.revision)
             .copied()?;
-        let img = c.map.get(&newest).map(|c| c.img.clone())?;
-        c.touch(&newest);
-        Some((newest, img))
+        c.shown(&newest).map(|img| (newest, img))
     }
 
     /// The [`comp_content`] identity of `comp` in `project` at `revision` (taken once per

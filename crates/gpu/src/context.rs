@@ -2247,6 +2247,11 @@ impl<'g> Enc<'g> {
         reads.into_iter().map(crate::guard::FlagRead::clean).fold(false, |capped, clean| capped | !clean)
     }
 
+    /// The loop flags this encoder submitted, read later without waiting.
+    pub(crate) fn loop_check(&mut self) -> crate::guard::LoopCheck {
+        crate::guard::LoopCheck::new(&self.g.device, std::mem::take(&mut self.submitted_guards))
+    }
+
     /// The raw encoder: within this module only, after [`Enc::uses`] on every pooled image.
     fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
         let g = self.g;

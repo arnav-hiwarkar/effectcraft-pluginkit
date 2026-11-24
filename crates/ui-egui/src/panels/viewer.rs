@@ -403,8 +403,12 @@ fn phase_frame(app: &mut EffectcraftApp, v: &mut Vw<'_>) {
     // The frame on screen. While a drag or a property scrub is rendering, the exact key changes
     // with every edit and its render is still in flight; the newest completed revision of the
     // same frame keeps the picture following the pointer instead of freezing until it stops.
+    let capped = app.viewer_native.as_ref().map(|(_, _, f)| f.loop_check.capped());
+    if capped == Some(None) {
+        ctx.request_repaint();
+    }
     if let Some((k, img)) = app.frames.get_for_viewer(&key, app.viewer_shown.as_ref().map(|(_, s)| s)) {
-        let stale = app.viewer_shown.as_ref().is_none_or(|(_, s)| *s != k);
+        let stale = app.viewer_shown.as_ref().is_none_or(|(_, s)| *s != k) || capped == Some(Some(true));
         // A CPU frame goes up again when the magnification calls for another factor.
         let minify = minify_factor(app.session.prefs.viewer_zoom_smooth(), scale, (zoom * ppp) as f64);
         // (Half-float frames have no such texture: the display pass makes mips.)
