@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use effectcraft_engine::effects::contributed;
 use effectcraft_engine::render::{RenderOpts, Renderer};
 use effectcraft_engine::time::Tick;
-use effectcraft_plugin::PluginState;
+use effectcraft_plugin::{PluginState, Plugins};
 use serde_json::{Value, json};
 
 const SWAP_RED_AND_BLUE: &str = "LUT_3D_SIZE 2\n0 0 0\n0 0 1\n0 1 0\n0 1 1\n1 0 0\n1 0 1\n1 1 0\n1 1 1\n";
@@ -77,13 +77,13 @@ fn dir_of(dir: &Path, file: &str) -> String {
 #[test]
 fn a_data_only_bundle_survives_a_restart_without_asking_again() {
     let id = "test.data-restart";
-    let app = super::app("test.data-only-restart", &[]);
+    let root = tempfile::tempdir().unwrap();
     let (_source, dir) = pack(id, &[("swap.cube", SWAP_RED_AND_BLUE)], json!([]));
-    app.plugins.install(&dir).unwrap();
+    Plugins::open(root.path(), false).install(&dir).unwrap();
     contributed::remove(id);
-    app.plugins.reload();
+    let restarted = Plugins::open(root.path(), false);
     assert!(lut_path(id).ends_with("swap.cube"));
-    app.plugins.uninstall(id).unwrap();
+    restarted.uninstall(id).unwrap();
 }
 
 #[test]

@@ -132,7 +132,8 @@ Each loaded plugin gets its own helper. The reasons:
   roughly 100 to 160 MB and start in parallel (an estimate from the per-helper figures; 20 helpers at once
   were not measured).
 
-Helpers start when the plugin loads, because `Describe` runs then anyway. They stay up until the plugin
+Helpers would start on a plugin's first use: a warm start registers its contributions from the kept
+`Describe` reply and runs nothing. They stay up until the plugin
 is unloaded or the app quits.
 
 The helper is a separate small binary, `craft-plugin-helper`
@@ -204,10 +205,10 @@ allocation, as the ABI requires, so it pays one extra copy.
 - The helper engine uses `Config::new()` with `epoch_interruption(false)`. `cache_name` already hashes
   `precompile_compatibility_hash`, so its compiled files are cached apart from the in-process ones.
 - The app compiles and writes the cache, as it does today. The helper gets the cache folder read-only,
-  so a plugin cannot plant a compiled module. Each entry `<name>.cwasm` has a `<name>.mac` holding an
-  HMAC-SHA-256 under the install's owner-only key (`.compiled/key`) over the cache name and the entry's file
-  identity (device, inode, size, modification and change times, read after the entry is read); an entry
-  that was replaced, changed in place or copied over another's name is compiled again.
+  so a plugin cannot plant a compiled module. Each entry `<name>.cwasm` (and each kept description
+  `<name>.described`) has a `.mac` file beside it holding an HMAC-SHA-256 under the install's owner-only key
+  (`.compiled/key`) over its file name and its whole body; an entry that was replaced, corrupted on disk or
+  copied over another's name is compiled again. `<name>` hashes the approved bundle's digest.
 - `StoreLimits` stay. Nothing else limits time, because the deadline lives in the app.
 - To keep the frame copies at today's two (app into linear memory, and back), give the helper engine
   `Config::with_host_memory(Arc<SlabMemory>)` (wasmtime 51 `MemoryCreator` / `LinearMemory`). Each

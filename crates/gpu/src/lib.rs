@@ -460,6 +460,12 @@ impl Accelerator for Gpu {
 
     fn supports_effect(&self, id: &str) -> bool {
         self.warm_plugins();
+        if let Some(registered) = effectcraft_effects::dynamic::get(id)
+            && !registered.gpu_planned.load(std::sync::atomic::Ordering::Relaxed)
+            && registered.gpu_probed.set(()).is_ok()
+        {
+            fx_plugin::warm(&self.ctx, &registered);
+        }
         self.ctx.check_health().is_ok() && self.ctx.can_readback() && effects::supports(id)
     }
 

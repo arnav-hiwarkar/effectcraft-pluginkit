@@ -57,6 +57,13 @@ There is one function in each direction.
   read or write a file, write a log line, start or ask about a task, render a frame, read audio, or
   open the file dialog.
 
+The app asks `describe` once per approved bundle: the reply is kept under the bundle's digest
+(`Plugins/.data/.compiled/<name>.described`, signed like the compiled module), and later starts register the
+plugin's effects, panels, commands, tools and tasks from it without running the plugin. A sandboxed plugin's
+module is loaded and run on its first use (a render, a panel, a command, a task). Changed files make a new
+digest, so the plugin is described again. Each start reads and hashes every bundle file once; that one digest
+checks the approval and names the compiled module and the kept description.
+
 A task runs on its own thread and instance. Its calls that need the document wait in a queue that the
 app answers on the main thread once per UI frame (`effectcraft_plugin::pump`) and in the headless
 `plugin.tasks` wait loop, so the document is never touched off the main thread. A sandboxed task is

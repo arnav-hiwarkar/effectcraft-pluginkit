@@ -16,7 +16,6 @@ use effectcraft_engine::project::ParamUi;
 
 use crate::manage::Loaded;
 
-const PROBE_SIDE: u32 = 256;
 const MAX_STAMPED_FILES: usize = 256;
 const STAMP_LIFETIME: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -68,9 +67,6 @@ fn register(loaded: &Arc<Loaded>) {
             state_version: spec.version,
             migrate: Some(Box::new(move |from, values| migrate(&migrate_plugin, &migrate_spec, from, values))),
         });
-        if spec.shader.is_none() && default_plan_runs_on_gpu(loaded, spec) {
-            mark_gpu_planned(&id);
-        }
     }
 }
 
@@ -87,14 +83,6 @@ fn mark_gpu_planned(id: &str) {
 struct Quiet;
 
 impl Host for Quiet {}
-
-fn default_plan_runs_on_gpu(loaded: &Loaded, spec: &EffectSpec) -> bool {
-    let grid = Grid { width: PROBE_SIDE, height: PROBE_SIDE, offset: [0.0; 2], scale: 1.0 };
-    let layer_size = [f64::from(PROBE_SIDE); 2];
-    let cx = RenderCx { params: wire_params(spec, &Params::default(), layer_size, grid), scale: 1.0, layer_size, size: [PROBE_SIDE; 2], ..RenderCx::default() };
-    let layout = loaded.plugin.call::<Layout>(&Call::Layout { effect: spec.id.clone(), cx }, None, &mut Quiet);
-    layout.is_ok_and(|layout| layout.gpu.is_some_and(|plan| plan_runs_on_gpu(spec, &plan)))
-}
 
 fn revision_stamp(loaded: Arc<Loaded>) -> dynamic::StampDyn {
     let folders = vec![loaded.bundle.dir.clone(), loaded.data_dir.clone()];

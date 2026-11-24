@@ -94,3 +94,26 @@ fn a_bundle_replaced_while_it_loads_never_runs_as_the_approved_one() {
         }
     }
 }
+
+#[test]
+fn a_warm_start_runs_no_plugin_and_the_first_use_runs_only_the_one_used() {
+    struct NoHost;
+    impl craft_plugin_host::Host for NoHost {}
+    let root = tempfile::tempdir().unwrap();
+    let ids = ["test.lazy-a", "test.lazy-b", "test.lazy-c"];
+    let sources: Vec<_> = ids.iter().map(|id| installed(root.path(), id).1).collect();
+
+    let warm = Plugins::open(root.path(), false);
+    assert_eq!(ids.map(|id| warm.get(id).unwrap().plugin.started()), [false; 3]);
+    assert_eq!(listed(&warm, ids[1]).state, PluginState::Running);
+    assert!(listed(&warm, ids[1]).effects.iter().any(|effect| effect.id.ends_with("invert")));
+
+    let used = warm.get(ids[1]).unwrap();
+    let mut cx = craft_plugin_host::RenderCx { size: [2, 1], scale: 1.0, ..Default::default() };
+    cx.params.insert("amount".into(), craft_plugin_host::Value::Number(1.0));
+    let mut pixels = vec![[0.25, 0.5, 1.0, 1.0], [0.0, 0.0, 0.0, 0.5]];
+    used.plugin.render("invert", &cx, &craft_plugin_host::Layout::pointwise(), None, &mut pixels, || NoHost).unwrap();
+    assert_eq!(pixels, [[0.75, 0.5, 0.0, 1.0], [1.0, 1.0, 1.0, 0.5]]);
+    assert_eq!(ids.map(|id| warm.get(id).unwrap().plugin.started()), [false, true, false]);
+    drop(sources);
+}

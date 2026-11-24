@@ -128,6 +128,7 @@ pub struct Registered {
     pub effect: DynamicEffect,
     pub gpu_planned: std::sync::atomic::AtomicBool,
     pub gpu_stopped: std::sync::OnceLock<String>,
+    pub gpu_probed: std::sync::OnceLock<()>,
 }
 
 static REGISTRY: RwLock<Vec<Arc<Registered>>> = RwLock::new(Vec::new());
@@ -184,7 +185,7 @@ pub fn register(effect: DynamicEffect) {
     let mut registry = REGISTRY.write().unwrap_or_else(|poisoned| poisoned.into_inner());
     registry.retain(|r| r.spec.id != spec.id);
     let gpu_planned = std::sync::atomic::AtomicBool::new(effect.shader.as_deref().is_some_and(|wgsl| !wgsl.is_empty()));
-    registry.push(Arc::new(Registered { spec, effect, gpu_planned, gpu_stopped: std::sync::OnceLock::new() }));
+    registry.push(Arc::new(Registered { spec, effect, gpu_planned, gpu_stopped: std::sync::OnceLock::new(), gpu_probed: std::sync::OnceLock::new() }));
     GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
 }
 

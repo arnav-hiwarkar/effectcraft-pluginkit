@@ -207,6 +207,14 @@ broken package leaves the installed version working. It refuses a package with a
 path, a link, more than 4096 entries or more than 512 MiB of content. The plugin runs after the user
 approves what it asks for.
 
+An installed plugin costs almost nothing at start: the app keeps the list of what it adds (from
+`Plugin::new()...`) and loads the plugin only when you first use one of its effects, panels, commands or
+tasks. Rebuild and reinstall and the list is read again:
+
+```rust
+craft_plugin::export!(|| Plugin::new().effect(Tint).command("reset", "Reset Tint", reset))
+```
+
 `plugin.load` runs an unpacked bundle for the current session with the permissions it asks for, and
 `EFFECTCRAFT_PLUGIN_PATH` loads bundle folders every time the app starts. `cargo xtask plugin dev` uses
 `plugin.load`.
