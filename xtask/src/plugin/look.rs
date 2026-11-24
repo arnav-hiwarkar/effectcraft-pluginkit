@@ -44,6 +44,7 @@ pub(super) fn value(id: &str, text: &str, kind: &ParamKind) -> Result<Value, Str
             serde_json::from_str(text).map(Value::Gradient).map_err(|_| wrong(r#"a gradient as JSON, such as {"colors":[[0,[0,0,0,1]],[1,[1,1,1,1]]]}"#.into()))
         }
         ParamKind::Layer | ParamKind::Mask => Err(wrong("a layer or a mask, which render fills from the input image; --set cannot change it".into())),
+        ParamKind::Button => Err(wrong("a button, which has no value; --set cannot change it".into())),
     }
 }
 
