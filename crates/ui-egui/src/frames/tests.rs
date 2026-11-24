@@ -1914,7 +1914,7 @@ fn no_frame_is_encoded_while_the_disk_has_no_room() {
     disk.set_disk_space(Some((4096 * GB, GB)));
     assert!(!disk.accepts_writes());
     // The frame worker's write: refused up front.
-    assert!(!put_disk_frame(&disk, 1, &img(), &ReadFiles::default(), None, disk.drop_generation()));
+    assert!(!put_disk_frame(&disk, 1, &img(), None, &ReadFiles::default(), None, disk.drop_generation()));
     let mut s = Session::default();
     let cid = ItemId(s.execute("comp.new", json!({"name": "A", "width": 8, "height": 8, "duration": 1})).unwrap()["comp"].as_u64().unwrap());
     s.execute("layer.newSolid", json!({})).unwrap();
@@ -3216,6 +3216,56 @@ fn the_accountant_trims_only_frames_in_ram() {
     assert!(!c.map.contains_key(&key(1, 2, 0)) && c.map.contains_key(&key(1, 3, 0)), "the oldest frame in RAM went");
     drop(c);
     assert_eq!(memory.bytes(), 16);
+}
+
+#[test]
+fn gpu_frames_past_their_budget_stay_as_cpu_frames() {
+    let Some(gpu) = Gpu::headless() else {
+        eprintln!("no GPU adapter: skipped");
+        return;
+    };
+    let gpu_frame = |v: u8| {
+        let texture = gpu.device().create_texture(&eframe::wgpu::TextureDescriptor {
+            label: None,
+            size: eframe::wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: eframe::wgpu::TextureDimension::D2,
+            format: eframe::wgpu::TextureFormat::Rgba8Unorm,
+            usage: eframe::wgpu::TextureUsages::TEXTURE_BINDING | eframe::wgpu::TextureUsages::COPY_SRC | eframe::wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        gpu.context().queue.write_texture(
+            eframe::wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: eframe::wgpu::Origin3d::ZERO,
+                aspect: eframe::wgpu::TextureAspect::All,
+            },
+            &[v, 0, 0, 255].repeat(4),
+            eframe::wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(8), rows_per_image: Some(2) },
+            eframe::wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
+        );
+        FrameImage::Gpu(Arc::new(DisplayFrame { texture, width: 2, height: 2 }))
+    };
+    let frames = Frames::default();
+    {
+        let mut c = frames.cache.lock().unwrap();
+        c.gpu_budget = 16;
+        for frame in 0..3 {
+            c.insert(key(1, frame, 0), gpu_frame(10 * frame as u8 + 10));
+        }
+        assert_eq!((c.bytes, c.gpu_bytes), (48, 48));
+    }
+    frames.worker().demote_gpu_frames(&gpu);
+    let c = frames.cache.lock().unwrap();
+    assert_eq!((c.bytes, c.gpu_bytes), (48, 16));
+    assert_eq!(c.order.iter().map(|k| k.frame).collect::<Vec<_>>(), [0, 1, 2], "still in line");
+    let red = |frame| match &c.map[&key(1, frame, 0)].img {
+        FrameImage::Cpu(i) => Some(i.pixels[3].r()),
+        _ => None,
+    };
+    assert_eq!([red(0), red(1), red(2)], [Some(10), Some(20), None], "the oldest two in RAM, the newest on the GPU");
 }
 
 /// #3301 review: a frame someone still holds (the viewer showing it, from `Frames::get`) is not

@@ -1,4 +1,4 @@
-use super::{Arc, EffectcraftApp, RenderSource, gpu_failure, menus, panels};
+use super::{Arc, EffectcraftApp, RenderSource, frames, gpu_failure, menus, panels};
 
 /// The status line while the GPU compositor's worker thread is still building its pipelines
 /// (see [`EffectcraftApp::init_gpu`]).
@@ -20,11 +20,15 @@ impl EffectcraftApp {
         }
     }
 
-    /// Keep GPU-composited viewer frames on the GPU (drawn from their texture). The browser can't
-    /// read frames back (its thread can't wait for the GPU), so there the viewer shows GPU frames
-    /// directly whenever it draws them plainly (RGB, no exposure, no region of interest); the
-    /// desktop reads them back (see [`frames::RenderSource::gpu_display`]).
+    /// Keep GPU-composited viewer frames on the GPU (drawn from their texture, through the display
+    /// pass on the same device, read back only for a pixel consumer). The desktop does so except
+    /// for half-float frames (32 bpc). The browser can't read frames back (its thread can't wait
+    /// for the GPU), so there the viewer shows GPU frames directly whenever it draws them plainly
+    /// (RGB, no exposure, no region of interest) (see [`frames::RenderSource::gpu_display`]).
     fn gpu_display(&self) -> bool {
+        if cfg!(not(target_arch = "wasm32")) {
+            return !frames::f16_frames(&self.session.project.settings);
+        }
         let v = &self.session.state.viewer;
         cfg!(target_arch = "wasm32")
             && v.channel == effectcraft_engine::viewer::Channel::Rgb

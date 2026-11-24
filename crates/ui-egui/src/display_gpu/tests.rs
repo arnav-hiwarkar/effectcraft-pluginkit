@@ -582,3 +582,46 @@ fn bakes_run_again_when_frame_pass_or_lut_change() {
     b.free(Some(&rs));
     assert!(b.id().is_none());
 }
+
+#[test]
+fn gpu_frames_pass_from_their_own_texture() {
+    let _g = DEVICE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(d) = device() else { return eprintln!("no wgpu adapter: skipping") };
+    let gpu = DisplayGpu::new(&d.device);
+    let rs = render_state(&d);
+    let (w, h) = (64u32, 8u32);
+    let px: Vec<egui::Color32> =
+        (0..w * h).map(|i| egui::Color32::from_rgba_premultiplied((i % 64 * 3) as u8, (i / 64 * 20) as u8, 90, [255, 160][(i % 2) as usize])).collect();
+    let img = Arc::new(egui::ColorImage::new([w as usize, h as usize], px));
+    let texture = d.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("composited frame"),
+        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        mip_level_count: super::mip_levels(w, h),
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    d.queue.write_texture(
+        wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+        img.as_raw(),
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+    );
+    let frame = Arc::new(effectcraft_gpu::DisplayFrame { texture: texture.clone(), width: w, height: h });
+    let dc = DisplayColor::from_lut(test_lut(1.0));
+    let mut on_gpu = super::Bake::default();
+    let mut uploaded = super::Bake::default();
+    for pass in [DisplayPass::new(Channel::Red, false, 0.0, SRGB, None), DisplayPass::new(Channel::Rgb, false, 1.0, SRGB, Some(&dc))] {
+        on_gpu.show(&rs, &gpu, &Source::Gpu(frame.clone()), &pass, true).unwrap();
+        uploaded.show(&rs, &gpu, &Source::Rgba8(img.clone()), &pass, true).unwrap();
+        assert!(on_gpu.input.as_ref() == Some(&texture), "the pass reads the frame's texture");
+        let (a, b) = (read(&d, on_gpu.texture().unwrap(), 0).0, read(&d, uploaded.texture().unwrap(), 0).0);
+        assert!(a == b, "{pass:?}: the frame's texture and its uploaded pixels differ");
+    }
+    let other = Arc::new(egui::ColorImage::new([w as usize, h as usize], vec![egui::Color32::RED; (w * h) as usize]));
+    on_gpu.show(&rs, &gpu, &Source::Rgba8(other), &DisplayPass::new(Channel::Rgb, false, 1.0, SRGB, None), true).unwrap();
+    assert!(on_gpu.input.as_ref() != Some(&texture));
+    assert!(read(&d, &texture, 0).0 == img.pixels.iter().map(|c| c.to_array()).collect::<Vec<_>>(), "the composited frame is untouched");
+}

@@ -418,6 +418,7 @@ fn draw_through_pass(
         let ptr = match &src {
             crate::display_gpu::Source::F16(f) => std::sync::Arc::as_ptr(f) as usize,
             crate::display_gpu::Source::Rgba8(c) => std::sync::Arc::as_ptr(c) as usize,
+            crate::display_gpu::Source::Gpu(f) => std::sync::Arc::as_ptr(f) as usize,
         };
         (ptr, pass_key(pass), minify).hash(&mut h);
         h.finish()
@@ -429,6 +430,7 @@ fn draw_through_pass(
             let img = match &src {
                 crate::display_gpu::Source::F16(f) => f.to_color_image(pass),
                 crate::display_gpu::Source::Rgba8(c) => transformed(c, pass),
+                crate::display_gpu::Source::Gpu(_) => return,
             };
             let img = crate::frames::fit_texture_by(img, crate::frames::max_texture_side(ctx), minify);
             let tex = ctx.load_texture(if snapshot { "viewer-snapshot" } else { "viewer-display" }, img, super::viewer::zoom_texture_options(smooth));
@@ -516,22 +518,29 @@ pub(crate) fn draw_frame(app: &mut EffectcraftApp, ctx: &egui::Context, painter:
     }
     let pass = display_pass(app, rgba8_encoding(app), dc.as_ref());
     let plain = pass.is_identity();
-    // A GPU frame (the web viewer): drawn straight from its texture; Show Channel / exposure
-    // read it back first (asynchronously in the browser: from the next frame on).
-    let gpu = matches!((&app.viewer_shown, &app.viewer_native), (Some(s), Some(n)) if s.0 == Some(n.0) && s.1 == n.1 && n.1.comp == cid.0);
-    let rect = if gpu {
-        let Some(id) = app.viewer_shown.and_then(|s| s.0) else { return };
+    // A GPU frame: drawn straight from its texture, and through the display pass on the same
+    // device for Show Channel / exposure / display colour. Without the pass's pipelines (the
+    // browser) it is read back first (asynchronously in the browser: from the next frame on).
+    let gpu = match (&app.viewer_shown, &app.viewer_native) {
+        (Some(s), Some(n)) if s.0 == Some(n.0) && s.1 == n.1 && n.1.comp == cid.0 => Some((n.0, n.1, n.2.clone())),
+        _ => None,
+    };
+    let rect = if let Some((id, key, frame)) = gpu {
+        let rect = roi_rect();
+        if !plain && app.display_gpu().is_some() {
+            draw_through_pass(app, ctx, painter, false, crate::display_gpu::Source::Gpu(frame), &pass, rect);
+            note_sample_source(ctx, SampleSource::Gpu(key), region, Some(pass));
+            return;
+        }
         if plain || app.viewer_pixels().is_none() {
             if !plain {
                 ctx.request_repaint();
             }
-            painter.image(id, comp_rect, uv, Color32::WHITE);
-            if let Some((_, key)) = app.viewer_shown {
-                note_sample_source(ctx, SampleSource::Gpu(key), region, None);
-            }
+            painter.image(id, rect, uv, Color32::WHITE);
+            note_sample_source(ctx, SampleSource::Gpu(key), region, None);
             return;
         }
-        comp_rect
+        rect
     } else {
         let Some((tex, k, minify)) = app.viewer_tex.clone() else { return };
         if k.comp != cid.0 {
