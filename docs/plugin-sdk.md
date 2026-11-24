@@ -971,6 +971,19 @@ fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
 }
 ```
 
+A test gives the task its own frames and reads what it stored:
+
+```rust
+let plugin = TestPlugin::of(super::plugin);
+plugin.frames(|request| moving_square(request.time));
+plugin.task("track", json!({"layer": 7}))?;
+let points = plugin.data(Place::Layer(7), "points");
+plugin.set_data(Place::OwnLayer, "points", &points.unwrap());
+let still = plugin.render("stabilise").time(0.5).run()?;
+```
+
+`plugin.start`, `plugin.cancel` and `plugin.wait` test Cancel. `plugins/tracker` is a complete example.
+
 The write is one undo step and is saved with the project. When the data changes, the layer's
 cached frames redraw. Use `Place::Project` for data that belongs to the whole project.
 

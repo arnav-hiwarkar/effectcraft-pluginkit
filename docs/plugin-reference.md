@@ -828,10 +828,14 @@ the app uses, with the permissions `plugin.json` asks for. Commands the plugin r
 | `plugin.migrate(effect, from, values)` | Calls the effect's `migrate` with saved values and returns what it made of them. |
 | `plugin.command(id)`, `plugin.task(id, args)`, `plugin.tool(id, event)` | Runs a command; runs a task to its end (60 s at most) and returns its result; sends a `ToolEvent` (`testing::pointer(kind, comp)` makes one) and returns the overlay. |
 | `plugin.commands()`, `plugin.answer(command, json)`, `plugin.notes()`, `plugin.logs()` | The commands run so far with their parameters; what a command returns (null by default); the `notify` messages; the log. |
+| `plugin.reply(command, \|params\| json)` | What a command returns, made from the parameters it was called with. |
+| `plugin.start(id, args)`, `plugin.cancel(task)`, `plugin.wait(task)` | Starts a task and returns its id; cancels it as the Cancel button does; waits for its result. A cancelled task gives `Err("task <id> was cancelled")`. |
+| `plugin.frames(\|request\| picture)` | The pictures `host::frame` returns, for example a sequence made from `request.time`. |
+| `plugin.data(place, key)`, `plugin.set_data(place, key, bytes)` | The plugin data a task or command wrote, and data to give it. In a render, `Place::OwnLayer` is `Place::Layer(RENDER_LAYER)`. |
 | `Pattern` | `Photo`, `Gradient`, `Checker`, `Shapes`, `Text`, `Empty`; `.picture(w, h)`. |
 | `Picture` | `{ width, height, pixels }` in premultiplied RGBA f32; `open(path)`, `save(path)`, `at(x, y)`, `rgba8()`. |
 
-`host::frame` in a test returns the photo pattern at 320x180 times the requested scale; layer parameters
+`host::frame` in a test returns the photo pattern at 320x180 times the requested scale unless `plugin.frames` says otherwise; layer parameters
 are connected only when the render gives them a picture; `cx.scene()` is a centred camera; `cx.at` returns
 the same parameters at every time.
 
