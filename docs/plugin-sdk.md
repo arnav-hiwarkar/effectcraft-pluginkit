@@ -88,14 +88,13 @@ fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
 }
 ```
 
-A group whose name is not a plain id gets one derived from it, and the twirl-down keeps the name:
+A group name is the first part of its parameters' ids and the name its twirl-down shows:
 
 ```rust
 EffectSpec::new("edges", "Edges", "Stylize").group("Fine Tuning", [Param::slider("detail", "Detail", 2.0, 0.0..=10.0)])
 ```
 
-reads `cx.f("fine_tuning/detail")` and shows a `Fine Tuning` group. In `params!` the quoted name is the id,
-so write it as one (`"Colour"`, `"fine_tuning"`).
+reads `cx.f("Fine Tuning/detail")`. A part may not start with `#` or `@` or contain `/`.
 
 The builder after `=` is any `Param` builder without its id. A misspelt field is a compile error, where
 `cx.f("radus")` silently reads 0, and a field whose type does not fit its builder (`String` with `slider`)

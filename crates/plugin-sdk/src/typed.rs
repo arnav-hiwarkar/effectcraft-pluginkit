@@ -1,7 +1,7 @@
 use crate::curve::{CURVE_CHANNELS, Curve, check_points};
 use crate::effect::{Cx, Image};
 use crate::gradient::Gradient;
-use crate::wire::{EffectSpec, Param, ParamKind, Value, id_segment};
+use crate::wire::{EffectSpec, Param, ParamKind, Value};
 
 pub trait FromParam: Sized {
     fn from_param(cx: &Cx, id: &'static str) -> Self;
@@ -148,7 +148,6 @@ impl Param {
 const MAX_PARAMS: usize = 512;
 const MAX_ID_BYTES: usize = 256;
 const MAX_ID_DEPTH: usize = 8;
-const SEGMENT_RULE: &str = "may only use letters, digits, `-` and `_`";
 
 fn check_id(id: &str) -> Result<(), String> {
     if id.len() > MAX_ID_BYTES {
@@ -157,13 +156,18 @@ fn check_id(id: &str) -> Result<(), String> {
     if id.split('/').count() > MAX_ID_DEPTH {
         return Err(format!("nests {} levels deep; at most {MAX_ID_DEPTH} are allowed", id.split('/').count()));
     }
-    match id.split('/').find(|segment| !id_segment(segment)) {
-        Some("") => Err("has an empty part; each part between `/` needs a name".into()),
-        Some(_) => {
-            Err(format!("{SEGMENT_RULE}, with `/` between group and parameter; `.group(\"Fine Tuning\", …)` derives the id `fine_tuning` and keeps the name"))
+    for part in id.split('/') {
+        if part.is_empty() {
+            return Err("has an empty part; each part between `/` needs a name".into());
         }
-        None => Ok(()),
+        if part.starts_with(['#', '@']) {
+            return Err(format!("has a part starting with `{}`, which property paths read as an index or a uid; start it with another character", &part[..1]));
+        }
+        if part.contains(char::is_control) {
+            return Err("contains a control character; use printable characters".into());
+        }
     }
+    Ok(())
 }
 
 fn shown(id: &str) -> String {
@@ -184,9 +188,6 @@ impl EffectSpec {
             if !seen.insert(param.id.as_str()) {
                 return Err(format!("effect `{}` declares the parameter id `{}` twice; give each parameter its own id", self.id, param.id));
             }
-        }
-        if let Some(id) = self.groups.keys().find(|id| !id_segment(id)) {
-            return Err(format!("effect `{}`: group id `{}` {SEGMENT_RULE}", self.id, shown(id)));
         }
         for param in &self.params {
             if let ParamKind::Slider { min, max, .. } = param.kind
@@ -464,25 +465,20 @@ mod tests {
         );
         assert_eq!(with("a/b/c/d/e/f/g/h/i"), Err("effect `glow`: parameter id `a/b/c/d/e/f/g/h/i` nests 9 levels deep; at most 8 are allowed".into()));
         assert_eq!(with("edges//on"), Err("effect `glow`: parameter id `edges//on` has an empty part; each part between `/` needs a name".into()));
-        assert!(with("Edge Options/on").unwrap_err().contains("may only use letters, digits, `-` and `_`"));
-        assert_eq!(with("a/b/c/d/e/f/g/On_2-x"), Ok(()));
+        assert_eq!(
+            with("#1/on"),
+            Err("effect `glow`: parameter id `#1/on` has a part starting with `#`, which property paths read as an index or a uid; start it with another character".into())
+        );
+        assert_eq!(
+            with("glow/@7"),
+            Err("effect `glow`: parameter id `glow/@7` has a part starting with `@`, which property paths read as an index or a uid; start it with another character".into())
+        );
+        assert_eq!(with("glow/o\nn"), Err("effect `glow`: parameter id `glow/o\nn` contains a control character; use printable characters".into()));
+        assert_eq!(with("Phosphor Glow/glow"), Ok(()));
+        assert_eq!(with("a/b/c/d/e/f/g/Glow & Rays (2) #1"), Ok(()));
         let twice = EffectSpec::new("glow", "Glow", "Stylize").params([Param::checkbox("on", "On", true), Param::checkbox("on", "Again", false)]);
         assert_eq!(twice.check(), Err("effect `glow` declares the parameter id `on` twice; give each parameter its own id".into()));
         let many = EffectSpec::new("glow", "Glow", "Stylize").params((0..513).map(|i| Param::checkbox(&format!("p{i}"), "On", true)));
         assert_eq!(many.check(), Err("effect `glow` declares 513 parameters; at most 512 are allowed".into()));
-    }
-
-    #[test]
-    fn a_group_named_with_spaces_gets_a_safe_id_and_keeps_its_name() {
-        let spec = EffectSpec::new("glow", "Glow", "Stylize")
-            .group("Fine Tuning", [Param::checkbox("on", "On", true)])
-            .group("Glow", [Param::checkbox("on", "On", true)])
-            .group("Glow & Rays (2)", [Param::checkbox("on", "On", true)]);
-        let ids: Vec<&str> = spec.params.iter().map(|param| param.id.as_str()).collect();
-        assert_eq!(ids, ["fine_tuning/on", "Glow/on", "glow_rays_2/on"]);
-        assert_eq!(spec.groups, BTreeMap::from([("fine_tuning".into(), "Fine Tuning".into()), ("glow_rays_2".into(), "Glow & Rays (2)".into())]));
-        assert_eq!(spec.check(), Ok(()));
-        let old: EffectSpec = serde_json::from_str(r#"{"id":"glow","name":"Glow","category":"Stylize"}"#).unwrap();
-        assert!(old.groups.is_empty());
     }
 }

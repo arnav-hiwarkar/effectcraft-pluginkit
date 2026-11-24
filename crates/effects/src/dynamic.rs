@@ -114,7 +114,6 @@ pub struct DynamicEffect {
     pub reads_comp_scene: bool,
     pub reads_param_history: bool,
     pub presets: Vec<(String, Vec<(String, Value)>)>,
-    pub groups: Vec<(String, String)>,
     pub revision: u64,
     pub files: Option<StampDyn>,
     pub margin: Option<MarginDyn>,
