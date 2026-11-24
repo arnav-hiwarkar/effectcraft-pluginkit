@@ -49,3 +49,18 @@ measured speed before and after is [speed.md](speed.md).
   it made every light native effect 20 to 130 % slower. Effects that read no other pixels render in place again.
 - **Abandoning a slow file call at the time limit.** A file write cannot be cancelled, so the abandoned write
   could land after the plugin was told it failed.
+
+## Later: plugin manager, distribution and a store (owner, 2026-11-24)
+
+After the plugins and the shared base work as the owner wants on EffectCraft. Kept from the old platform's study
+(`pluginkit/reports/w8-old-system-study.md`, section 3(b) and (c)):
+- a signed catalogue index (ed25519 over the exact bytes, each row pinning sha256 and size) with a kill list;
+- versions installed side by side: one-step rollback, optional pins, an update that widens access waits for approval;
+- a manifest fit to publish: `apps`, `requires`, licence, source, a reason per permission; release-record and submission-check tools;
+- origin tracking (file or catalogue; a change asks again);
+- Problems and Updates in the manager, over a toolkit-free manager model in craft-libs that every app draws;
+- for all apps: per-app contracts, a shared command vocabulary, the helper process, brushes, translated plugin text, a web runtime where an app's plugins run in the browser, JavaScript plugins only if script authors are a target.
+
+Not taken (study section 4): the wasmi interpreter and fuel, the 100-string permission ladder, a per-frame GPU time
+budget, typed binary calls, mapping frames into plugin memory, the Adobe and Figma compatibility layers as kit work,
+install from GitHub, and store polish.
