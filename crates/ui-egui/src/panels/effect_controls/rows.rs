@@ -589,7 +589,10 @@ fn value_gradient(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, valu
         p.rect_filled(Rect::from_min_max(pos2(x0, gr.min.y), pos2(x1, gr.max.y)), 0.0, c);
     }
     p.rect_stroke(gr, 2.0, Stroke::new(1.0, t.field_border), egui::StrokeKind::Inside);
-    let resp = ui.interact(gr, egui::Id::unique(("ec-gradient", uid)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(crate::i18n::tr("Edit Gradient…"));
+    let resp = ui
+        .interact(gr, egui::Id::unique(("ec-gradient", uid)), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(crate::i18n::tr("Edit Gradient…"));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &prop.name));
     if resp.clicked() {
         actions.push(("prop.editGradient".into(), json!({"layer": layer.id.0, "prop": uid})));

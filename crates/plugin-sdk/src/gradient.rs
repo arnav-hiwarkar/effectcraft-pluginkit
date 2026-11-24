@@ -24,7 +24,9 @@ impl Gradient {
     pub fn check(&self) -> Result<(), String> {
         let (colors, opacities) = (self.colors.len(), self.opacities.len());
         if colors == 0 || colors > MAX_GRADIENT_STOPS || opacities > MAX_GRADIENT_STOPS {
-            return Err(format!("has {colors} colour and {opacities} opacity stops; give 1 to {MAX_GRADIENT_STOPS} colour stops and at most {MAX_GRADIENT_STOPS} opacity stops"));
+            return Err(format!(
+                "has {colors} colour and {opacities} opacity stops; give 1 to {MAX_GRADIENT_STOPS} colour stops and at most {MAX_GRADIENT_STOPS} opacity stops"
+            ));
         }
         let positions = self.colors.iter().map(|stop| stop.0).chain(self.opacities.iter().map(|stop| stop.0));
         if !positions.into_iter().all(|at| (0.0..=1.0).contains(&at)) || !self.colors.iter().all(|stop| stop.1.iter().all(|c| c.is_finite())) {
