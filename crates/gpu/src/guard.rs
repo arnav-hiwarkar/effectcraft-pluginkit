@@ -125,6 +125,56 @@ impl FlagRead {
     }
 }
 
+/// The loop flags of a frame shown before its GPU work finished: [`LoopCheck::capped`] reads
+/// them once they arrive, without waiting.
+#[derive(Clone, Default)]
+pub struct LoopCheck(Arc<Mutex<Option<(wgpu::Device, Vec<FlagRead>)>>>, Arc<AtomicU8>);
+
+const CLEAN: u8 = 0;
+const CAPPED: u8 = 1;
+
+impl std::fmt::Debug for LoopCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("LoopCheck").field(&self.capped()).finish()
+    }
+}
+
+impl LoopCheck {
+    pub(crate) fn new(device: &wgpu::Device, reads: Vec<FlagRead>) -> Self {
+        let check = LoopCheck::default();
+        if !reads.is_empty() {
+            *check.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((device.clone(), reads));
+        }
+        check
+    }
+
+    /// A check already read: `capped` says whether a loop ran past the cap.
+    pub fn resolved(capped: bool) -> Self {
+        let check = LoopCheck::default();
+        check.1.store(if capped { CAPPED } else { CLEAN }, Ordering::Release);
+        check
+    }
+
+    /// `Some(true)` once a flag shows a loop ran past the cap (or could not be read), `Some(false)`
+    /// once every flag is clean, `None` while the GPU work is still in flight.
+    pub fn capped(&self) -> Option<bool> {
+        let mut held = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((device, reads)) = held.as_ref() {
+            #[cfg(not(target_arch = "wasm32"))]
+            let _ = device.poll(wgpu::PollType::Poll);
+            #[cfg(target_arch = "wasm32")]
+            let _ = device;
+            if reads.iter().any(FlagRead::pending) {
+                return None;
+            }
+            let (_, reads) = held.take()?;
+            let clean = reads.into_iter().map(FlagRead::clean).fold(true, |clean, read| clean & read);
+            self.1.store(if clean { CLEAN } else { CAPPED }, Ordering::Release);
+        }
+        Some(self.1.load(Ordering::Acquire) == CAPPED)
+    }
+}
+
 struct Guard {
     count: Handle<GlobalVariable>,
     flag: Handle<GlobalVariable>,

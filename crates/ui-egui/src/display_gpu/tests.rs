@@ -609,7 +609,7 @@ fn gpu_frames_pass_from_their_own_texture() {
         wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
         wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
     );
-    let frame = Arc::new(effectcraft_gpu::DisplayFrame { texture: texture.clone(), width: w, height: h });
+    let frame = Arc::new(effectcraft_gpu::DisplayFrame { texture: texture.clone(), width: w, height: h, loop_check: Default::default() });
     let dc = DisplayColor::from_lut(test_lut(1.0));
     let mut on_gpu = super::Bake::default();
     let mut uploaded = super::Bake::default();

@@ -3251,7 +3251,7 @@ fn the_accountant_trims_only_frames_in_ram() {
         usage: eframe::wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
-    let gpu_frame = || FrameImage::Gpu(Arc::new(DisplayFrame { texture: texture.clone(), width: 2, height: 2 }));
+    let gpu_frame = || FrameImage::Gpu(Arc::new(DisplayFrame { texture: texture.clone(), width: 2, height: 2, loop_check: Default::default() }));
     let frames = Frames::default();
     {
         let mut c = frames.cache.lock().unwrap();
@@ -3303,7 +3303,7 @@ fn gpu_frames_past_their_budget_stay_as_cpu_frames() {
             eframe::wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(8), rows_per_image: Some(2) },
             eframe::wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
         );
-        FrameImage::Gpu(Arc::new(DisplayFrame { texture, width: 2, height: 2 }))
+        FrameImage::Gpu(Arc::new(DisplayFrame { texture, width: 2, height: 2, loop_check: Default::default() }))
     };
     let frames = Frames::default();
     {
@@ -3733,4 +3733,36 @@ fn a_pane_gets_its_frame_when_the_cache_evicts_it() {
     f.worker().finish_key(pane, false, img(), None, None, web_time::Instant::now());
     assert!(!f.is_cached(&pane));
     assert!(f.take_pane(3, &pane).is_some());
+}
+
+#[test]
+fn a_gpu_frame_whose_plugin_loop_ran_past_the_cap_leaves_the_cache_when_next_shown() {
+    let Some(gpu) = Gpu::headless() else {
+        eprintln!("no GPU adapter: skipped");
+        return;
+    };
+    let texture = gpu.device().create_texture(&eframe::wgpu::TextureDescriptor {
+        label: None,
+        size: eframe::wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: eframe::wgpu::TextureDimension::D2,
+        format: eframe::wgpu::TextureFormat::Rgba8Unorm,
+        usage: eframe::wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let frame = |capped| {
+        FrameImage::Gpu(Arc::new(DisplayFrame { texture: texture.clone(), width: 2, height: 2, loop_check: effectcraft_gpu::LoopCheck::resolved(capped) }))
+    };
+    let frames = Frames::default();
+    {
+        let mut c = frames.cache.lock().unwrap();
+        c.insert(key(1, 0, 0), frame(false));
+        c.insert(key(1, 1, 0), frame(true));
+    }
+    assert!(frames.get(&key(1, 0, 0)).is_some(), "a clean GPU frame is shown");
+    assert!(frames.get_for_viewer(&key(1, 1, 0), None).is_none(), "the capped frame is not shown again");
+    let c = frames.cache.lock().unwrap();
+    assert!(!c.map.contains_key(&key(1, 1, 0)) && !c.order.contains(&key(1, 1, 0)), "and it left the cache, so it renders again");
+    assert_eq!(c.gpu_bytes, 16);
 }
