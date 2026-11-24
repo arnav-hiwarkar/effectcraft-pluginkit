@@ -329,7 +329,8 @@ assert_eq!(plan.validate([1920, 1080]), Ok(()));
 ## Host kernels
 
 Blurs, resampling, blends, curves, convolutions, warps, colour matrices, sRGB transfers, brightness
-curves, dither and light alpha need no code of your own.
+curves, dither, light alpha, dilate and erode, directional blur, bilateral filtering and noise need no code
+of your own.
 Name them as passes of a plan and the app runs them natively on the CPU and with its own WGSL on the
 GPU, with the same result on both. In a sandboxed plugin they run at native speed with no frame copied
 into the sandbox. A glow:
@@ -369,6 +370,16 @@ let plan = plan
     .pass(PlanPass::matrix(work, work, [[1.0, 0.0, 0.0, 0.0], [0.0, 0.8, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0], [0.0, 0.0, 0.0, 1.0]]))
     .pass(PlanPass::to_srgb(work, work))
     .pass(PlanPass::dither(work, PlanImage::Output, cx.instance as u32, [0, 0]));
+```
+
+Noise is pointwise too, so grain multiplied into the picture is one loop; `origin` places the pattern:
+
+```rust
+let mut plan = Plan::new();
+let grain = plan.scratch(cx.size);
+let plan = plan
+    .pass(PlanPass::noise(grain, 3.0, 2, cx.instance as u32, [0, 0]))
+    .pass(PlanPass::blend_images(PlanImage::Source, grain, PlanImage::Output, BlendMode::Multiply, 0.3));
 ```
 
 Light that can go negative (a glow of signed colour) keeps the sRGB curve's straight segment below zero

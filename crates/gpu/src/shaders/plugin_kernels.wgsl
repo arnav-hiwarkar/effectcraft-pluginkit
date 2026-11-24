@@ -218,19 +218,109 @@ fn craft_dither(at: u32, p: vec4<f32>, at_pixel: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(p.rgb + n * room, p.a);
 }
 
-@compute @workgroup_size(16, 16)
-fn craft_warp(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (!inside_out(id.xy)) { return; }
-    let d = texel(aux, vec2<i32>(id.xy));
-    let at = vec2<f32>(id.xy) + vec2<f32>(pass_f(0u) * d.r, pass_f(1u) * d.g);
-    if (!(all(at > vec2<f32>(-1.0)) && all(at < vec2<f32>(src_size())))) {
-        store(id.xy, vec4<f32>(0.0));
-        return;
+fn craft_bilinear(t: texture_2d<f32>, at: vec2<f32>) -> vec4<f32> {
+    if (!(all(at > vec2<f32>(-1.0)) && all(at < vec2<f32>(textureDimensions(t))))) {
+        return vec4<f32>(0.0);
     }
     let base = floor(at);
     let f = at - base;
     let b = vec2<i32>(base);
-    let top = mix(texel(src, b), texel(src, b + vec2<i32>(1, 0)), f.x);
-    let bottom = mix(texel(src, b + vec2<i32>(0, 1)), texel(src, b + vec2<i32>(1, 1)), f.x);
-    store(id.xy, mix(top, bottom, f.y));
+    let top = mix(texel(t, b), texel(t, b + vec2<i32>(1, 0)), f.x);
+    let bottom = mix(texel(t, b + vec2<i32>(0, 1)), texel(t, b + vec2<i32>(1, 1)), f.x);
+    return mix(top, bottom, f.y);
+}
+
+@compute @workgroup_size(16, 16)
+fn craft_warp(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    let d = texel(aux, vec2<i32>(id.xy));
+    store(id.xy, craft_bilinear(src, vec2<f32>(id.xy) + vec2<f32>(pass_f(0u) * d.r, pass_f(1u) * d.g)));
+}
+
+@compute @workgroup_size(16, 16)
+fn craft_morphology(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    let r = i32(pass_u(0u));
+    let erode = pass_u(1u) == 1u;
+    let axis = select(vec2<i32>(1, 0), vec2<i32>(0, 1), pass_u(2u) == 1u);
+    let p = vec2<i32>(id.xy);
+    let along = dot(p, axis);
+    let first = max(along - r, 0) - along;
+    let last = min(along + r, dot(vec2<i32>(src_size()), axis) - 1) - along;
+    var v = texel(src, p + axis * first);
+    for (var k = first + 1; k <= last; k++) {
+        let q = texel(src, p + axis * k);
+        v = select(max(v, q), min(v, q), erode);
+    }
+    store(id.xy, v);
+}
+
+@compute @workgroup_size(16, 16)
+fn craft_directional_blur(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    let n = pass_u(0u);
+    let step = vec2<f32>(pass_f(0u), pass_f(1u));
+    let middle = f32(n - 1u) * 0.5;
+    var sum = vec4<f32>(0.0);
+    for (var s = 0u; s < n; s++) {
+        sum += craft_bilinear(src, vec2<f32>(id.xy) + step * (f32(s) - middle));
+    }
+    store(id.xy, sum * pass_f(2u));
+}
+
+@compute @workgroup_size(16, 16)
+fn craft_bilateral(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    let r = i32(pass_u(0u));
+    let range = pass_f(0u);
+    let p = vec2<i32>(id.xy);
+    let size = vec2<i32>(src_size());
+    let centre = texel(src, p);
+    var sum = vec4<f32>(0.0);
+    var total = 0.0;
+    for (var dy = -r; dy <= r; dy++) {
+        let y = p.y + dy;
+        if (y < 0 || y >= size.y) { continue; }
+        for (var dx = -r; dx <= r; dx++) {
+            let x = p.x + dx;
+            if (x < 0 || x >= size.x) { continue; }
+            let q = texel(src, vec2<i32>(x, y));
+            let d = q.rgb - centre.rgb;
+            let w = craft_data(u32(dx + r)) * craft_data(u32(dy + r)) * exp(-dot(d, d) * range);
+            sum += q * w;
+            total += w;
+        }
+    }
+    store(id.xy, sum / total);
+}
+
+fn craft_lattice(x: u32, y: u32, seed: u32) -> f32 {
+    return f32(craft_hash(x, y, seed) & 0xffffffu) / 16777215.0;
+}
+
+fn craft_value_noise(at: vec2<f32>, seed: u32) -> f32 {
+    let base = floor(at);
+    let f = at - base;
+    let s = f * f * (3.0 - 2.0 * f);
+    let i = bitcast<vec2<u32>>(vec2<i32>(base));
+    let top = mix(craft_lattice(i.x, i.y, seed), craft_lattice(i.x + 1u, i.y, seed), s.x);
+    let bottom = mix(craft_lattice(i.x, i.y + 1u, seed), craft_lattice(i.x + 1u, i.y + 1u, seed), s.x);
+    return mix(top, bottom, s.y);
+}
+
+fn craft_noise(at: u32, at_pixel: vec2<u32>) -> vec4<f32> {
+    let p = vec2<f32>(bitcast<vec2<i32>>(at_pixel - vec2<u32>(craft_word(at + 4u), craft_word(at + 6u))));
+    let seed = craft_word(at + 2u);
+    var frequency = craft_data(at);
+    var amplitude = 1.0;
+    var sum = 0.0;
+    var total = 0.0;
+    for (var o = 0u; o < u32(craft_data(at + 1u)); o++) {
+        sum += amplitude * craft_value_noise(p * frequency, seed + o * 0x9e3779b9u);
+        total += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    let n = sum / total;
+    return vec4<f32>(n, n, n, 1.0);
 }

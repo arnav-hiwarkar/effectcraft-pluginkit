@@ -263,7 +263,7 @@ fn every_host_kernel_renders_on_the_gpu_within_two_levels_of_the_cpu() {
     let Some(gpu) = gpu() else { return };
     let spec = effects::find(&format!("{}.host-kernels", app.id)).expect("the probe registered its host kernel effect");
     assert!(spec.gpu && gpu.supports_effect(spec.id), "a plan of host kernels needs no plugin WGSL to run on the GPU");
-    let cases = (0..16).map(|kernel| (kernel, 0)).chain((1..10).map(|mode| (3, mode)));
+    let cases = (0..16).chain(26..31).map(|kernel| (kernel, 0)).chain((1..10).map(|mode| (3, mode)));
     for (kernel, mode) in cases {
         let params = params(spec, &[("kernel", f64::from(kernel)), ("mode", f64::from(mode))]);
         let cpu = effects::apply(spec, &ctx(&params), picture());
