@@ -407,11 +407,19 @@ each other. See [Host kernels](plugin-gpu.md#host-kernels) for what each compute
 | `PlanPass::directional_blur(src, out, angle, length)` | `HostKernel::DirectionalBlur { angle: f32, length: f32 }`, `angle` in degrees, `length` 0 to `MAX_DIRECTIONAL_LENGTH` (1024) pixels. `src` and `out` the same size. |
 | `PlanPass::bilateral(src, out, radius, tolerance)` | `HostKernel::Bilateral { radius: u32, tolerance: f32 }`, `radius` 0 to `MAX_BILATERAL_RADIUS` (32), `tolerance` above 0. `src` and `out` the same size. |
 | `PlanPass::noise(out, scale, octaves, seed, origin)` | `HostKernel::Noise { scale: f32, octaves: u32, seed: u32, origin: [i64; 2] }`, `scale` above 0 pixels, 1 to `MAX_NOISE_OCTAVES` (12) octaves. Its `src` is `PlanImage::Source` and is not read. |
+| `PlanPass::hsl_range(src, out, hue, saturation, lightness, softness)` | `HostKernel::HslRange { hue: [f32; 2], saturation: [f32; 2], lightness: [f32; 2], softness: f32 }`, `hue` 0 to 360 degrees, the others 0 to 1. `src` and `out` the same size. |
+| `PlanPass::splat(src, out, dabs)` | `HostKernel::Splat { dabs: Vec<Dab> }`, `Dab { at: [f32; 2], radius: f32, colour: [f32; 3], opacity: f32, hardness: f32 }`: at most `MAX_DABS` (65536), `radius` 0 to `MAX_DAB_RADIUS` (256), colour 0 or more, `opacity` and `hardness` 0 to 1, and together covering at most `MAX_DAB_TILES` (2²¹) tiles of 16×16 pixels. `src` and `out` the same size. |
 | `PlanPass::host(kernel, src, out)` | Any `HostKernel`. |
 
 Every value must be finite. `kernel.check(src_size, aux_size, out_size)` is the check `plan.validate`
 runs for one pass. `kernel.pointwise()` is true for the kernels that may write the image
 they read and that the app fuses into one loop.
+
+`craft_plugin::histogram(pixels)` returns `[[u32; 256]; 4]`: for red, green, blue and alpha, how many of
+the pixels have each straight (unpremultiplied) value, rounded to 255ths and clamped to 0 to 1; a
+transparent pixel counts as 0 in every channel. It runs in the plugin, not as a plan pass: a plan's
+images go to the app and never back to the plugin during the render, so a host histogram would have no
+reader. Call it in `render` or `pass` on the frame you were given, or in a task on frames it reads.
 
 `plan.validate(frame)` checks a plan against the limits in [Passes](plugin-gpu.md#limits) for a padded
 frame of that size and returns the first rule it breaks. The app runs this same check before it runs a

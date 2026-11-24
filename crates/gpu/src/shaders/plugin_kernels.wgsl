@@ -324,3 +324,67 @@ fn craft_noise(at: u32, at_pixel: vec2<u32>) -> vec4<f32> {
     let n = sum / total;
     return vec4<f32>(n, n, n, 1.0);
 }
+
+fn craft_soft_band(inside: f32, softness: f32) -> f32 {
+    return clamp(inside / max(softness, 1.1920929e-7) + 1.0, 0.0, 1.0);
+}
+
+fn craft_wrap_degrees(v: f32) -> f32 {
+    return v - 360.0 * floor(v / 360.0);
+}
+
+fn craft_hsl_range(at: u32, p: vec4<f32>) -> vec4<f32> {
+    if (p.a <= 0.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    let c = p.rgb / p.a;
+    let high = max(max(c.r, c.g), c.b);
+    let low = min(min(c.r, c.g), c.b);
+    let l = (high + low) * 0.5;
+    let d = high - low;
+    var h = 0.0;
+    var s = 0.0;
+    if (d > 1.1920929e-7) {
+        var sector = (c.r - c.g) / d + 4.0;
+        if (high == c.r) {
+            sector = (c.g - c.b) / d + 6.0;
+        } else if (high == c.g) {
+            sector = (c.b - c.r) / d + 2.0;
+        }
+        h = 60.0 * (sector - 6.0 * floor(sector / 6.0));
+        s = clamp(d / max(1.0 - abs(2.0 * l - 1.0), 1.1920929e-7), 0.0, 1.0);
+    }
+    let softness = craft_data(at + 6u);
+    let width = craft_wrap_degrees(craft_data(at + 1u) - craft_data(at));
+    let offset = craft_wrap_degrees(h - craft_data(at));
+    var outside = 0.0;
+    if (offset > width) {
+        outside = min(offset - width, 360.0 - offset);
+    }
+    let saturation = craft_soft_band(min(s - craft_data(at + 2u), craft_data(at + 3u) - s), softness);
+    let lightness = craft_soft_band(min(l - craft_data(at + 4u), craft_data(at + 5u) - l), softness);
+    let m = craft_soft_band(-outside, softness * 360.0) * saturation * lightness * p.a;
+    return vec4<f32>(m, m, m, 1.0);
+}
+
+@compute @workgroup_size(16, 16)
+fn craft_splat(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    let tile = (id.y / 16u) * pass_u(0u) + id.x / 16u;
+    let centre = vec2<f32>(id.xy) + 0.5;
+    var p = texel(src, vec2<i32>(id.xy));
+    for (var k = u32(craft_data(tile)); k < u32(craft_data(tile + 1u)); k++) {
+        let at = pass_u(2u) + 8u * u32(craft_data(pass_u(1u) + k));
+        let radius = craft_data(at + 2u);
+        let d = length(centre - vec2<f32>(craft_data(at), craft_data(at + 1u))) / radius;
+        if (d >= 1.0) { continue; }
+        let hardness = craft_data(at + 7u);
+        var fall = 1.0;
+        if (d > hardness) {
+            fall = 1.0 - (d - hardness) / max(1.0 - hardness, 1e-6);
+        }
+        let w = fall * fall * (3.0 - 2.0 * fall) * craft_data(at + 6u);
+        p = vec4<f32>(p.rgb + vec3<f32>(craft_data(at + 3u), craft_data(at + 4u), craft_data(at + 5u)) * w, min(p.a + w, 1.0));
+    }
+    store(id.xy, p);
+}
