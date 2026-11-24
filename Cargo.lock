@@ -2776,6 +2776,7 @@ dependencies = [
  "bytemuck",
  "chrono",
  "craft-mime",
+ "craft-plugin",
  "craft-plugin-host",
  "craft-plugin-ui",
  "craft-quit",

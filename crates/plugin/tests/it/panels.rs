@@ -291,6 +291,23 @@ fn a_control_edit_that_arrives_after_its_project_closed_is_not_applied_to_the_ne
 }
 
 #[test]
+fn a_control_edit_that_arrives_after_effect_controls_closed_is_not_applied() {
+    let mut app = app("test.panels-control-hidden", &[]);
+    let target = scale_layer(&mut app);
+    let steps = app.session.history.undo.len();
+    let (mut panels, mut frame) = (Panels::default(), 0);
+    halve_held(&mut app, &mut panels, &target, &mut frame);
+    for _ in 0..2 {
+        frame += 1;
+        panels.frame(&mut app.session, ms(16 * frame));
+    }
+    release(&app);
+    crate::viewer::settle(&mut app, &mut panels);
+    assert_eq!(level(&mut app)["value"], json!("1"));
+    assert_eq!(app.session.history.undo.len(), steps, "no undo step");
+}
+
+#[test]
 fn a_control_edit_keys_the_time_it_was_made_at_even_when_the_playhead_moved_meanwhile() {
     let mut app = app("test.panels-control-time", &[]);
     let target = scale_layer(&mut app);

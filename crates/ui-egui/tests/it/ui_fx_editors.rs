@@ -349,3 +349,38 @@ fn a_plugin_curve_parameter_edits_one_channel_in_the_curves_graph_and_undoes() {
     undo(&mut h);
     assert_eq!(s(value(&h, l, fx, "grade")), edited);
 }
+
+#[test]
+fn a_plugin_curve_at_the_point_limit_takes_no_more_points_from_a_click_or_a_drag() {
+    use effectcraft_engine::effects::dynamic::{self, DynamicEffect, DynamicParam};
+    use effectcraft_engine::project::ParamUi;
+    let mut points: Vec<String> = (0..63).map(|i| format!("{},{}", f64::from(i) * 0.005, f64::from(i) * 0.005)).collect();
+    points.push("1,1".into());
+    let full = points.join(" ");
+    dynamic::register(DynamicEffect {
+        owner: "test.ui.curve-full".into(),
+        version: "1.0.0".into(),
+        id: "test.ui.curve-full.grade".into(),
+        name: "Full Curve Test".into(),
+        category: "Test".into(),
+        params: vec![DynamicParam { id: "grade".into(), name: "Grade".into(), default: KV::Str(full.clone()), ui: ParamUi::Curve { channels: false } }],
+        render: Box::new(|ctx, buf| ctx.unchanged(buf)),
+        shader: None,
+        gpu: None,
+        time_dependent: false,
+        reads_other_frames: false,
+        reads_comp_scene: false,
+        reads_param_history: false,
+        presets: Vec::new(),
+        revision: 1,
+        files: None,
+        margin: None,
+    });
+    let (s0, l, fx) = with_effect("test.ui.curve-full.grade");
+    let mut h = harness(s0);
+    let uid = group(&h, l, fx).get("grade").unwrap().uid;
+    let gr = rect(&h, &format!("effectControls.prop.{uid}.curve.graph"));
+    click_n(&mut h, at(gr, 0.7, 0.8), 1);
+    drag(&mut h, at(gr, 0.6, 0.9), at(gr, 0.65, 0.7));
+    assert_eq!(s(value(&h, l, fx, "grade")).split(' ').count(), 64);
+}

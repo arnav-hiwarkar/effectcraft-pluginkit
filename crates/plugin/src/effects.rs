@@ -258,7 +258,8 @@ fn warn_dropped_stops(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid:
     }
 }
 
-fn render_cx(spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> RenderCx {
+fn render_cx(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> RenderCx {
+    warn_dropped_stops(loaded, spec, ctx, grid);
     RenderCx {
         params: wire_params(spec, ctx.params, ctx.layer_size, grid),
         time: ctx.time,
@@ -370,7 +371,7 @@ fn wire_scene(scene: effectcraft_engine::effects::CompScene) -> Scene {
 }
 
 fn layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid) -> Layout {
-    let call = Call::Layout { effect: spec.id.clone(), cx: render_cx(spec, ctx, grid) };
+    let call = Call::Layout { effect: spec.id.clone(), cx: render_cx(loaded, spec, ctx, grid) };
     let mut layout: Layout = loaded.plugin.call(&call, None, &mut RenderHost { ctx, grid, spec }).unwrap_or_default();
     layout.padding = craft_plugin_host::applied_padding(layout.padding, [grid.width, grid.height]);
     layout
@@ -405,8 +406,7 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
     }
     buf.pad_sides(layout.padding);
     let grid = grid_of(&buf);
-    warn_dropped_stops(loaded, spec, ctx, grid);
-    let cx = render_cx(spec, ctx, grid);
+    let cx = render_cx(loaded, spec, ctx, grid);
     let host = || RenderHost { ctx, grid, spec };
     let passes = layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu());
     let rendered = match passes {

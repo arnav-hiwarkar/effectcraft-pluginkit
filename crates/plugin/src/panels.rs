@@ -335,12 +335,13 @@ struct Slot {
     loaded: Arc<Loaded>,
     open: Arc<()>,
     shown: bool,
+    hidden: bool,
     value: Option<String>,
 }
 
 impl Slot {
     fn new(loaded: &Arc<Loaded>) -> Slot {
-        Slot { retained: Retained::new(), loaded: loaded.clone(), open: Arc::default(), shown: false, value: None }
+        Slot { retained: Retained::new(), loaded: loaded.clone(), open: Arc::default(), shown: false, hidden: false, value: None }
     }
 }
 
@@ -434,6 +435,7 @@ impl Panels {
         for slot in self.slots.values_mut() {
             if !std::mem::take(&mut slot.shown) {
                 slot.retained.hide();
+                slot.hidden = true;
             }
         }
         let seen = Seen::of(session);
@@ -491,7 +493,11 @@ impl Panels {
             }
         }
         let bound = Bound::of(loaded, session, Arc::downgrade(&slot.open));
-        while let Some(input) = self.slots.get_mut(key).and_then(|slot| slot.retained.start(size, self.now)) {
+        while let Some(input) = self.slots.get_mut(key).and_then(|slot| {
+            let input = slot.retained.start(size, self.now)?;
+            slot.hidden = false;
+            Some(input)
+        }) {
             let mut call = call.clone();
             if let Call::Panel { input: given, .. } | Call::Controls { input: given, .. } = &mut call {
                 *given = input;
@@ -604,7 +610,7 @@ impl Panels {
             match (stale, reply) {
                 (None, Ok(Reply::Panel(reply, edited))) => {
                     slot.retained.finish(Ok(reply), self.now);
-                    if let (Some(value), Some(edit)) = (edited, &edit)
+                    if let (false, Some(value), Some(edit)) = (slot.hidden, edited, &edit)
                         && let Err(error) = edit.set(session, value)
                     {
                         self.notice = Some(error);

@@ -346,6 +346,7 @@ pub struct CurveEdit {
 pub struct CurveMode {
     pub pencil: bool,
     pub natural: bool,
+    pub max_points: usize,
 }
 
 /// The Curves graph: grid, identity diagonal, the curve, its points. Click adds a point, drag
@@ -384,9 +385,10 @@ pub fn curves_graph(
         return (resp, edit);
     }
     let mut edit = CurveEdit::default();
-    curve_drag(ui, &resp, rect, pts, drag_id, dragging, &mut edit);
+    let room = pts.0.len() < mode.max_points;
+    curve_drag(ui, &resp, rect, pts, drag_id, room, &mut edit);
     let alt = ui.input(|i| i.modifiers.alt);
-    curve_click(&resp, rect, pts, alt, &mut edit);
+    curve_click(&resp, rect, pts, alt, room, &mut edit);
     (resp, edit)
 }
 
@@ -460,22 +462,24 @@ fn curve_pencil(ui: &mut egui::Ui, resp: &egui::Response, rect: Rect, id: egui::
 
 /// Drag a point to move it, or drag from empty space to insert one; dropping a point well off
 /// the graph removes it.
-fn curve_drag(ui: &mut egui::Ui, resp: &egui::Response, rect: Rect, pts: &CurvePoints, drag_id: egui::Id, dragging: Option<usize>, edit: &mut CurveEdit) {
+fn curve_drag(ui: &mut egui::Ui, resp: &egui::Response, rect: Rect, pts: &CurvePoints, drag_id: egui::Id, room: bool, edit: &mut CurveEdit) {
+    let dragging: Option<usize> = ui.data(|d| d.get_temp(drag_id));
     let hit_r = 7.0 / rect.width();
     if resp.drag_started()
         && let Some(pt) = ui.input(|i| i.pointer.press_origin())
     {
         let g = screen_to_curve(rect, pt);
-        let i = match pts.hit(g[0], g[1], hit_r) {
-            Some(i) => i,
-            None => {
+        let picked = pts.hit(g[0], g[1], hit_r).or_else(|| {
+            room.then(|| {
                 let mut np = pts.clone();
                 let i = np.insert(g[0], g[1]);
                 edit.changed = Some(np);
                 i
-            }
-        };
-        ui.data_mut(|d| d.insert_temp(drag_id, i));
+            })
+        });
+        if let Some(i) = picked {
+            ui.data_mut(|d| d.insert_temp(drag_id, i));
+        }
     } else if resp.dragged()
         && let (Some(i), Some(pt)) = (dragging, resp.interact_pointer_pos())
     {
@@ -501,7 +505,7 @@ fn curve_drag(ui: &mut egui::Ui, resp: &egui::Response, rect: Rect, pts: &CurveP
 }
 
 /// A click adds a point on empty space; Alt-clicking a point removes it.
-fn curve_click(resp: &egui::Response, rect: Rect, pts: &CurvePoints, alt: bool, edit: &mut CurveEdit) {
+fn curve_click(resp: &egui::Response, rect: Rect, pts: &CurvePoints, alt: bool, room: bool, edit: &mut CurveEdit) {
     if resp.clicked()
         && let Some(pt) = resp.interact_pointer_pos()
     {
@@ -512,10 +516,10 @@ fn curve_click(resp: &egui::Response, rect: Rect, pts: &CurvePoints, alt: bool, 
             Some(i) if alt => {
                 np.remove(i);
             }
-            Some(_) => {}
-            None => {
+            None if room => {
                 np.insert(g[0], g[1]);
             }
+            _ => {}
         }
         if np != *pts {
             edit.changed = Some(np);
