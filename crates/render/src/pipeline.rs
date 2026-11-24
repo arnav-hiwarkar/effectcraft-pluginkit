@@ -1761,18 +1761,18 @@ impl Renderer<'_> {
     }
 }
 
-/// How far the enabled effects of `layer` reach around a pixel (layer pixels) on a grid of
+/// How far the enabled effects of `layer` reach together around a pixel (layer pixels) on a grid of
 /// `scale`, `None` when one doesn't declare it (`effectcraft_effects::pixel_margin`).
 fn effects_margin(ctx: &EvalCtx, layer: &Layer, scale: f64) -> Option<f64> {
     if !layer.switches.effects {
         return Some(0.0);
     }
-    let mut most: f64 = 0.0;
+    let mut reach = 0.0;
     for g in layer.effects().into_iter().flat_map(|fx| fx.groups()).filter(|g| g.enabled) {
         let effectcraft_project::GroupKind::Effect { effect } = &g.kind else { return None };
-        most = most.max(effect_margin(ctx, layer, g, effect, scale)?);
+        reach += effect_margin(ctx, layer, g, effect, scale)?;
     }
-    Some(most)
+    Some(reach)
 }
 
 fn effect_margin(ctx: &EvalCtx, layer: &Layer, g: &effectcraft_project::PropGroup, effect: &str, scale: f64) -> Option<f64> {
