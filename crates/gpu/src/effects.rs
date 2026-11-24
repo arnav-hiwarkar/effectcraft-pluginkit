@@ -148,9 +148,45 @@ pub(crate) struct GpuFx<'e, 'g> {
 }
 
 enum Held {
+    Source(std::sync::Arc<Buf>, Option<Fit>),
     Gpu(GBuf),
     Cpu(Buf),
     Lost,
+}
+
+#[derive(Clone, Copy)]
+enum Fit {
+    Cover([f64; 2]),
+    Align([f64; 2]),
+}
+
+impl Fit {
+    fn on_cpu(self, buf: &mut Buf) {
+        match self {
+            Fit::Cover(size) => buf.cover(size),
+            Fit::Align(size) => buf.align(size),
+        }
+    }
+
+    fn on_gpu(self, e: &mut Enc, b: &mut GBuf) {
+        match self {
+            Fit::Cover(size) => {
+                let keep = (b.img.clone(), b.offset);
+                if b.cover(e, size).is_none() {
+                    (b.img, b.offset) = keep;
+                }
+            }
+            Fit::Align(size) => {
+                if let Some((l, t)) = effectcraft_effects::align_plan(b.offset, b.scale, size, b.img.width, b.img.height)
+                    && e.g.fits(b.img.width + l, b.img.height + t)
+                {
+                    let img = e.image(b.img.width + l, b.img.height + t);
+                    e.copy_into(&b.img, &img, l, t);
+                    *b = GBuf { img, offset: [b.offset[0] + l as f64, b.offset[1] + t as f64], scale: b.scale };
+                }
+            }
+        }
+    }
 }
 
 impl<'e, 'g> GpuFx<'e, 'g> {
@@ -158,35 +194,49 @@ impl<'e, 'g> GpuFx<'e, 'g> {
         GpuFx { e, held: Held::Gpu(GBuf { img, offset, scale }), levels }
     }
 
-    fn on_gpu(&mut self) -> Option<&GBuf> {
-        if let Held::Cpu(buf) = &self.held {
-            self.held = match self.e.g.upload_image(&buf.img) {
-                Some(img) => Held::Gpu(GBuf { img, offset: buf.offset, scale: buf.scale }),
-                None => Held::Lost,
-            };
-        }
+    pub fn source(e: &'e mut Enc<'g>, buf: std::sync::Arc<Buf>, levels: Option<f32>) -> Self {
+        GpuFx { e, held: Held::Source(buf, None), levels }
+    }
+
+    fn uploaded(&mut self) -> Option<GBuf> {
         match &self.held {
-            Held::Gpu(b) => Some(b),
-            Held::Cpu(_) | Held::Lost => None,
+            Held::Gpu(b) => Some(GBuf { img: b.img.clone(), offset: b.offset, scale: b.scale }),
+            Held::Cpu(buf) => Some(GBuf { img: self.e.g.upload_image(&buf.img)?, offset: buf.offset, scale: buf.scale }),
+            Held::Source(buf, fit) => {
+                let mut b = GBuf { img: self.e.g.upload_buf(buf)?, offset: buf.offset, scale: buf.scale };
+                if let Some(fit) = fit {
+                    fit.on_gpu(self.e, &mut b);
+                }
+                Some(b)
+            }
+            Held::Lost => None,
+        }
+    }
+
+    fn fit(&mut self, fit: Fit) {
+        if let Held::Source(_, pending @ None) = &mut self.held {
+            *pending = Some(fit);
+            return;
+        }
+        if matches!(self.held, Held::Source(..)) {
+            self.held = self.uploaded().map_or(Held::Lost, Held::Gpu);
+        }
+        match &mut self.held {
+            Held::Gpu(b) => fit.on_gpu(self.e, b),
+            Held::Cpu(buf) => fit.on_cpu(buf),
+            Held::Source(..) | Held::Lost => {}
         }
     }
 
     /// The result: (image, offset, scale); `None` when a step failed.
     pub fn finish(mut self) -> Option<(GpuImage, [f64; 2], f64)> {
-        self.on_gpu().map(|b| (b.img.clone(), b.offset, b.scale))
+        self.uploaded().map(|b| (b.img, b.offset, b.scale))
     }
 }
 
 impl effectcraft_render::FxTarget for GpuFx<'_, '_> {
     fn gpu(&mut self, steps: &[FxStep]) -> bool {
-        let mut cur = match &self.held {
-            Held::Gpu(b) => GBuf { img: b.img.clone(), offset: b.offset, scale: b.scale },
-            Held::Cpu(buf) => match self.e.g.upload_image(&buf.img) {
-                Some(img) => GBuf { img, offset: buf.offset, scale: buf.scale },
-                None => return false,
-            },
-            Held::Lost => return false,
-        };
+        let Some(mut cur) = self.uploaded() else { return false };
         self.e.take_missing();
         for step in steps {
             let Some(next) = apply(self.e, step.spec.id, &step.ctx, cur) else { return false };
@@ -211,6 +261,13 @@ impl effectcraft_render::FxTarget for GpuFx<'_, '_> {
                 None => return,
             },
             Held::Cpu(buf) => buf,
+            Held::Source(buf, fit) => {
+                let mut buf = std::sync::Arc::unwrap_or_clone(buf);
+                if let Some(fit) = fit {
+                    fit.on_cpu(&mut buf);
+                }
+                buf
+            }
             Held::Lost => return,
         };
         self.held = Held::Cpu(f(buf));
@@ -219,34 +276,13 @@ impl effectcraft_render::FxTarget for GpuFx<'_, '_> {
     /// GBuf::cover, like `pad`: a bigger texture with the old one copied into place, no
     /// readback. A region the device can't allocate leaves the buffer as it is.
     fn cover(&mut self, size: [f64; 2]) {
-        match &mut self.held {
-            Held::Gpu(b) => {
-                let keep = (b.img.clone(), b.offset);
-                if b.cover(self.e, size).is_none() {
-                    (b.img, b.offset) = keep;
-                }
-            }
-            Held::Cpu(buf) => buf.cover(size),
-            Held::Lost => {}
-        }
+        self.fit(Fit::Cover(size));
     }
 
     /// [`effectcraft_effects::Buf::align`] on the device: a texture grown left/top, the old one
     /// copied in. A size the device can't allocate leaves the buffer as it is.
     fn align(&mut self, size: [f64; 2]) {
-        match &mut self.held {
-            Held::Gpu(b) => {
-                if let Some((l, t)) = effectcraft_effects::align_plan(b.offset, b.scale, size, b.img.width, b.img.height)
-                    && self.e.g.fits(b.img.width + l, b.img.height + t)
-                {
-                    let img = self.e.image(b.img.width + l, b.img.height + t);
-                    self.e.copy_into(&b.img, &img, l, t);
-                    *b = GBuf { img, offset: [b.offset[0] + l as f64, b.offset[1] + t as f64], scale: b.scale };
-                }
-            }
-            Held::Cpu(buf) => buf.align(size),
-            Held::Lost => {}
-        }
+        self.fit(Fit::Align(size));
     }
 }
 
