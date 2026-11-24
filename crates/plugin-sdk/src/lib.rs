@@ -1,4 +1,5 @@
 pub mod abi;
+mod curve;
 mod effect;
 mod gradient;
 pub mod host;
@@ -11,6 +12,7 @@ mod ui;
 mod viewer;
 mod wire;
 
+pub use curve::{Curve, MAX_CURVE_POINTS, curves_text, parse_curves};
 pub use effect::{Cx, Effect, Frame, Image, Pass, Rows};
 pub use gradient::{Gradient, MAX_GRADIENT_STOPS};
 pub use kernels::*;
@@ -24,7 +26,7 @@ pub use wire::*;
 pub mod prelude {
     pub use crate::host;
     pub use crate::{
-        AppEvent, AudioRequest, Bind, Blend, BlendMode, BlurShape, Camera, Canvas, Cull, Cursor, Cx, Drag, Dropped, Effect, EffectSpec, Encoding, Error,
+        AppEvent, AudioRequest, Bind, Blend, BlendMode, BlurShape, Camera, Canvas, Cull, Cursor, Curve, Cx, Drag, Dropped, Effect, EffectSpec, Encoding, Error,
         FileErrorKind, Filter, Frame, FrameRequest, Gradient, Handle, HostKernel, Image, Key, LayerParam, LayerPlacement, Layout, Light, LightKind, LogLevel,
         Mark, MaskPath, Measure, Modifiers, Negatives, Overlay, Paint, Panel, Param, Pass, PickFile, Pixel, Plan, PlanData, PlanImage, PlanPass, Plugin,
         Pointer, PointerPhase, Rect, Result, Root, Rows, Scene, Space, Taps, Task, TaskState, TaskStatus, Tool, ToolEvent, ToolEventKind, Topic, Ui, Value,

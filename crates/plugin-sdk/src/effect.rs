@@ -163,6 +163,19 @@ impl Cx {
         }
     }
 
+    pub fn curve(&self, id: &str) -> crate::Curve {
+        self.curves(id).swap_remove(0)
+    }
+
+    pub fn curves(&self, id: &str) -> Vec<crate::Curve> {
+        let text = self.text(id);
+        let channels = text.split('|').count();
+        match crate::curve::parse_curves(text, channels) {
+            Ok(curves) => curves.iter().map(|points| crate::Curve::new(points)).collect(),
+            Err(_) => vec![crate::Curve::identity(); channels],
+        }
+    }
+
     pub fn layer(&self, param: &str) -> Option<Image> {
         image(&HostCall::Layer { param: param.into(), time: None })
     }

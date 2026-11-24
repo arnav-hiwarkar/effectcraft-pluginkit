@@ -211,3 +211,25 @@ fn the_sdk_samples_a_gradient_as_the_app_does() {
         assert!(found.iter().zip(wanted).all(|(a, b)| (a - b).abs() < 1e-6), "{t}: {found:?} against {wanted:?}");
     }
 }
+
+#[test]
+fn a_plugin_reads_its_curves_as_declared_and_as_edited_with_undo() {
+    let mut app = app("test.params-curve", &[]);
+    report_layer(&mut app, "Sim");
+    render_at(&app, 0.0);
+    let report = &reports(&app)[0];
+    assert_eq!((report["tone"].as_f64(), report["grade"].clone()), (Some(0.5), json!([0.2, 0.2, 0.2, 0.2])));
+
+    app.session.execute_checked("prop.set", json!({"layer": "Sim", "path": "effects/#1/tone", "value": "0,0 0.5,0.8 1,1"})).unwrap();
+    app.session.execute_checked("prop.set", json!({"layer": "Sim", "path": "effects/#1/grade", "value": "0,0 1,1 | 0,0.5 1,1 | 0,0 1,1 | 0,0.1 1,1"})).unwrap();
+    clear_reports(&app);
+    render_at(&app, 0.0);
+    let report = &reports(&app)[0];
+    assert_eq!((report["tone"].as_f64(), report["grade"].clone()), (Some(0.8), json!([0.0, 0.5, 0.0, 0.1])));
+
+    app.session.execute_checked("edit.undo", json!({})).unwrap();
+    app.session.execute_checked("edit.undo", json!({})).unwrap();
+    clear_reports(&app);
+    render_at(&app, 0.0);
+    assert_eq!(reports(&app)[0]["tone"].as_f64(), Some(0.5));
+}

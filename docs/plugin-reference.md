@@ -137,6 +137,7 @@ Panels, commands, the CLI and automation all use these two commands.
 | `Param::layer(id, name)` | `cx.layer(id)` | another layer's pixels |
 | `Param::mask(id, name)` | `cx.index(id)` | index into `cx.masks()` |
 | `Param::gradient(id, name, &[(at, [r, g, b, a]), …])` | `cx.gradient(id)` | a `Gradient`; `.sample(t)` gives RGBA |
+| `Param::curve(id, name, &[[0.0, 0.0], [1.0, 1.0]])` | `cx.curve(id)` | a `Curve`; add `.channels()` for master, red, green and blue, read with `cx.curves(id)` |
 
 A slider has two ranges. `min..=max` is the hard range: what the user can type and what `cx.f` returns, even
 when an expression or a script pushes the value outside it. `.soft(low..=high)` is what the slider under the
@@ -174,6 +175,21 @@ A gradient the user edits to more stops reaches the plugin with its first 64. In
 `Gradient` to `.set`, or `{"colors": [[0, [0, 0, 0, 1]], [1, [1, 1, 1, 1]]]}` to `.with` and to
 `plugin look --set`.
 
+#### Curves
+
+A curve parameter shows the app's curve graph under its row: click adds a point, dragging moves one, dragging
+one off removes it, and Reset goes back to a straight line. With `.channels()` the graph has Master, Red,
+Green and Blue tabs. Each drag is one undo step. `cx.curve(id).at(x)` evaluates the monotone cubic through
+the points (the spline the app's curve editors draw), extended along the end slopes outside the first and
+last point; `.lut::<256>()` samples it at 256 even steps from 0 to 1 for a lookup table. `cx.curves(id)`
+gives one `Curve` per channel.
+The value is text: the points `x,y` separated by spaces, the channels separated by `|`
+(`"0,0 0.5,0.7 1,1"`), so a preset sets it with `Value::Text`. Every value the plugin receives has 2 to
+64 points per channel (`MAX_CURVE_POINTS`), each coordinate in 0 to 1 and x increasing; `fit` clamps and
+sorts the points and refuses a curve with fewer or more points, or the wrong number of channels. A default
+that breaks these rules stops the plugin from loading with `effect `tone`: parameter `curve`: the default
+a curve has 2 to 64 points, not 1`.
+
 #### Typed parameters
 
 `params! { struct Name { field: Type = builder(name, …), "Group" { field: Type = builder(…), … }, … } }`
@@ -195,6 +211,7 @@ The field type must fit the builder; a `String` field with `slider(...)` stops t
 | `[f64; 2]`, `[f64; 3]` | `cx.point`, `cx.point3` | point, point3 |
 | `[f32; 4]` | `cx.color` | color |
 | `String` | `cx.text` | text, custom |
+| `Curve`, `Vec<Curve>` | `cx.curve`, `cx.curves` | curve, curve with `.channels()` |
 | `LayerParam` | `{ id, connected }`; `.image(cx)` and `.image_at(cx, comp_time)` read the layer | layer |
 | `Gradient` | `cx.gradient` | gradient |
 

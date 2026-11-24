@@ -243,6 +243,11 @@ pub enum ParamKind {
     Gradient {
         default: Gradient,
     },
+    Curve {
+        default: Vec<[f64; 2]>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        channels: bool,
+    },
 }
 
 impl Param {
@@ -325,6 +330,17 @@ impl Param {
 
     pub fn gradient(id: &str, name: &str, colors: &[(f64, [f64; 4])]) -> Self {
         Param::new(id, name, ParamKind::Gradient { default: Gradient::new(colors) })
+    }
+
+    pub fn curve(id: &str, name: &str, default: &[[f64; 2]]) -> Self {
+        Param::new(id, name, ParamKind::Curve { default: default.to_vec(), channels: false })
+    }
+
+    pub fn channels(mut self) -> Self {
+        if let ParamKind::Curve { channels, .. } = &mut self.kind {
+            *channels = true;
+        }
+        self
     }
 }
 

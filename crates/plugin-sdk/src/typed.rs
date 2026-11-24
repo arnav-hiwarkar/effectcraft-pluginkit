@@ -1,3 +1,4 @@
+use crate::curve::{CURVE_CHANNELS, Curve, check_points};
 use crate::effect::{Cx, Image};
 use crate::gradient::Gradient;
 use crate::wire::{EffectSpec, Param, ParamKind, Value, id_segment};
@@ -66,6 +67,18 @@ impl FromParam for String {
     }
 }
 
+impl FromParam for Curve {
+    fn from_param(cx: &Cx, id: &'static str) -> Self {
+        cx.curve(id)
+    }
+}
+
+impl FromParam for Vec<Curve> {
+    fn from_param(cx: &Cx, id: &'static str) -> Self {
+        cx.curves(id)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayerParam {
     pub id: &'static str,
@@ -101,6 +114,11 @@ impl Param {
             (ParamKind::Color { .. }, Value::List(items)) => list(items, 4),
             (ParamKind::Text { .. } | ParamKind::Custom { .. }, Value::Text(text)) => Some(Value::Text(text.clone())),
             (ParamKind::Gradient { .. }, Value::Gradient(gradient)) => Some(Value::Gradient(gradient.clone().limited())),
+            (ParamKind::Curve { channels, .. }, Value::Text(text)) => {
+                let curves = crate::curve::parse_curves(text, if *channels { CURVE_CHANNELS } else { 1 })
+                    .map_err(|error| format!("parameter `{}`: {error}", self.id))?;
+                Some(Value::Text(crate::curve::curves_text(&curves)))
+            }
             _ => None,
         };
         fitted.ok_or_else(|| {
@@ -113,6 +131,7 @@ impl Param {
                 ParamKind::Color { .. } => "a list of 4 numbers",
                 ParamKind::Text { .. } | ParamKind::Custom { .. } => "text",
                 ParamKind::Gradient { .. } => "a gradient",
+                ParamKind::Curve { .. } => "curve points as text, such as \"0,0 0.5,0.7 1,1\"",
             };
             let given = match value {
                 Value::Number(n) => format!("the number {n}"),
@@ -177,6 +196,9 @@ impl EffectSpec {
             }
             if let ParamKind::Gradient { default } = &param.kind {
                 default.check().map_err(|error| format!("effect `{}`: gradient `{}` {error}", self.id, param.id))?;
+            }
+            if let ParamKind::Curve { default, .. } = &param.kind {
+                check_points(default).map_err(|error| format!("effect `{}`: parameter `{}`: the default {error}", self.id, param.id))?;
             }
         }
         for preset in &self.presets {
@@ -268,6 +290,16 @@ pub mod fits {
     pub fn custom<T: Text>() {}
     pub fn layer<T: Layer>() {}
     pub fn gradient<T: Gradient>() {}
+
+    #[diagnostic::on_unimplemented(
+        message = "a curve parameter is read as `Curve`, or `Vec<Curve>` with `.channels()`, so its field cannot be `{Self}`",
+        label = "declare this field as `Curve` or `Vec<Curve>`"
+    )]
+    pub trait Curves {}
+    impl Curves for crate::Curve {}
+    impl Curves for Vec<crate::Curve> {}
+
+    pub fn curve<T: Curves>() {}
 }
 
 /// Declares an effect's parameters and a struct that reads them.
@@ -384,6 +416,15 @@ mod tests {
         let spec = EffectSpec::new("glow", "Glow", "Stylize").param(Param::slider("gain", "Gain", 1.0, 10.0..=1.0));
         assert_eq!(spec.check(), Err("effect `glow`: parameter `gain` has the range 10..=1; give the smaller end first".to_string()));
         assert_eq!(EffectSpec::new("glow", "Glow", "Stylize").params(Glow::params()).check(), Ok(()));
+    }
+
+    #[test]
+    fn a_curve_default_or_value_that_breaks_the_point_rules_is_refused_and_a_good_one_is_cleaned() {
+        let spec = EffectSpec::new("tone", "Tone", "Color").param(Param::curve("curve", "Curve", &[[0.0, 0.0]]));
+        assert_eq!(spec.check(), Err("effect `tone`: parameter `curve`: the default a curve has 2 to 64 points, not 1".to_string()));
+        let grade = Param::curve("grade", "Grade", &[[0.0, 0.0], [1.0, 1.0]]).channels();
+        assert_eq!(grade.fit(Value::Text("0,0 1,1".into())), Err("parameter `grade`: 4 curve(s) separated by `|`, not 1".to_string()));
+        assert_eq!(grade.fit(Value::Text("1,1 0,0|0,0 1,1|0,0 1,1|0,0.5 1,1".into())), Ok(Value::Text("0,0 1,1 | 0,0 1,1 | 0,0 1,1 | 0,0.5 1,1".into())));
     }
 
     #[test]

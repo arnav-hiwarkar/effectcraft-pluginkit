@@ -476,6 +476,26 @@ fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
 
 See [Gradients](plugin-reference.md#gradients).
 
+## Add a curve
+
+A curve parameter gets the app's curve editor, with undo, from one line. Read it per pixel or as a table:
+
+```rust
+params! { struct Tone { tone: Curve = curve("Tone", &[[0.0, 0.0], [0.5, 0.6], [1.0, 1.0]]) } }
+
+fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+    let lut = Tone::read(cx).tone.lut::<256>();
+    frame.map(|[r, g, b, a]| {
+        let at = |v: f32| lut[(v.clamp(0.0, 1.0) * 255.0) as usize];
+        [at(r), at(g), at(b), a]
+    });
+    Ok(())
+}
+```
+
+`curve(...).channels()` adds Red, Green and Blue curves beside the master one; read them with
+`Vec<Curve>` or `cx.curves("tone")`.
+
 ## Add a panel
 
 A panel keeps its own state. The app calls `ui` once to draw the panel and keeps what it returned: it

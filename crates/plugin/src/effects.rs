@@ -148,6 +148,10 @@ fn declare(param: &Param) -> DynamicParam {
         ParamKind::Layer => (Value::Layer(None), ParamUi::Layer),
         ParamKind::Mask => (Value::Enum(0), ParamUi::Mask),
         ParamKind::Gradient { default } => (Value::Gradient(app_gradient(default)), ParamUi::Gradient),
+        ParamKind::Curve { default, channels } => {
+            let text = craft_plugin_host::curves_text(&vec![default.clone(); if *channels { 4 } else { 1 }]);
+            (Value::Str(text), ParamUi::Curve { channels: *channels })
+        }
     };
     DynamicParam { id: param.id.clone(), name: param.name.clone(), default, ui }
 }
@@ -213,7 +217,7 @@ pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 
                 Wire::List(vec![x, y, z * grid.scale])
             }
             ParamKind::Color { .. } => Wire::List(value.as_color().iter().map(|c| f64::from(*c)).collect()),
-            ParamKind::Text { .. } | ParamKind::Custom { .. } => match value {
+            ParamKind::Text { .. } | ParamKind::Custom { .. } | ParamKind::Curve { .. } => match value {
                 Value::Str(text) => Wire::Text(text.clone()),
                 _ => Wire::Text(String::new()),
             },
