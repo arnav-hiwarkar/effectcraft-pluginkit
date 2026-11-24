@@ -162,6 +162,7 @@ fn a_frame_reader_above_an_effect_that_reads_another_layer_is_not_cached() {
         state_version: 0,
         migrate: None,
         aux: Vec::new(),
+        param_state: None,
     });
     let (mut p, cid, comp) = setup();
     let matte = solid(&mut p, &comp, [0.9, 0.1, 0.1], 200, 100);
