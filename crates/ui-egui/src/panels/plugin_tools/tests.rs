@@ -81,11 +81,11 @@ fn press_drag_release(harness: &mut Harness<'_, EffectcraftApp>, path: &[Pos2]) 
     }
 }
 
-fn shown_frame(harness: &Harness<'_, EffectcraftApp>) -> Option<Vec<u8>> {
-    harness.state().viewer_image.as_ref().map(|image| image.pixels.iter().flat_map(|pixel| pixel.to_array()).collect())
+fn shown_frame(harness: &mut Harness<'_, EffectcraftApp>) -> Option<Vec<u8>> {
+    harness.state_mut().viewer_pixels().map(|image| image.pixels.iter().flat_map(|pixel| pixel.to_array()).collect())
 }
 
-fn settle(harness: &mut Harness<'_, EffectcraftApp>, done: impl Fn(&Harness<'_, EffectcraftApp>) -> bool) {
+fn settle(harness: &mut Harness<'_, EffectcraftApp>, mut done: impl FnMut(&mut Harness<'_, EffectcraftApp>) -> bool) {
     for _ in 0..600 {
         harness.step();
         if done(harness) {

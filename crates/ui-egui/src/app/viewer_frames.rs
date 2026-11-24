@@ -277,8 +277,8 @@ mod tests {
         session.execute("effect.apply", serde_json::json!({"layer": 1, "effect": "Apply Color LUT"})).unwrap();
         session.execute("prop.set", serde_json::json!({"layer": 1, "path": "effects/#1/lut", "value": lut.to_string_lossy()})).unwrap();
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(|_| crate::EffectcraftApp::new(session));
-        let centre = |h: &egui_kittest::Harness<'_, crate::EffectcraftApp>| {
-            h.state().viewer_image.as_ref().map(|img| img.pixels[img.pixels.len() / 2 + img.size[0] / 2].r())
+        let centre = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>| {
+            h.state_mut().viewer_pixels().map(|img| img.pixels[img.pixels.len() / 2 + img.size[0] / 2].r())
         };
         let settle = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>, want: u8| {
             for _ in 0..400 {
@@ -313,8 +313,8 @@ mod tests {
         let item = session.execute("file.import", serde_json::json!({"paths": [png.to_string_lossy()]})).unwrap()["items"][0].clone();
         session.execute("layer.addItem", serde_json::json!({"item": item})).unwrap();
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(|_| crate::EffectcraftApp::new(session));
-        let centre = |h: &egui_kittest::Harness<'_, crate::EffectcraftApp>| {
-            h.state().viewer_image.as_ref().map(|img| img.pixels[img.pixels.len() / 2 + img.size[0] / 2].r())
+        let centre = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>| {
+            h.state_mut().viewer_pixels().map(|img| img.pixels[img.pixels.len() / 2 + img.size[0] / 2].r())
         };
         let settle = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>, want: u8| {
             for _ in 0..400 {
