@@ -83,5 +83,5 @@ pub(crate) fn render_refusal(p: &Project) -> Result<(), String> {
     ))
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
 mod tests;
