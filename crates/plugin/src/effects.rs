@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use craft_plugin_host::kernels::{self, Lowered, StepImage};
 use craft_plugin_host::{
-    Blend, Call, Camera, Cull, Draw, EffectRegistry, EffectSpec, Focus, Gradient as WireGradient, Host, LayerPlacement, Layout, Light, LightKind, MaskPath,
-    Param, ParamKind, ParamValues, ParamsAt, Pixels, Place, PlanData, PlanImage, Rect, RenderCx, Scene, Value as Wire,
+    AuxPlanes, Blend, Call, Camera, Channel, Cull, Draw, EffectRegistry, EffectSpec, Focus, Gradient as WireGradient, Host, LayerPlacement, Layout, Light,
+    LightKind, MaskPath, Param, ParamKind, ParamValues, ParamsAt, Pixels, Place, PlanData, PlanImage, Rect, RenderCx, Scene, Value as Wire,
 };
 use effectcraft_engine::effects::dynamic::{
     self, DynamicEffect, DynamicParam, GpuBlend, GpuBytes, GpuCull, GpuDraw, GpuPass, GpuPicture, GpuProgram, GpuSlot, Grid,
@@ -13,6 +13,8 @@ use effectcraft_engine::effects::dynamic::{
 use effectcraft_engine::effects::{Buf, EffectCtx, Image, LayerPixels, MaskShape, Params, SceneLightKind, util};
 use effectcraft_engine::keyframe::{Gradient, Value};
 use effectcraft_engine::project::ParamUi;
+use effectcraft_engine::raster::AuxChannels;
+use effectcraft_engine::raster::channels3d::{self, AuxLookup};
 
 use crate::manage::Loaded;
 
@@ -67,6 +69,7 @@ fn register(loaded: &Arc<Loaded>) {
             margin: Some(Box::new(move |ctx, scale| margin(&margin_plugin, &margin_spec, ctx, scale))),
             state_version: spec.version,
             migrate: Some(Box::new(move |from, values| migrate(&migrate_plugin, &migrate_spec, from, values))),
+            aux: spec.reads_aux.iter().flat_map(aux_lookups).collect(),
         });
         if spec.shader.is_none() && default_plan_runs_on_gpu(loaded, spec) {
             mark_gpu_planned(&id);
@@ -379,6 +382,30 @@ impl Host for RenderHost<'_, '_> {
         self.ctx.env.masks.iter().map(convert).collect()
     }
 
+    fn aux(&mut self, channels: &[Channel], rows: Option<[u32; 2]>) -> Option<AuxPlanes> {
+        let aux = self.ctx.env.host?.aux()?;
+        let Grid { width, height, offset, scale } = self.grid;
+        let [first, count] = rows.unwrap_or([0, height]);
+        let rows = first.min(height)..first.saturating_add(count).min(height);
+        let w = width as usize;
+        let index: Vec<Option<usize>> = (rows.start as usize * w..rows.end as usize * w)
+            .map(|i| {
+                let [x, y] = effectcraft_engine::effects::aux_point(scale, offset, [(i % w) as f64 + 0.5, (i / w) as f64 + 0.5]);
+                aux.index_at(x, y)
+            })
+            .collect();
+        let sample = |channel: &Channel| {
+            let sources: Vec<&[f32]> = aux_lookups(channel).iter().map(|lookup| aux_plane(&aux, lookup)).collect::<Option<_>>()?;
+            let outside = if *channel == Channel::Depth { channels3d::BACKGROUND_DEPTH } else { 0.0 };
+            let mut plane = Vec::with_capacity(index.len() * sources.len());
+            for at in &index {
+                plane.extend(sources.iter().map(|source| at.and_then(|i| source.get(i).copied()).unwrap_or(outside)));
+            }
+            Some((channel.clone(), plane))
+        };
+        Some(AuxPlanes { width, height: rows.len() as u32, planes: channels.iter().filter_map(sample).collect() })
+    }
+
     fn params_at(&mut self, layer_time: f64) -> Option<ParamsAt> {
         let host = self.ctx.env.host?;
         let params = host.params_at(layer_time)?;
@@ -401,6 +428,28 @@ impl Host for RenderHost<'_, '_> {
         let layer = self.ctx.params.get(param)?.as_layer()?;
         let placement = self.ctx.env.host?.placement(layer, comp_time)?;
         Some(LayerPlacement { matrix: placement.matrix, opacity: placement.opacity, size: placement.size })
+    }
+}
+
+fn aux_lookups(channel: &Channel) -> Vec<AuxLookup> {
+    let find = AuxLookup::find;
+    match channel {
+        Channel::Depth => vec![find(&channels3d::DEPTH_NAMES)],
+        Channel::Normal => channels3d::NORMAL_NAMES.map(find).into(),
+        Channel::Uv => channels3d::UV_NAMES[..2].iter().map(|names| find(names)).collect(),
+        Channel::ObjectId => vec![find(&channels3d::OBJECT_ID_NAMES)],
+        Channel::MaterialId => vec![find(&channels3d::MATERIAL_ID_NAMES)],
+        Channel::Coverage => vec![find(&channels3d::COVERAGE_NAMES)],
+        Channel::Background => channels3d::BACKGROUND_NAMES.map(find).into(),
+        Channel::Named(name) => vec![AuxLookup::Name(name.trim().to_string())],
+    }
+}
+
+fn aux_plane<'a>(aux: &'a AuxChannels, lookup: &AuxLookup) -> Option<&'a [f32]> {
+    match lookup {
+        AuxLookup::Name(name) => aux.get(name),
+        AuxLookup::Find(names) => aux.find(&names.iter().map(String::as_str).collect::<Vec<_>>()),
+        AuxLookup::Crypto { .. } => None,
     }
 }
 

@@ -34,6 +34,7 @@ fn register() -> MutexGuard<'static, ()> {
         margin: None,
         state_version: 0,
         migrate: None,
+        aux: Vec::new(),
     });
     serial
 }

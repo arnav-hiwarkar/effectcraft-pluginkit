@@ -324,11 +324,11 @@ fn tally(app: &App) -> u64 {
     bytes.and_then(|bytes| <[u8; 8]>::try_from(&bytes[..]).ok()).map_or(0, u64::from_le_bytes)
 }
 
-fn frame(app: &App, roi: Option<[f64; 4]>) -> effectcraft_engine::raster::Image {
+pub(crate) fn frame(app: &App, roi: Option<[f64; 4]>) -> effectcraft_engine::raster::Image {
     cached_frame(app, roi, None)
 }
 
-fn cached_frame(app: &App, roi: Option<[f64; 4]>, cache: Option<&effectcraft_engine::render::LayerCache>) -> effectcraft_engine::raster::Image {
+pub(crate) fn cached_frame(app: &App, roi: Option<[f64; 4]>, cache: Option<&effectcraft_engine::render::LayerCache>) -> effectcraft_engine::raster::Image {
     let session = &app.session;
     let mut renderer = Renderer::new(&session.project, session.footage.as_ref(), RenderOpts { roi, ..RenderOpts::default() });
     renderer.expr = session.expr.as_deref();
@@ -552,6 +552,26 @@ fn probe_native() -> std::path::PathBuf {
     probe.join("target/release").join(format!("{}probe{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX))
 }
 
+pub(crate) fn native_probe(app: &App) -> &'static str {
+    static INSTALLED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    INSTALLED.get_or_init(|| {
+        let native = "test.native-probe";
+        let source = tempfile::tempdir().unwrap();
+        let library = probe_native();
+        let file = library.file_name().unwrap().to_str().unwrap().to_string();
+        std::fs::copy(app.bundle.path().join("probe.wasm"), source.path().join("probe.wasm")).unwrap();
+        std::fs::copy(&library, source.path().join(&file)).unwrap();
+        let entry = json!({"wasm": "probe.wasm", "native": {format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH): file}});
+        let manifest = json!({"id": native, "name": "Probe", "version": "1.0.0", "entry": entry});
+        std::fs::write(source.path().join("plugin.json"), manifest.to_string()).unwrap();
+        app.plugins.install(source.path()).unwrap();
+        app.plugins.approve(native).unwrap();
+        app.plugins.set_sandboxed(native, false).unwrap();
+        assert!(app.plugins.get(native).is_some(), "the native probe runs");
+        native.to_string()
+    })
+}
+
 fn sprite_frames(app: &mut App, effect: &str) -> Vec<effectcraft_engine::raster::Image> {
     app.session.execute("comp.new", json!({"name": effect, "width": 300, "height": 260, "frameRate": 24, "duration": 2})).unwrap();
     app.session.execute("layer.newSolid", json!({"name": "Grey", "color": "#808080", "width": 300, "height": 260})).unwrap();
@@ -579,23 +599,9 @@ fn sprite_frames(app: &mut App, effect: &str) -> Vec<effectcraft_engine::raster:
 #[test]
 fn a_generator_that_ignores_its_input_and_reports_what_it_drew_renders_the_same_comp_sandboxed_and_native() {
     let mut app = app("test.render-sprite", &[]);
-    let native = "test.render-sprite-native";
-    let source = tempfile::tempdir().unwrap();
-    let library = probe_native();
-    let file = library.file_name().unwrap().to_str().unwrap().to_string();
-    std::fs::copy(app.bundle.path().join("probe.wasm"), source.path().join("probe.wasm")).unwrap();
-    std::fs::copy(&library, source.path().join(&file)).unwrap();
-    let entry = json!({"wasm": "probe.wasm", "native": {format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH): file}});
-    let manifest = json!({"id": native, "name": "Probe", "version": "1.0.0", "entry": entry});
-    std::fs::write(source.path().join("plugin.json"), manifest.to_string()).unwrap();
-    app.plugins.install(source.path()).unwrap();
-    app.plugins.approve(native).unwrap();
-    app.plugins.set_sandboxed(native, false).unwrap();
-    assert!(app.plugins.get(native).is_some(), "the native probe runs");
-
+    let native = native_probe(&app);
     let sandboxed = sprite_frames(&mut app, "test.render-sprite.sprite");
     let unsandboxed = sprite_frames(&mut app, &format!("{native}.sprite"));
-    app.plugins.uninstall(native).unwrap();
     assert!(sandboxed.iter().zip(&unsandboxed).all(|(a, b)| a.data == b.data), "the sandboxed and native comps differ");
     let at = |x: u32, y: u32| sandboxed[0].data[(y * 300 + x) as usize];
     assert!(close(at(150, 130), [0.5, 0.5, 0.75, 1.0]), "the sprite's centre is {:?}", at(150, 130));
