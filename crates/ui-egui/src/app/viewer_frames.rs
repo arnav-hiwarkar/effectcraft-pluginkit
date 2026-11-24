@@ -272,8 +272,6 @@ fn camera_hash(roi: Option<[f64; 4]>, cam: Option<&effectcraft_engine::render::t
 mod tests {
     use egui_kittest::Harness;
 
-    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     type H<'a> = Harness<'a, crate::EffectcraftApp>;
 
     fn harness<'a>(session: effectcraft_engine::Session, gpu: bool) -> Option<H<'a>> {
@@ -328,7 +326,7 @@ mod tests {
     }
 
     fn lut_file_changed_on_disk(gpu: bool) {
-        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _alone = crate::frames::gpu_slot_test();
         let dir = tempfile::tempdir().unwrap();
         let lut = dir.path().join("viewer.cube");
         let write = |text: &str, secs: u64| {
@@ -365,7 +363,7 @@ mod tests {
     }
 
     fn still_reloaded_at_the_same_size(gpu: bool) {
-        let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _alone = crate::frames::gpu_slot_test();
         let dir = tempfile::tempdir().unwrap();
         let png = dir.path().join("still.png");
         let save = |rgb: [u8; 3]| image::RgbaImage::from_pixel(64, 36, image::Rgba([rgb[0], rgb[1], rgb[2], 255])).save(&png).unwrap();
