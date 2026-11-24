@@ -2,6 +2,7 @@ use std::ops::Deref;
 
 use crate::Result;
 use crate::abi::Buffer;
+use crate::gradient::Gradient;
 use crate::host;
 use crate::ui::Ui;
 use crate::viewer::Overlay;
@@ -145,6 +146,14 @@ impl Cx {
 
     pub fn color(&self, id: &str) -> [f32; 4] {
         self.list::<4>(id).map(|c| c as f32)
+    }
+
+    pub fn gradient(&self, id: &str) -> &Gradient {
+        static NONE: Gradient = Gradient { colors: Vec::new(), opacities: Vec::new() };
+        match self.params.get(id) {
+            Some(Value::Gradient(gradient)) => gradient,
+            _ => &NONE,
+        }
     }
 
     pub fn text(&self, id: &str) -> &str {

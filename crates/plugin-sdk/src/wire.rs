@@ -3,6 +3,7 @@ use std::ops::RangeInclusive;
 
 use serde::{Deserialize, Serialize};
 
+use crate::gradient::Gradient;
 use crate::kernels::{BlendMode, BlurShape, Encoding, Filter, HostKernel, Measure, Negatives, Taps};
 use crate::viewer::{ToolEvent, ToolSpec};
 
@@ -239,6 +240,9 @@ pub enum ParamKind {
     },
     Layer,
     Mask,
+    Gradient {
+        default: Gradient,
+    },
 }
 
 impl Param {
@@ -318,6 +322,10 @@ impl Param {
     pub fn mask(id: &str, name: &str) -> Self {
         Param::new(id, name, ParamKind::Mask)
     }
+
+    pub fn gradient(id: &str, name: &str, colors: &[(f64, [f64; 4])]) -> Self {
+        Param::new(id, name, ParamKind::Gradient { default: Gradient::new(colors) })
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -327,6 +335,7 @@ pub enum Value {
     Number(f64),
     List(Vec<f64>),
     Text(String),
+    Gradient(Gradient),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

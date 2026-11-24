@@ -579,6 +579,32 @@ impl Effect for Checks {
     }
 }
 
+params! {
+    struct RampSettings {
+        ramp: Gradient = gradient("Ramp", &[(0.0, [0.0, 0.0, 0.0, 1.0]), (1.0, [1.0, 1.0, 1.0, 1.0])]),
+        at: f64 = slider("At", 0.5, 0.0..=1.0),
+    }
+}
+
+struct Ramp;
+
+impl Effect for Ramp {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("ramp", "Ramp", "Probe").params(RampSettings::params())
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise()
+    }
+
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let settings = RampSettings::read(cx);
+        let colour = settings.ramp.sample(settings.at);
+        frame.map(|_| colour);
+        Ok(())
+    }
+}
+
 struct Halve;
 
 impl Effect for Halve {
@@ -974,6 +1000,7 @@ fn make() -> Plugin {
         .effect(Lift)
         .effect(Tally)
         .effect(Checks)
+        .effect(Ramp)
         .effect(Halve)
         .effect(Streak)
         .effect(Plain)

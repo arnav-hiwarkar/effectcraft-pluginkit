@@ -308,3 +308,22 @@ fn a_handle_drag_whose_last_move_arrives_with_the_release_ends_where_the_pointer
     let light = harness.state_mut().session.execute("prop.get", json!({"layer": "Sky", "path": "effects/#1/light"})).unwrap()["value"].clone();
     assert_eq!(light, json!([136.0, 74.0]));
 }
+
+#[test]
+fn clicking_a_plugin_gradient_strip_in_effect_controls_opens_the_gradient_editor_on_it() {
+    let mut session = probe_session();
+    session.execute("layer.newSolid", json!({"name": "Ramp", "color": "#000000", "width": 320, "height": 180})).unwrap();
+    session.execute("effect.apply", json!({"layer": "Ramp", "effect": "test.viewer-tool-ui.ramp"})).unwrap();
+    let layer = session.active_comp().unwrap().layers[0].clone();
+    let ramp = layer.effects().unwrap().groups().next().unwrap().get("ramp").unwrap().uid;
+    session.state.selected_layers = vec![layer.id];
+    let mut harness = harness(session);
+    harness.state_mut().show_panel(crate::dock::PanelKind::EffectControls);
+    settle(&mut harness, |h| h.state().auto.find(&format!("effectControls.prop.{ramp}.value")).is_some());
+    let strip = element(&harness, &format!("effectControls.prop.{ramp}.value")).center();
+    press_drag_release(&mut harness, &[strip]);
+    harness.run_steps(2);
+    assert_eq!(harness.state().dialog, Some(crate::Dialog::GradientEditor));
+    let target = harness.state().gradient_draft().target.as_ref().expect("the editor edits a property");
+    assert_eq!((target.layer, target.prop), (layer.id.0, ramp));
+}

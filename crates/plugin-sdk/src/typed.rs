@@ -1,4 +1,5 @@
 use crate::effect::{Cx, Image};
+use crate::gradient::Gradient;
 use crate::wire::{EffectSpec, Param, ParamKind, Value, id_segment};
 
 pub trait FromParam: Sized {
@@ -53,6 +54,12 @@ impl FromParam for [f32; 4] {
     }
 }
 
+impl FromParam for Gradient {
+    fn from_param(cx: &Cx, id: &'static str) -> Self {
+        cx.gradient(id).clone()
+    }
+}
+
 impl FromParam for String {
     fn from_param(cx: &Cx, id: &'static str) -> Self {
         cx.text(id).to_string()
@@ -93,6 +100,7 @@ impl Param {
             (ParamKind::Point3 { .. }, Value::List(items)) => list(items, 3),
             (ParamKind::Color { .. }, Value::List(items)) => list(items, 4),
             (ParamKind::Text { .. } | ParamKind::Custom { .. }, Value::Text(text)) => Some(Value::Text(text.clone())),
+            (ParamKind::Gradient { .. }, Value::Gradient(gradient)) => Some(Value::Gradient(gradient.clone().limited())),
             _ => None,
         };
         fitted.ok_or_else(|| {
@@ -104,12 +112,14 @@ impl Param {
                 ParamKind::Point3 { .. } => "a list of 3 numbers",
                 ParamKind::Color { .. } => "a list of 4 numbers",
                 ParamKind::Text { .. } | ParamKind::Custom { .. } => "text",
+                ParamKind::Gradient { .. } => "a gradient",
             };
             let given = match value {
                 Value::Number(n) => format!("the number {n}"),
                 Value::Bool(b) => format!("{b}"),
                 Value::Text(text) => format!("the text {text:?}"),
                 Value::List(items) => format!("a list of {} numbers", items.len()),
+                Value::Gradient(_) => "a gradient".into(),
             };
             format!("parameter `{}` takes {wanted}, not {given}", self.id)
         })
@@ -164,6 +174,9 @@ impl EffectSpec {
                 && min.partial_cmp(&max).is_none_or(std::cmp::Ordering::is_gt)
             {
                 return Err(format!("effect `{}`: parameter `{}` has the range {min}..={max}; give the smaller end first", self.id, param.id));
+            }
+            if let ParamKind::Gradient { default } = &param.kind {
+                default.check().map_err(|error| format!("effect `{}`: gradient `{}` {error}", self.id, param.id))?;
             }
         }
         for preset in &self.presets {
@@ -235,6 +248,13 @@ pub mod fits {
     pub trait Layer {}
     impl Layer for super::LayerParam {}
 
+    #[diagnostic::on_unimplemented(
+        message = "a gradient parameter is read as `Gradient`, so its field cannot be `{Self}`",
+        label = "declare this field as `Gradient`"
+    )]
+    pub trait Gradient {}
+    impl Gradient for crate::gradient::Gradient {}
+
     pub fn slider<T: Number>() {}
     pub fn percent<T: Number>() {}
     pub fn angle<T: Number>() {}
@@ -247,6 +267,7 @@ pub mod fits {
     pub fn text<T: Text>() {}
     pub fn custom<T: Text>() {}
     pub fn layer<T: Layer>() {}
+    pub fn gradient<T: Gradient>() {}
 }
 
 /// Declares an effect's parameters and a struct that reads them.

@@ -179,3 +179,35 @@ fn a_group_named_with_spaces_shows_its_name_and_a_project_saved_under_the_old_id
     assert_eq!(app.session.execute("prop.get", detail).unwrap()["value"], json!(7.0));
     assert!(instance(&mut app).sub("Fine Tuning").is_none());
 }
+
+#[test]
+fn a_gradient_parameter_keyframed_at_0_and_1_reaches_the_plugin_interpolated_at_half_a_second() {
+    let mut app = app("test.params-gradient", &[]);
+    app.session.execute("layer.newSolid", json!({"name": "Ramp", "color": "#ffffff", "width": 64, "height": 36})).unwrap();
+    app.session.execute("effect.apply", json!({"layer": "Ramp", "effect": format!("{}.ramp", app.id)})).unwrap();
+    for (time, end) in [(0.0, [1.0, 0.0, 0.0, 1.0]), (1.0, [0.0, 0.0, 1.0, 1.0])] {
+        let value = json!({"colors": [[0.0, [0.0, 0.0, 0.0, 1.0]], [1.0, end]], "opacities": [[0.0, 1.0], [1.0, 1.0]]});
+        app.session.execute_checked("prop.addKey", json!({"layer": "Ramp", "path": "effects/#1/ramp", "time": time, "value": value})).unwrap();
+    }
+    let session = &app.session;
+    let renderer = Renderer::new(&session.project, session.footage.as_ref(), RenderOpts::default());
+    let image = renderer.comp_frame(session.active_comp_id().unwrap(), Tick::from_seconds_f64(0.5));
+    let centre = image.data[(image.height / 2 * image.width + image.width / 2) as usize];
+    assert!(centre.iter().zip([0.25, 0.0, 0.25, 1.0]).all(|(found, wanted)| (found - wanted).abs() < 0.003), "{centre:?}");
+}
+
+#[test]
+fn the_sdk_samples_a_gradient_as_the_app_does() {
+    let app = effectcraft_engine::keyframe::Gradient {
+        colors: vec![(0.1, [1.0, 0.5, 0.0, 0.8]), (0.4, [0.0, 0.25, 1.0, 1.0]), (0.9, [0.2, 0.2, 0.2, 0.6])],
+        opacities: vec![(0.0, 0.3), (0.7, 1.0)],
+    };
+    let sdk = craft_plugin_host::Gradient {
+        colors: app.colors.iter().map(|(at, color)| (*at, color.map(f64::from))).collect(),
+        opacities: app.opacities.iter().map(|(at, opacity)| (*at, f64::from(*opacity))).collect(),
+    };
+    for t in [-0.5, 0.0, 0.1, 0.25, 0.4, 0.55, 0.7, 0.9, 1.0, 2.0] {
+        let (found, wanted) = (sdk.sample(t), app.sample(t));
+        assert!(found.iter().zip(wanted).all(|(a, b)| (a - b).abs() < 1e-6), "{t}: {found:?} against {wanted:?}");
+    }
+}

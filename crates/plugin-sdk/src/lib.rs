@@ -1,5 +1,6 @@
 pub mod abi;
 mod effect;
+mod gradient;
 pub mod host;
 mod kernels;
 mod manifest;
@@ -11,6 +12,7 @@ mod viewer;
 mod wire;
 
 pub use effect::{Cx, Effect, Frame, Image, Pass, Rows};
+pub use gradient::{Gradient, MAX_GRADIENT_STOPS};
 pub use kernels::*;
 pub use manifest::{Entry, MANIFEST_FILE, Manifest, ManifestError, Permission, RunMode, native_target};
 pub use plugin::{Error, Plugin, Result, Task};
@@ -23,7 +25,7 @@ pub mod prelude {
     pub use crate::host;
     pub use crate::{
         AppEvent, AudioRequest, Bind, Blend, BlendMode, BlurShape, Camera, Canvas, Cull, Cursor, Cx, Drag, Dropped, Effect, EffectSpec, Encoding, Error,
-        FileErrorKind, Filter, Frame, FrameRequest, Handle, HostKernel, Image, Key, LayerParam, LayerPlacement, Layout, Light, LightKind, LogLevel, Mark,
+        FileErrorKind, Filter, Frame, FrameRequest, Gradient, Handle, HostKernel, Image, Key, LayerParam, LayerPlacement, Layout, Light, LightKind, LogLevel, Mark,
         MaskPath, Measure, Modifiers, Negatives, Overlay, Paint, Panel, Param, Pass, PickFile, Pixel, Plan, PlanData, PlanImage, PlanPass, Plugin, Pointer,
         PointerPhase, Rect, Result, Root, Rows, Scene, Space, Taps, Task, TaskState, TaskStatus, Tool, ToolEvent, ToolEventKind, Topic, Ui, Value,
     };
