@@ -47,3 +47,21 @@ the build notes have the conditions.
 | UI frame with three plugin panels open and idle | 0.83 ms | 0.62 to 0.66 ms |
 
 Not measured: the app's full render path under real projects, GPU effects other than Lumen Glow, memory use.
+
+## Fifth build (2026-11-24)
+Measured with `effectcraft-cli bench` built at `56aabc49` (before) and `e69d7083` (after), run alternately four
+times at a load average of 5 to 14; 1080p, 8 bpc, 30 consecutive frames with the layer cache (`--play 30`).
+The projects are made by the timing script in the build notes (`ab-w5.sh`).
+
+| Project | Before | After |
+|---|---|---|
+| Lumen Glow on a still layer, four 60 % layers above it, a moving layer on top: median / mean ms | 4.0–5.7 / 4.9–6.9 | 1.1 / 2.7–3.2 |
+| A layer with Lumen Glow moving 4 px a frame, half outside the frame: median / mean ms | 24–28 / 26–32 | 0.8 / 4.8–5.0 |
+| Curves (sandboxed) on a still layer, one frame: minimum ms | 3.9 | 4.0 |
+| Peak memory of the first project | 309 MB | 372 MB |
+
+- **Static layers under a moving one** are composited once and kept; the extra memory is that kept frame.
+- **A moving layer** is rendered again only when its shown part crosses the 64-pixel grid, about every 16 frames here.
+- **Quantising inside the plugin's bands** shows no gain on a sandboxed light effect, whose time is in copying the frame in and out. The agent measured about 5 % on a native one-line effect at high load.
+- **A plugin effect followed by a colour effect at 400 %** went from 29.2 to 11.4 ms on a 4K layer (the margins worker, load 19 to 26, not measured again).
+- **Peak memory of a sandboxed effect rendering a 1280×720 part of a 4K layer** stays at 260 MB over 30 renders; it grew to 619 MB before the fix.
