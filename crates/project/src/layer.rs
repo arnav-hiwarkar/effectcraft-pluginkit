@@ -423,6 +423,7 @@ impl Layer {
             environment,
             environment_background,
             props,
+            plugin_data,
         } = self;
         *id == o.id
             && *name == o.name
@@ -443,6 +444,7 @@ impl Layer {
             && *auto_orient == o.auto_orient
             && *environment == o.environment
             && *environment_background == o.environment_background
+            && *plugin_data == o.plugin_data
             && (if heard { *props == o.props } else { same_picture_props(props, &o.props) })
     }
 
@@ -653,6 +655,8 @@ pub struct Layer {
     pub environment_background: bool,
     /// The property tree (Masks, Effects, Transform, Text, Contents, Camera/Light options…).
     pub props: PropGroup,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty", with = "crate::plugin_data")]
+    pub plugin_data: crate::plugin_data::PluginData,
 }
 
 /// The name a text layer takes from its text: the first 40 characters of the first line. A line

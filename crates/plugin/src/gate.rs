@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 
-use craft_plugin_host::{Access, AudioRequest, FrameRequest, Host, Permission, PickFile, Pixels, Samples};
+use craft_plugin_host::{Access, AudioRequest, FrameRequest, Host, Permission, PickFile, Pixels, Place, Samples, data};
 use effectcraft_automation::confine::{self, Confinement, Lookup};
 use effectcraft_engine::project::{ItemId, LayerId, Project};
 use effectcraft_engine::render::{RenderOpts, Renderer, audio};
 use effectcraft_engine::time::Tick;
-use effectcraft_engine::{Event, Session, commands};
+use effectcraft_engine::{EngineError, Event, Session, commands};
 use serde_json::{Value, json};
 
 use crate::manage::Loaded;
@@ -332,6 +332,44 @@ impl Host for SessionHost<'_> {
         let picker = FILE_PICKER.get().ok_or("a file dialog cannot open in a headless run")?;
         Ok(picker(request))
     }
+
+    fn data(&mut self, plugin: &str, place: Place, key: &str) -> Result<Option<Vec<u8>>, String> {
+        let project = &*self.session.project;
+        let found = match place {
+            Place::Layer(id) => &project.comps().find_map(|(_, comp)| comp.layer(LayerId(id))).ok_or(no_layer(id).to_string())?.plugin_data,
+            _ => &project.plugin_data,
+        };
+        Ok(found.get(plugin).and_then(|keys| keys.get(key)).cloned())
+    }
+
+    fn set_data(&mut self, plugin: &str, place: Place, key: &str, value: Option<Vec<u8>>) -> Result<(), String> {
+        let label = format!("{} Data", self.plugin.bundle.manifest.name);
+        let held = |found: &effectcraft_engine::project::plugin_data::PluginData| found.get(plugin).map_or(0, data::size);
+        self.session
+            .edit(&label, None, |project, _| {
+                let total =
+                    held(&project.plugin_data) + project.comps().flat_map(|(_, comp)| &comp.layers).map(|layer| held(&layer.plugin_data)).sum::<usize>();
+                let found = match place {
+                    Place::Layer(id) => {
+                        let comp = project.comps().find(|(_, comp)| comp.layer(LayerId(id)).is_some()).map(|(comp, _)| *comp).ok_or(no_layer(id))?;
+                        &mut project.comp_mut(comp).and_then(|comp| comp.layer_mut(LayerId(id))).ok_or(no_layer(id))?.plugin_data
+                    }
+                    _ => &mut project.plugin_data,
+                };
+                let mut keys = found.remove(plugin).unwrap_or_default();
+                let elsewhere = total - data::size(&keys);
+                let written = data::write(&mut keys, elsewhere, key, value);
+                if !keys.is_empty() {
+                    found.insert(plugin.to_string(), keys);
+                }
+                written.map_err(EngineError::Other)
+            })
+            .map_err(|e| e.to_string())
+    }
+}
+
+fn no_layer(id: u64) -> EngineError {
+    EngineError::Other(format!("no layer {id} in the project; read layer ids from `layer.list` or the selection"))
 }
 
 pub(crate) type Job<T> = Box<dyn FnOnce() -> T + Send>;

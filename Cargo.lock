@@ -2627,6 +2627,7 @@ name = "effectcraft-project"
 version = "0.24.1"
 dependencies = [
  "craft-ecproj-format",
+ "craft-mime",
  "effectcraft-color",
  "effectcraft-geom",
  "effectcraft-keyframe",

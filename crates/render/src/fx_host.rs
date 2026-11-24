@@ -98,6 +98,10 @@ fn finite_time(seconds: f64) -> Option<Tick> {
 pub(crate) const MAX_FX_DEPTH: usize = 8;
 
 impl EffectHost for FxHost<'_, '_, '_> {
+    fn layer_data(&self, plugin: &str, key: &str) -> Option<Vec<u8>> {
+        self.layer.plugin_data.get(plugin)?.get(key).cloned()
+    }
+
     fn original(&self) -> Option<&Buf> {
         self.original
     }
