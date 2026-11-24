@@ -324,6 +324,9 @@ fn an_effect_that_reads_no_other_rows_changes_whole_rows_where_they_lie() {
             );
             assert!(pixels_shown == cut(&pixels, width, shown), "{kind:?} {shown:?} differs from the whole render");
         }
+        let mut pixels_part = numbered(width, height);
+        pool.install(|| loaded.plugin.render("invert", &cx, &Layout::pointwise(), Some(part), &mut pixels_part, Recorder::default)).unwrap();
+        assert_eq!((pixels_part.len(), pixels_part.capacity()), (318, 318), "{kind:?} holds more memory than the part it shows");
     });
 }
 
