@@ -114,8 +114,7 @@ fn a_frame_of_one_layer_whose_video_is_off_shows_its_pixels() {
 
 #[test]
 fn a_task_reads_a_layer_by_id_before_its_effects_and_transform_in_layer_pixels() {
-    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut app = app("test.media-source", &["document.read"]);
+    let mut app = app_exclusive("test.media-source", &["document.read"]);
     let red = solid(&mut app, "Red", "#ff0000", 16);
     let impostor = solid(&mut app, "Green", "#00ff00", 8);
     app.session.execute("layer.rename", json!({"layer": impostor, "name": red.to_string()})).unwrap();
