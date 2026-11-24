@@ -520,3 +520,23 @@ fn a_time_dependent_plugin_effect_renders_each_frame_again_through_the_layer_cac
     assert!((later - 0.45).abs() < 0.02, "at 0.5 s green is {later}");
     assert!((again - first).abs() < 1e-6, "back at 0 s green is {again}");
 }
+
+#[test]
+fn a_gradient_edited_past_the_stop_limit_reaches_the_plugin_cut_with_one_warning_per_value() {
+    use effectcraft_engine::keyframe::{Gradient, Value};
+    let mut app = app("test.render-stops", &[]);
+    app.session.execute("layer.newSolid", json!({"name": "Red", "color": "#ff3300", "width": 64, "height": 36})).unwrap();
+    app.session.execute("effect.apply", json!({"effect": "test.render-stops.ramp"})).unwrap();
+    app.session.execute("prop.set", json!({"path": "effects/#1/at", "value": 1.0})).unwrap();
+    let ramp = |count: usize| {
+        let colors = (0..count).map(|i| (i as f64 / 69.0, [i as f32 / 69.0, 0.0, 0.0, 1.0])).collect();
+        serde_json::to_value(Value::Gradient(Gradient { colors, opacities: vec![(0.0, 1.0), (1.0, 1.0)] })).unwrap()
+    };
+    app.session.execute("prop.set", json!({"path": "effects/#1/ramp", "value": ramp(70)})).unwrap();
+    for _ in 0..2 {
+        assert!(close(centre_pixel(&app), [63.0 / 69.0, 0.0, 0.0, 1.0]), "the plugin got {:?}", centre_pixel(&app));
+    }
+    let warnings: Vec<String> = app.plugins.get("test.render-stops").unwrap().plugin.logs(0).into_iter().map(|line| line.message).collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("gradient parameter `ramp` has 6 stops beyond the limit of 64"), "{warnings:?}");
+}

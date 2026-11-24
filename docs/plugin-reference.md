@@ -166,7 +166,7 @@ around it, and returns the colour's alpha times the opacity, exactly as the app 
 A default needs 1 to `MAX_GRADIENT_STOPS` (64) colour stops, at most 64 opacity stops, positions in
 0..=1 and finite colours, or the plugin does not load:
 `effect `ramp`: gradient `ramp` has 65 colour and 2 opacity stops; give 1 to 64 colour stops and at most 64 opacity stops`.
-A gradient the user edits to more stops reaches the plugin with its first 64. In the test kit pass a
+A gradient the user edits to more stops reaches the plugin with its first 64, and the plugin's journal gets one warning naming the parameter and the stops dropped, once per changed value. In the test kit pass a
 `Gradient` to `.set`, or `{"colors": [[0, [0, 0, 0, 1]], [1, [1, 1, 1, 1]]]}` to `.with` and to
 `plugin look --set`.
 
