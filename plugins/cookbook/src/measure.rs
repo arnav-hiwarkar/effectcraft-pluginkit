@@ -5,7 +5,7 @@ pub fn measure(task: &Task) -> Result<serde_json::Value> {
     let mut total = 0.0;
     for n in 0..frames {
         task.progress(n as f64 / frames as f64, &format!("Frame {} of {frames}", n + 1))?;
-        let image = host::frame(FrameRequest { comp: None, layer: None, time: n as f64 / 10.0, scale: 0.25 })?;
+        let image = host::frame(FrameRequest { time: n as f64 / 10.0, scale: 0.25, ..Default::default() })?;
         let sum: f32 = image.pixels().iter().map(|p| (p[0] + p[1] + p[2]) / 3.0).sum();
         total += f64::from(sum) / image.pixels().len() as f64;
     }
