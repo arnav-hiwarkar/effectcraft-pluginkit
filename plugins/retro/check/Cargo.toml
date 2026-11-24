@@ -5,8 +5,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
-craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "f142cc4ba652fcc34cec1cd8a7bca19d47b2c16e" }
-craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "f142cc4ba652fcc34cec1cd8a7bca19d47b2c16e" }
+craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "2116798d4354a13e43d5de2e536211376decd919" }
+craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "2116798d4354a13e43d5de2e536211376decd919" }
 effectcraft-engine = { path = "../../../crates/engine" }
 effectcraft-gpu = { path = "../../../crates/gpu" }
 effectcraft-host = { path = "../../../crates/host" }
