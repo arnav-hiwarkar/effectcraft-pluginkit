@@ -23,8 +23,11 @@ fn a_batch_is_judged_by_its_steps_so_it_cannot_smuggle_an_edit() {
 #[test]
 fn a_plugin_with_write_permission_edits_and_a_batch_is_one_undo_step() {
     let mut app = app("test.gate-editor", &["document.read", "document.write"]);
+    let steps = app.session.history.undo.len();
     app.run("batch-edit").expect("editing is allowed");
     assert_eq!(app.layer_names().len(), 2, "{:?}", app.layer_names());
+    assert_eq!(app.session.history.undo.len(), steps + 1);
+    assert_eq!(app.session.history.undo.last().unwrap().0, "Two Nulls");
 
     app.session.execute("edit.undo", serde_json::json!({})).unwrap();
     assert!(app.layer_names().is_empty(), "one undo removes the whole batch: {:?}", app.layer_names());

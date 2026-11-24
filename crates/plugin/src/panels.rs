@@ -130,18 +130,21 @@ impl Bound {
 
 fn command_gesture(loaded: &Loaded, command: &str) -> Gesture {
     let commands = &loaded.plugin.contributions().commands;
-    Gesture::new(commands.iter().find(|spec| spec.id == command).map_or(command, |spec| spec.title.as_str()))
+    let mut gesture = Gesture::new(commands.iter().find(|spec| spec.id == command).map_or(command, |spec| spec.title.as_str()));
+    gesture.keeps_own = true;
+    gesture
 }
 
 #[derive(Clone)]
 pub(crate) struct Gesture {
     label: String,
+    keeps_own: bool,
     last: Arc<Mutex<Option<Arc<Project>>>>,
 }
 
 impl Gesture {
     pub(crate) fn new(label: &str) -> Gesture {
-        Gesture { label: label.to_string(), last: Arc::default() }
+        Gesture { label: label.to_string(), keeps_own: false, last: Arc::default() }
     }
 
     fn fold(&self, session: &mut Session, before: &Arc<Project>, earlier: History) {
@@ -150,10 +153,19 @@ impl Gesture {
         }
         let mut last = lock(&self.last);
         let joined = last.as_ref().is_some_and(|after| Arc::ptr_eq(after, before));
+        let made: Vec<_> = session.history.undo.iter().filter(|(_, state)| !earlier.undo.iter().any(|(_, old)| Arc::ptr_eq(old, state))).collect();
+        let own = self.keeps_own && !joined && matches!(made.as_slice(), [(_, state)] if Arc::ptr_eq(state, before));
+        if own {
+            session.history.merge_key = None;
+            *last = Some(session.project.clone());
+            return;
+        }
         session.history = earlier;
         if !joined {
             let levels = session.prefs.general.undo_levels.max(1) as usize;
             session.history.record(&self.label, before.clone(), levels);
+        } else if let Some((label, _)) = session.history.undo.last_mut() {
+            label.clone_from(&self.label);
         }
         session.history.merge_key = None;
         *last = Some(session.project.clone());
