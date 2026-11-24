@@ -890,6 +890,19 @@ pub fn focus_when_opened(ui: &Ui, id: egui::Id, entry: &Response) {
 
 /// Show a popup menu anchored at `pos` with string options; returns the chosen index.
 pub fn popup_menu(ui: &mut Ui, id: egui::Id, pos: egui::Pos2, options: &[String], current: Option<usize>) -> Option<usize> {
+    popup_menu_named(ui, id, pos, options, current, None)
+}
+
+/// [`popup_menu`] whose entries are also named for automation (`names[i]` is entry `i`'s id) and
+/// for a screen reader (a menu item with its label).
+pub fn popup_menu_named(
+    ui: &mut Ui,
+    id: egui::Id,
+    pos: egui::Pos2,
+    options: &[String],
+    current: Option<usize>,
+    mut names: Option<(&mut crate::automation::Registry, &[String])>,
+) -> Option<usize> {
     if !popup_is_open(ui, id) {
         return None;
     }
@@ -903,6 +916,12 @@ pub fn popup_menu(ui: &mut Ui, id: egui::Id, pos: egui::Pos2, options: &[String]
                 ui.separator();
             } else {
                 let r = ui.selectable_label(current == Some(i), o);
+                if let Some((auto, ids)) = names.as_mut() {
+                    crate::a11y::menu_item(&r, o, None);
+                    if let Some(name) = ids.get(i) {
+                        auto.add(name, r.rect, o);
+                    }
+                }
                 // The keyboard starts on the current entry (the first one, with none current).
                 if current == Some(i) || (current.is_none() && first) {
                     focus_when_opened(ui, id, &r);
