@@ -65,6 +65,8 @@ jobs:
       - uses: ./.github/actions/rust
         with:
           cache-key: ui
+      - name: Japanese and Chinese fonts the text tests lay out
+        run: sudo apt-get install -y --no-install-recommends fonts-noto-cjk
       - name: UI tests
         run: cargo test -p effectcraft-ui-egui
 
