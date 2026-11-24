@@ -226,7 +226,13 @@ Tell the app how much of the frame each output pixel needs, in `layout()`.
   `.maps_input()` and say which input an output rectangle needs in `Effect::input`.
 - If the effect needs the whole frame, describe it as passes: `Layout::whole_frame().passes(plan)`. The
   app runs each pass on the GPU when there is one, and otherwise calls your `pass` method for bands of
-  each pass on all cores. See [Passes](plugin-gpu.md).
+  each pass on all cores. See [Passes](plugin-gpu.md). Bound every loop in your WGSL by a pass value or a
+  constant: a loop that runs past 1 048 576 iterations in one invocation turns the shader off, and the
+  effect's error and your log say so.
+
+  ```wgsl
+  for (var i = 0u; i < min(pass_u(0u), 256u); i++) { sum += texel(src, vec2<i32>(id.xy) + vec2<i32>(i32(i), 0)); }
+  ```
 
 A frame has rows to write and rows to read. `frame.pixels` holds the rectangle this call writes
 (`frame.width` by `frame.height` at `frame.origin` in the layer's frame), and `frame.input` the input

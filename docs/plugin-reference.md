@@ -80,7 +80,7 @@ pooled instance, so values stored outside `cx` are not shared between calls.
 | `.reads_scene()` | The effect calls `cx.scene`, `cx.scene_at` or `cx.placement`. |
 | `.reads_param_history()` | The effect calls `cx.at` or `cx.param_history`. A layer whose other effects or masks have expressions is then not cached, because the key cannot see what an expression returned at another time. |
 | `.preset(name, [(id, Value), …])` | A named set of parameter values, see [Presets](#presets). |
-| `.shader(wgsl)` | WGSL kernels for GPU passes. See [Passes](plugin-gpu.md). |
+| `.shader(wgsl)` | WGSL kernels for GPU passes. Each invocation may run 1 048 576 loop iterations; past that the app turns the shader off and renders on the CPU (see [Time](plugin-gpu.md#time)). See [Passes](plugin-gpu.md). |
 | `.designer(panel_id)` | Effect Controls shows a button that opens this panel. |
 
 The render cache uses the four declarations. An effect that omits one shows stale frames. The

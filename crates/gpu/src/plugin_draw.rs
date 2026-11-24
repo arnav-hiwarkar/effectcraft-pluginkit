@@ -58,7 +58,8 @@ fn hash_of(bytes: &[u8]) -> u64 {
 }
 
 impl Store {
-    fn layouts(&self, device: &wgpu::Device) -> &(wgpu::BindGroupLayout, wgpu::PipelineLayout) {
+    fn layouts(&self, g: &GpuContext) -> &(wgpu::BindGroupLayout, wgpu::PipelineLayout) {
+        let device = &g.device;
         self.layouts.get_or_init(|| {
             let texture = |binding| wgpu::BindGroupLayoutEntry {
                 binding,
@@ -80,7 +81,7 @@ impl Store {
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("plugin draw"), entries: &[uniform, texture(1), texture(2)] });
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("plugin draw"),
-                bind_group_layouts: &[Some(&bind)],
+                bind_group_layouts: &[Some(&bind), Some(&g.loop_guard().0)],
                 immediate_size: 0,
             });
             (bind, layout)
@@ -213,7 +214,7 @@ fn attributes(layout: &[u32], first: u32) -> Vec<wgpu::VertexAttribute> {
 }
 
 pub(crate) fn pipeline(g: &GpuContext, module: &wgpu::ShaderModule, key: &DrawKey) -> wgpu::RenderPipeline {
-    let (_, layout) = g.plugin_draw.layouts(&g.device);
+    let (_, layout) = g.plugin_draw.layouts(g);
     let vertex = attributes(&key.layout, 0);
     let instance = attributes(&key.instance_layout, key.layout.len() as u32);
     let size = |layout: &[u32]| u64::from(layout.iter().sum::<u32>()) * 4;
@@ -278,6 +279,7 @@ pub(crate) struct Stage<'a> {
     depth: Option<wgpu::Texture>,
     colours: Vec<([u32; 2], wgpu::Texture)>,
     canvas: Option<Canvas>,
+    guard: Option<wgpu::BindGroup>,
 }
 
 pub(crate) struct Target<'a> {
@@ -288,8 +290,8 @@ pub(crate) struct Target<'a> {
 }
 
 impl<'a> Stage<'a> {
-    pub fn new(effect: &'a str, revision: u64, wgsl: &'a str, program: &'a GpuProgram) -> Self {
-        Stage { effect, revision, wgsl, program, depth: None, colours: Vec::new(), canvas: None }
+    pub fn new(effect: &'a str, revision: u64, wgsl: &'a str, program: &'a GpuProgram, guard: Option<wgpu::BindGroup>) -> Self {
+        Stage { effect, revision, wgsl, program, depth: None, colours: Vec::new(), canvas: None, guard }
     }
 
     pub fn texture(&self, g: &GpuContext, index: usize) -> Option<GpuImage> {
@@ -343,7 +345,7 @@ impl<'a> Stage<'a> {
     }
 
     fn bind(g: &GpuContext, params: &Params, src: &wgpu::Texture, aux: Option<&wgpu::Texture>) -> wgpu::BindGroup {
-        let (layout, _) = g.plugin_draw.layouts(&g.device);
+        let (layout, _) = g.plugin_draw.layouts(g);
         let uniform = g.buffer_init(None, &params.bytes(), wgpu::BufferUsages::UNIFORM);
         let src = src.create_view(&Default::default());
         let aux = aux.map(|aux| aux.create_view(&Default::default()));
@@ -383,6 +385,7 @@ impl<'a> Stage<'a> {
         target: Target,
     ) -> Result<Option<GpuImage>, String> {
         let g = e.g;
+        let guard = self.guard.clone().ok_or("the shader has no loop guard")?;
         let draw = pass.draw.as_ref().ok_or("not a draw pass")?;
         let counts = check_draw(0, draw, self.program, false)?;
         let pipeline = g.plugin_draw_pipeline(self.effect, self.revision, self.wgsl, &draw_key(pass, draw))?;
@@ -439,12 +442,14 @@ impl<'a> Stage<'a> {
             let mut under = begin(enc, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), None, false);
             under.set_pipeline(blit);
             under.set_bind_group(0, bind, &[]);
+            under.set_bind_group(1, &guard, &[]);
             under.draw(0..3, 0..1);
         }
         {
             let mut render = begin(enc, load, depth_view.as_ref(), fresh_depth);
             render.set_pipeline(&pipeline);
             render.set_bind_group(0, &bound, &[]);
+            render.set_bind_group(1, &guard, &[]);
             render.set_vertex_buffer(0, vertices.slice(..));
             if let Some(instances) = &instances {
                 render.set_vertex_buffer(1, instances.slice(..));
@@ -466,7 +471,13 @@ impl<'a> Stage<'a> {
         let out = e.scratch(w, h);
         let drawn = GpuImage::new(colour, w, h);
         let bound = KernelImages { src: &drawn, aux: None, out: &out };
-        e.dispatch(Kernel::Plugin { pipeline: &resolve, label: RESOLVE }, &Params::default(), bound, None, (w.div_ceil(16), h.div_ceil(16)));
+        e.dispatch(
+            Kernel::Plugin { pipeline: &resolve, label: RESOLVE, guard: Some(&guard) },
+            &Params::default(),
+            bound,
+            None,
+            (w.div_ceil(16), h.div_ceil(16)),
+        );
         Ok(Some(out))
     }
 }

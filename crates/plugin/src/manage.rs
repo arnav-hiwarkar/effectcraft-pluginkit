@@ -21,18 +21,18 @@ pub struct Loaded {
 }
 
 impl Loaded {
-    pub(crate) fn report(&self, effect: &str, error: Option<String>) {
-        let Ok(mut errors) = self.render_errors.lock() else { return };
+    pub(crate) fn report(&self, effect: &str, error: Option<String>) -> bool {
+        let Ok(mut errors) = self.render_errors.lock() else { return false };
         match error {
             Some(error) => {
-                if errors.get(effect) != Some(&error) {
+                let new = errors.get(effect) != Some(&error);
+                if new {
                     log::warn!("plugin `{}` effect `{effect}`: {error}", self.bundle.manifest.id);
                 }
                 errors.insert(effect.to_string(), error);
+                new
             }
-            None => {
-                errors.remove(effect);
-            }
+            None => errors.remove(effect).is_some(),
         }
     }
 }

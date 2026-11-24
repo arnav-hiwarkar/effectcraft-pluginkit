@@ -234,7 +234,7 @@ fn a_plugin_texture_cached_under_one_size_is_uploaded_again_under_another() {
     let sizes: Vec<[u32; 2]> = [program([16, 4]), program([8, 8])]
         .iter()
         .map(|p| {
-            let image = crate::plugin_draw::Stage::new("test.gpu.reshape", 1, "", p).texture(&g.ctx, 0).expect("the texture uploads");
+            let image = crate::plugin_draw::Stage::new("test.gpu.reshape", 1, "", p, None).texture(&g.ctx, 0).expect("the texture uploads");
             [image.width, image.height]
         })
         .collect();
@@ -252,4 +252,80 @@ fn the_sixty_fifth_host_module_evicts_only_the_least_recently_used() {
     drop(build(64));
     let kept: Vec<bool> = [0, 1, 2, 64].iter().map(|i| g.ctx.host_module_kept(&source(*i))).collect();
     assert_eq!(kept, [true, false, true, true], "module 1 was used least recently");
+}
+
+const SPIN_WGSL: &str = r#"
+@compute @workgroup_size(16, 16)
+fn spin(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    var n = 0.0;
+    loop {
+        n = n + 1.0;
+        if (pass_f(0u) < 0.0) { break; }
+    }
+    store(id.xy, vec4<f32>(n / 1048576.0));
+}
+"#;
+
+const COUNT_WGSL: &str = r#"
+fn count(k: u32) -> f32 {
+    var n = 0.0;
+    for (var i = 0u; i < k; i++) {
+        for (var j = 0u; j < k; j++) { n += 1.0; }
+    }
+    return n;
+}
+
+@compute @workgroup_size(16, 16)
+fn spin(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (!inside_out(id.xy)) { return; }
+    store(id.xy, vec4<f32>(count(pass_u(0u)) / 1000000.0));
+}
+"#;
+
+fn small(id: &str) -> Option<Buf> {
+    let g = gpu()?;
+    let spec = effectcraft_effects::find(id).expect("registered");
+    let params = Params::default();
+    let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [4.0, 4.0], seed: 1, adjustment: false, env: Default::default() };
+    g.effects(&[FxStep { spec, ctx }], &Buf { img: pattern(2, 4, 4), offset: [0.0, 0.0], scale: 1.0 }, None)
+}
+
+fn spin_program(u: Vec<u32>) -> GpuProgram {
+    GpuProgram { padding: [3; 4], passes: vec![GpuPass { u, ..pass("spin", GpuSlot::Source, GpuSlot::Output) }], ..Default::default() }
+}
+
+#[test]
+fn a_loop_that_never_ends_stops_at_the_cap_then_its_shader_is_turned_off_and_reported() {
+    let Some(g) = gpu() else { return };
+    register("test.gpu.spin", SPIN_WGSL, spin_program(Vec::new()));
+    let first = small("test.gpu.spin").expect("the capped loop ends and the frame comes back");
+    assert!(first.img.data.iter().all(|p| *p == [1.0; 4]), "every pixel looped exactly the cap: {:?}", first.img.data.first());
+    let declined = (0..4).position(|_| small("test.gpu.spin").is_none());
+    assert!(declined.is_some(), "a later frame declines to the CPU");
+    let registered = dynamic::get("test.gpu.spin").expect("registered");
+    let stopped = registered.gpu_stopped.get().expect("the effect carries the reason");
+    assert!(stopped.starts_with("a loop in this shader ran past 1048576 iterations in one invocation"), "{stopped}");
+    assert!(g.ctx.plugin_reports("test.gpu.spin").contains(stopped), "the GPU log names it");
+    assert!(g.ctx.check_health().is_ok(), "the device stays usable");
+    register("test.gpu.after-spin", TINT_WGSL, tint_program());
+    renders_on_the_gpu_like_the_cpu("test.gpu.after-spin");
+}
+
+#[test]
+fn loops_under_the_cap_run_every_iteration_frame_after_frame() {
+    register("test.gpu.count", COUNT_WGSL, spin_program(vec![1000]));
+    let frames: Vec<Buf> = (0..3).map_while(|_| small("test.gpu.count")).collect();
+    assert_eq!(frames.len(), 3, "every frame runs on the GPU");
+    assert!(frames.iter().all(|frame| frame.img.data.iter().all(|p| *p == [1.0; 4])), "a million nested iterations all ran: {:?}", frames[0].img.data.first());
+}
+
+#[test]
+fn a_plugin_effect_is_built_before_its_first_frame() {
+    gpu();
+    let Some(g) = crate::Gpu::headless() else { return };
+    register("test.gpu.warm", FLIP_WGSL, GpuProgram { passes: vec![pass("flip", GpuSlot::Source, GpuSlot::Output)], ..Default::default() });
+    assert!(!g.ctx.plugin_shader_cached("test.gpu.warm"), "a fresh context has built nothing");
+    g.warm_plugins().expect("a new plugin effect starts a warm-up").join().expect("the warm-up finishes");
+    assert!(g.ctx.plugin_shader_cached("test.gpu.warm"), "the shader was built off the frame path");
 }

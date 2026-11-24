@@ -81,6 +81,7 @@ mod fx_tone;
 mod fx_transition;
 mod fx_vr;
 mod fx_warp;
+mod guard;
 mod inpaint;
 mod memcap;
 mod ops;
@@ -136,6 +137,7 @@ pub struct Gpu {
     auto: Arc<effectcraft_render::AutoPick>,
     /// (comp, reason) pairs already warned about when the GPU declined a frame.
     declined: Arc<std::sync::Mutex<std::collections::HashSet<(u64, String)>>>,
+    warmed: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// A viewer frame left on the GPU: premultiplied RGBA8 (`wgpu::TextureFormat::Rgba8Unorm`) with
@@ -167,7 +169,29 @@ impl Gpu {
     }
 
     pub fn from_context(ctx: GpuContext) -> Gpu {
-        Gpu { ctx: Arc::new(ctx), auto: Default::default(), declined: Default::default(), scoped_observations: Default::default() }
+        let warmed = Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX));
+        Gpu { ctx: Arc::new(ctx), auto: Default::default(), declined: Default::default(), scoped_observations: Default::default(), warmed }
+    }
+
+    /// Builds the pipelines of every plugin GPU effect on a thread of its own once the set of
+    /// plugin effects changes, so the first frame that shows one does not compile them.
+    pub fn warm_plugins(&self) -> Option<std::thread::JoinHandle<()>> {
+        if cfg!(target_arch = "wasm32") {
+            return None;
+        }
+        let generation = effectcraft_effects::dynamic::generation();
+        if self.warmed.swap(generation, std::sync::atomic::Ordering::AcqRel) == generation {
+            return None;
+        }
+        let ctx = self.ctx.clone();
+        let warm = move || {
+            for spec in effectcraft_effects::dynamic::specs() {
+                if let Some(registered) = effectcraft_effects::dynamic::get(spec.id) {
+                    fx_plugin::warm(&ctx, &registered);
+                }
+            }
+        };
+        std::thread::Builder::new().name("gpu plugin warm-up".into()).spawn(warm).ok()
     }
 
     /// A device of its own without blocking, with deferred readbacks (a browser worker, see
@@ -227,6 +251,7 @@ impl Gpu {
     /// readback unless a CPU fallback step needs one). `None` = render on the CPU.
     pub fn render_display(&self, r: &Renderer, comp: ItemId, t: Tick) -> Option<DisplayFrame> {
         self.ctx.check_health().map_err(|e| log::error!("gpu display: {e}")).ok()?;
+        self.warm_plugins();
         let mut e = Enc::new(&self.ctx);
         let img = walk::render(&mut e, r, comp, t)?;
         let texture = e.display(&img);
@@ -256,6 +281,7 @@ impl Gpu {
     /// Render a frame on the GPU and read it back (`None` = not handled).
     pub fn render(&self, r: &Renderer, comp: ItemId, t: Tick) -> Option<Image> {
         self.ctx.check_health().ok()?;
+        self.warm_plugins();
         if !self.ctx.can_readback() {
             return None;
         }
@@ -429,6 +455,7 @@ impl Accelerator for Gpu {
     }
 
     fn supports_effect(&self, id: &str) -> bool {
+        self.warm_plugins();
         self.ctx.check_health().is_ok() && self.ctx.can_readback() && effects::supports(id)
     }
 

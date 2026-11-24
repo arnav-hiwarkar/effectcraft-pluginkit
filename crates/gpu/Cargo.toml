@@ -18,7 +18,8 @@ effectcraft-raster = { workspace = true }
 effectcraft-effects = { workspace = true }
 effectcraft-render = { workspace = true }
 effectcraft-keyframe = { workspace = true }
-wgpu = { workspace = true }
+wgpu = { workspace = true, features = ["naga-ir"] }
+naga = { version = "30.0.1", features = ["wgsl-in"] }
 bytemuck = { workspace = true }
 log = { workspace = true }
 rayon = { workspace = true }

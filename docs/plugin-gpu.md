@@ -83,9 +83,21 @@ device and the stored bytes (image sizes the GPU holds, buffer and texture byte 
 
 ### Time
 
-A plugin's GPU work has no time limit of its own. A GPU dispatch cannot be cancelled, so a kernel that runs
-for seconds stalls the GPU for as long as that frame takes, and every other effect waits for it. The
-operating system's GPU watchdog and the app's 10 second readback deadline are the only limits.
+Every loop in your WGSL stops after 1 048 576 iterations in one invocation, counting every loop the
+invocation runs, nested ones and those in functions it calls. The app compiles your WGSL through naga and
+adds the count itself. When a loop reaches the limit it ends, the frame finishes, and the app turns that
+shader off: the effect renders on the CPU (your `pass` method) until the WGSL changes, the effect's error
+reads `on the GPU: a loop in this shader ran past 1048576 iterations in one invocation, …`, and your
+plugin's log gets the same line once. Loops in vertex shaders stop at the limit too but are not reported,
+because a vertex shader cannot write the flag on every GPU. A loop costs one add and one compare per
+iteration. Other GPU work has no time limit of its own: a dispatch cannot be cancelled, so a kernel that
+does seconds of work without looping stalls the GPU, with the operating system's GPU watchdog and the
+app's 10 second readback deadline as the only limits.
+
+The app builds each plugin's GPU pipelines on a thread of its own when the set of loaded effects changes,
+from the plan your effect makes at its default settings on a 1920 by 1080 frame. The first frame that
+shows the effect then compiles nothing. Kernels that a plan names only at other settings are built on
+first use.
 
 ## Draw passes
 
