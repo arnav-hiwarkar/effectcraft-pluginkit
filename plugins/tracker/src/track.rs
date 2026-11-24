@@ -6,13 +6,19 @@ pub const KEY: &str = "track";
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct Request {
+    pub comp: u64,
     pub layer: u64,
     pub min: [f64; 2],
     pub max: [f64; 2],
     pub search: f64,
-    pub from: f64,
-    pub to: f64,
+    pub first: i64,
+    pub frames: usize,
     pub fps: f64,
+}
+
+pub fn frame_grid(from: f64, to: f64, fps: f64) -> (i64, usize) {
+    let index = |time: f64| (time * fps - 1e-6).ceil() as i64;
+    (index(from), (index(to) - index(from)).max(0) as usize)
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
@@ -84,30 +90,35 @@ pub fn best_match(frame: &Grey, template: &[f32], size: [i32; 2], around: [i32; 
     [f64::from(x) + fx, f64::from(y) + fy]
 }
 
+pub const MAX_SEARCH: f64 = 200.0;
+
 pub fn track(task: &Task) -> Result<Value> {
     let request: Request = serde_json::from_value(task.args().clone())?;
-    let frames = ((request.to - request.from) * request.fps).round() as usize;
-    if frames == 0 || request.max[0] <= request.min[0] || request.max[1] <= request.min[1] {
-        return Err("Tracker needs a box with a size and a time range of at least one frame".into());
+    if request.frames == 0 || !request.fps.is_finite() || request.fps <= 0.0 || !(0.0..=MAX_SEARCH).contains(&request.search) {
+        return Err(format!("Tracker needs at least one frame and a search range from 0 to {MAX_SEARCH} pixels").into());
     }
-    host::remove_data(Place::Layer(request.layer), KEY)?;
     let read = |frame: usize| {
-        let time = request.from + frame as f64 / request.fps;
-        host::frame(FrameRequest { comp: None, layer: Some(request.layer.to_string()), time, scale: 1.0 }).map(|image| Grey::of(&image))
+        let time = (request.first + frame as i64) as f64 / request.fps;
+        let (comp, layer) = (Some(request.comp.to_string()), Some(request.layer.to_string()));
+        host::frame(FrameRequest { comp, layer, time, scale: 1.0, ids: true, source: true }).map(|image| Grey::of(&image))
     };
     let start = request.min.map(|v| v.round() as i32);
-    let size = [0, 1].map(|i| (request.max[i] - request.min[i]).round() as i32);
-    let template = read(0)?.patch(start, size);
-    let centre = [0, 1].map(|i| (request.min[i] + request.max[i]) / 2.0);
+    let size = [0, 1].map(|i| request.max[i].round() as i32 - start[i]);
+    let first = read(0)?;
+    if size[0] < 1 || size[1] < 1 || start[0] < 0 || start[1] < 0 || start[0] + size[0] > first.width || start[1] + size[1] > first.height {
+        return Err(format!("Tracker needs a box at least one pixel wide and tall inside the {}×{} layer", first.width, first.height).into());
+    }
+    let template = first.patch(start, size);
+    let centre = [0, 1].map(|i| f64::from(start[i]) + f64::from(size[i]) / 2.0);
     let mut points = vec![centre];
     let mut at = start;
-    for frame in 1..frames {
-        task.progress(frame as f64 / frames as f64, &format!("Tracking frame {frame} of {frames}"))?;
+    for frame in 1..request.frames {
+        task.progress(frame as f64 / request.frames as f64, &format!("Tracking frame {frame} of {}", request.frames))?;
         let found = best_match(&read(frame)?, &template, size, at, request.search.round() as i32);
         at = found.map(|v| v.round() as i32);
         points.push([0, 1].map(|i| centre[i] + found[i] - f64::from(start[i])));
     }
-    let track = Track { version: 1, start: request.from, fps: request.fps, points };
+    let track = Track { version: 1, start: request.first as f64 / request.fps, fps: request.fps, points };
     host::set_data(Place::Layer(request.layer), KEY, &serde_json::to_vec(&track)?)?;
     Ok(serde_json::to_value(track)?)
 }

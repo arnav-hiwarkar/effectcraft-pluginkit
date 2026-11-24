@@ -36,9 +36,9 @@ impl Effect for Stabilise {
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let track: Option<Track> = match cx.layer_data(KEY)? {
-            Some(bytes) if Settings::read(cx).stabilise => Some(serde_json::from_slice(&bytes)?),
-            _ => None,
+        let track: Option<Track> = match Settings::read(cx).stabilise {
+            true => cx.layer_data(KEY)?.map(|bytes| serde_json::from_slice(&bytes)).transpose()?,
+            false => None,
         };
         let (Some(first), Some(now)) = (track.as_ref().and_then(|t| t.points.first()), track.as_ref().and_then(|t| t.at(cx.comp_time))) else {
             frame.map(|pixel| pixel);

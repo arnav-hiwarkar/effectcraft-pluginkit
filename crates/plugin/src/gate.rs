@@ -71,7 +71,6 @@ const FILE_PERMISSIONS: [Permission; 2] = [Permission::FilesRead, Permission::Fi
 
 const MAX_AUDIO_FRAMES: f64 = (1u64 << 25) as f64;
 const AUDIO_RATES: std::ops::RangeInclusive<u32> = 1000..=192_000;
-const MAX_FRAME_SCALE: f64 = 4.0;
 const MAX_FRAME_SIDE: f64 = 16384.0;
 const MAX_FRAME_BYTES: f64 = (1u64 << 30) as f64;
 const RGBA_F32_BYTES: f64 = 16.0;
@@ -84,14 +83,20 @@ pub fn set_file_picker(picker: FilePicker) {
     let _ = FILE_PICKER.set(picker);
 }
 
-fn find_comp(session: &Session, name: Option<&str>) -> Result<ItemId, String> {
+fn find_comp(session: &Session, name: Option<&str>, ids: bool) -> Result<ItemId, String> {
     let Some(name) = name else { return session.active_comp_id().ok_or_else(|| "there is no active composition".to_string()) };
+    if ids {
+        return name.parse().ok().map(ItemId).filter(|id| session.project.comp(*id).is_some()).ok_or_else(|| format!("no composition with id {name}"));
+    }
     let by_name = session.project.items.values().find(|item| item.name == name && item.as_comp().is_some()).map(|item| item.id);
     by_name.or_else(|| name.parse().ok().map(ItemId).filter(|id| session.project.comp(*id).is_some())).ok_or_else(|| format!("no composition `{name}`"))
 }
 
-fn find_layer(project: &Project, comp: ItemId, name: &str) -> Result<LayerId, String> {
+fn find_layer(project: &Project, comp: ItemId, name: &str, ids: bool) -> Result<LayerId, String> {
     let comp = project.comp(comp).ok_or("the composition is gone")?;
+    if ids {
+        return name.parse().ok().map(LayerId).filter(|id| comp.layer(*id).is_some()).ok_or_else(|| format!("no layer with id {name}"));
+    }
     let by_name = comp.layers.iter().find(|layer| layer.name == name).map(|layer| layer.id);
     by_name.or_else(|| name.parse().ok().map(LayerId).filter(|id| comp.layer(*id).is_some())).ok_or_else(|| format!("no layer `{name}`"))
 }
@@ -374,23 +379,30 @@ fn no_layer(id: u64) -> EngineError {
 
 pub(crate) type Job<T> = Box<dyn FnOnce() -> T + Send>;
 
+fn frame_size(size: (u32, u32), scale: f64) -> Result<(u32, u32), String> {
+    let (width, height) = ((f64::from(size.0) * scale).ceil(), (f64::from(size.1) * scale).ceil());
+    if width > MAX_FRAME_SIDE || height > MAX_FRAME_SIDE || width * height * RGBA_F32_BYTES > MAX_FRAME_BYTES {
+        return Err(format!(
+            "a {width}×{height} frame is too large: a frame may be at most {MAX_FRAME_SIDE} pixels on a side and {} MiB as RGBA floats",
+            MAX_FRAME_BYTES / f64::from(1u32 << 20)
+        ));
+    }
+    Ok((width.max(1.0) as u32, height.max(1.0) as u32))
+}
+
 impl SessionHost<'_> {
     pub(crate) fn frame_job(&self, request: &FrameRequest) -> Result<Job<Pixels>, String> {
-        if !(request.scale > 0.0 && request.scale <= MAX_FRAME_SCALE) || !request.time.is_finite() {
-            return Err(format!("a frame needs a scale above 0 and at most {MAX_FRAME_SCALE}, and a finite time"));
-        }
+        craft_plugin_host::check_frame(request)?;
         let session = &*self.session;
-        let comp = find_comp(session, request.comp.as_deref())?;
-        let size = session.project.comp(comp).map(|found| (found.width, found.height)).ok_or("the composition is gone")?;
-        let (width, height) = ((f64::from(size.0) * request.scale).ceil(), (f64::from(size.1) * request.scale).ceil());
-        if width > MAX_FRAME_SIDE || height > MAX_FRAME_SIDE || width * height * RGBA_F32_BYTES > MAX_FRAME_BYTES {
-            return Err(format!(
-                "a {width}×{height} frame is too large: a frame may be at most {MAX_FRAME_SIDE} pixels on a side and {} MiB as RGBA floats",
-                MAX_FRAME_BYTES / f64::from(1u32 << 20)
-            ));
+        let comp = find_comp(session, request.comp.as_deref(), request.ids)?;
+        let layer = request.layer.as_deref().map(|layer| find_layer(&session.project, comp, layer, request.ids)).transpose()?;
+        if let (true, Some(layer)) = (request.source, layer) {
+            return self.source_job(request, comp, layer);
         }
-        let (project, cache) = match &request.layer {
-            Some(layer) => (Arc::new(only_layer(&session.project, comp, find_layer(&session.project, comp, layer)?, true)?), None),
+        let size = session.project.comp(comp).map(|found| (found.width, found.height)).ok_or("the composition is gone")?;
+        frame_size(size, request.scale)?;
+        let (project, cache) = match layer {
+            Some(layer) => (Arc::new(only_layer(&session.project, comp, layer, true)?), None),
             None => (session.project.clone(), Some(session.layer_cache.clone())),
         };
         let opts = session.render_opts(RenderOpts { scale: request.scale, ..RenderOpts::default() });
@@ -405,15 +417,43 @@ impl SessionHost<'_> {
         }))
     }
 
+    fn source_job(&self, request: &FrameRequest, comp: ItemId, layer: LayerId) -> Result<Job<Pixels>, String> {
+        let session = &*self.session;
+        let project = session.project.clone();
+        let found = project.comp(comp).ok_or("the composition is gone")?;
+        let source = found.layer(layer).ok_or("the layer is gone")?;
+        let size = match effectcraft_engine::render::source_size(&project, source) {
+            (0, _) | (_, 0) => (found.width, found.height),
+            size => size,
+        };
+        let (width, height) = frame_size(size, request.scale)?;
+        let opts = session.render_opts(RenderOpts { scale: request.scale, ..RenderOpts::default() });
+        let (footage, expr, scale, time) = (session.footage.clone(), session.expr.clone(), request.scale, Tick::from_seconds_f64(request.time));
+        Ok(Box::new(move || {
+            let mut renderer = Renderer::new(&project, footage.as_ref(), opts);
+            renderer.expr = expr.as_deref();
+            let read = renderer.eval_ctx(comp, time).and_then(|ctx| renderer.layer_source(&ctx, ctx.layer(layer)?));
+            let mut data = vec![[0.0; 4]; width as usize * height as usize];
+            if let Some(buf) = read {
+                for (i, pixel) in data.iter_mut().enumerate() {
+                    let (x, y) = ((i % width as usize) as f64 + 0.5, (i / width as usize) as f64 + 0.5);
+                    let [bx, by] = [x, y].map(|v| v / scale * buf.scale);
+                    *pixel = buf.img.get((bx + buf.offset[0]).floor() as i64, (by + buf.offset[1]).floor() as i64);
+                }
+            }
+            Pixels { width, height, data }
+        }))
+    }
+
     pub(crate) fn audio_job(&self, request: &AudioRequest) -> Result<Job<Samples>, String> {
         let frames = request.duration * f64::from(request.rate);
         if !AUDIO_RATES.contains(&request.rate) || !(request.duration >= 0.0 && frames <= MAX_AUDIO_FRAMES) || !request.start.is_finite() {
             return Err(format!("audio needs a rate from {} to {} Hz and at most {MAX_AUDIO_FRAMES} sample frames", AUDIO_RATES.start(), AUDIO_RATES.end()));
         }
         let session = &*self.session;
-        let comp = find_comp(session, None)?;
+        let comp = find_comp(session, None, false)?;
         let project = match &request.layer {
-            Some(layer) => Arc::new(only_layer(&session.project, comp, find_layer(&session.project, comp, layer)?, false)?),
+            Some(layer) => Arc::new(only_layer(&session.project, comp, find_layer(&session.project, comp, layer, false)?, false)?),
             None => session.project.clone(),
         };
         let (footage, expr, start, rate) = (session.footage.clone(), session.expr.clone(), Tick::from_seconds_f64(request.start), request.rate);
