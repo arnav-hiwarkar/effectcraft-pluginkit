@@ -642,7 +642,7 @@ fn a_gradient_past_the_stop_limit_warns_when_only_the_gpu_plans_the_effect() {
     let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [64.0, 36.0], seed: 0, adjustment: false, env: Default::default() };
     let registered = dynamic::get(&id).expect("the probe registered its ramp");
     let plan = registered.effect.gpu.as_ref().expect("a GPU planner");
-    plan(&ctx, dynamic::Grid { width: 64, height: 36, offset: [0.0; 2], scale: 1.0 });
+    plan(&ctx, dynamic::Grid { width: 64, height: 36, offset: [0.0; 2], scale: 1.0 }, dynamic::Planning::Frame);
     let warnings: Vec<String> = app.plugins.get("test.render-stops-gpu").unwrap().plugin.logs(0).into_iter().map(|line| line.message).collect();
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].contains("gradient parameter `ramp` has 6 stops beyond the limit of 64"), "{warnings:?}");
@@ -673,4 +673,24 @@ fn a_plugin_effect_render_called_off_keeps_nothing_in_the_layer_cache() {
     assert!(cache.stats().entries > 0, "a render that runs to the end keeps its layers");
     let centre = image.data[(image.height / 2 * image.width + image.width / 2) as usize];
     assert!(close(centre, [0.0, 0.8, 1.0, 1.0]), "the finished render is inverted: {centre:?}");
+}
+
+#[test]
+fn warming_up_a_gpu_plan_leaves_the_cache_entries_of_a_live_frame_alone() {
+    use effectcraft_engine::effects::{EffectCtx, Params, dynamic};
+    use effectcraft_engine::keyframe::Value;
+    let app = app("test.render-cached-fill", &[]);
+    let registered = dynamic::get(&format!("{}.gpu-cached-fill", app.id)).expect("the probe registered its cached fill");
+    let planner = registered.effect.gpu.as_ref().expect("a GPU planner");
+    let grid = dynamic::Grid { width: 64, height: 36, offset: [0.0; 2], scale: 1.0 };
+    let plan = |params: &Params, planning| {
+        let ctx = EffectCtx { params, time: 0.0, layer_size: [64.0, 36.0], seed: 0, adjustment: false, env: Default::default() };
+        planner(&ctx, grid, planning).expect("a GPU program").buffers[0].bytes.clone()
+    };
+    let corners = || app.plugins.get("test.render-cached-fill").unwrap().plugin.cached("corners");
+    let live = plan(&Params { values: [("reach".to_string(), Value::Scalar(1.0))].into() }, dynamic::Planning::Frame);
+    assert_eq!(corners().as_deref(), Some(&*live), "a frame keeps the corners its layout stored");
+    let warmed = plan(&Params::default(), dynamic::Planning::WarmUp);
+    assert_ne!(warmed, live, "the warm-up planned other corners from its default reach");
+    assert_eq!(corners().as_deref(), Some(&*live), "the warm-up's corners do not replace the live frame's");
 }

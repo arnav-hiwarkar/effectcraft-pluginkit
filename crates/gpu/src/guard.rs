@@ -12,9 +12,9 @@ pub(crate) const LOOP_LIMIT: u32 = 1 << 20;
 pub(crate) const GROUP: u32 = 1;
 
 const IDLE: u8 = 0;
-const COPIED: u8 = 1;
-const MAPPING: u8 = 2;
-const MAPPED: u8 = 3;
+const MAPPING: u8 = 1;
+const MAPPED: u8 = 2;
+const FAILED: u8 = 3;
 
 static STOPPED: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
 
@@ -50,8 +50,12 @@ impl Layouts {
 pub(crate) struct ShaderGuard {
     digest: u64,
     flag: wgpu::Buffer,
-    staging: wgpu::Buffer,
     pub bind: wgpu::BindGroup,
+}
+
+pub(crate) struct FlagRead {
+    digest: u64,
+    staging: wgpu::Buffer,
     state: Arc<AtomicU8>,
 }
 
@@ -65,28 +69,22 @@ fn stopped() -> std::sync::MutexGuard<'static, BTreeSet<u64>> {
     STOPPED.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn flag_buffer(device: &wgpu::Device, usage: wgpu::BufferUsages) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor { label: Some("plugin loop guard"), size: 4, usage, mapped_at_creation: false })
+}
+
 impl ShaderGuard {
     pub(crate) fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, digest: u64) -> Self {
-        let buffer = |usage| device.create_buffer(&wgpu::BufferDescriptor { label: Some("plugin loop guard"), size: 4, usage, mapped_at_creation: false });
-        let flag = buffer(wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC);
-        let staging = buffer(wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
+        let flag = flag_buffer(device, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC);
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("plugin loop guard"),
             layout,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: flag.as_entire_binding() }],
         });
-        ShaderGuard { digest, flag, staging, bind, state: Arc::new(AtomicU8::new(IDLE)) }
+        ShaderGuard { digest, flag, bind }
     }
 
     pub(crate) fn check(&self) -> Result<(), String> {
-        if self.state.compare_exchange(MAPPED, MAPPING, Ordering::AcqRel, Ordering::Acquire).is_ok() {
-            let raised = self.staging.slice(..).get_mapped_range().is_ok_and(|view| view.first().is_some_and(|byte| *byte != 0));
-            self.staging.unmap();
-            self.state.store(IDLE, Ordering::Release);
-            if raised {
-                stopped().insert(self.digest);
-            }
-        }
         match stopped().contains(&self.digest) {
             true => Err(format!(
                 "a loop in this shader ran past {LOOP_LIMIT} iterations in one invocation, so its GPU kernels are turned off and the effect renders on the CPU until the WGSL changes; bound every loop"
@@ -95,22 +93,35 @@ impl ShaderGuard {
         }
     }
 
-    pub(crate) fn copy(&self, encoder: &mut wgpu::CommandEncoder) -> bool {
-        let claimed = self.state.compare_exchange(IDLE, COPIED, Ordering::AcqRel, Ordering::Acquire).is_ok();
-        if claimed {
-            encoder.copy_buffer_to_buffer(&self.flag, 0, &self.staging, 0, 4);
-        }
-        claimed
+    pub(crate) fn copy(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) -> FlagRead {
+        let staging = flag_buffer(device, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
+        encoder.copy_buffer_to_buffer(&self.flag, 0, &staging, 0, 4);
+        FlagRead { digest: self.digest, staging, state: Arc::new(AtomicU8::new(IDLE)) }
     }
+}
 
+impl FlagRead {
     pub(crate) fn submitted(&self) {
         self.state.store(MAPPING, Ordering::Release);
         let state = self.state.clone();
-        self.staging.slice(..).map_async(wgpu::MapMode::Read, move |mapped| state.store(if mapped.is_ok() { MAPPED } else { IDLE }, Ordering::Release));
+        self.staging.slice(..).map_async(wgpu::MapMode::Read, move |mapped| state.store(if mapped.is_ok() { MAPPED } else { FAILED }, Ordering::Release));
     }
 
-    pub(crate) fn dropped(&self) {
-        let _ = self.state.compare_exchange(COPIED, IDLE, Ordering::AcqRel, Ordering::Acquire);
+    pub(crate) fn pending(&self) -> bool {
+        self.state.load(Ordering::Acquire) == MAPPING
+    }
+
+    pub(crate) fn clean(self) -> bool {
+        if self.state.load(Ordering::Acquire) != MAPPED {
+            return false;
+        }
+        let raised = self.staging.slice(..).get_mapped_range().is_ok_and(|view| view.first().is_some_and(|byte| *byte != 0));
+        self.staging.unmap();
+        let mut stopped = stopped();
+        if raised {
+            stopped.insert(self.digest);
+        }
+        !stopped.contains(&self.digest)
     }
 }
 

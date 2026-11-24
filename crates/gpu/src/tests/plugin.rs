@@ -50,7 +50,7 @@ fn effect(id: &str, wgsl: &str, program: GpuProgram) -> DynamicEffect {
             ctx.quantized(buf)
         }),
         shader: Some(wgsl.into()),
-        gpu: Some(Box::new(move |_, _| Some(program.clone()))),
+        gpu: Some(Box::new(move |_, _, _| Some(program.clone()))),
         time_dependent: false,
         reads_other_frames: false,
         reads_comp_scene: false,
@@ -314,6 +314,43 @@ fn a_loop_that_never_ends_stops_at_the_cap_then_its_shader_is_turned_off_and_rep
     renders_on_the_gpu_like_the_cpu("test.gpu.after-spin");
 }
 
+pub(crate) fn register_spin(id: &str, variant: &str) {
+    let mut spin = effect(id, &format!("{SPIN_WGSL}{variant}"), spin_program(Vec::new()));
+    spin.time_dependent = true;
+    dynamic::register(spin);
+}
+
+#[test]
+fn a_capped_frame_declines_while_another_encoder_holds_a_flag_read_of_the_same_shader() {
+    let Some(g) = gpu() else { return };
+    let wgsl = format!("{SPIN_WGSL}\n");
+    register("test.gpu.spin-shared", &wgsl, spin_program(Vec::new()));
+    let guard = g.ctx.plugin_guard("test.gpu.spin-shared", 1, &wgsl).expect("the shader has a loop guard");
+    let mut other = crate::context::Enc::new(&g.ctx);
+    other.read_loop_flag(&guard);
+    assert!(small("test.gpu.spin-shared").is_none(), "the capped frame renders on the CPU");
+}
+
+#[test]
+fn a_capped_frame_never_reaches_the_viewer() {
+    let Some(g) = gpu() else { return };
+    register_spin("test.gpu.spin-display", "\n\n");
+    crate::fx_plugin::warm(&g.ctx, &dynamic::get("test.gpu.spin-display").expect("registered"));
+    let mut scene = crate::tests::Scene::new(effectcraft_project::BitDepth::Bpc32);
+    let mut layer = scene.footage(8, 8);
+    scene.effect(&mut layer, "test.gpu.spin-display", &[]);
+    scene.push(layer);
+    let mut r = effectcraft_render::Renderer::new(
+        &scene.p,
+        &crate::tests::Pattern,
+        effectcraft_render::RenderOpts { backend: effectcraft_render::Backend::Gpu, ..crate::tests::opts() },
+    );
+    r.accel = Some(g);
+    let shown =
+        g.render_display(&r, scene.cid, effectcraft_time::Tick::ZERO).and_then(|f| g.read_display(&f)).map(|bytes| bytes[(30 * 97 + 48) * 4..][..4].to_vec());
+    assert_eq!(shown, None, "the capped frame renders on the CPU");
+}
+
 #[test]
 fn loops_under_the_cap_run_every_iteration_frame_after_frame() {
     register("test.gpu.count", COUNT_WGSL, spin_program(vec![1000]));
@@ -358,7 +395,7 @@ fn warming_up_leaves_the_buffers_of_a_live_render_alone() {
     let triangles = |n: usize| [-1.0f32, -1.0, 3.0, -1.0, -1.0, 3.0].repeat(n).iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
     let draw = dynamic::GpuDraw { layout: vec![2], clear: true, ..Default::default() };
     let mut effect = effect("test.gpu.warm-draw", TRIANGLE_WGSL, GpuProgram::default());
-    effect.gpu = Some(Box::new(move |ctx: &EffectCtx, _| {
+    effect.gpu = Some(Box::new(move |ctx: &EffectCtx, _, _| {
         Some(GpuProgram {
             buffers: vec![dynamic::GpuBytes { name: "mesh".into(), bytes: triangles(if ctx.seed == 1 { 1 } else { 2 }).into() }],
             passes: vec![GpuPass { draw: Some(draw.clone()), ..pass("tri", GpuSlot::Source, GpuSlot::Output) }],
