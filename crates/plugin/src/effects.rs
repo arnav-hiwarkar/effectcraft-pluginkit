@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use craft_plugin_host::kernels::{self, Lowered, StepImage};
 use craft_plugin_host::{
-    Blend, Call, Camera, Cull, Draw, EffectSpec, Focus, Gradient as WireGradient, Host, LayerPlacement, Layout, Light, LightKind, MaskPath, Param, ParamKind,
-    ParamsAt, Pixels, PlanData, PlanImage, Rect, RenderCx, Scene, Value as Wire,
+    Blend, Call, Camera, Cull, Draw, EffectRegistry, EffectSpec, Focus, Gradient as WireGradient, Host, LayerPlacement, Layout, Light, LightKind, MaskPath,
+    Param, ParamKind, ParamValues, ParamsAt, Pixels, PlanData, PlanImage, Rect, RenderCx, Scene, Value as Wire,
 };
 use effectcraft_engine::effects::dynamic::{
     self, DynamicEffect, DynamicParam, GpuBlend, GpuBytes, GpuCull, GpuDraw, GpuPass, GpuPicture, GpuProgram, GpuSlot, Grid,
@@ -24,7 +24,21 @@ pub(crate) fn effect_id(plugin: &str, effect: &str) -> String {
     format!("{plugin}.{effect}")
 }
 
-pub(crate) fn register(loaded: &Arc<Loaded>) {
+pub(crate) struct Engine;
+
+impl EffectRegistry for Engine {
+    type Loaded = Loaded;
+
+    fn register(&self, loaded: &Arc<Loaded>) {
+        register(loaded);
+    }
+
+    fn unregister(&self, plugin: &str) {
+        dynamic::unregister(plugin);
+    }
+}
+
+fn register(loaded: &Arc<Loaded>) {
     let plugin_id = &loaded.bundle.manifest.id;
     for spec in &loaded.plugin.contributions().effects {
         let (render_plugin, render_spec) = (loaded.clone(), spec.clone());
@@ -118,10 +132,6 @@ fn stamp_folders(folders: &[std::path::PathBuf]) -> u64 {
     hasher.finish()
 }
 
-pub(crate) fn unregister(plugin: &str) {
-    dynamic::unregister(plugin);
-}
-
 fn declare(param: &Param) -> DynamicParam {
     let (default, ui) = match &param.kind {
         ParamKind::Slider { default, min, max, soft, log, percent } => {
@@ -162,8 +172,16 @@ fn app_gradient(gradient: &WireGradient) -> Gradient {
 }
 
 fn preset_values(spec: &EffectSpec, values: &BTreeMap<String, Wire>) -> Vec<(String, Value)> {
-    let convert = |param: &Param, value: &Wire| -> Option<Value> {
-        Some(match (&param.kind, param.fit(value.clone()).ok()?) {
+    spec.params.iter().filter_map(|param| Some((param.id.clone(), Placed::from_wire(param, values.get(&param.id)?.clone())?))).collect()
+}
+
+struct Placed(Grid);
+
+impl ParamValues for Placed {
+    type Value = Value;
+
+    fn from_wire(param: &Param, value: Wire) -> Option<Value> {
+        Some(match (&param.kind, param.fit(value).ok()?) {
             (ParamKind::Popup { options, .. }, Wire::Number(n)) => Value::Enum((n as u32).min(options.len().saturating_sub(1) as u32)),
             (ParamKind::Mask | ParamKind::Layer, _) => return None,
             (_, Wire::Number(n)) => Value::Scalar(n),
@@ -174,36 +192,10 @@ fn preset_values(spec: &EffectSpec, values: &BTreeMap<String, Wire>) -> Vec<(Str
             (_, Wire::Text(text)) => Value::Str(text),
             (_, Wire::Gradient(gradient)) => Value::Gradient(app_gradient(&gradient)),
         })
-    };
-    spec.params.iter().filter_map(|param| Some((param.id.clone(), convert(param, values.get(&param.id)?)?))).collect()
-}
-
-fn grid_of(buf: &Buf) -> Grid {
-    Grid { width: buf.img.width, height: buf.img.height, offset: buf.offset, scale: buf.scale }
-}
-
-fn to_px(grid: Grid, point: [f64; 2]) -> [f64; 2] {
-    [point[0] * grid.scale + grid.offset[0], point[1] * grid.scale + grid.offset[1]]
-}
-
-fn declared_default(param: &Param, layer_size: [f64; 2]) -> Value {
-    match declare(param).default {
-        Value::Vec2([x, y]) => Value::Vec2([x * layer_size[0], y * layer_size[1]]),
-        Value::Vec3([x, y, z]) => Value::Vec3([x * layer_size[0], y * layer_size[1], z]),
-        other => other,
     }
-}
 
-pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 2], grid: Grid) -> BTreeMap<String, Wire> {
-    let convert = |param: &Param| -> Wire {
-        let fallback;
-        let value = match params.get(&param.id) {
-            Some(value) => value,
-            None => {
-                fallback = declared_default(param, layer_size);
-                &fallback
-            }
-        };
+    fn to_wire(&self, param: &Param, value: &Value) -> Wire {
+        let grid = self.0;
         match &param.kind {
             ParamKind::Slider { .. } | ParamKind::Percent { .. } | ParamKind::Angle { .. } => Wire::Number(value.as_f64()),
             ParamKind::Checkbox { .. } => Wire::Bool(value.as_bool()),
@@ -228,6 +220,30 @@ pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 
                 _ => Wire::Gradient(WireGradient::default()),
             },
         }
+    }
+}
+
+fn grid_of(buf: &Buf) -> Grid {
+    Grid { width: buf.img.width, height: buf.img.height, offset: buf.offset, scale: buf.scale }
+}
+
+fn to_px(grid: Grid, point: [f64; 2]) -> [f64; 2] {
+    [point[0] * grid.scale + grid.offset[0], point[1] * grid.scale + grid.offset[1]]
+}
+
+fn declared_default(param: &Param, layer_size: [f64; 2]) -> Value {
+    match declare(param).default {
+        Value::Vec2([x, y]) => Value::Vec2([x * layer_size[0], y * layer_size[1]]),
+        Value::Vec3([x, y, z]) => Value::Vec3([x * layer_size[0], y * layer_size[1], z]),
+        other => other,
+    }
+}
+
+pub(crate) fn wire_params(spec: &EffectSpec, params: &Params, layer_size: [f64; 2], grid: Grid) -> BTreeMap<String, Wire> {
+    let placed = Placed(grid);
+    let convert = |param: &Param| match params.get(&param.id) {
+        Some(value) => placed.to_wire(param, value),
+        None => placed.to_wire(param, &declared_default(param, layer_size)),
     };
     spec.params.iter().filter_map(|param| Some((param.id.clone(), param.fit(convert(param)).ok()?))).collect()
 }

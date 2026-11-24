@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use craft_plugin_host::PluginImage;
-use craft_plugin_host::{Bundle, BundleError, Limits, Manifest, Permission, Plugin, Registry, RunMode, TaskState};
+use craft_plugin_host::{Bundle, BundleError, EffectRegistry, Limits, Manifest, Permission, Plugin, Registry, RunMode, TaskState};
 use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -102,6 +102,7 @@ fn load(bundle: &Bundle, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Res
     (&bundle.manifest.version, &bytes).hash(&mut hasher);
     let plugin = Plugin::load(bundle, grants, data_dir.clone(), Limits::default()).map_err(|e| e.to_string())?;
     craft_plugin_host::validate(&bundle.manifest, plugin.contributions())?;
+    effects::Engine.admit(plugin.contributions())?;
     let loaded = Loaded { bundle: bundle.clone(), plugin, data_dir, revision: hasher.finish(), render_errors: Mutex::new(BTreeMap::new()) };
     Ok(Arc::new(loaded))
 }
@@ -118,7 +119,7 @@ impl Inner {
         };
         match load(&bundle, grants, self.registry.data_dir(&id)) {
             Ok(loaded) => {
-                effects::register(&loaded);
+                effects::Engine.register(&loaded);
                 self.loaded.insert(id, loaded);
             }
             Err(error) => {
@@ -132,7 +133,7 @@ impl Inner {
         self.failed.remove(id);
         if let Some(loaded) = self.loaded.remove(id) {
             loaded.plugin.cancel_all();
-            effects::unregister(id);
+            effects::Engine.unregister(id);
         }
     }
 

@@ -1,3 +1,4 @@
+mod app;
 #[cfg(not(target_family = "wasm"))]
 mod cache;
 mod host;
@@ -16,6 +17,7 @@ mod runtime;
 #[cfg(all(feature = "testing", not(target_family = "wasm")))]
 pub mod testing;
 
+pub use app::{EffectRegistry, ParamValues};
 pub use craft_plugin::{
     AudioRequest, Blend, Call, Camera, CommandSpec, Contributions, ControlsReply, Cull, Draw, EffectSpec, Entry, Focus, FrameDesc, FrameRequest, Gradient,
     LayerPlacement, Layout, Light, LightKind, Manifest, MaskPath, PanelReply, PanelSpec, Param, ParamKind, ParamsAt, Permission, PickFile, Pixel, Plan,

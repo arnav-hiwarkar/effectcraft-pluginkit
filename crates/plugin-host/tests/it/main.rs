@@ -1304,3 +1304,33 @@ fn an_effect_with_a_parameter_id_ten_thousand_groups_deep_is_refused_at_load_wit
         Some(format!("the plugin could not be loaded: effect `deep`: parameter id `{}…` is 19999 bytes long; at most 256 are allowed", &shown[..40]))
     );
 }
+
+struct SlidersOnly;
+
+impl craft_plugin_host::EffectRegistry for SlidersOnly {
+    type Loaded = Plugin;
+
+    fn supports(&self, kind: &craft_plugin::ParamKind) -> bool {
+        matches!(kind, craft_plugin::ParamKind::Slider { .. })
+    }
+
+    fn register(&self, _loaded: &std::sync::Arc<Plugin>) {}
+
+    fn unregister(&self, _plugin: &str) {}
+}
+
+#[test]
+fn an_app_with_only_sliders_refuses_a_curve_at_load_and_names_it() {
+    use craft_plugin::ParamKind;
+    use craft_plugin_host::EffectRegistry;
+    let loaded = load(Kind::Wasm, &[]);
+    let mut found = loaded.plugin.contributions().clone();
+    found.effects.retain(|effect| effect.id == "report");
+    found.effects[0].params.retain(|param| matches!(param.kind, ParamKind::Slider { .. } | ParamKind::Curve { .. }));
+    assert_eq!(
+        SlidersOnly.admit(&found).unwrap_err(),
+        "effect `report` parameter `tone` is a curve control, which this app does not offer; remove it or use another kind"
+    );
+    found.effects[0].params.retain(|param| matches!(param.kind, ParamKind::Slider { .. }));
+    assert_eq!(SlidersOnly.admit(&found), Ok(()));
+}
