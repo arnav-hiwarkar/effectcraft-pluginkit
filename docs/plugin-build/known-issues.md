@@ -124,3 +124,10 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **A layer cache entry may be kept for a layer whose built-in effect reads another frame while an
   expression is present.** Built-in effects that read other frames are not counted as reading other times
   for the layer cache. Raised by the render fix worker; not verified. (`crates/render/src/cache.rs`)
+
+## From the sixth build, not fixed
+
+- **`Camera` gained a `focus` field.** Plugin code that builds a `craft_plugin::Camera` field by field no longer compiles; built plugins still load. Plugins normally only read the camera the app sends.
+- **`cx.scene()` without `.reads_scene()` is not refused.** `cx.placement`, `cx.placement_at` and `cx.scene_at` are refused without their declarations; the older `cx.scene()` is not, so an undeclared call can still show a stale cached frame.
+- **An effect that reads the scene at other times is not cached in a comp with any expression.** Its cache key covers every layer's keyframes but cannot cover expression results (`cache::hash_scene`).
+- **A plugin rebuilt with a group name that is not an id reads the derived id.** `.group("Edge Options", …)` stores its parameters under `edge_options/…`; code that still reads `"Edge Options/…"` gets nothing for them. Saved projects migrate.
