@@ -5,7 +5,7 @@ use std::sync::Arc;
 use craft_plugin_host::kernels::{self, Lowered, StepImage};
 use craft_plugin_host::{
     Blend, Call, Camera, Cull, Draw, EffectRegistry, EffectSpec, Focus, Gradient as WireGradient, Host, LayerPlacement, Layout, Light, LightKind, MaskPath,
-    Param, ParamKind, ParamValues, ParamsAt, Pixels, PlanData, PlanImage, Rect, RenderCx, Scene, Value as Wire,
+    Param, ParamKind, ParamValues, ParamsAt, Pixels, Place, PlanData, PlanImage, Rect, RenderCx, Scene, Value as Wire,
 };
 use effectcraft_engine::effects::dynamic::{
     self, DynamicEffect, DynamicParam, GpuBlend, GpuBytes, GpuCull, GpuDraw, GpuPass, GpuPicture, GpuProgram, GpuSlot, Grid,
@@ -337,6 +337,10 @@ impl Host for RenderHost<'_, '_> {
 
     fn scene_at(&mut self, comp_time: f64) -> Option<Scene> {
         Some(wire_scene(self.ctx.env.host?.comp_scene_at(comp_time)?))
+    }
+
+    fn data(&mut self, plugin: &str, _place: Place, key: &str) -> Result<Option<Vec<u8>>, String> {
+        Ok(self.ctx.env.host.and_then(|host| host.layer_data(plugin, key)))
     }
 
     fn placement(&mut self, param: &str, comp_time: Option<f64>) -> Option<LayerPlacement> {

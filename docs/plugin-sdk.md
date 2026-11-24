@@ -932,6 +932,32 @@ let lut = host::read_file(Root::Bundle, "assets/film.cube")?;  // shipped with t
 let any = host::read_file(Root::User, "/abs/path")?;    // needs files.read
 ```
 
+## Keep data in the project
+
+A tracker analyses frames in a task and stores the result on the layer; its effect reads it back.
+The plugin needs `document.read` and `document.write`.
+
+```rust
+.task("track", "Track", |task: &Task| {
+    let layer = task.args()["layer"].as_u64().ok_or("track needs `layer`")?;
+    let points: Vec<[f32; 2]> = analyse(task)?;
+    host::set_data(Place::Layer(layer), "points", &serde_json::to_vec(&points)?)
+})
+```
+
+```rust
+fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+    let points: Vec<[f32; 2]> = match cx.layer_data("points")? {
+        Some(bytes) => serde_json::from_slice(&bytes)?,
+        None => return Ok(()),
+    };
+    // …
+}
+```
+
+The write is one undo step and is saved with the project. When the data changes, the layer's
+cached frames redraw. Use `Place::Project` for data that belongs to the whole project.
+
 ## Projects that use plugins
 
 A saved project lists the plugins its effects come from, so nothing is needed in the plugin. Bump

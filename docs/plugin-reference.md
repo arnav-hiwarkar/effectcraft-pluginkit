@@ -440,6 +440,26 @@ without the list opens as before.
 | `renderQueue.render`, Watch Folder | Refused with an error naming the plugins of the project's effects that are not loaded, unless `{"withoutMissingPlugins": true}` (CLI `render --without-missing-plugins`); the effects are then skipped. |
 | Preview, Effect Controls | The effect is skipped and its header shows a warning: "Plug-in `<id>` is not installed". |
 
+### Plugin data
+
+A plugin keeps its own bytes in the project and on layers: `host::data(place, key)` returns
+`Option<Vec<u8>>`, `host::set_data(place, key, bytes)` writes, `host::remove_data(place, key)` removes.
+`place` is `Place::Project`, `Place::Layer(id)` (a layer id from `layer.list` or the selection) or, inside an
+effect's `render`, `Place::OwnLayer` (`cx.layer_data(key)`). Each plugin sees only its own data.
+
+| Rule | Value |
+|---|---|
+| Permission | reading `document.read`, writing `document.write` |
+| Keys per place | 64 (`MAX_DATA_KEYS`), 1 to 256 bytes each |
+| One value | 256 KiB (`MAX_DATA_VALUE`) |
+| One plugin in one project | 4 MiB, keys and values over every place (`MAX_DATA_PER_PLUGIN`) |
+| Undo | Each write is an undo step; all the edits of one command or one panel call are one step, named after the command |
+| Effects | Read `Place::OwnLayer` only, never write. The layer's data is in its cache key, so a changed value redraws the effect |
+| Saved | `plugin_data` on the project and on each layer, per plugin id, values in base64. Kept byte for byte, and saved again unchanged, while the plugin is missing |
+
+A write past a limit, to a layer that does not exist, or from an effect is refused with a message
+that says what to change.
+
 ## Fast maths
 
 `craft_plugin::math` holds `#[inline(always)]` `f32` functions with no tables and no library calls. Sandboxed and
@@ -680,6 +700,8 @@ All are in `craft_plugin::host`.
 | `remove_image(key)`: removes an uploaded image and frees its share of the 256 MiB image budget | None |
 | `clipboard()`: the text on the system clipboard | `clipboard` |
 | `set_clipboard(text)`: replaces the text on the system clipboard | `clipboard` |
+| `data(place, key)`: the plugin's bytes at the project or a layer (see Plugin data) | `document.read` |
+| `set_data(place, key, bytes)`, `remove_data(place, key)` | `document.write` |
 
 `craft_plugin::log!(level, "format {args}")` calls `host::log` with the file and line in front of the
 message; `level` is `info` (the default when left out), `warn` or `error`.

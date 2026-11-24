@@ -978,6 +978,9 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
     // must not reuse another instance's processed buffer.
     hash_overrides(&mut h, ctx, layer.id);
     hash_value(&mut h, &layer.source);
+    if effects != EffectScope::Footprint {
+        layer.plugin_data.hash(&mut h);
+    }
     // (Audio, Lock and Shy don't change pixels.)
     hash_value(&mut h, &layer.switches.pixels());
     // Mask motion blur and effects that read the shutter depend on whether the layer is motion

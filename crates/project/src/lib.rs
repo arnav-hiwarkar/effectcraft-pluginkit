@@ -11,6 +11,7 @@ pub mod build;
 pub mod essential;
 mod file_check;
 pub mod limits;
+pub mod plugin_data;
 pub mod props;
 pub mod render_queue;
 pub mod render_templates;
@@ -72,6 +73,8 @@ pub struct Project {
     /// The plug-ins whose effects the project uses, as they were when it was saved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plugins: Vec<PluginUse>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "plugin_data")]
+    pub plugin_data: plugin_data::PluginData,
 }
 
 /// One plug-in a saved project uses: its id and version, and its digest once plug-ins carry one.

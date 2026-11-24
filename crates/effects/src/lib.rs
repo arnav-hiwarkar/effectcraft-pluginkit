@@ -583,6 +583,10 @@ pub struct Shown {
 
 /// Services the renderer offers effects that look beyond their own pixels.
 pub trait EffectHost: Sync {
+    fn layer_data(&self, _plugin: &str, _key: &str) -> Option<Vec<u8>> {
+        None
+    }
+
     /// Pixels entering the effect stack, in effect space, before any effects. For an
     /// adjustment layer this is the composition below it, in the effect working space.
     fn original(&self) -> Option<&Buf> {

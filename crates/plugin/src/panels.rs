@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use craft_plugin_host::ui::{AppEvent, ControlsReply, PanelReply, UiEvent, UiInput, Widget};
 use craft_plugin_host::viewer::{Overlay, ToolEventKind};
-use craft_plugin_host::{Access, AudioRequest, Call, FrameRequest, Host, MAX_BACKLOG, PickFile, Pixels, Retained, Samples};
+use craft_plugin_host::{Access, AudioRequest, Call, FrameRequest, Host, MAX_BACKLOG, PickFile, Pixels, Place, Retained, Samples};
 use effectcraft_engine::Session;
 use effectcraft_engine::project::{ItemId, Project};
 use serde_json::{Value, json};
@@ -58,8 +58,9 @@ fn wait_for_work(timeout: Duration) {
 pub(crate) fn run_command(session: &mut Session, loaded: Arc<Loaded>, command: &str) -> Result<(), String> {
     let asking = Arc::new(());
     let plugin = loaded.bundle.manifest.id.clone();
+    let gesture = Some(command_gesture(&loaded, command));
     let bound = Bound::of(loaded, session, Arc::downgrade(&asking));
-    let request = Request { key: Key::Command(plugin.clone()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture: None };
+    let request = Request { key: Key::Command(plugin.clone()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture };
     let running = std::thread::Builder::new()
         .name(format!("craft-plugin-command-{plugin}"))
         .spawn(move || run(&request, &(Arc::new(|| {}) as Waker)).map(drop))
@@ -125,6 +126,11 @@ impl Bound {
         };
         Err(format!("the app dropped this request because {why}"))
     }
+}
+
+fn command_gesture(loaded: &Loaded, command: &str) -> Gesture {
+    let commands = &loaded.plugin.contributions().commands;
+    Gesture::new(commands.iter().find(|spec| spec.id == command).map_or(command, |spec| spec.title.as_str()))
 }
 
 #[derive(Clone)]
@@ -243,6 +249,16 @@ impl Host for Remote {
     fn set_clipboard(&mut self, text: &str) -> Result<(), String> {
         let text = text.to_string();
         self.on_app(move |host| host.set_clipboard(&text))?
+    }
+
+    fn data(&mut self, plugin: &str, place: Place, key: &str) -> Result<Option<Vec<u8>>, String> {
+        let (plugin, key) = (plugin.to_string(), key.to_string());
+        self.on_app(move |host| host.data(&plugin, place, &key))?
+    }
+
+    fn set_data(&mut self, plugin: &str, place: Place, key: &str, value: Option<Vec<u8>>) -> Result<(), String> {
+        let (plugin, key) = (plugin.to_string(), key.to_string());
+        self.on_app(move |host| host.set_data(&plugin, place, &key, value))?
     }
 }
 
@@ -472,8 +488,10 @@ impl Panels {
     }
 
     pub fn command(&mut self, session: &Session, plugin: &str, command: &str) -> Result<(), String> {
-        let bound = Bound::of(running(plugin)?, session, Arc::downgrade(&self.open));
-        self.post(Request { key: Key::Command(plugin.to_string()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture: None });
+        let loaded = running(plugin)?;
+        let gesture = Some(command_gesture(&loaded, command));
+        let bound = Bound::of(loaded, session, Arc::downgrade(&self.open));
+        self.post(Request { key: Key::Command(plugin.to_string()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture });
         Ok(())
     }
 
@@ -492,6 +510,7 @@ impl Panels {
                 slot.retained.invalidate();
             }
         }
+        let gesture = matches!(call, Call::Panel { .. }).then(|| Gesture::new(&loaded.bundle.manifest.name));
         let bound = Bound::of(loaded, session, Arc::downgrade(&slot.open));
         while let Some(input) = self.slots.get_mut(key).and_then(|slot| {
             let input = slot.retained.start(size, self.now)?;
@@ -502,7 +521,7 @@ impl Panels {
             if let Call::Panel { input: given, .. } | Call::Controls { input: given, .. } = &mut call {
                 *given = input;
             }
-            self.send(Request { key: Key::Slot(key.to_string()), bound: bound.clone(), call, edit: edit.clone(), gesture: None });
+            self.send(Request { key: Key::Slot(key.to_string()), bound: bound.clone(), call, edit: edit.clone(), gesture: gesture.clone() });
             self.wait(session, |panels| !panels.busy(key));
             if self.busy(key) || edit.is_some() || self.spent() {
                 break;
