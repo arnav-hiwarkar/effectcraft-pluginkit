@@ -41,7 +41,7 @@ jobs:
         run: cargo run --quiet --package xtask -- assets
       - name: Format
         run: cargo fmt --check -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-ui-egui -p effectcraft-engine -p effectcraft-automation -p xtask
-      - name: Adapter tests (craft-libs tests the kit crates)
+      - name: Adapter tests (the kit job tests the kit crates)
         run: cargo test -p effectcraft-plugin
       - name: Lint
         run: cargo clippy -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-engine -p effectcraft-automation -p effectcraft-ui-egui -p xtask --all-targets --keep-going -- -D warnings
@@ -70,3 +70,33 @@ jobs:
           for manifest in plugins/*/Cargo.toml; do
             cargo test --manifest-path "$manifest"
           done
+
+  kit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: Cargo.toml
+          sparse-checkout-cone-mode: false
+      - name: The craft-libs rev this workspace pins
+        id: pin
+        run: echo "rev=$(sed -n 's/^craft-plugin = .*rev = "\([0-9a-f]*\)".*/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: arnav-hiwarkar/craft-libs-plugin-beta
+          ref: ${{ steps.pin.outputs.rev }}
+          path: craft-libs
+      - name: Install Rust targets and components
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: craft-libs
+      - name: Kit lint and tests
+        working-directory: craft-libs
+        run: |
+          cargo clippy -p craft-plugin -p craft-plugin-host -p craft-plugin-ui --all-targets --all-features -- -D warnings
+          cargo test -p craft-plugin -p craft-plugin-host -p craft-plugin-ui

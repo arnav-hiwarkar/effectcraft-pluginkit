@@ -210,6 +210,10 @@ impl craft_plugin_ui::Host for AppHost<'_> {
     fn accept_files(&mut self, paths: &[String]) {
         effectcraft_plugin::accept_drop(self.source.plugin, paths);
     }
+
+    fn combo_box(&self, ui: &mut egui::Ui, id: egui::IdSalt, label: &str, selected: String, menu: &mut dyn FnMut(&mut egui::Ui)) -> egui::Response {
+        craft_ui::ComboBox::new(id, label).selected_text(selected).show_ui(ui, menu).response
+    }
 }
 
 #[cfg(test)]

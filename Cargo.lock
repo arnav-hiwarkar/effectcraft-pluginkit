@@ -1360,11 +1360,6 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=5a7a63a21dd03dd1a2bc6c308a3a6ce818caae87#5a7a63a21dd03dd1a2bc6c308a3a6ce818caae87"
 
 [[package]]
-name = "craft-fonts-build"
-version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=5e60bed8599b8550cd069ae55fd3ccc8f47f742a#5e60bed8599b8550cd069ae55fd3ccc8f47f742a"
-
-[[package]]
 name = "craft-frame"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=587339c787682592ed46bab5a15cae52e60da2e3#587339c787682592ed46bab5a15cae52e60da2e3"
@@ -1388,29 +1383,6 @@ dependencies = [
 name = "craft-i18n"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=5a7a63a21dd03dd1a2bc6c308a3a6ce818caae87#5a7a63a21dd03dd1a2bc6c308a3a6ce818caae87"
-dependencies = [
- "fixed_decimal",
- "icu_decimal",
- "icu_locale_core",
- "icu_locale_fallback",
- "icu_normalizer",
- "icu_plurals",
- "icu_properties",
- "icu_provider",
- "icu_provider_adapters",
- "icu_provider_blob",
- "log",
- "objc2-foundation 0.3.2",
- "sys-locale",
- "unicode-bidi",
- "windows-registry",
- "writeable",
-]
-
-[[package]]
-name = "craft-i18n"
-version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=5e60bed8599b8550cd069ae55fd3ccc8f47f742a#5e60bed8599b8550cd069ae55fd3ccc8f47f742a"
 dependencies = [
  "fixed_decimal",
  "icu_decimal",
@@ -1543,7 +1515,7 @@ dependencies = [
 [[package]]
 name = "craft-plugin"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=5e60bed8599b8550cd069ae55fd3ccc8f47f742a#5e60bed8599b8550cd069ae55fd3ccc8f47f742a"
+source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=94fa5dc508358951774b322cf383c107e8bd0c68#94fa5dc508358951774b322cf383c107e8bd0c68"
 dependencies = [
  "serde",
  "serde_json",
@@ -1552,7 +1524,7 @@ dependencies = [
 [[package]]
 name = "craft-plugin-host"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=5e60bed8599b8550cd069ae55fd3ccc8f47f742a#5e60bed8599b8550cd069ae55fd3ccc8f47f742a"
+source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=94fa5dc508358951774b322cf383c107e8bd0c68#94fa5dc508358951774b322cf383c107e8bd0c68"
 dependencies = [
  "bytemuck",
  "craft-plugin",
@@ -1575,10 +1547,9 @@ dependencies = [
 [[package]]
 name = "craft-plugin-ui"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=5e60bed8599b8550cd069ae55fd3ccc8f47f742a#5e60bed8599b8550cd069ae55fd3ccc8f47f742a"
+source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=94fa5dc508358951774b322cf383c107e8bd0c68#94fa5dc508358951774b322cf383c107e8bd0c68"
 dependencies = [
  "craft-plugin",
- "craft-ui 0.1.0 (git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=5e60bed8599b8550cd069ae55fd3ccc8f47f742a)",
  "egui",
 ]
 
@@ -1731,8 +1702,8 @@ name = "craft-ui"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=5a7a63a21dd03dd1a2bc6c308a3a6ce818caae87#5a7a63a21dd03dd1a2bc6c308a3a6ce818caae87"
 dependencies = [
- "craft-fonts-build 0.1.0 (git+https://github.com/storytold/craft-libs?rev=5a7a63a21dd03dd1a2bc6c308a3a6ce818caae87)",
- "craft-i18n 0.1.0 (git+https://github.com/storytold/craft-libs?rev=5a7a63a21dd03dd1a2bc6c308a3a6ce818caae87)",
+ "craft-fonts-build",
+ "craft-i18n",
  "egui",
  "epaint",
  "js-sys",
@@ -1741,26 +1712,6 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "serde",
- "skrifa 0.44.0",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "craft-ui"
-version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=5e60bed8599b8550cd069ae55fd3ccc8f47f742a#5e60bed8599b8550cd069ae55fd3ccc8f47f742a"
-dependencies = [
- "craft-fonts-build 0.1.0 (git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=5e60bed8599b8550cd069ae55fd3ccc8f47f742a)",
- "craft-i18n 0.1.0 (git+https://github.com/arnav-hiwarkar/craft-libs-plugin-beta?rev=5e60bed8599b8550cd069ae55fd3ccc8f47f742a)",
- "egui",
- "epaint",
- "js-sys",
- "log",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
  "skrifa 0.44.0",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2827,7 +2778,7 @@ dependencies = [
  "craft-plugin-host",
  "craft-plugin-ui",
  "craft-quit",
- "craft-ui 0.1.0 (git+https://github.com/storytold/craft-libs?rev=5a7a63a21dd03dd1a2bc6c308a3a6ce818caae87)",
+ "craft-ui",
  "craft-update",
  "effectcraft-color",
  "effectcraft-engine",

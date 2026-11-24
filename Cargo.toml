@@ -61,9 +61,9 @@ effectcraft-svg = { path = "crates/svg" }
 effectcraft-engine = { path = "crates/engine" }
 effectcraft-host = { path = "crates/host" }
 effectcraft-plugin = { path = "crates/plugin" }
-craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "5e60bed8599b8550cd069ae55fd3ccc8f47f742a" }
-craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "5e60bed8599b8550cd069ae55fd3ccc8f47f742a" }
-craft-plugin-ui = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "5e60bed8599b8550cd069ae55fd3ccc8f47f742a" }
+craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "94fa5dc508358951774b322cf383c107e8bd0c68" }
+craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "94fa5dc508358951774b322cf383c107e8bd0c68" }
+craft-plugin-ui = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "94fa5dc508358951774b322cf383c107e8bd0c68" }
 effectcraft-ui-egui = { path = "crates/ui-egui" }
 effectcraft-automation = { path = "crates/automation" }
 effectcraft-script = { path = "crates/script" }
@@ -148,6 +148,7 @@ sys-locale = "0.3"
 # filmcraft-color = { path = "../filmcraft/crates/color" }
 # filmcraft-time = { path = "../filmcraft/crates/time" }
 # Local co-development against the craft-libs fork checkout next to this repo (the plugin kit): uncomment.
+# From a worktree under pluginkit/wt/, write ../../craft-libs instead of ../craft-libs.
 # [patch."https://github.com/arnav-hiwarkar/craft-libs-plugin-beta"]
 # craft-plugin = { path = "../craft-libs/crates/plugin-sdk" }
 # craft-plugin-host = { path = "../craft-libs/crates/plugin-host" }

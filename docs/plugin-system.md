@@ -36,7 +36,8 @@ from the workspace `Cargo.toml`). Another Craft app adopts the system by writing
 `effectcraft-plugin`, which is about 600 lines here.
 
 To change the kit and EffectCraft together, check out craft-libs branch `pluginkit` next to this
-repository (`../craft-libs`) and uncomment the `[patch."https://github.com/arnav-hiwarkar/craft-libs-plugin-beta"]` block in the
+repository (`../craft-libs`; from a worktree under `pluginkit/wt/` the path is `../../craft-libs`, so edit the
+block's paths) and uncomment the `[patch."https://github.com/arnav-hiwarkar/craft-libs-plugin-beta"]` block in the
 workspace `Cargo.toml`: the app then builds the kit from that checkout. The reference plugins are
 workspaces of their own and keep the git `rev`; add the same block to a plugin's `Cargo.toml` to build it
 against the checkout too. When the change is done, push craft-libs `pluginkit`, set the new `rev` in the
