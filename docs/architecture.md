@@ -44,6 +44,7 @@ cpal or muda. Everything in L0 to L4, the egui UI and the web app also build for
 | L4 | `engine` | `Session`: project, branching undo history, editor state, the command registry and menus, the ScriptUI window model (`scriptui`) |
 | L4 | `script` | Scripting: JavaScript (boa) with an After Effects-style object model (`app.project`, comps, layers, properties, render queue) and ScriptUI (dialogs, palettes, dockable panels; script-host threads so dialogs block `show()`), whose edits run engine commands; AE match names |
 | L4 | `host` | A fully wired `Session` (media, expressions, scripting, exporter) for the frontends |
+| L5 | `craft-plugin-ui` (`crates/plugin-ui`) | egui drawing of plug-in panels, controls and viewer marks; the app passes its theme, translations, textures and drag payloads; no EffectCraft dependency |
 | L5 | `ui-egui` | The desktop interface: docking, panels, viewer, timeline, graph editor, dialogs, control channel |
 | L5 | `automation` | The MCP server, headless or bridged to the running app |
 | L5 | `plugin` | EffectCraft's side of the plugin system: plugin effects in the effect registry, plugin commands and panels over engine commands under the automation confinement, plugin management |

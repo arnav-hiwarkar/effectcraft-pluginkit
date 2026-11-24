@@ -26,6 +26,7 @@ work from the registry entry.
 | `craft-plugin` | `crates/plugin-sdk` | The SDK a plugin author depends on. Also holds the manifest and message types the host reads. |
 | `craft-plugin-host` | `crates/plugin-host` | Loads plugins, runs them, checks permissions, and keeps the list of installed plugins. |
 | `effectcraft-plugin` | `crates/plugin` | Connects the runtime to EffectCraft: effects, engine commands, and the file rules. |
+| `craft-plugin-ui` | `crates/plugin-ui` | Draws plugin panels, custom controls and viewer marks in egui. The app passes its theme, translations, textures and drag payloads through a `Host`. |
 
 The first two crates do not depend on EffectCraft. `cargo xtask layers` checks this. Another Craft app
 adopts the system by writing its own version of the third crate, which is about 600 lines here.
