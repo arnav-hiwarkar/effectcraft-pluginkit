@@ -727,22 +727,12 @@ impl<'a> Renderer<'a> {
     }
 
     fn static_frame_key(&self, ctx: &EvalCtx<'a>) -> Option<u64> {
-        let top = self.depth == 0 && self.top && self.outer.is_none() && self.inherited.is_none() && self.collapse3d.is_none();
-        if self.cache.is_none() || !top || self.whole_raster || self.opacity_mul != 1.0 || self.through.iter().any(Option::is_some) {
+        if !self.frame_cacheable() {
             return None;
         }
         let mut contents = Vec::new();
         for layer in ctx.comp.layers.iter() {
-            if layer.is_3d() || layer.track_matte.is_some() || !cache::timeless(layer) {
-                return None;
-            }
-            if let LayerSource::Footage { item } = &layer.source {
-                let it = self.project.item(ctx.media_item(layer, *item))?;
-                if it.proxy.is_some() || !matches!(&it.kind, ItemKind::Footage(f) if f.kind == effectcraft_project::FootageKind::Still) {
-                    return None;
-                }
-            }
-            if self.reads_footage_rows(ctx, layer) {
+            if !self.timeless_layer(ctx, layer) {
                 return None;
             }
             if layer.source.is_av() {
@@ -751,6 +741,54 @@ impl<'a> Renderer<'a> {
         }
         let visible: Vec<_> = self.visible_layers(ctx).iter().map(|l| l.id).collect();
         Some(cache::frame_key(ctx, &contents, &visible, &self.opts))
+    }
+
+    fn frame_cacheable(&self) -> bool {
+        let top = self.depth == 0 && self.top && self.outer.is_none() && self.inherited.is_none() && self.collapse3d.is_none();
+        self.cache.is_some() && top && !self.whole_raster && self.opacity_mul == 1.0 && self.through.iter().all(Option::is_none)
+    }
+
+    fn timeless_layer(&self, ctx: &EvalCtx<'a>, layer: &Layer) -> bool {
+        if layer.is_3d() || layer.track_matte.is_some() || !cache::timeless(layer) || self.reads_footage_rows(ctx, layer) {
+            return false;
+        }
+        let LayerSource::Footage { item } = &layer.source else { return true };
+        self.project
+            .item(ctx.media_item(layer, *item))
+            .is_some_and(|it| it.proxy.is_none() && matches!(&it.kind, ItemKind::Footage(f) if f.kind == effectcraft_project::FootageKind::Still))
+    }
+
+    fn static_base_key(&self, ctx: &EvalCtx<'a>, visible: &[&'a Layer]) -> Option<(usize, u64)> {
+        let mut contents = Vec::new();
+        let mut ids = Vec::new();
+        for layer in visible {
+            let still_parents =
+                std::iter::successors(layer.parent.and_then(|p| ctx.layer(p)), |l| l.parent.and_then(|p| ctx.layer(p))).take(64).all(cache::timeless);
+            let base = still_parents && !layer.switches.adjustment && !layer.switches.collapse && self.timeless_layer(ctx, layer);
+            let Some(key) = base.then(|| self.content_cache_key(ctx, layer)).flatten() else { break };
+            contents.push(key);
+            ids.push(layer.id);
+        }
+        (!ids.is_empty() && ids.len() < visible.len()).then(|| (ids.len(), cache::derive(cache::frame_key(ctx, &contents, &ids, &self.opts), 0xba5e)))
+    }
+
+    fn draw_static_base(&self, ctx: &EvalCtx<'a>, visible: &[&'a Layer], canvas: &mut Image) -> usize {
+        let (Some(c), Some((n, key))) = (self.cache, self.static_base_key(ctx, visible)) else { return 0 };
+        if let Some((base, files)) = c.get_in_memory(key) {
+            if let Some(log) = self.reads {
+                log.note_all(&files);
+            }
+            canvas.clone_from(&base.img);
+            return n;
+        }
+        let t0 = web_time::Instant::now();
+        let ((), files) = self.recorded(Some(key), |r| r.draw_layers(&r.with_reads(ctx), &visible[..n], canvas, true));
+        if let Some(c) = self.cache_to_keep()
+            && !files.files().iter().any(|f| f.stamp == crate::reads::FileStamp::Missing)
+        {
+            c.insert_in_memory(key, Arc::new(Buf { img: canvas.clone(), offset: [0.0; 2], scale: self.opts.scale }), files, t0.elapsed());
+        }
+        n
     }
 
     fn finish_frame(&self, ctx: &EvalCtx<'a>, mut canvas: Image) -> Image {
@@ -779,9 +817,14 @@ impl<'a> Renderer<'a> {
 
     /// Draw a comp's layers (bottom to top) into `canvas` (blending space).
     /// `blank`: the canvas is fully transparent (lets the first layer skip re-quantising).
-    fn draw_comp(&self, ctx: &EvalCtx<'a>, canvas: &mut Image, mut blank: bool) {
-        // Bottom-to-top, with runs of consecutive 3D layers depth-sorted (farthest first).
+    fn draw_comp(&self, ctx: &EvalCtx<'a>, canvas: &mut Image, blank: bool) {
         let visible = self.visible_layers(ctx);
+        let base = if blank && self.frame_cacheable() { self.draw_static_base(ctx, &visible, canvas) } else { 0 };
+        self.draw_layers(ctx, &visible[base..], canvas, blank && base == 0);
+    }
+
+    fn draw_layers(&self, ctx: &EvalCtx<'a>, visible: &[&'a Layer], canvas: &mut Image, mut blank: bool) {
+        // Bottom-to-top, with runs of consecutive 3D layers depth-sorted (farthest first).
         let mut i = 0;
         while i < visible.len() {
             if visible[i].is_3d() {
