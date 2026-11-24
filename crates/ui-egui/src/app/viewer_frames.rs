@@ -270,12 +270,64 @@ fn camera_hash(roi: Option<[f64; 4]>, cam: Option<&effectcraft_engine::render::t
 
 #[cfg(test)]
 mod tests {
+    use egui_kittest::Harness;
+
     static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    type H<'a> = Harness<'a, crate::EffectcraftApp>;
+
+    fn harness<'a>(session: effectcraft_engine::Session, gpu: bool) -> Option<H<'a>> {
+        let builder = Harness::builder().with_size(egui::vec2(1200.0, 800.0));
+        let mut h = if gpu {
+            builder.renderer(egui_kittest::wgpu::WgpuTestRenderer::new()).build_eframe(|_| crate::EffectcraftApp::new(session))
+        } else {
+            builder.build_eframe(|_| crate::EffectcraftApp::new(session))
+        };
+        if gpu {
+            while h.state().gpu_initializing() {
+                h.step();
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            h.state().gpu.as_ref()?;
+        }
+        Some(h)
+    }
+
+    fn settle(h: &mut H<'_>, want: u8) {
+        let centre = |h: &mut H<'_>| h.state_mut().viewer_pixels().map(|img| img.pixels[img.pixels.len() / 2 + img.size[0] / 2].r());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while std::time::Instant::now() < deadline {
+            h.step();
+            if let (Some(g), Some(cid)) = (h.state().gpu.clone(), h.state().session.active_comp_id())
+                && let Some(auto) = effectcraft_engine::render::Accelerator::auto_pick(&g)
+            {
+                let key = effectcraft_engine::render::AutoKey::new(cid, 1.0, true);
+                for _ in 0..4 {
+                    auto.record(key, false, 1000.0);
+                    auto.record(key, true, 1.0);
+                }
+            }
+            if centre(h) == Some(want) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("the viewer shows {:?}, not {want}", centre(h));
+    }
 
     /// #3493: the viewer shows the frame again once the LUT file it was graded with changes,
     /// though its key was otherwise the same (same project revision, frame and options).
     #[test]
     fn the_viewer_shows_a_lut_file_changed_on_disk() {
+        lut_file_changed_on_disk(false);
+    }
+
+    #[test]
+    fn the_viewer_shows_a_lut_file_changed_on_disk_from_the_gpu() {
+        lut_file_changed_on_disk(true);
+    }
+
+    fn lut_file_changed_on_disk(gpu: bool) {
         let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let lut = dir.path().join("viewer.cube");
@@ -290,26 +342,13 @@ mod tests {
         session.execute("layer.newSolid", serde_json::json!({"color": "#808080"})).unwrap();
         session.execute("effect.apply", serde_json::json!({"layer": 1, "effect": "Apply Color LUT"})).unwrap();
         session.execute("prop.set", serde_json::json!({"layer": 1, "path": "effects/#1/lut", "value": lut.to_string_lossy()})).unwrap();
-        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(|_| crate::EffectcraftApp::new(session));
-        let centre = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>| {
-            h.state_mut().viewer_pixels().map(|img| img.pixels[img.pixels.len() / 2 + img.size[0] / 2].r())
-        };
-        let settle = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>, want: u8| {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-            while std::time::Instant::now() < deadline {
-                h.step();
-                if centre(h) == Some(want) {
-                    return;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            panic!("the viewer shows {:?}, not {want}", centre(h));
-        };
+        let Some(mut harness) = harness(session, gpu) else { return eprintln!("no GPU compositor on this adapter: skipping") };
         settle(&mut harness, 0);
         write("LUT_1D_SIZE 2\n1 1 1\n1 1 1\n", 2_000);
         // (what the app's watcher does every two seconds)
         effectcraft_engine::lut_reload::check();
         settle(&mut harness, 255);
+        assert_eq!(gpu, harness.state().viewer_native.is_some(), "shown from the compositor's texture exactly when it is on");
     }
 
     /// #3539: a still re-saved at the same size and reloaded as changed on disk keeps the project
@@ -317,6 +356,15 @@ mod tests {
     /// frame having the key of the one on screen. A reload's purge gives the frames new keys, once.
     #[test]
     fn the_viewers_show_a_still_reloaded_at_the_same_size() {
+        still_reloaded_at_the_same_size(false);
+    }
+
+    #[test]
+    fn the_viewers_show_a_still_reloaded_at_the_same_size_from_the_gpu() {
+        still_reloaded_at_the_same_size(true);
+    }
+
+    fn still_reloaded_at_the_same_size(gpu: bool) {
         let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let png = dir.path().join("still.png");
@@ -327,21 +375,7 @@ mod tests {
         let cid = session.active_comp_id().unwrap();
         let item = session.execute("file.import", serde_json::json!({"paths": [png.to_string_lossy()]})).unwrap()["items"][0].clone();
         session.execute("layer.addItem", serde_json::json!({"item": item})).unwrap();
-        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(|_| crate::EffectcraftApp::new(session));
-        let centre = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>| {
-            h.state_mut().viewer_pixels().map(|img| img.pixels[img.pixels.len() / 2 + img.size[0] / 2].r())
-        };
-        let settle = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>, want: u8| {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-            while std::time::Instant::now() < deadline {
-                h.step();
-                if centre(h) == Some(want) {
-                    return;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            panic!("the viewer shows {:?}, not {want}", centre(h));
-        };
+        let Some(mut harness) = harness(session, gpu) else { return eprintln!("no GPU compositor on this adapter: skipping") };
         settle(&mut harness, 255);
         // (every viewer, passive ones too, asks for its frame by this key)
         let key = |h: &egui_kittest::Harness<'_, crate::EffectcraftApp>| h.state().frame_key(cid, 0, 1.0);
@@ -362,5 +396,6 @@ mod tests {
         assert_ne!(after, before, "the reloaded frame has a key of its own");
         harness.step();
         assert_eq!(key(&harness), after, "one new key per purge");
+        assert_eq!(gpu, harness.state().viewer_native.is_some(), "shown from the compositor's texture exactly when it is on");
     }
 }
