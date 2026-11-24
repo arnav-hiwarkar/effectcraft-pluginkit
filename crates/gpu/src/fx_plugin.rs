@@ -71,7 +71,7 @@ pub(crate) fn warm(g: &GpuContext, registered: &Registered) {
     let ctx = EffectCtx { params: &params, time: 0.0, layer_size, seed: 0, adjustment: false, env: Default::default() };
     let Some(program) = plan(&ctx, Grid { width: size[0], height: size[1], offset: [0.0, 0.0], scale: 1.0 }) else { return };
     let id = registered.spec.id;
-    if compute_pipelines(g, id, effect.revision, wgsl, &program).is_ok() && Stage::new(id, effect.revision, wgsl, &program, None).prepare(g).is_ok() {
+    if compute_pipelines(g, id, effect.revision, wgsl, &program).is_ok() && Stage::new(id, effect.revision, wgsl, &program, None).pipelines(g).is_ok() {
         registered.gpu_planned.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }

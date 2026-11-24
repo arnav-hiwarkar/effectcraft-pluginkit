@@ -2143,6 +2143,7 @@ pub(crate) struct Enc<'g> {
     /// `owner` is lent ([`Enc::lent`]) and outlives this `Enc`.
     lent: bool,
     guards: Vec<Arc<crate::guard::ShaderGuard>>,
+    submitted_guards: Vec<Arc<crate::guard::ShaderGuard>>,
 }
 
 #[derive(Clone, Copy)]
@@ -2184,7 +2185,7 @@ impl Drop for Enc<'_> {
 impl<'g> Enc<'g> {
     pub fn new(g: &'g GpuContext) -> Enc<'g> {
         let owner = g.pool.lock().map(|mut p| p.register()).unwrap_or(0);
-        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: false, guards: Vec::new() }
+        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: false, guards: Vec::new(), submitted_guards: Vec::new() }
     }
 
     /// An `Enc` for self-contained work (an effect chain): once it is dropped, its working
@@ -2196,7 +2197,7 @@ impl<'g> Enc<'g> {
     /// effect's intermediates stayed allocated until the frame ended.
     pub(crate) fn lent(g: &'g GpuContext) -> Enc<'g> {
         let owner = g.pool.lock().map(|mut p| p.lend()).unwrap_or(0);
-        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: true, guards: Vec::new() }
+        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: true, guards: Vec::new(), submitted_guards: Vec::new() }
     }
 
     /// `img` is used by this `Enc`: if another `Enc` made it, that one must not reuse it at once
@@ -2230,6 +2231,12 @@ impl<'g> Enc<'g> {
         if guard.copy(self.encoder()) {
             self.guards.push(guard.clone());
         }
+    }
+
+    /// Whether a plugin loop submitted by this encoder ran past the cap. Call after a readback
+    /// waited for the work: the frame is then truncated and must render on the CPU.
+    pub(crate) fn loop_capped(&mut self) -> bool {
+        std::mem::take(&mut self.submitted_guards).iter().map(|guard| guard.check().is_err()).fold(false, |capped, raised| capped | raised)
     }
 
     /// The raw encoder: within this module only, after [`Enc::uses`] on every pooled image.
@@ -2401,7 +2408,8 @@ impl<'g> Enc<'g> {
     pub fn submit(&mut self) {
         if let Some((enc, id)) = self.enc.take() {
             self.last_submit = Some(self.g.queue.submit([enc.finish()]));
-            self.guards.drain(..).for_each(|guard| guard.submitted());
+            self.guards.iter().for_each(|guard| guard.submitted());
+            self.submitted_guards.append(&mut self.guards);
             if let Ok(mut p) = self.g.pool.lock() {
                 p.close(id);
             }

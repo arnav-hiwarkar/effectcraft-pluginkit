@@ -94,6 +94,12 @@ impl Store {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn kept_bytes(&self, effect: &str, name: &str) -> Option<usize> {
+        let uploads = self.uploads.lock().ok()?;
+        uploads.entries.iter().find(|((kept, kept_name, _), _)| kept == effect && kept_name == name).map(|(_, entry)| entry.bytes)
+    }
+
     fn kept(&self, effect: &str, name: &str, picture: Option<[u32; 2]>, bytes: &Arc<[u8]>, upload: impl FnOnce() -> Kept) -> Option<Kept> {
         let mut uploads = self.uploads.lock().ok()?;
         uploads.clock += 1;
@@ -360,15 +366,25 @@ impl<'a> Stage<'a> {
         })
     }
 
+    fn draws(&self) -> impl Iterator<Item = (&GpuPass, &GpuDraw)> {
+        self.program.passes.iter().filter_map(|pass| Some((pass, pass.draw.as_ref()?)))
+    }
+
     pub fn prepare(&self, g: &GpuContext) -> Result<(), String> {
-        let draws: Vec<(&GpuPass, &GpuDraw)> = self.program.passes.iter().filter_map(|pass| Some((pass, pass.draw.as_ref()?))).collect();
-        for (pass, draw) in &draws {
-            g.plugin_draw_pipeline(self.effect, self.revision, self.wgsl, &draw_key(pass, draw))?;
+        self.pipelines(g)?;
+        for (_, draw) in self.draws() {
             for buffer in [Some(draw.vertices), draw.indices, draw.instances].into_iter().flatten() {
                 self.buffer(g, buffer).ok_or("a GPU buffer could not be kept")?;
             }
         }
-        if !draws.is_empty() {
+        Ok(())
+    }
+
+    pub fn pipelines(&self, g: &GpuContext) -> Result<(), String> {
+        for (pass, draw) in self.draws() {
+            g.plugin_draw_pipeline(self.effect, self.revision, self.wgsl, &draw_key(pass, draw))?;
+        }
+        if self.draws().next().is_some() {
             g.plugin_draw_pipeline(self.effect, self.revision, self.wgsl, &DrawKey { kernel: BLIT.into(), ..Default::default() })?;
             g.plugin_pipelines(self.effect, self.revision, self.wgsl, &[RESOLVE])?;
         }

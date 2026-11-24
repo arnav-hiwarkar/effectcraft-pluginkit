@@ -290,7 +290,8 @@ impl Gpu {
         }
         let mut e = Enc::new(&self.ctx);
         let img = walk::render(&mut e, r, comp, t)?;
-        e.download(&img)
+        let img = e.download(&img)?;
+        (!e.loop_capped()).then_some(img)
     }
 
     /// [`Gpu::render`] with deferred readbacks: the frame's readback is keyed by comp, time and
@@ -449,6 +450,9 @@ impl Accelerator for Gpu {
         let mut e = Enc::new(&self.ctx);
         let img = walk::render(&mut e, r, comp, t)?;
         let planes = yuv::convert(&mut e, yp, &img, bg)?;
+        if e.loop_capped() {
+            return None;
+        }
         // A device fault seen while the frame recorded makes the planes untrustworthy.
         self.ctx.check_health().ok()?;
         Some(planes)
