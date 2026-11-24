@@ -61,9 +61,9 @@ effectcraft-svg = { path = "crates/svg" }
 effectcraft-engine = { path = "crates/engine" }
 effectcraft-host = { path = "crates/host" }
 effectcraft-plugin = { path = "crates/plugin" }
-craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "5c73277bf2e1935bd607c18268cfdaac9995c9ec" }
-craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "5c73277bf2e1935bd607c18268cfdaac9995c9ec" }
-craft-plugin-ui = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "5c73277bf2e1935bd607c18268cfdaac9995c9ec" }
+craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "e5d29beb1b0cdfba6ca53df5d4317442dca5c005" }
+craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "e5d29beb1b0cdfba6ca53df5d4317442dca5c005" }
+craft-plugin-ui = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "e5d29beb1b0cdfba6ca53df5d4317442dca5c005" }
 effectcraft-ui-egui = { path = "crates/ui-egui" }
 effectcraft-automation = { path = "crates/automation" }
 effectcraft-script = { path = "crates/script" }
