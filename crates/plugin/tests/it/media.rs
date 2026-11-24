@@ -120,3 +120,21 @@ fn a_frame_of_one_layer_whose_video_is_off_shows_its_pixels() {
     assert_eq!(finished(&mut app, "frame", json!({"time": 0.0, "scale": 1.0}))["center"], json!([0.0, 0.0, 0.0, 0.0]));
     assert_eq!(finished(&mut app, "frame", json!({"time": 0.0, "scale": 1.0, "layer": "Hidden"}))["center"], json!([0.0, 1.0, 0.0, 1.0]));
 }
+
+#[test]
+fn a_task_reads_a_layer_by_id_before_its_effects_and_transform_in_layer_pixels() {
+    let _alone = ONE_SESSION_PUMPS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut app = app("test.media-source", &["document.read"]);
+    let red = solid(&mut app, "Red", "#ff0000", 16);
+    let impostor = solid(&mut app, "Green", "#00ff00", 8);
+    app.session.execute("layer.rename", json!({"layer": impostor, "name": red.to_string()})).unwrap();
+    app.session.execute("effect.apply", json!({"layer": red, "effect": "ec.channel.invert"})).unwrap();
+    app.session.execute("prop.set", json!({"layer": red, "path": "transform/scale", "value": [300, 300]})).unwrap();
+    let comp = app.session.execute("comp.info", json!({})).unwrap()["id"].as_u64().unwrap();
+
+    let source = json!({"time": 0.0, "scale": 1.0, "comp": comp.to_string(), "layer": red.to_string(), "ids": true, "source": true});
+    let read = finished(&mut app, "frame", source);
+    assert_eq!((read["width"].clone(), read["height"].clone(), read["center"].clone()), (json!(16), json!(16), json!([1.0, 0.0, 0.0, 1.0])));
+    let by_name = finished(&mut app, "frame", json!({"time": 0.0, "scale": 1.0, "layer": red.to_string(), "source": true}));
+    assert_eq!(by_name["center"], json!([0.0, 1.0, 0.0, 1.0]));
+}

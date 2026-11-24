@@ -16,6 +16,24 @@ from craft-libs at the `rev` the workspace `Cargo.toml` pins. They are the refer
 | [Cookbook](cookbook) | Effects, panels, a command, a task and a tool | Every recipe of [the cookbook](../docs/plugin-cookbook.md), each with its test; the page's code is checked against it |
 | [Generate](generate) | Effects | Reference generators that draw without reading the layer: a linear or radial gradient ramp, a noise field from the host noise kernel (CPU and GPU from one plan) and a grid of soft dots that reports only the rectangle it drew |
 | [Pulse](pulse) | Panel and task | Analyses a frequency band of a layer's audio in a cancellable background task and writes its energy per frame as slider keyframes in one undo step |
+| [Tracker](tracker) | Effect, panel and task | Tracks a box through a layer's frames by block matching in a cancellable task, stores the track on the layer, stabilises the layer on it and writes it as position keyframes on another layer in one undo step |
+
+## Tracker
+
+Apply **Track and Stabilise** to a layer and drag its box onto a feature in the viewer; the outer
+rectangle and the ring set the Search Range, how far the feature may move between frames. Open
+**Window ▸ Plug-ins ▸ Tracker**, select the layer and press **Track**. A task reads the layer's source
+before its effects and transform, in layer pixels, by comp and layer id, at each comp frame inside the
+work area. It finds the box's first-frame pixels by the smallest sum of absolute differences within
+the search range around the last position, refines it to a fraction of a pixel with a parabola through
+the neighbouring scores, and replaces the layer's `track` (versioned JSON) in one write at the end, so
+Cancel or a failed frame keeps the old track. The effect then moves each frame so the feature stays
+where it was on the first frame, in layer space, so a scaled or moved layer stabilises too. Select the
+tracked layer, then another layer, and press **Apply to Layer** to write the points as Position
+keyframes in one `engine.batch`. Apply needs a 2D target without a parent or separated Position, and a
+tracked layer that is not scaled, rotated, skewed or animated (its pixels then map to the comp by one
+offset); it refuses anything else before writing. The tests track a moving anti-aliased square to
+within 0.25 px and hold it still to within 0.5 px.
 
 ## Pulse
 

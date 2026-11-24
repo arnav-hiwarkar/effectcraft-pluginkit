@@ -913,11 +913,14 @@ With `document.read`, a panel, command or task can render the comp, or one layer
 read the audio mix or one layer's audio:
 
 ```rust
-let image = host::frame(FrameRequest { comp: None, layer: Some("Logo".into()), time: 1.0, scale: 0.5 })?;
+let image = host::frame(FrameRequest { layer: Some("Logo".into()), time: 1.0, scale: 0.5, ..Default::default() })?;
 let audio = host::audio(AudioRequest { layer: None, start: 0.0, duration: 2.0, rate: 48_000 })?;
 ```
 
-An effect cannot call either while it renders.
+With `source: true` the frame is the layer's source before its masks, effects and transform, in layer
+pixels at the layer's time for the comp time asked: what a tracker reads. With `ids: true`, `comp` and
+`layer` are ids (`comp.info`'s `id`, the selection's layers), never names, so a layer named `"7"` cannot
+stand in for layer 7. An effect cannot call either while it renders.
 
 ## Ask the user for a file
 
@@ -970,6 +973,19 @@ fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
     // …
 }
 ```
+
+A test gives the task its own frames and reads what it stored:
+
+```rust
+let plugin = TestPlugin::of(super::plugin);
+plugin.frames(|request| moving_square(request.time));
+plugin.task("track", json!({"layer": 7}))?;
+let points = plugin.data(Place::Layer(7), "points");
+plugin.set_data(Place::OwnLayer, "points", &points.unwrap());
+let still = plugin.render("stabilise").time(0.5).run()?;
+```
+
+`plugin.start`, `plugin.cancel` and `plugin.wait` test Cancel. `plugins/tracker` is a complete example.
 
 The write is one undo step and is saved with the project. When the data changes, the layer's
 cached frames redraw. Use `Place::Project` for data that belongs to the whole project.
