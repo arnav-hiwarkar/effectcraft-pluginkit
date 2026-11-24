@@ -121,15 +121,26 @@ impl EffectcraftApp {
     /// The key of frame 0 of `comp`'s viewer frames at `scale` (the content, view and render
     /// options are the same for every frame: loops compute this once).
     pub fn frame_series(&self, comp: ItemId, scale: f64) -> FrameKey {
+        self.render_key(comp, 0, self.view_hash(comp), &self.frame_opts(comp, scale))
+    }
+
+    /// The cache key of frame `frame` of `comp` rendered with `opts` and keyed by view `view`.
+    fn render_key(&self, comp: ItemId, frame: i64, view: u64, opts: &RenderOpts) -> FrameKey {
         FrameKey {
             revision: self.session.revision,
             content: self.frames.content_of(&self.session.project, self.session.revision, comp),
             comp: comp.0,
-            frame: 0,
-            scale: (scale * 1000.0).round() as u32,
-            view: self.view_hash(comp),
-            opts: frames::opts_hash(&self.frame_opts(comp, scale)) ^ self.roto_model_stamp() ^ self.lut_stamp() ^ self.purge_stamp(),
+            frame,
+            scale: (opts.scale * 1000.0).round() as u32,
+            view,
+            opts: frames::opts_hash(opts) ^ self.roto_model_stamp() ^ self.lut_stamp() ^ self.purge_stamp(),
         }
+    }
+
+    /// The key of frame `frame` of `comp` as a side pane renders it (a view of a multi-view
+    /// layout, the locked viewer): its own camera and options, no region of interest.
+    pub fn pane_key(&self, comp: ItemId, frame: i64, opts: &RenderOpts) -> FrameKey {
+        self.render_key(comp, frame, camera_hash(opts.roi, opts.view.as_ref()), opts)
     }
 
     /// Changes when the Roto Brush model in use does: a frame drawn with the classic fallback while the model loaded
@@ -175,22 +186,7 @@ impl EffectcraftApp {
 
     /// Hash of the comp viewer's 3D view camera (0 for the active camera view).
     pub fn view_hash(&self, comp: ItemId) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        // The region of interest changes what is rendered too.
-        let roi = self.viewer_region(comp);
-        if let Some(r) = roi {
-            r.map(f64::to_bits).hash(&mut h);
-        }
-        let Some(cam) = self.session.view_camera(comp) else { return if roi.is_some() { h.finish() | 1 } else { 0 } };
-        for row in cam.view.0 {
-            for v in row {
-                v.to_bits().hash(&mut h);
-            }
-        }
-        cam.zoom.to_bits().hash(&mut h);
-        cam.ortho.hash(&mut h);
-        h.finish() | 1
+        camera_hash(self.viewer_region(comp), self.session.view_camera(comp).as_ref())
     }
 
     /// The comp-space region viewer frames of `comp` cover: the region of interest, else the
@@ -252,6 +248,24 @@ impl EffectcraftApp {
         let opts = self.frame_opts(comp, scale);
         request(&self.frames, &self.render_source(), key, comp, t, opts);
     }
+}
+
+/// Hash of a 3D view camera and a region of interest (0 for the active camera and the whole frame).
+fn camera_hash(roi: Option<[f64; 4]>, cam: Option<&effectcraft_engine::render::three_d::CameraState>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    if let Some(r) = roi {
+        r.map(f64::to_bits).hash(&mut h);
+    }
+    let Some(cam) = cam else { return if roi.is_some() { h.finish() | 1 } else { 0 } };
+    for row in cam.view.0 {
+        for v in row {
+            v.to_bits().hash(&mut h);
+        }
+    }
+    cam.zoom.to_bits().hash(&mut h);
+    cam.ortho.hash(&mut h);
+    h.finish() | 1
 }
 
 #[cfg(test)]

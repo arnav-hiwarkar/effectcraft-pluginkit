@@ -140,6 +140,50 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: u32, rect: Rect) {
     }
 }
 
+/// The texture of the locked viewer's pane (Split with New Locked Viewer).
+pub(crate) const LOCKED_PANE: u32 = u32::MAX;
+
+/// The texture of extra view `i` of a multi-view layout.
+pub(crate) fn aux_pane(i: usize) -> u32 {
+    LOCKED_PANE - 1 - i as u32
+}
+
+/// A side pane of the Composition viewer (a view of a multi-view layout, the locked viewer): its
+/// frame of `comp` at the comp's time, rendered with `opts` by the frame workers behind the active
+/// viewer's frame, and drawn from texture `id` as a passive viewer's. Returns the texture and the
+/// frame's place in it once a frame of `comp` is ready.
+pub(crate) fn pane(
+    app: &mut EffectcraftApp,
+    ctx: &egui::Context,
+    id: u32,
+    comp: ItemId,
+    opts: effectcraft_engine::render::RenderOpts,
+    dc: Option<effectcraft_engine::viewer::DisplayColor>,
+) -> Option<(egui::TextureId, Rect)> {
+    let rate = app.session.project.comp(comp)?.frame_rate;
+    let frame = rate.frame_at(app.session.time_of(comp));
+    let key = app.pane_key(comp, frame, &opts);
+    let shown = app.passive_tex.get(&id).map(|(k, _)| *k);
+    if shown != Some(key) {
+        app.frames.request(&app.render_source(), key, comp, rate.tick_of(frame), opts);
+    }
+    if let Some((key, img)) = app.frames.get_for_viewer(&key, shown.as_ref()) {
+        let dkey = dc.as_ref().map_or(0, |_| display_hash(&super::viewer_tools::display_key(app, true)));
+        set_texture(app, ctx, id, key, img, dc, dkey);
+    }
+    let tex = app.passive_tex.get(&id).filter(|(k, _)| k.comp == comp.0).and_then(|(_, tex)| Some((tex.id()?, tex.uv())));
+    if tex.is_none() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+    }
+    tex
+}
+
+/// Give back texture `id` of a viewer or pane no longer shown.
+pub(crate) fn release(app: &mut EffectcraftApp, id: u32) {
+    let tex = app.passive_tex.remove(&id).map(|(_, t)| t);
+    free(app, tex);
+}
+
 /// Keep the frame viewer `id` shows in its texture.
 pub(crate) fn set_texture(
     app: &mut EffectcraftApp,
@@ -352,8 +396,7 @@ fn add_viewer(app: &mut EffectcraftApp, near: u32) -> u32 {
 /// active viewer another open one takes over.
 pub fn on_close(app: &mut EffectcraftApp, p: PanelKind) {
     let Some(id) = id_of(p) else { return };
-    let tex = app.passive_tex.remove(&id).map(|(_, t)| t);
-    free(app, tex);
+    release(app, id);
     if id != 0 {
         app.ui.viewers.remove(&id);
         app.ui.locked_tabs.remove(&p.id());

@@ -197,3 +197,66 @@ fn every_3d_view_finds_its_japanese_row() {
     }
     crate::i18n::ui::set_current("en");
 }
+
+struct UiThreadReads {
+    inner: std::sync::Arc<dyn effectcraft_engine::render::FootageSource>,
+    ui: std::thread::ThreadId,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl effectcraft_engine::render::FootageSource for UiThreadReads {
+    fn frame(
+        &self,
+        item: effectcraft_engine::project::ItemId,
+        footage: &effectcraft_engine::project::Footage,
+        t: effectcraft_engine::time::Tick,
+    ) -> Option<std::sync::Arc<effectcraft_engine::render::Image>> {
+        if std::thread::current().id() == self.ui {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        self.inner.frame(item, footage, t)
+    }
+}
+
+/// Study change #10: the locked viewer and the extra views of a 4-view layout render on the frame
+/// workers, not on the UI thread, and show the same pixels the UI thread rendered before.
+#[test]
+fn side_and_locked_panes_render_on_the_frame_workers() {
+    use crate::panels::viewers::{LOCKED_PANE, aux_pane};
+    let dir = tempfile::tempdir().unwrap();
+    let png = dir.path().join("still.png");
+    image::RgbaImage::from_fn(64, 36, |x, y| image::Rgba([(x * 4) as u8, (y * 7) as u8, 90, 255])).save(&png).unwrap();
+    let mut session = effectcraft_host::session();
+    session.execute("comp.new", serde_json::json!({"width": 64, "height": 36, "duration": 2})).unwrap();
+    let cid = session.active_comp_id().unwrap();
+    let item = session.execute("file.import", serde_json::json!({"paths": [png.to_string_lossy()]})).unwrap()["items"][0].clone();
+    session.execute("layer.addItem", serde_json::json!({"item": item})).unwrap();
+    session.execute("view.splitLockedViewer", serde_json::json!({})).unwrap();
+    session.execute("view.layout", serde_json::json!({"views": 4})).unwrap();
+    let counter = std::sync::Arc::new(UiThreadReads { inner: session.footage.clone(), ui: std::thread::current().id(), reads: Default::default() });
+    session.footage = counter.clone();
+    session.layer_cache.set_gate(Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true))));
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_| crate::EffectcraftApp::new(session));
+    let panes = [LOCKED_PANE, aux_pane(0), aux_pane(1), aux_pane(2)];
+    let shown = |h: &egui_kittest::Harness<'_, crate::EffectcraftApp>| panes.iter().filter(|p| h.state().passive_tex.contains_key(p)).count();
+    harness.step();
+    assert_eq!(counter.reads.load(std::sync::atomic::Ordering::SeqCst), 0, "a pane rendered on the UI thread");
+    for _ in 0..400 {
+        if shown(&harness) == 4 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        harness.step();
+    }
+    assert_eq!(shown(&harness), 4, "every pane shows its frame once the workers finish");
+    assert_eq!(counter.reads.load(std::sync::atomic::Ordering::SeqCst), 0, "a pane rendered on the UI thread");
+    for (pane, draft) in [(LOCKED_PANE, false), (aux_pane(0), true)] {
+        let app = harness.state();
+        let key = app.passive_tex[&pane].0;
+        let Some(crate::frames::FrameImage::Cpu(img)) = app.frames.get(&key) else { panic!("no CPU frame for pane {pane}") };
+        let opts = effectcraft_engine::render::RenderOpts { scale: f64::from(key.scale) / 1000.0, draft, ..Default::default() };
+        let before = crate::frames::to_color_image(&app.session.render(cid, app.session.time_of(cid), opts));
+        assert_eq!(img.size, before.size);
+        assert!(img.pixels == before.pixels, "pane {pane} differs from the UI thread's render");
+    }
+}
