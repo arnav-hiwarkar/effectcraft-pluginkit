@@ -141,7 +141,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: u32, rect: Rect) {
 }
 
 /// The texture of the locked viewer's pane (Split with New Locked Viewer).
-pub(crate) const LOCKED_PANE: u32 = u32::MAX;
+pub const LOCKED_PANE: u32 = u32::MAX;
 
 /// The texture of extra view `i` of a multi-view layout.
 pub(crate) fn aux_pane(i: usize) -> u32 {
@@ -176,6 +176,11 @@ pub(crate) fn pane(
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
     tex
+}
+
+/// The texture viewer or pane `id` draws, once it has a frame.
+pub fn texture(app: &EffectcraftApp, id: u32) -> Option<egui::TextureId> {
+    app.passive_tex.get(&id)?.1.id()
 }
 
 /// Give back texture `id` of a viewer or pane no longer shown.
