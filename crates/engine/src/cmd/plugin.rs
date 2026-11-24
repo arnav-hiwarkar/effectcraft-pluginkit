@@ -3,7 +3,14 @@ use serde_json::Value;
 use super::{CommandSpec, always, frontend};
 use crate::{EngineError, Result, Session, cmd, query};
 
+const USER_ONLY: [&str; 7] = ["plugin.install", "plugin.approve", "plugin.setSandbox", "plugin.disable", "plugin.uninstall", "plugin.load", "plugin.reload"];
+
 fn forward(s: &mut Session, id: &str, params: &Value) -> Result<Value> {
+    if s.running_for_script() && USER_ONLY.contains(&id) {
+        return Err(EngineError::Other(format!(
+            "Scripts can't run `{id}`: installing, approving, loading and removing plug-ins is the user's act. Do it yourself in Window ▸ Plug-ins ▸ Manage Plug-ins."
+        )));
+    }
     let run = s.plugin_commands.ok_or_else(|| EngineError::Other("plug-ins are not available in this session".into()))?;
     run(s, id, params)
 }
