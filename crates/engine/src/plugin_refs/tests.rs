@@ -80,3 +80,29 @@ fn a_project_names_its_missing_plugin_refuses_a_final_render_and_keeps_the_value
     let resaved: Value = serde_json::from_str(&std::fs::read_to_string(&second).unwrap()).unwrap();
     assert_eq!(resaved["plugins"], saved["plugins"]);
 }
+
+#[test]
+fn an_old_project_without_a_plugin_record_is_refused_for_a_missing_plugin_effect_and_renders_with_the_option() {
+    let dir = tempfile::tempdir().unwrap();
+    let (saved, old) = (dir.path().join("saved.ecproj"), dir.path().join("old.ecproj"));
+    register();
+    let mut s = Session::new();
+    s.execute("comp.new", json!({"name": "Main"})).unwrap();
+    let layer = s.execute("layer.newSolid", json!({})).unwrap()["layer"].clone();
+    s.execute("effect.apply", json!({"layer": layer, "effect": EFFECT})).unwrap();
+    s.execute("renderQueue.add", json!({"output": dir.path().join("out.mp4")})).unwrap();
+    s.execute("file.saveAs", json!({"path": saved})).unwrap();
+    let mut text: Value = serde_json::from_str(&std::fs::read_to_string(&saved).unwrap()).unwrap();
+    assert!(text.as_object_mut().unwrap().remove("plugins").is_some());
+    std::fs::write(&old, text.to_string()).unwrap();
+
+    dynamic::unregister(OWNER);
+    let mut s = Session::new();
+    s.exporter = Some(Arc::new(MockExporter { log: Default::default() }));
+    let opened = s.execute("file.open", json!({"path": old})).unwrap();
+    assert_eq!(opened["plugins"], json!([]));
+    let refused = s.execute("renderQueue.render", json!({})).unwrap_err().to_string();
+    assert!(refused.contains(EFFECT) && refused.contains("withoutMissingPlugins"), "{refused}");
+    let rendered = s.execute("renderQueue.render", json!({"withoutMissingPlugins": true})).unwrap();
+    assert_eq!(rendered["items"][0]["status"], "Done", "{rendered}");
+}

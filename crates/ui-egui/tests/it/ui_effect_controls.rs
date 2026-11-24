@@ -1715,4 +1715,7 @@ fn an_effect_whose_plugin_is_missing_is_marked_in_effect_controls() {
     let mark = format!("effectControls.effect.{fx}.error");
     let label = h.state().auto.previous.iter().chain(h.state().auto.elements.iter()).find(|e| e.id == mark).map(|e| e.label.clone());
     assert!(label.as_deref().is_some_and(|l| l.contains("test.ui.refs") && l.contains("not installed")), "{label:?} in {:?}", ids(&h));
+    use egui_kittest::kittest::NodeT;
+    let name = h.get_by_label_contains("test.ui.refs").accesskit_node().label().unwrap_or_default();
+    assert!(name.starts_with("⚠ ") && name.contains("not installed"), "{name:?}");
 }
