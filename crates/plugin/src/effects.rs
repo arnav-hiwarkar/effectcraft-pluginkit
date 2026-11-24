@@ -149,8 +149,7 @@ fn declare(param: &Param) -> DynamicParam {
         ParamKind::Mask => (Value::Enum(0), ParamUi::Mask),
         ParamKind::Gradient { default } => (Value::Gradient(app_gradient(default)), ParamUi::Gradient),
         ParamKind::Curve { default, channels } => {
-            let text = craft_plugin_host::curves_text(&vec![default.clone(); if *channels { 4 } else { 1 }]);
-            (Value::Str(text), ParamUi::Curve { channels: *channels })
+            (Value::Str(craft_plugin_host::default_curves_text(default, *channels)), ParamUi::Curve { channels: *channels })
         }
     };
     DynamicParam { id: param.id.clone(), name: param.name.clone(), default, ui }

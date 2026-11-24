@@ -298,7 +298,7 @@ pub fn default_value(kind: &ParamKind, layer_size: [f64; 2]) -> Option<Value> {
         ParamKind::Layer => Value::Bool(false),
         ParamKind::Mask => Value::Number(0.0),
         ParamKind::Gradient { default } => Value::Gradient(default.clone()),
-        ParamKind::Curve { default, channels } => Value::Text(crate::curves_text(&vec![default.clone(); if *channels { 4 } else { 1 }])),
+        ParamKind::Curve { default, channels } => Value::Text(crate::default_curves_text(default, *channels)),
     })
 }
 

@@ -109,6 +109,10 @@ pub fn curves_text(curves: &[Vec<[f64; 2]>]) -> String {
     curves.iter().map(|points| points.iter().map(|[x, y]| format!("{x},{y}")).collect::<Vec<_>>().join(" ")).collect::<Vec<_>>().join(" | ")
 }
 
+pub fn default_curves_text(default: &[[f64; 2]], channels: bool) -> String {
+    curves_text(&vec![default.to_vec(); if channels { CURVE_CHANNELS } else { 1 }])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

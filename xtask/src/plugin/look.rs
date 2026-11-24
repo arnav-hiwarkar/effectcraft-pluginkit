@@ -39,7 +39,7 @@ pub(super) fn value(id: &str, text: &str, kind: &ParamKind) -> Result<Value, Str
                 Value::List(list)
             })
             .ok_or_else(|| wrong("a colour as three or four numbers from 0 to 1, such as 1,0.5,0,1".into())),
-        ParamKind::Text { .. } | ParamKind::Custom { .. } => Ok(Value::Text(text.to_string())),
+        ParamKind::Text { .. } | ParamKind::Custom { .. } | ParamKind::Curve { .. } => Ok(Value::Text(text.to_string())),
         ParamKind::Gradient { .. } => {
             serde_json::from_str(text).map(Value::Gradient).map_err(|_| wrong(r#"a gradient as JSON, such as {"colors":[[0,[0,0,0,1]],[1,[1,1,1,1]]]}"#.into()))
         }

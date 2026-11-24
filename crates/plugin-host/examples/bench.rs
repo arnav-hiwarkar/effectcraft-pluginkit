@@ -53,6 +53,7 @@ fn defaults(plugin: &Plugin, effect: &str, size: [u32; 2]) -> BTreeMap<String, V
                 ParamKind::Color { default } => Value::List(default.to_vec()),
                 ParamKind::Text { default } | ParamKind::Custom { default } => Value::Text(default.clone()),
                 ParamKind::Gradient { default } => Value::Gradient(default.clone()),
+                ParamKind::Curve { default, channels } => Value::Text(craft_plugin_host::default_curves_text(default, *channels)),
                 ParamKind::Layer | ParamKind::Mask => return None,
             };
             Some((p.id.clone(), value))

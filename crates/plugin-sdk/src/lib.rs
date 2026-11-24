@@ -12,7 +12,7 @@ mod ui;
 mod viewer;
 mod wire;
 
-pub use curve::{Curve, MAX_CURVE_POINTS, curves_text, parse_curves};
+pub use curve::{Curve, MAX_CURVE_POINTS, default_curves_text};
 pub use effect::{Cx, Effect, Frame, Image, Pass, Rows};
 pub use gradient::{Gradient, MAX_GRADIENT_STOPS};
 pub use kernels::*;

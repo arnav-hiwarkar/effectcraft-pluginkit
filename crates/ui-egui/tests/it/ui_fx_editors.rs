@@ -325,6 +325,7 @@ fn a_plugin_curve_parameter_edits_one_channel_in_the_curves_graph_and_undoes() {
         reads_comp_scene: false,
         reads_param_history: false,
         presets: Vec::new(),
+        groups: Vec::new(),
         revision: 1,
         files: None,
         margin: None,
