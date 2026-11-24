@@ -33,6 +33,7 @@ pub(crate) enum State {
     Running,
     NeedsApproval,
     Disabled,
+    Quarantined,
     Failed,
 }
 
@@ -206,13 +207,16 @@ fn entry(app: &mut EffectcraftApp, ui: &mut egui::Ui, plugin: &Listed, actions: 
                 .strong(),
             );
         }
-        ui.label(RichText::new(state_text(plugin)).color(if plugin.state == State::Failed { t.danger } else { t.text }));
+        ui.label(RichText::new(state_text(plugin)).color(if matches!(plugin.state, State::Failed | State::Quarantined) { t.danger } else { t.text }));
         permissions(ui, plugin, &t);
         ui.horizontal(|ui| {
             let scope = if plugin.session_only { format!("plugins.{}.session", plugin.id) } else { format!("plugins.{}", plugin.id) };
             let id = json!({"id": plugin.id});
             if matches!(plugin.state, State::NeedsApproval | State::Disabled) {
                 action(app, ui, &format!("{scope}.approve"), "Allow and Enable", ("plugin.approve", id.clone()), actions);
+            }
+            if plugin.state == State::Quarantined {
+                action(app, ui, &format!("{scope}.approve"), "Turn Back On", ("plugin.approve", id.clone()), actions);
             }
             if plugin.state == State::Running {
                 action(app, ui, &format!("{scope}.disable"), "Disable", ("plugin.disable", id.clone()), actions);
@@ -232,8 +236,15 @@ fn entry(app: &mut EffectcraftApp, ui: &mut egui::Ui, plugin: &Listed, actions: 
 fn state_text(plugin: &Listed) -> String {
     let state = match plugin.state {
         State::Running => tr("Running").to_string(),
-        State::NeedsApproval => tr("Needs your approval before it can run").to_string(),
-        State::Disabled => tr("Disabled").to_string(),
+        State::NeedsApproval => match &plugin.error {
+            Some(why) => tr_args("Needs your approval again: {}", &[why]),
+            None => tr("Needs your approval before it can run").to_string(),
+        },
+        State::Disabled => match &plugin.error {
+            Some(why) => tr_args("Disabled: {}", &[why]),
+            None => tr("Disabled").to_string(),
+        },
+        State::Quarantined => tr_args("Turned off: {}", &[&plugin.error.as_deref().unwrap_or_default()]),
         State::Failed => tr_args("Failed: {}", &[&plugin.error.as_deref().unwrap_or_default()]),
     };
     if plugin.session_only { tr_args("{} (loaded for this session only)", &[&state]) } else { state }
@@ -252,3 +263,6 @@ fn permissions(ui: &mut egui::Ui, plugin: &Listed, t: &Tokens) {
         });
     }
 }
+
+#[cfg(test)]
+mod tests;

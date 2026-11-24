@@ -1,6 +1,6 @@
 //! EffectCraft desktop app.
 //!
-//! Usage: `effectcraft [--control <port>] [--demo|--empty|--home] [--] [project.ecproj | media files…]`
+//! Usage: `effectcraft [--control <port>] [--demo|--empty|--home] [--safe-mode] [--] [project.ecproj | media files…]`
 //!
 //! An unknown option or a bad port prints an error and exits with status 1 before anything starts.
 //!
@@ -91,6 +91,7 @@ struct Args {
     demo: bool,
     /// Show or skip the Home screen (`--home`), else the Startup preference decides.
     home: Option<bool>,
+    safe_mode: bool,
 }
 
 /// Parse the arguments after the program name; `Ok(None)` for `--version`. `env_port` is
@@ -111,6 +112,7 @@ fn parse_args(args: impl IntoIterator<Item = String>, env_port: Result<String, s
             "--demo" => out.demo = true,
             "--empty" => out.demo = false,
             "--home" => out.home = Some(true),
+            "--safe-mode" => out.safe_mode = true,
             "--version" => return Ok(None),
             _ => match a.strip_prefix("--control=") {
                 Some(v) => out.control_port = Some(control_port("--control", Some(v))?),
@@ -208,7 +210,7 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
     // feed the compatibility report.
     effectcraft_engine::logging::install();
     effectcraft_engine::logging::install_panic_hook();
-    let Args { control_port, files, demo, home } = match parse_args(std::env::args().skip(1), std::env::var("EFFECTCRAFT_CONTROL_PORT")) {
+    let Args { control_port, files, demo, home, safe_mode } = match parse_args(std::env::args().skip(1), std::env::var("EFFECTCRAFT_CONTROL_PORT")) {
         Ok(Some(args)) => args,
         Ok(None) => {
             println!("effectcraft {}", env!("CARGO_PKG_VERSION"));
@@ -327,6 +329,9 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
                 });
             }
             let mut session = effectcraft_host::session();
+            if safe_mode {
+                effectcraft_plugin::start_in_safe_mode();
+            }
             effectcraft_plugin::install(&mut session, effectcraft_host::config_dir().as_deref());
             // Lazy open and non-blocking auto-save: footage is checked and auto-saves are
             // written on background threads (M13.14).
@@ -574,6 +579,7 @@ impl eframe::App for Desktop {
             self.app.on_exit();
             // Scripts in Scripts/Shutdown run with the project closed.
             let _ = self.app.session.execute("file.runShutdownScripts", json!({}));
+            effectcraft_plugin::end_run();
         }) {
             log::warn!("could not mark crash reporter clean after teardown: {error}");
         }
@@ -712,6 +718,7 @@ mod tests {
         assert_eq!(parse(&[]), Some(Args::default()));
         assert!(parse(&["--demo"]).is_some_and(|a| a.demo));
         assert!(parse(&["--demo", "--empty"]).is_some_and(|a| !a.demo));
+        assert!(parse(&["--safe-mode"]).is_some_and(|a| a.safe_mode));
         let a = parse(&["--control", "9877", "--home", "a.ecproj"]).unwrap_or_default();
         assert_eq!((a.control_port, a.home, a.files), (Some(9877), Some(true), vec!["a.ecproj".to_string()]));
         assert_eq!(parse(&["--version"]), None);

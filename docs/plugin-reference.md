@@ -714,7 +714,7 @@ reason has still landed.
 |---|---|---|
 | `plugin.list` | | Every plugin with its state, permissions, effects, panels, and commands |
 | `plugin.install` | `path` | Installs a `.craftplugin` file or a bundle folder into the plugin folder. The plugin waits for approval. |
-| `plugin.approve` | `id` | Grants the permissions the plugin asks for and starts it |
+| `plugin.approve` | `id` | Grants the permissions the plugin asks for, for exactly the installed files, and starts it. Also turns back on a plugin turned off after the app closed unexpectedly |
 | `plugin.setSandbox` | `id`, `sandboxed` | For a plugin with a WebAssembly and a native build: `false` runs the native build for this version, `true` runs the sandboxed one |
 | `plugin.disable` | `id` | Stops the plugin and keeps it installed |
 | `plugin.uninstall` | `id` | Removes the plugin and its approval |
@@ -738,7 +738,11 @@ length of the whole path. `dims` is the number of dimensions the layer shows (2 
 
 An automation agent confined to folders cannot run any of these except `plugin.list`.
 
-Installed plugins live in `Plugins/` in the settings folder. `Plugins/state.json` records each approval.
+Installed plugins live in `Plugins/` in the settings folder. `Plugins/state.json` records each approval with
+the version and digest of the files approved; `plugin.list` gives the state `needs_approval` with an `error`
+saying why when files changed or permissions grew, and `quarantined` for a plugin that ran unsandboxed when
+the app last closed unexpectedly. `Plugins/.runs/` holds the markers of running apps. `--safe-mode` or
+`EFFECTCRAFT_SAFE_MODE=1` starts the app with no plugins and no `EFFECTCRAFT_PLUGIN_PATH` bundles.
 `Plugins/.data/<id>/` is a plugin's private data folder.
 
 ## Testing
