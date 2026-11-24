@@ -1605,3 +1605,27 @@ fn gpu_summary_names_the_adapter_or_says_why_there_is_none() {
     assert!(on.starts_with("Compositing: GPU, NVIDIA GeForce RTX 4070 (Vulkan)."), "{on}");
     assert!(!on.contains("compositing is off"), "{on}");
 }
+
+#[test]
+fn a_plugin_command_gets_its_free_default_shortcut_never_a_built_in_one_and_can_be_rebound() {
+    let item = |id: &str, shortcut: &str| crate::PluginItem {
+        plugin: "test.probe".into(),
+        plugin_name: "Probe".into(),
+        id: id.into(),
+        title: id.into(),
+        panel: false,
+        shortcut: Some(shortcut.into()),
+    };
+    let mut s = Session::default();
+    let save = s.shortcuts().shortcut_of("file.save", &json!(null)).unwrap().to_string();
+    s.set_plugin_items(vec![item("free", "alt+shift+f11"), item("taken", &save)]);
+    let params = |id: &str| crate::shortcuts::plugin_command_params("test.probe", id);
+    assert_eq!(s.shortcuts().shortcut_of("plugin.run", &params("free")), Some("Alt+Shift+F11"));
+    assert_eq!(s.shortcuts().shortcut_of("plugin.run", &params("taken")), None);
+    assert_eq!(s.shortcuts().shortcut_of("file.save", &json!(null)), Some(save.as_str()));
+
+    let taken = s.shortcuts().find(&crate::shortcuts::binding_key("plugin.run", &params("taken"))).unwrap().clone();
+    s.keymaps.set(&taken, &["Alt+Shift+F10".into()]).unwrap();
+    s.shortcuts_changed();
+    assert_eq!(s.shortcuts().shortcut_of("plugin.run", &params("taken")), Some("Alt+Shift+F10"));
+}

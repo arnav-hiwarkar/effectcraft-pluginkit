@@ -174,7 +174,13 @@ pub fn dynamic(s: &Session, name: &str, cx: &DynCtx) -> (Vec<MenuEntry>, Option<
             s.plugin_items
                 .iter()
                 .filter(|item| !item.panel)
-                .map(|item| dyn_entry(format!("{}: {}", item.plugin_name, item.title), "plugin.run", json!({"plugin": item.plugin, "command": item.id})))
+                .map(|item| {
+                    dyn_entry(
+                        format!("{}: {}", item.plugin_name, item.title),
+                        "plugin.run",
+                        crate::settings::shortcuts::plugin_command_params(&item.plugin, &item.id),
+                    )
+                })
                 .collect(),
             Some("No Plug-in Commands"),
         ),

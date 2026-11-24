@@ -159,6 +159,24 @@ pub(crate) fn theme(t: &Tokens) -> Theme {
     }
 }
 
+pub(crate) fn form(app: &mut EffectcraftApp, ctx: &egui::Context) {
+    let tokens = app.tokens;
+    let (auto, images) = (&mut app.auto, &mut app.plugin_ui.images);
+    let answered = effectcraft_plugin::asked_form(&app.session, |asked| {
+        let mut answer = None;
+        super::dialogs::modal(ctx, &asked.form.title, egui::vec2(420.0, 160.0), &tokens, |ui| {
+            let mut host = AppHost { source: Source { plugin: &asked.plugin, images }, auto };
+            answer = craft_plugin_ui::draw_form(ui, &asked.form, &mut asked.values, "plugin.form", &mut host);
+        });
+        answer.map(|answer| (answer == craft_plugin_ui::Answer::Ok).then(|| asked.values.clone()))
+    });
+    if let Some(values) = answered.flatten()
+        && let Err(error) = effectcraft_plugin::answer_form(&app.session, values)
+    {
+        app.ui.status = error;
+    }
+}
+
 pub(crate) fn triangulate(outline: &[[f64; 2]]) -> Vec<[usize; 3]> {
     effectcraft_model::triangulate::triangulate(outline, &[])
 }

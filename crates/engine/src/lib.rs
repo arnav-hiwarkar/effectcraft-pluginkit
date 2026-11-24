@@ -303,6 +303,7 @@ pub struct PluginItem {
     pub id: String,
     pub title: String,
     pub panel: bool,
+    pub shortcut: Option<String>,
 }
 
 impl Default for Session {

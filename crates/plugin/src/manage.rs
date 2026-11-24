@@ -343,7 +343,14 @@ impl Plugins {
             let found = loaded.plugin.contributions();
             let panel = found.effects.iter().find(|e| e.id == local)?.designer.as_ref()?;
             let title = &found.panels.iter().find(|p| &p.id == panel)?.title;
-            Some(PluginItem { plugin: plugin.clone(), plugin_name: loaded.bundle.manifest.name.clone(), id: panel.clone(), title: title.clone(), panel: true })
+            Some(PluginItem {
+                plugin: plugin.clone(),
+                plugin_name: loaded.bundle.manifest.name.clone(),
+                id: panel.clone(),
+                title: title.clone(),
+                panel: true,
+                shortcut: None,
+            })
         })
     }
 
@@ -428,15 +435,16 @@ impl Plugins {
         let mut items = Vec::new();
         for (id, loaded) in &inner.loaded {
             let found = loaded.plugin.contributions();
-            let item = |panel: bool, local: &str, title: &str| PluginItem {
+            let item = |panel: bool, local: &str, title: &str, shortcut: &Option<String>| PluginItem {
                 plugin: id.clone(),
                 plugin_name: loaded.bundle.manifest.name.clone(),
                 id: local.to_string(),
                 title: title.to_string(),
                 panel,
+                shortcut: shortcut.clone(),
             };
-            items.extend(found.panels.iter().map(|p| item(true, &p.id, &p.title)));
-            items.extend(found.commands.iter().map(|c| item(false, &c.id, &c.title)));
+            items.extend(found.panels.iter().map(|p| item(true, &p.id, &p.title, &None)));
+            items.extend(found.commands.iter().map(|c| item(false, &c.id, &c.title, &c.shortcut)));
         }
         items
     }
@@ -480,7 +488,7 @@ pub fn install(session: &mut Session, config_dir: Option<&Path>) -> &'static Plu
         plugins
     });
     session.plugin_commands = Some(command);
-    session.plugin_items = plugins.items();
+    session.set_plugin_items(plugins.items());
     plugins
 }
 
@@ -591,7 +599,7 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
         }
         _ => Err(failed(format!("unknown plugin command `{id}`"))),
     };
-    session.plugin_items = plugins.items();
+    session.set_plugin_items(plugins.items());
     if effectcraft_engine::effects::dynamic::generation() != effects_before {
         match session.edit("Update Plug-in Effects", None, |project, _| Ok(effectcraft_engine::upgrade_effects(project))) {
             Ok(upgraded) => {

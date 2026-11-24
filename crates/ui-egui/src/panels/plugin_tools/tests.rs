@@ -424,3 +424,88 @@ fn a_control_row_of_a_plugin_built_against_the_sdk_before_row_events_still_draws
     let hint = "Click to add a point, drag to move it, drag it off or Alt-click to remove it. Arrow keys move the chosen point, Delete removes it.";
     assert_eq!(harness.query_all_by_value(hint).count(), 1, "the row draws the plugin's own hint");
 }
+
+static PROBE_FORM: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn asked_title(harness: &Harness<'_, EffectcraftApp>) -> Option<String> {
+    effectcraft_plugin::asked_form(&harness.state().session, |asked| asked.form.title.clone())
+}
+
+fn answered(harness: &mut Harness<'_, EffectcraftApp>) -> String {
+    settle(harness, |h| asked_title(h).is_none() && h.state().plugin_ui.panels.idle());
+    let data = effectcraft_plugin::plugins().unwrap().get("test.viewer-tool-ui").unwrap().data_dir.join("form.json");
+    std::fs::read_to_string(data).unwrap()
+}
+
+#[test]
+fn a_plugin_command_runs_from_its_free_default_shortcut_and_the_palette_but_never_takes_a_built_in_one() {
+    let _one_at_a_time = PROBE_FORM.lock().unwrap_or_else(|e| e.into_inner());
+    let mut session = probe_session();
+    session.execute("plugin.list", json!({})).unwrap();
+    let mine = session.plugin_items.iter().filter(|item| item.plugin == "test.viewer-tool-ui").cloned().collect();
+    session.set_plugin_items(mine);
+    let mut harness = harness(session);
+    harness.step();
+    let params = |id: &str| effectcraft_engine::shortcuts::plugin_command_params("test.viewer-tool-ui", id);
+    let shortcuts = harness.state().session.shortcuts();
+    assert_eq!(shortcuts.shortcut_of("plugin.run", &params("ask")), Some("Alt+Shift+F11"));
+    assert_eq!(shortcuts.shortcut_of("plugin.run", &params("read")), None, "Cmd+Shift+J stays with View ▸ Resolution ▸ Half");
+    assert_eq!(shortcuts.shortcut_of("view.res.half", &Value::Null), Some("Cmd+Shift+J"));
+
+    harness.key_press_modifiers(egui::Modifiers { alt: true, shift: true, ..Default::default() }, egui::Key::F11);
+    settle(&mut harness, |h| asked_title(h).is_some());
+    let ctx = harness.ctx.clone();
+    crate::menus::invoke(harness.state_mut(), &ctx, "plugin.answerForm", json!({"cancel": true})).unwrap();
+    assert_eq!(answered(&mut harness), "cancelled");
+
+    crate::menus::invoke(harness.state_mut(), &ctx, "app.commandPalette", json!({"query": "probe ask for settings"})).unwrap();
+    harness.step();
+    harness.key_press(egui::Key::Enter);
+    settle(&mut harness, |h| asked_title(h).is_some());
+    crate::menus::invoke(harness.state_mut(), &ctx, "plugin.answerForm", json!({"cancel": true})).unwrap();
+    assert_eq!(answered(&mut harness), "cancelled");
+}
+
+#[test]
+fn a_plugin_form_returns_the_values_entered_on_ok_nothing_on_cancel_and_automation_can_answer_it() {
+    let _one_at_a_time = PROBE_FORM.lock().unwrap_or_else(|e| e.into_inner());
+    let mut harness = harness(probe_session());
+    harness.step();
+    let ctx = harness.ctx.clone();
+    let ask = |harness: &mut Harness<'_, EffectcraftApp>| {
+        crate::menus::invoke(harness.state_mut(), &ctx, "plugin.run", json!({"plugin": "test.viewer-tool-ui", "command": "ask"})).unwrap();
+        settle(harness, |h| asked_title(h).is_some() && h.state().auto.find("plugin.form.ok").is_some());
+        (0..3).for_each(|_| harness.step());
+    };
+    let click = |harness: &mut Harness<'_, EffectcraftApp>, id: &str| {
+        let at = element(harness, id).center();
+        for event in [
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
+            egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE },
+        ] {
+            harness.input_mut().events.push(event);
+            harness.step();
+        }
+    };
+
+    ask(&mut harness);
+    click(&mut harness, "plugin.form.soft");
+    click(&mut harness, "plugin.form.ok");
+    let values: Value = serde_json::from_str(&answered(&mut harness)).unwrap();
+    assert_eq!(values, json!({"radius": 10.0, "soft": true, "mode": 0.0, "label": "none"}));
+
+    ask(&mut harness);
+    click(&mut harness, "plugin.form.soft");
+    click(&mut harness, "plugin.form.cancel");
+    assert_eq!(answered(&mut harness), "cancelled");
+
+    ask(&mut harness);
+    let shown = crate::menus::invoke(harness.state_mut(), &ctx, "plugin.form", json!({})).unwrap();
+    assert_eq!((shown["form"]["title"].clone(), shown["values"]["radius"].clone()), (json!("Settings"), json!(10.0)));
+    let wrong = crate::menus::invoke(harness.state_mut(), &ctx, "plugin.answerForm", json!({"values": {"soft": "yes"}})).unwrap_err();
+    assert!(wrong.contains("parameter `soft` takes true or false"), "{wrong}");
+    crate::menus::invoke(harness.state_mut(), &ctx, "plugin.answerForm", json!({"values": {"radius": 42.0, "mode": 1.0}})).unwrap();
+    let values: Value = serde_json::from_str(&answered(&mut harness)).unwrap();
+    assert_eq!(values, json!({"radius": 42.0, "soft": false, "mode": 1.0, "label": "none"}));
+}
