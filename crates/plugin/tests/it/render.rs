@@ -215,7 +215,7 @@ fn without_a_camera_layer_the_scene_camera_is_the_comp_default_view() {
     assert!((zoom - default_zoom).abs() < 1e-3, "zoom {zoom} against the view's {default_zoom}");
 }
 
-fn placed_report(id: &str, camera: serde_json::Value) -> Vec<[f32; 4]> {
+fn placed_app(id: &str, camera: serde_json::Value) -> (App, [Option<u64>; 3]) {
     let mut app = app(id, &[]);
     let session = &mut app.session;
     session.execute("file.projectSettings", json!({"bitDepth": 32})).expect("32 bit");
@@ -231,9 +231,31 @@ fn placed_report(id: &str, camera: serde_json::Value) -> Vec<[f32; 4]> {
     let plate = session.execute("layer.newSolid", json!({"name": "Plate", "color": "#000000", "width": 64, "height": 36})).expect("plate")["layer"].as_u64();
     session.execute("effect.apply", json!({"layer": plate, "effect": format!("{id}.placed")})).expect("effect.apply");
     session.execute_checked("prop.set", json!({"layer": plate, "path": "effects/#1/other", "value": child})).expect("choose the child");
-    let comp = session.active_comp_id().expect("an active comp");
-    let image = Renderer::new(&session.project, session.footage.as_ref(), RenderOpts::default()).comp_frame(comp, Tick::from_seconds_f64(0.0));
-    image.data[..8].to_vec()
+    (app, [camera, parent, child])
+}
+
+fn placed_report(id: &str, camera: serde_json::Value) -> Vec<[f32; 4]> {
+    frame(&placed_app(id, camera).0, None).data[..8].to_vec()
+}
+
+#[test]
+fn a_cached_layer_reading_placement_and_the_scene_at_another_time_redraws_when_they_move() {
+    let camera = json!({"name": "Shot", "type": "oneNode", "position": [10.0, 5.0, -300.0], "zoom": 250.0});
+    let (mut app, [camera, parent, child]) = placed_app("test.placed-cache", camera);
+    let cache = effectcraft_engine::render::LayerCache::new(256 << 20);
+    let mut report = cached_frame(&app, None, Some(&cache)).data[..8].to_vec();
+    let edits = [
+        ("prop.set", json!({"layer": child, "path": "transform/position", "value": [30.0, 2.0]}), "the chosen layer moved"),
+        ("prop.set", json!({"layer": parent, "path": "transform/position", "value": [12.0, 9.0]}), "its parent moved"),
+        ("prop.addKey", json!({"layer": camera, "path": "transform/position", "time": 1.0, "value": [60.0, 9.0, -200.0]}), "the camera key at 1 s moved"),
+    ];
+    for (command, params, what) in edits {
+        app.session.execute(command, params).expect(what);
+        let cached = cached_frame(&app, None, Some(&cache)).data[..8].to_vec();
+        assert_ne!(cached, report, "{what}, but the layer cache served the old frame");
+        assert_eq!(cached, frame(&app, None).data[..8].to_vec(), "{what}: the cached frame is the fresh render");
+        report = cached;
+    }
 }
 
 #[test]

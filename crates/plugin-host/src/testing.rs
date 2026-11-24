@@ -308,15 +308,20 @@ struct TestHost<'a> {
     masks: &'a [MaskPath],
     params: Option<&'a BTreeMap<String, Value>>,
     layer_size: [f64; 2],
+    spec: Option<&'a EffectSpec>,
 }
 
 impl<'a> TestHost<'a> {
     fn bare(recorder: &'a Mutex<Recorder>) -> TestHost<'a> {
-        TestHost { recorder, source: None, layers: None, masks: &[], params: None, layer_size: [0.0; 2] }
+        TestHost { recorder, source: None, layers: None, masks: &[], params: None, layer_size: [0.0; 2], spec: None }
     }
 }
 
 impl Host for TestHost<'_> {
+    fn effect(&self) -> Option<&EffectSpec> {
+        self.spec
+    }
+
     fn access(&self, _command: &str, _params: &serde_json::Value) -> Access {
         Access::Free
     }
@@ -638,7 +643,15 @@ impl Render<'_> {
     }
 
     fn host<'h>(&'h self, source: &'h Picture, layers: &'h BTreeMap<String, Picture>, masks: &'h [MaskPath], cx: &'h RenderCx) -> TestHost<'h> {
-        TestHost { recorder: &self.plugin.recorder, source: Some(source), layers: Some(layers), masks, params: Some(&cx.params), layer_size: cx.layer_size }
+        TestHost {
+            recorder: &self.plugin.recorder,
+            source: Some(source),
+            layers: Some(layers),
+            masks,
+            params: Some(&cx.params),
+            layer_size: cx.layer_size,
+            spec: self.plugin.spec(&self.effect).ok(),
+        }
     }
 
     pub fn time_check(&self) -> Result<(), String> {

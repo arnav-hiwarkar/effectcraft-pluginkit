@@ -62,8 +62,9 @@ pub(crate) fn comp_scene(ctx: &EvalCtx, layer: &Layer) -> Option<effectcraft_eff
         let focus = active.dof.map(|dof| [dof.focus, dof.aperture, dof.blur_level]);
         effectcraft_effects::CompCamera { layer_to_camera_rows: (active.view * world).0, eye: [eye.x, eye.y, eye.z], zoom: active.zoom, focus }
     });
-    let lights = three_d::light::light_layers(ctx)
-        .filter_map(|(layer, l)| {
+    let lights = three_d::light::lights_at(ctx)
+        .iter()
+        .filter_map(|l| {
             let inv = inv.as_ref()?;
             let pos = inv.apply(l.pos);
             let dir = inv.apply_vec(l.dir);
@@ -76,7 +77,6 @@ pub(crate) fn comp_scene(ctx: &EvalCtx, layer: &Layer) -> Option<effectcraft_eff
             };
             let unlit = l.intensity.abs() < 1e-9;
             Some(effectcraft_effects::SceneLight {
-                name: layer.name.clone(),
                 kind,
                 pos: [pos.x, pos.y, pos.z],
                 travel_direction: [dir.x / len, dir.y / len, dir.z / len],

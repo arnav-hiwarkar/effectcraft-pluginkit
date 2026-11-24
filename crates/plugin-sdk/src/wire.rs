@@ -1162,10 +1162,8 @@ impl LayerPlacement {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Light {
-    #[serde(default)]
-    pub name: String,
     pub kind: LightKind,
     pub position: [f64; 3],
     pub direction: [f64; 3],
@@ -1566,10 +1564,10 @@ mod tests {
     }
 
     #[test]
-    fn a_scene_from_an_older_host_has_no_focus_or_light_names_and_a_placement_moves_points() {
+    fn a_scene_from_an_older_host_has_no_focus_and_a_placement_moves_points() {
         let older = r#"{"camera":{"view":[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]],"position":[0,0,-50],"zoom":50},"lights":[{"kind":"spot","position":[1,2,3],"direction":[0,0,1],"colour":[1,1,1],"intensity":1,"cone_angle":90,"feather":0}]}"#;
         let scene: Scene = serde_json::from_str(older).unwrap();
-        assert_eq!((scene.camera.unwrap().focus, scene.lights[0].name.as_str()), (None, ""));
+        assert_eq!(scene.camera.unwrap().focus, None);
         let placed = LayerPlacement {
             matrix: [[0.0, -1.0, 0.0, 47.0], [1.0, 0.0, 0.0, 8.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
             opacity: 1.0,

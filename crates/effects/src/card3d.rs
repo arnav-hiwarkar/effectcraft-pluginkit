@@ -365,9 +365,8 @@ pub enum SceneLightKind {
     Spot,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
 pub struct SceneLight {
-    pub name: String,
     pub kind: SceneLightKind,
     pub pos: [f64; 3],
     pub travel_direction: [f64; 3],

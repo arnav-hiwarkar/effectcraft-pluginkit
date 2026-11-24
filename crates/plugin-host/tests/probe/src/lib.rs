@@ -719,13 +719,13 @@ struct Placed;
 
 impl Effect for Placed {
     fn spec(&self) -> EffectSpec {
-        EffectSpec::new("placed", "Placed", "Probe").param(Param::layer("other", "Other")).reads_scene()
+        EffectSpec::new("placed", "Placed", "Probe").param(Param::layer("other", "Other")).reads_scene().reads_other_frames()
     }
 
     fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
-        let placed = cx.placement("other").ok_or("no layer chosen")?;
+        let placed = cx.placement("other")?;
         let camera = cx.scene().and_then(|scene| scene.camera).ok_or("no scene camera")?;
-        let later = cx.scene_at(1.0).and_then(|scene| scene.camera).ok_or("no scene camera at 1 s")?;
+        let later = cx.scene_at(1.0)?.camera.ok_or("no scene camera at 1 s")?;
         let focus = camera.focus.unwrap_or_default();
         let m = placed.matrix.map(|row| row.map(|v| v as f32));
         frame.pixels[..4].copy_from_slice(&[[m[0][0], m[0][1], m[0][2], m[0][3]], [m[1][0], m[1][1], m[1][2], m[1][3]], [m[2][0], m[2][1], m[2][2], 1.0], [m[2][3], m[3][0], m[3][1], 1.0]]);
@@ -735,6 +735,18 @@ impl Effect for Placed {
         let [x, y, z] = later.position.map(|c| c as f32);
         frame.pixels[7] = [x, y, z, 1.0];
         Ok(())
+    }
+}
+
+struct SceneLater;
+
+impl Effect for SceneLater {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new("scene-later", "Scene Later", "Probe").reads_scene()
+    }
+
+    fn render(&self, cx: &Cx, _frame: &mut Frame) -> Result<()> {
+        cx.scene_at(1.0).map(|_| ())
     }
 }
 
@@ -960,6 +972,7 @@ fn make() -> Plugin {
         .effect(ReadInputs)
         .effect(SceneCamera)
         .effect(Placed)
+        .effect(SceneLater)
         .effect(Spin)
         .effect(HalfDone)
         .effect(MarkBand)

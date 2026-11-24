@@ -1052,7 +1052,7 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
     }
     // Effects that see the comp camera or lights (#397) change when they or the layer move.
     if effects != EffectScope::Footprint && reads_comp_scene(layer) {
-        hash_value(&mut h, &crate::comp_scene(ctx, layer));
+        hash_scene(&mut h, ctx, layer)?;
     }
     if effects != EffectScope::Footprint {
         effect_revisions(layer).for_each(|revision| revision.hash(&mut h));
@@ -1080,6 +1080,17 @@ pub(crate) fn effect_revisions(layer: &Layer) -> impl Iterator<Item = u64> {
         effectcraft_project::GroupKind::Effect { effect } => Some(effectcraft_effects::revision(effect)).filter(|r| *r != 0),
         _ => None,
     })
+}
+
+fn hash_scene(h: &mut KeyHasher, ctx: &EvalCtx, layer: &Layer) -> Option<()> {
+    hash_value(h, &crate::comp_scene(ctx, layer));
+    if reads_other_times(layer, None) {
+        if ctx.comp.layers.iter().any(|l| has_expression(&l.props)) {
+            return None;
+        }
+        hash_value(h, &ctx.comp.layers);
+    }
+    Some(())
 }
 
 /// Does the layer run an effect that reads the comp camera or lights (Card Dance, CC Particle

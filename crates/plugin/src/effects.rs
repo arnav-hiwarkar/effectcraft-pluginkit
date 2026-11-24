@@ -244,6 +244,10 @@ impl RenderHost<'_, '_> {
 }
 
 impl Host for RenderHost<'_, '_> {
+    fn effect(&self) -> Option<&EffectSpec> {
+        Some(self.spec)
+    }
+
     fn finish(&mut self, written: &mut [craft_plugin_host::Pixel]) {
         self.ctx.quantize_chunk(written);
     }
@@ -304,7 +308,6 @@ fn wire_scene(scene: effectcraft_engine::effects::CompScene) -> Scene {
         focus: camera.focus.map(|[distance, aperture, blur]| Focus { distance, aperture, blur }),
     });
     let light = |light: &effectcraft_engine::effects::SceneLight| Light {
-        name: light.name.clone(),
         kind: match light.kind {
             SceneLightKind::Parallel => LightKind::Parallel,
             SceneLightKind::Ambient => LightKind::Ambient,

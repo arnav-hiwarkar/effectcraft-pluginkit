@@ -76,7 +76,7 @@ pooled instance, so values stored outside `cx` are not shared between calls.
 | `.params([Param, …])` | Adds parameters, such as the list `params!` makes. |
 | `.group(name, [Param, …])` | Adds parameters under a twirl-down. Their ids become `name/<id>`. |
 | `.time_dependent()` | The output changes with `cx.time` when no parameter is animated. |
-| `.reads_other_frames()` | The effect calls `cx.source_at` or `cx.layer_at`. |
+| `.reads_other_frames()` | The effect calls `cx.source_at`, `cx.layer_at`, `cx.scene_at` or `cx.placement_at`. |
 | `.reads_scene()` | The effect calls `cx.scene`, `cx.scene_at` or `cx.placement`. |
 | `.reads_param_history()` | The effect calls `cx.at` or `cx.param_history`. A layer whose other effects or masks have expressions is then not cached, because the key cannot see what an expression returned at another time. |
 | `.preset(name, [(id, Value), …])` | A named set of parameter values, see [Presets](#presets). |
@@ -203,9 +203,9 @@ four times the frame, every side is cut by one factor, so a frame 16384 wide is 
 | `cx.param_history()` | A hash of everything that sets this effect's parameters over time (values, keyframes, expression text), the same in every frame and session. `None` when a parameter has an expression, whose values at other times the hash cannot see, or outside the app. Use it to key caches of a simulation. |
 | `cx.masks()` | The layer's masks as polylines in frame pixels. |
 | `cx.scene()` | The comp's camera and lights, see [Scene](#scene). Declare `.reads_scene()`. |
-| `cx.scene_at(comp_time)` | The same at another comp time. |
+| `cx.scene_at(comp_time)` | The same at another comp time. Declare `.reads_scene()` and `.reads_other_frames()`. |
 | `cx.placement("target")` | Where the layer chosen in a layer parameter sits, see [Placement](#placement). Declare `.reads_scene()`. |
-| `cx.placement_at("target", comp_time)` | The same at another comp time. |
+| `cx.placement_at("target", comp_time)` | The same at another comp time. Declare `.reads_scene()` and `.reads_other_frames()`. |
 
 These calls also work in `layout`, for example to size the padding from the masks.
 
@@ -236,16 +236,20 @@ with the layer on the plane z = 0. They do not change with `cx.scale` or padding
 | `scene.lights` | Every light layer that is switched on. |
 | `Scene::centred(cx.layer_size)` | A camera facing the middle of the layer that leaves the plane z = 0 where it is. Use it when `cx.scene()` is `None`. |
 
-A `Light` has `name` (the light layer's name), `kind` (`Ambient`, `Point`, `Spot`, `Parallel`), `position`, `direction` (the way the
+A `Light` has `kind` (`Ambient`, `Point`, `Spot`, `Parallel`), `position`, `direction` (the way the
 light travels, unit length), `colour`, `intensity` (1 is 100 %), `cone_angle` (the full angle in
 degrees) and `feather` (0 to 1). Light a surface with `colour` times `intensity`.
 
 `cx.scene_at(comp_time)` gives the scene at another comp time, for motion blur or a camera move
-between frames. It returns `None` for a time that is not finite.
+between frames. It returns an error for a time that is not finite, and when the spec lacks
+`.reads_scene()` or `.reads_other_frames()`: the layer cache keys such an effect on every camera,
+light and layer of the comp, which it would otherwise miss. A comp with an expression on any layer
+is then not cached.
 
 ### Placement
 
-`cx.placement("target")` returns `None` when no layer is chosen. A `LayerPlacement` has:
+`cx.placement("target")` returns an error when no layer is chosen or the spec lacks `.reads_scene()`
+(and `.reads_other_frames()` for `cx.placement_at`). A `LayerPlacement` has:
 
 | Field or call | Meaning |
 |---|---|

@@ -155,7 +155,7 @@ impl Dependencies<'_> {
         // A cached owner never runs this layer's effects, so the comp camera and lights its
         // scene-reading effects see belong in the owner's key too (#1252).
         if super::reads_comp_scene(layer) {
-            hash_value(self.h, &crate::comp_scene(ctx, layer));
+            super::hash_scene(self.h, ctx, layer)?;
         }
         if super::time_dependent(layer, true) {
             layer.layer_time(ctx.time).0.hash(self.h);

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use craft_plugin::{AudioRequest, FrameRequest, LayerPlacement, MaskPath, ParamsAt, Permission, PickFile, Pixel, Scene};
+use craft_plugin::{AudioRequest, EffectSpec, FrameRequest, LayerPlacement, MaskPath, ParamsAt, Permission, PickFile, Pixel, Scene};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +32,10 @@ pub struct Pixels {
 }
 
 pub trait Host {
+    fn effect(&self) -> Option<&EffectSpec> {
+        None
+    }
+
     fn access(&self, _command: &str, _params: &Value) -> Access {
         Access::Refused("commands are not available here".into())
     }
