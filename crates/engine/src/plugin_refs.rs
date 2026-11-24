@@ -68,18 +68,34 @@ pub fn missing_owner(p: &Project, effect: &str) -> Option<String> {
     recorded_owner(p, effect).map(|u| u.id.clone())
 }
 
-pub(crate) fn missing(p: &Project) -> BTreeSet<String> {
-    effect_ids(p).into_iter().filter_map(|effect| missing_owner(p, effect)).collect()
+fn missing_effects(p: &Project) -> BTreeMap<&str, Option<String>> {
+    let groups = p.comps().flat_map(|(_, c)| c.layers.iter()).filter_map(|l| l.effects()).flat_map(|fx| &fx.children);
+    groups
+        .filter_map(|n| match n {
+            Node::Group(g) if g.enabled => match &g.kind {
+                GroupKind::Effect { effect } if effectcraft_effects::find(effect).is_none() => Some((effect.as_str(), missing_owner(p, effect))),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 pub(crate) fn render_refusal(p: &Project) -> Result<(), String> {
-    let missing = missing(p);
+    let missing = missing_effects(p);
     if missing.is_empty() {
         return Ok(());
     }
+    let named = missing
+        .into_iter()
+        .map(|(effect, owner)| match owner {
+            Some(plugin) => format!("{effect} (plug-in {plugin})"),
+            None => effect.to_owned(),
+        })
+        .collect::<Vec<_>>();
     Err(format!(
-        "Not rendered: this project uses plug-ins that are not installed: {}. Install them, or render without their effects (renderQueue.render {{\"withoutMissingPlugins\": true}}, or --without-missing-plugins on the command line).",
-        missing.into_iter().collect::<Vec<_>>().join(", ")
+        "Not rendered: this project uses effects whose plug-ins are not installed: {}. Install the plug-ins, or render without these effects (renderQueue.render {{\"withoutMissingPlugins\": true}}, or --without-missing-plugins on the command line).",
+        named.join(", ")
     ))
 }
 

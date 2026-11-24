@@ -203,7 +203,7 @@ fn render_error_mark(app: &mut EffectcraftApp, ui: &mut egui::Ui, bp: &egui::Pai
     let Some(err) = effectcraft_plugin::plugins().and_then(|plugins| plugins.render_error(effect)).or_else(missing) else { return };
     let wr = bp.text(at, Align2::LEFT_CENTER, "⚠", Tokens::semibold(12.0), app.tokens.warning);
     let resp = ui.interact(wr.expand(2.0), egui::Id::unique(("ec-fx-error", g.uid)), Sense::hover());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, crate::i18n::tr_args("Render error: {}", &[&err])));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, format!("⚠ {err}")));
     app.auto.add(&format!("effectControls.effect.{}.error", g.uid), wr, &err);
     resp.on_hover_text(err);
 }
