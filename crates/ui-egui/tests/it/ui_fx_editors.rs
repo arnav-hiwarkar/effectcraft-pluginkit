@@ -310,6 +310,7 @@ fn a_plugin_curve_parameter_edits_one_channel_in_the_curves_graph_and_undoes() {
     use effectcraft_engine::project::ParamUi;
     dynamic::register(DynamicEffect {
         owner: "test.ui.curve".into(),
+        version: "1.0.0".into(),
         id: "test.ui.curve.grade".into(),
         name: "Curve Test".into(),
         category: "Test".into(),

@@ -196,7 +196,11 @@ fn drop_payload(ui: &egui::Ui, rect: Rect, p: &egui::Painter, t: &Tokens, layer_
 }
 
 fn render_error_mark(app: &mut EffectcraftApp, ui: &mut egui::Ui, bp: &egui::Painter, effect: &str, g: &PropGroup, at: egui::Pos2) {
-    let Some(err) = effectcraft_plugin::plugins().and_then(|plugins| plugins.render_error(effect)) else { return };
+    let missing = || {
+        effectcraft_engine::plugin_refs::missing_owner(&app.session.project, effect)
+            .map(|plugin| crate::i18n::tr_args("Plug-in {} is not installed: this effect is skipped until it is installed", &[&plugin]))
+    };
+    let Some(err) = effectcraft_plugin::plugins().and_then(|plugins| plugins.render_error(effect)).or_else(missing) else { return };
     let wr = bp.text(at, Align2::LEFT_CENTER, "⚠", Tokens::semibold(12.0), app.tokens.warning);
     let resp = ui.interact(wr.expand(2.0), egui::Id::unique(("ec-fx-error", g.uid)), Sense::hover());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, crate::i18n::tr_args("Render error: {}", &[&err])));

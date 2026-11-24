@@ -721,7 +721,8 @@ the playhead moved before the reply arrived. One drag is one undo step. `control
 in the long-lived instance, like a panel, so state kept in the effect (a selected channel, the point being
 dragged) lasts between frames. Keep that state per `instance`: it is the same for one effect on one layer
 and differs between two copies of the effect. `render` runs in pooled instances and sees only `cx`. A project with a
-custom value opens without the plugin: the value is kept and the layer renders without the effect.
+custom value opens without the plugin: the value is kept, and the effect is marked missing (see
+[Projects that use plugins](#projects-that-use-plugins)).
 
 The row subscribes to app events and arms timers the same way a panel does. This one shows the layers
 selected in the app and blinks while it shows:
@@ -914,6 +915,22 @@ let saved = match host::read_file(Root::Data, "presets.json") {
 host::write_file(Root::Data, "presets.json", bytes)?;   // private to the plugin, always allowed
 let lut = host::read_file(Root::Bundle, "assets/film.cube")?;  // shipped with the plugin, read-only
 let any = host::read_file(Root::User, "/abs/path")?;    // needs files.read
+```
+
+## Projects that use plugins
+
+A saved project lists the plugins its effects come from, so nothing is needed in the plugin. Bump
+`version` in `plugin.json` with each release: a project opened with another version says so.
+
+```json
+"plugins": [{"id": "com.example.tint", "version": "1.2.0"}]
+```
+
+Without the plugin the project still opens and plays; the effect keeps its values byte for byte and
+Effect Controls marks it missing. A final render refuses until the plugin is installed:
+
+```sh
+effectcraft-cli render film.ecproj --queue --without-missing-plugins
 ```
 
 ## Add a native build

@@ -102,6 +102,7 @@ pub struct DynamicParam {
 
 pub struct DynamicEffect {
     pub owner: String,
+    pub version: String,
     pub id: String,
     pub name: String,
     pub category: String,
@@ -195,6 +196,10 @@ pub fn unregister(owner: &str) {
 
 pub fn get(id: &str) -> Option<Arc<Registered>> {
     REGISTRY.read().unwrap_or_else(|poisoned| poisoned.into_inner()).iter().find(|r| r.spec.id == id).cloned()
+}
+
+pub fn plugin_version(owner: &str) -> Option<String> {
+    REGISTRY.read().unwrap_or_else(|poisoned| poisoned.into_inner()).iter().find(|r| r.effect.owner == owner).map(|r| r.effect.version.clone())
 }
 
 pub fn specs() -> Vec<&'static EffectSpec> {

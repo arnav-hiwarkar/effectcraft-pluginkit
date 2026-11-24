@@ -96,10 +96,14 @@ fn open_file(s: &mut Session, path: &str, home: impl FnOnce(&str) -> Option<Stri
     }
     // Lazy open: footage is checked in the background (Progress panel), not before the
     // project shows.
+    let plugins = crate::plugin_refs::on_open(&s.project);
+    if let Some(notice) = crate::plugin_refs::open_notice(&plugins) {
+        s.toast(notice);
+    }
     if s.check_footage_on_open {
         crate::footage_check::start(s, None, false)?;
     }
-    Ok(json!({"path": path, "savedBy": saved_by, "repaired": repaired}))
+    Ok(json!({"path": path, "savedBy": saved_by, "repaired": repaired, "plugins": plugins}))
 }
 
 /// The project file's text for `path`: `.ecproj` JSON, or XML for `.ecprojx` / `.xml` (a
@@ -107,7 +111,13 @@ fn open_file(s: &mut Session, path: &str, home: impl FnOnce(&str) -> Option<Stri
 /// wouldn't read back.
 pub(crate) fn file_text(s: &Session, path: &str) -> Result<String> {
     let compact = s.prefs.project.compact_project_files && !crate::xml_project::is_xml_path(path);
-    let json = s.project.to_file_json_with_view(&s.saved_view(), compact)?;
+    let plugins = crate::plugin_refs::record(&s.project);
+    let project = if plugins == s.project.plugins {
+        std::borrow::Cow::Borrowed(&*s.project)
+    } else {
+        std::borrow::Cow::Owned(Project { plugins, ..(*s.project).clone() })
+    };
+    let json = project.to_file_json_with_view(&s.saved_view(), compact)?;
     if crate::xml_project::is_xml_path(path) { crate::xml_project::to_xml(&json).map_err(EngineError::Other) } else { Ok(json) }
 }
 
