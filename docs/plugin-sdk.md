@@ -982,6 +982,11 @@ effectcraft-cli exec plugin.install '{"path": "plugins/dist/com.example.tint-0.1
 effectcraft-cli exec plugin.approve '{"id": "com.example.tint"}'
 ```
 
+The approval covers these exact files. After a rebuild, raise `version` in `plugin.json` before installing
+again, or `plugin.uninstall` first: the same version with other files is refused. If the app crashes while
+your native plugin runs, it starts turned off next time; approve it again, or start with
+`EFFECTCRAFT_SAFE_MODE=1` to open the app with no plugins.
+
 ## Check your work
 
 - `effectcraft-cli exec plugin.list` shows each plugin's state and, when a plugin fails to load, the error.

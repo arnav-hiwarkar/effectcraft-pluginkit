@@ -337,7 +337,9 @@ fn main() {
         fail_usage("missing subcommand");
     }
     let cmd = args.pos.remove(0);
-    match run(&cmd, &args, json_out) {
+    let result = run(&cmd, &args, json_out);
+    effectcraft_plugin::end_run();
+    match result {
         Ok(()) if stdout_broken() => std::process::exit(1),
         Ok(()) => {}
         Err(Failure::Usage(e)) => fail_usage(&e),
@@ -563,6 +565,7 @@ fn script_cmd(args: &Args, json_out: bool) -> Result<(), Failure> {
         };
         let msg = format!("{}{pos}: {}", e["file"].as_str().unwrap_or(&name), e["message"].as_str().unwrap_or("script error"));
         if json_out {
+            effectcraft_plugin::end_run();
             std::process::exit(1);
         }
         return Err(Failure::Error(msg));
@@ -618,6 +621,7 @@ fn replay_cmd(args: &Args, json_out: bool) -> Result<(), Failure> {
     );
     if json_out {
         note!("effectcraft-cli replay: {msg}");
+        effectcraft_plugin::end_run();
         std::process::exit(1);
     }
     Err(Failure::Error(msg))

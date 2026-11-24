@@ -6,6 +6,7 @@ mod media;
 mod panels;
 mod params;
 mod render;
+mod trust;
 mod viewer;
 
 use std::path::{Path, PathBuf};

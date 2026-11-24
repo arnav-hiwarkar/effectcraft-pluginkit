@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use craft_plugin_host::PluginImage;
-use craft_plugin_host::{Bundle, BundleError, EffectRegistry, Limits, Manifest, Permission, Plugin, Registry, RunMode, TaskState};
+use craft_plugin_host::{Bundle, BundleError, EffectRegistry, Limits, Permission, Plugin, Refusal, Registry, RunMode, TaskState};
 use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -43,6 +44,7 @@ pub enum PluginState {
     Running,
     NeedsApproval,
     Disabled,
+    Quarantined,
     Failed,
 }
 
@@ -89,6 +91,8 @@ struct Inner {
     session_only: Vec<Bundle>,
     loaded: BTreeMap<String, Arc<Loaded>>,
     failed: BTreeMap<String, String>,
+    refused: BTreeMap<String, Refusal>,
+    safe_mode: bool,
 }
 
 pub struct Plugins {
@@ -114,9 +118,18 @@ impl Inner {
         let (bundle, grants) = if self.is_session_only(&id) {
             (bundle.clone().with_mode(RunMode::Sandboxed), bundle.manifest.permissions.clone())
         } else {
-            let Some(grants) = self.registry.grants(&bundle.manifest) else { return };
-            (self.registry.running(bundle), grants)
+            match self.registry.grants(bundle) {
+                Ok(grants) => (self.registry.running(bundle), grants),
+                Err(refusal) => {
+                    self.refused.insert(id, refusal);
+                    return;
+                }
+            }
         };
+        let unsandboxed = bundle.mode == RunMode::Unsandboxed;
+        if unsandboxed {
+            self.mark(Some(&id));
+        }
         match load(&bundle, grants, self.registry.data_dir(&id)) {
             Ok(loaded) => {
                 effects::Engine.register(&loaded);
@@ -125,15 +138,30 @@ impl Inner {
             Err(error) => {
                 log::warn!("plugin `{id}` did not load: {error}");
                 self.failed.insert(id, error);
+                if unsandboxed {
+                    self.mark(None);
+                }
             }
         }
     }
 
     fn stop(&mut self, id: &str) {
         self.failed.remove(id);
+        self.refused.remove(id);
         if let Some(loaded) = self.loaded.remove(id) {
             loaded.plugin.cancel_all();
             effects::Engine.unregister(id);
+            if loaded.bundle.mode == RunMode::Unsandboxed {
+                self.mark(None);
+            }
+        }
+    }
+
+    fn mark(&mut self, starting: Option<&str>) {
+        let live = self.loaded.iter().filter(|(_, loaded)| loaded.bundle.mode == RunMode::Unsandboxed).map(|(id, _)| id.as_str());
+        let unsandboxed: BTreeSet<String> = live.chain(starting).map(str::to_string).collect();
+        if let Err(error) = self.registry.mark_running(&unsandboxed) {
+            log::warn!("the plug-in run marker was not written: {error}");
         }
     }
 
@@ -155,10 +183,9 @@ impl Inner {
         let running: Vec<String> = self.loaded.keys().cloned().collect();
         running.iter().for_each(|id| self.stop(id));
         self.failed.clear();
+        self.refused.clear();
         for bundle in self.installed() {
-            if self.registry.grants(&bundle.manifest).is_some() {
-                self.start(&bundle);
-            }
+            self.start(&bundle);
         }
         for bundle in self.session_only.clone() {
             self.start(&bundle);
@@ -176,12 +203,16 @@ impl Inner {
     fn info(&self, bundle: &Bundle, session_only: bool) -> PluginInfo {
         let manifest = &bundle.manifest;
         let loaded = self.loaded.get(&manifest.id);
-        let error = self.failed.get(&manifest.id).cloned();
-        let state = match (loaded, &error, self.registry.consent(&manifest.id)) {
-            (Some(_), ..) => PluginState::Running,
-            (None, Some(_), _) => PluginState::Failed,
-            (None, None, Some(consent)) if covers(consent, manifest) => PluginState::Disabled,
-            _ => PluginState::NeedsApproval,
+        let failed = self.failed.get(&manifest.id).cloned();
+        let (state, error) = match (loaded, failed, self.refused.get(&manifest.id)) {
+            (Some(_), ..) => (PluginState::Running, None),
+            (None, Some(error), _) => (PluginState::Failed, Some(error)),
+            (None, None, Some(Refusal::Disabled)) => (PluginState::Disabled, None),
+            (None, None, Some(refusal @ Refusal::Quarantined(_))) => (PluginState::Quarantined, Some(refusal.to_string())),
+            (None, None, Some(Refusal::NotApproved)) => (PluginState::NeedsApproval, None),
+            (None, None, Some(refusal)) => (PluginState::NeedsApproval, Some(refusal.to_string())),
+            (None, None, None) if self.safe_mode => (PluginState::Disabled, Some(SAFE_MODE_NOTE.to_string())),
+            (None, None, None) => (PluginState::NeedsApproval, None),
         };
         let found = loaded.map(|l| l.plugin.contributions().clone()).unwrap_or_default();
         let named = |id: &str, title: &str| Contribution { id: id.to_string(), title: title.to_string() };
@@ -209,15 +240,27 @@ fn local_effect<'a>(plugin: &str, loaded: &'a Loaded, effect_id: &str) -> Option
     loaded.plugin.contributions().effects.iter().map(|e| e.id.as_str()).find(|local| effects::effect_id(plugin, local) == effect_id)
 }
 
-fn covers(consent: &craft_plugin_host::Consent, manifest: &Manifest) -> bool {
-    manifest.permissions.is_subset(&consent.granted) && (manifest.has_wasm() || consent.unsandboxed.as_ref() == Some(&manifest.version))
-}
+const SAFE_MODE_NOTE: &str = "EffectCraft started in safe mode, so no plug-ins were started";
 
 impl Plugins {
-    pub fn open(root: &Path) -> Plugins {
-        let mut inner = Inner { registry: Registry::open(root), session_only: Vec::new(), loaded: BTreeMap::new(), failed: BTreeMap::new() };
-        inner.reload();
+    pub fn open(root: &Path, safe_mode: bool) -> Plugins {
+        let mut registry = Registry::open(root);
+        match registry.recover() {
+            Ok(quarantined) => quarantined.iter().for_each(|id| log::warn!("plug-in `{id}` was turned off: EffectCraft closed unexpectedly while it ran")),
+            Err(error) => log::warn!("the last run's plug-in marker was not read: {error}"),
+        }
+        let (loaded, failed, refused) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
+        let mut inner = Inner { registry, session_only: Vec::new(), loaded, failed, refused, safe_mode };
+        if !safe_mode {
+            inner.reload();
+        }
         Plugins { inner: Mutex::new(inner) }
+    }
+
+    pub fn end_run(&self) {
+        if let Err(error) = self.lock().registry.end_run() {
+            log::warn!("the plug-in run marker was not removed: {error}");
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -276,16 +319,14 @@ impl Plugins {
         inner.stop(&incoming.id);
         inner.session_only.retain(|b| b.manifest.id != incoming.id);
         let bundle = inner.registry.install(source).map_err(|e| e.to_string())?;
-        if inner.registry.grants(&bundle.manifest).is_some() {
-            inner.start(&bundle);
-        }
+        inner.start(&bundle);
         Ok(inner.info(&bundle, false))
     }
 
     pub fn approve(&self, id: &str) -> Result<PluginInfo, String> {
         let mut inner = self.lock();
         let bundle = inner.find(id)?;
-        inner.registry.approve(&bundle.manifest).map_err(|e| e.to_string())?;
+        inner.registry.approve(&bundle).map_err(|e| e.to_string())?;
         inner.start(&bundle);
         Ok(inner.info(&bundle, false))
     }
@@ -305,6 +346,7 @@ impl Plugins {
         let mut inner = self.lock();
         inner.stop(id);
         let had_session_copy = inner.forget_session_copy(id);
+        inner.refused.insert(id.to_string(), Refusal::Disabled);
         match inner.registry.disable(id) {
             Err(BundleError::NotInstalled(_)) if had_session_copy => Ok(()),
             other => other.map_err(|e| e.to_string()),
@@ -369,6 +411,18 @@ pub fn plugins() -> Option<&'static Plugins> {
 
 const PLUGINS_DIR: &str = "Plugins";
 const DEVELOPMENT_PATH: &str = "EFFECTCRAFT_PLUGIN_PATH";
+const SAFE_MODE_VARIABLE: &str = "EFFECTCRAFT_SAFE_MODE";
+static SAFE_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn start_in_safe_mode() {
+    SAFE_MODE.store(true, Ordering::Relaxed);
+}
+
+pub fn end_run() {
+    if let Some(plugins) = plugins() {
+        plugins.end_run();
+    }
+}
 
 pub fn install(session: &mut Session, config_dir: Option<&Path>) -> &'static Plugins {
     let plugins = PLUGINS.get_or_init(|| {
@@ -376,8 +430,10 @@ pub fn install(session: &mut Session, config_dir: Option<&Path>) -> &'static Plu
             Some(dir) => dir.join(PLUGINS_DIR),
             None => std::env::temp_dir().join("effectcraft-plugins"),
         };
-        let plugins = Plugins::open(&root);
-        for dir in std::env::var_os(DEVELOPMENT_PATH).iter().flat_map(std::env::split_paths) {
+        let safe_mode = SAFE_MODE.load(Ordering::Relaxed) || std::env::var_os(SAFE_MODE_VARIABLE).is_some_and(|value| value == "1");
+        let plugins = Plugins::open(&root, safe_mode);
+        let development = std::env::var_os(DEVELOPMENT_PATH).filter(|_| !safe_mode);
+        for dir in development.iter().flat_map(std::env::split_paths) {
             if let Err(error) = plugins.load_for_session(&dir) {
                 log::warn!("{DEVELOPMENT_PATH}: {}: {error}", dir.display());
             }

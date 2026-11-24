@@ -88,8 +88,14 @@ vendor library, running a licensing daemon, or driving a private GPU pipeline.
 ## Permissions and how they are enforced
 
 A plugin lists the permissions it wants in `plugin.json`. The user sees that list before the plugin runs.
-An update that asks for more waits for a new approval. Approval of a native plugin covers one version: every
-update of a native plugin waits for a new approval.
+An update that asks for more waits for a new approval. An approval covers the exact files of the installed
+bundle (a sha256 over its sorted file list, sizes and bytes): any changed file or a new version waits for a
+new approval, and the plugin manager says why. Installing other files under a version that was already
+approved is refused; give the build a new version number or remove the installed one first.
+
+While a plugin runs unsandboxed, `Plugins/.runs/` holds a marker for this run; a clean quit removes it. If the
+app closed without quitting, the next start turns those plugins off and the plugin manager shows why, with
+Turn Back On. `effectcraft --safe-mode` or `EFFECTCRAFT_SAFE_MODE=1` starts the app with no plugins running.
 
 | Permission | Allows |
 |---|---|
