@@ -417,13 +417,17 @@ fn render(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, mut buf: Buf) -> 
     let cx = render_cx(loaded, spec, ctx, grid);
     let host = || RenderHost { ctx, grid, spec };
     let passes = layout.gpu.as_ref().filter(|plan| layout.cpu && plan.runs_on_cpu());
+    let shown = shown_area(ctx, grid);
+    let size = [grid.width, grid.height];
     let rendered = match passes {
         Some(plan) => loaded.plugin.run_passes(&spec.id, &cx, plan, &mut buf.img.data, host),
-        None => loaded.plugin.render(&spec.id, &cx, &layout, shown_area(ctx, grid), &mut buf.img.data, host).map(|area| {
+        None => loaded.plugin.render(&spec.id, &cx, &layout, shown, &mut buf.img.data, host).map(|area| {
+            let kept = shown.map_or(Rect::of_size(size), |shown| shown.clipped(size)).union(area);
             buf.img.width = area.width();
             buf.img.height = area.height();
             buf.offset = [buf.offset[0] - f64::from(area.left), buf.offset[1] - f64::from(area.top)];
-            if area.is_empty() {
+            buf.pad_sides([area.left - kept.left, area.top - kept.top, kept.right - area.right, kept.bottom - area.bottom].map(|side| side as u32));
+            if kept.is_empty() {
                 buf.img = Image::new(1, 1);
             }
         }),
