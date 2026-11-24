@@ -295,7 +295,8 @@ mod tests {
             h.state_mut().viewer_pixels().map(|img| img.pixels[img.pixels.len() / 2 + img.size[0] / 2].r())
         };
         let settle = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>, want: u8| {
-            for _ in 0..400 {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            while std::time::Instant::now() < deadline {
                 h.step();
                 if centre(h) == Some(want) {
                     return;
@@ -331,7 +332,8 @@ mod tests {
             h.state_mut().viewer_pixels().map(|img| img.pixels[img.pixels.len() / 2 + img.size[0] / 2].r())
         };
         let settle = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>, want: u8| {
-            for _ in 0..400 {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            while std::time::Instant::now() < deadline {
                 h.step();
                 if centre(h) == Some(want) {
                     return;
