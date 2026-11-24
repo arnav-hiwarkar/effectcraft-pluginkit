@@ -1,0 +1,14 @@
+{
+  "id": "com.example.{{name}}",
+  "name": "{{Title}}",
+  "version": "0.1.0",
+  "author": "",
+  "description": "{{Title}}: a preset and a LUT, with no code.",
+  "license": "MIT OR Apache-2.0",
+  "contributes": {
+    "presets": [
+      { "effect": "ec.color.tint", "name": "{{Title}} Warm", "values": { "white": [1.0, 0.92, 0.8, 1.0], "amount": 60.0 } }
+    ],
+    "luts": ["warm.cube"]
+  }
+}

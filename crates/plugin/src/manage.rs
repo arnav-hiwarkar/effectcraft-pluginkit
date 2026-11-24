@@ -10,6 +10,7 @@ use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::data_only;
 use crate::effects;
 use crate::gate::SessionHost;
 
@@ -90,6 +91,7 @@ struct Inner {
     registry: Registry,
     session_only: Vec<Bundle>,
     loaded: BTreeMap<String, Arc<Loaded>>,
+    data: BTreeSet<String>,
     failed: BTreeMap<String, String>,
     refused: BTreeMap<String, Refusal>,
     safe_mode: bool,
@@ -126,6 +128,19 @@ impl Inner {
                 }
             }
         };
+        if bundle.manifest.is_data_only() {
+            match data_only::check(&bundle) {
+                Ok(checked) => {
+                    data_only::register(&id, checked);
+                    self.data.insert(id);
+                }
+                Err(error) => {
+                    log::warn!("plugin `{id}` did not load: {error}");
+                    self.failed.insert(id, error);
+                }
+            }
+            return;
+        }
         let unsandboxed = bundle.mode == RunMode::Unsandboxed;
         if unsandboxed {
             self.mark(Some(&id));
@@ -148,6 +163,9 @@ impl Inner {
     fn stop(&mut self, id: &str) {
         self.failed.remove(id);
         self.refused.remove(id);
+        if self.data.remove(id) {
+            data_only::unregister(id);
+        }
         if let Some(loaded) = self.loaded.remove(id) {
             loaded.plugin.cancel_all();
             effects::Engine.unregister(id);
@@ -184,10 +202,10 @@ impl Inner {
         running.iter().for_each(|id| self.stop(id));
         self.failed.clear();
         self.refused.clear();
-        for bundle in self.installed() {
-            self.start(&bundle);
-        }
-        for bundle in self.session_only.clone() {
+        let mut bundles = self.installed();
+        bundles.extend(self.session_only.iter().cloned());
+        bundles.sort_by_key(|bundle| bundle.manifest.is_data_only());
+        for bundle in bundles {
             self.start(&bundle);
         }
     }
@@ -204,15 +222,16 @@ impl Inner {
         let manifest = &bundle.manifest;
         let loaded = self.loaded.get(&manifest.id);
         let failed = self.failed.get(&manifest.id).cloned();
-        let (state, error) = match (loaded, failed, self.refused.get(&manifest.id)) {
-            (Some(_), ..) => (PluginState::Running, None),
-            (None, Some(error), _) => (PluginState::Failed, Some(error)),
-            (None, None, Some(Refusal::Disabled)) => (PluginState::Disabled, None),
-            (None, None, Some(refusal @ Refusal::Quarantined(_))) => (PluginState::Quarantined, Some(refusal.to_string())),
-            (None, None, Some(Refusal::NotApproved)) => (PluginState::NeedsApproval, None),
-            (None, None, Some(refusal)) => (PluginState::NeedsApproval, Some(refusal.to_string())),
-            (None, None, None) if self.safe_mode => (PluginState::Disabled, Some(SAFE_MODE_NOTE.to_string())),
-            (None, None, None) => (PluginState::NeedsApproval, None),
+        let running = loaded.is_some() || self.data.contains(&manifest.id);
+        let (state, error) = match (running, failed, self.refused.get(&manifest.id)) {
+            (true, ..) => (PluginState::Running, None),
+            (false, Some(error), _) => (PluginState::Failed, Some(error)),
+            (false, None, Some(Refusal::Disabled)) => (PluginState::Disabled, None),
+            (false, None, Some(refusal @ Refusal::Quarantined(_))) => (PluginState::Quarantined, Some(refusal.to_string())),
+            (false, None, Some(Refusal::NotApproved)) => (PluginState::NeedsApproval, None),
+            (false, None, Some(refusal)) => (PluginState::NeedsApproval, Some(refusal.to_string())),
+            (false, None, None) if self.safe_mode => (PluginState::Disabled, Some(SAFE_MODE_NOTE.to_string())),
+            (false, None, None) => (PluginState::NeedsApproval, None),
         };
         let found = loaded.map(|l| l.plugin.contributions().clone()).unwrap_or_default();
         let named = |id: &str, title: &str| Contribution { id: id.to_string(), title: title.to_string() };
@@ -250,7 +269,7 @@ impl Plugins {
             Err(error) => log::warn!("the last run's plug-in marker was not read: {error}"),
         }
         let (loaded, failed, refused) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
-        let mut inner = Inner { registry, session_only: Vec::new(), loaded, failed, refused, safe_mode };
+        let mut inner = Inner { registry, session_only: Vec::new(), loaded, data: BTreeSet::new(), failed, refused, safe_mode };
         if !safe_mode {
             inner.reload();
         }
@@ -318,7 +337,11 @@ impl Plugins {
         let mut inner = self.lock();
         inner.stop(&incoming.id);
         inner.session_only.retain(|b| b.manifest.id != incoming.id);
-        let bundle = inner.registry.install(source).map_err(|e| e.to_string())?;
+        let rejects = |bundle: &Bundle| if bundle.manifest.is_data_only() { data_only::check(bundle).map(drop) } else { Ok(()) };
+        let bundle = inner.registry.install_checked(source, rejects).map_err(|e| e.to_string())?;
+        if bundle.manifest.is_data_only() {
+            inner.registry.approve(&bundle).map_err(|e| e.to_string())?;
+        }
         inner.start(&bundle);
         Ok(inner.info(&bundle, false))
     }
@@ -366,7 +389,7 @@ impl Plugins {
     pub fn load_for_session(&self, dir: &Path) -> Result<PluginInfo, String> {
         let bundle = Bundle::open(dir).map_err(|e| e.to_string())?;
         craft_plugin_host::validate(&bundle.manifest, &Default::default())?;
-        if !bundle.manifest.has_wasm() {
+        if !bundle.manifest.has_wasm() && !bundle.manifest.is_data_only() {
             return Err("a native plugin runs only after it is installed and approved".into());
         }
         let mut inner = self.lock();

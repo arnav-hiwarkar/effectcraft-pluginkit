@@ -506,6 +506,22 @@ and leaves the others alone. `plugins/halo` has a preset per look that sets the 
 
 See [Presets](plugin-reference.md#presets).
 
+## Ship presets and LUTs with no code
+
+Presets for any effect and `.cube` LUT files need no Rust. `cargo xtask plugin new film-looks --kind data`
+writes `plugin.json` and a `warm.cube`:
+
+```json
+{ "id": "com.example.film-looks", "name": "Film Looks", "version": "0.1.0",
+  "contributes": {
+    "presets": [{ "effect": "ec.color.tint", "name": "Warm", "values": { "white": [1.0, 0.92, 0.8, 1.0], "amount": 60.0 } }],
+    "luts": ["warm.cube"] } }
+```
+
+Install the folder or its `.craftplugin`; the preset is in the Tint effect's Presets menu and the LUT in Apply
+Color LUT's Library. There is no entry, no permission and no approval prompt. Mistakes are refused when you
+install, with the effect, parameter or file named. See [Data-only plugins](plugin-reference.md#data-only-plugins).
+
 ## Give a slider its own ranges
 
 A slider's hard range is what is allowed, and `cx.f` never returns a value outside it. The soft range is what the

@@ -12,6 +12,28 @@ workflow, read [Write a plugin](plugin-sdk.md).
 | `author`, `description`, `license` | Optional; `cargo xtask plugin check` warns when the description or the licence is missing. |
 | `entry` | `{"wasm": "plugin.wasm"}`, `{"native": {"macos-aarch64": "libx.dylib", "linux-x86_64": "libx.so", "windows-x86_64": "x.dll"}}`, or both keys together. File names only; they live in the plugin folder. A plugin with `wasm` runs sandboxed unless the user chooses Run Unsandboxed and the plugin has a native build for this machine. |
 | `permissions` | Any of `document.read`, `document.write`, `files.read`, `files.write`, `clipboard`. |
+| `contributes` | Data a plugin ships with no code: `{"presets": [{"effect", "name", "values"}], "luts": ["look.cube"]}`. See [Data-only plugins](#data-only-plugins). |
+
+### Data-only plugins
+
+A manifest with no `entry` and a non-empty `contributes` is a data-only plugin. Nothing runs, so it takes no
+permissions (a manifest that lists any is refused) and installing it needs no approval: the install
+approves it, and changing its files later waits for approval like any plugin.
+
+- `presets`: `effect` is a built-in effect id (`ec.color.tint`) or a loaded plugin's effect id
+  (`<plugin id>.<effect>`); `name` is unique for that effect within the plugin; `values` maps parameter
+  ids to values as in `.preset()` (number, true or false, a list of 2, 3 or 4 numbers, text; a popup takes
+  its option index). They appear in the effect's Presets menu and in `effect.presets` and apply with
+  `effect.applyPreset`.
+- `luts`: `.cube` file names in the plugin folder (no subfolders). They appear as `<plugin name> / <file>`
+  in the Library menu next to Choose... of Apply Color LUT and the other LUT file parameters.
+
+The install is refused with the reason when an effect or parameter does not exist (the message lists the
+parameters it has), a value has the wrong type, a LUT file is missing, too large (256 MB) or not a valid
+`.cube` file, a name is listed twice, or the manifest gives neither an `entry` nor `contributes`. A plugin
+that fails the same checks at startup shows as Failed with the same message. A preset for another plugin's
+effect needs that plugin installed and running; data-only plugins start last.
+`cargo xtask plugin new <name> --kind data` makes one; `cargo xtask plugin <dir>` packs it.
 
 ## Plugin
 

@@ -21,6 +21,7 @@ mod channel3d;
 mod color2;
 mod color3;
 mod color_fx;
+pub mod contributed;
 pub mod controls;
 pub mod crypto_select;
 #[cfg(test)]
@@ -133,7 +134,7 @@ pub use sim2::{
     CausticsSetup, FoamDisc, FoamEnv, FoamPlan, Piece, PiecePlan, PieceTex, PixelPlan, WavePlan, Waves, caustics_setup, foam_full_plan, piece_plan, pixel_plan,
     wave_world_plan,
 };
-pub use utility::{Lut, cineon_gamma, cineon_gamma_scale, load_lut, lut_file, lut_files, lut_params};
+pub use utility::{Lut, parse_cube, cineon_gamma, cineon_gamma_scale, load_lut, lut_file, lut_files, lut_params};
 pub use vr::{equi_dir as vr_equi_dir, rotation as vr_rotation};
 
 /// Effect categories in Effects & Presets order.
@@ -1645,7 +1646,9 @@ pub fn reads_other_frames(id: &str) -> bool {
 }
 
 pub fn presets(id: &str) -> Vec<(String, Vec<(String, Value)>)> {
-    dynamic::get(id).map(|r| r.effect.presets.clone()).unwrap_or_default()
+    let mut presets = dynamic::get(id).map(|r| r.effect.presets.clone()).unwrap_or_default();
+    presets.extend(contributed::presets(id));
+    presets
 }
 
 pub fn revision(id: &str) -> u64 {

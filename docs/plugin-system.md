@@ -85,6 +85,10 @@ permission checks, but the code itself can do anything the app can. The manager 
 plugin does not load until the user accepts it. Native exists for work the sandbox cannot do: linking a
 vendor library, running a licensing daemon, or driving a private GPU pipeline.
 
+A plugin may also have no code at all: a manifest with presets and LUT files and no `entry` (a data-only
+plugin). It runs nothing, takes no permissions and is approved by installing it; the app checks every
+preset and LUT when it loads.
+
 ## Permissions and how they are enforced
 
 A plugin lists the permissions it wants in `plugin.json`. The user sees that list before the plugin runs.

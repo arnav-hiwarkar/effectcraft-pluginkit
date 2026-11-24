@@ -519,6 +519,24 @@ fn value_file(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value: &
         }
     }
     app.auto.add(&format!("effectControls.prop.{uid}.choose"), br, &prop.name);
+    let library = match &prop.ui {
+        ParamUi::File { filters } if filters.iter().any(|f| f == "cube") => effectcraft_engine::effects::contributed::luts(),
+        _ => Vec::new(),
+    };
+    let mut name_x = br.max.x + 8.0;
+    if !library.is_empty() {
+        let lr = Rect::from_min_size(pos2(br.max.x + 6.0, cy - 9.0), vec2(64.0, 18.0));
+        name_x = lr.max.x + 8.0;
+        let pop = egui::Id::unique(("ec-lut-library", uid));
+        if widgets::text_button(ui, lr, crate::i18n::tr("Library"), false, &t, egui::Id::unique(("ec-lut-lib", uid))).clicked() {
+            widgets::open_popup(ui, pop);
+        }
+        app.auto.add(&format!("effectControls.prop.{uid}.library"), lr, &prop.name);
+        let names: Vec<String> = library.iter().map(|lut| lut.name.clone()).collect();
+        if let Some(i) = widgets::popup_menu(ui, pop, lr.left_bottom(), &names, library.iter().position(|lut| &lut.path == s)) {
+            actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": uid, "value": library[i].path})));
+        }
+    }
     let shown = if s.trim().is_empty() {
         crate::i18n::tr("None").to_string()
     } else if s.contains('\n') {
@@ -526,7 +544,7 @@ fn value_file(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value: &
     } else {
         effectcraft_engine::sequence::file_name(s)
     };
-    let nr = Rect::from_min_max(pos2(br.max.x + 8.0, r.min.y), pos2(r.max.x - 8.0, r.max.y));
+    let nr = Rect::from_min_max(pos2(name_x, r.min.y), pos2(r.max.x - 8.0, r.max.y));
     let np = p.with_clip_rect(nr.intersect(p.clip_rect()));
     np.text(pos2(nr.min.x, cy), Align2::LEFT_CENTER, &shown, Tokens::ui(12.0), if s.trim().is_empty() { t.text_dim } else { t.text });
     let hover = ui.interact(nr, egui::Id::unique(("ec-file-name", uid)), Sense::hover());

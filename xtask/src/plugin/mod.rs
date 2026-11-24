@@ -10,7 +10,7 @@ use std::process::Command;
 use serde_json::{Value, json};
 
 const USAGE: &str = "usage: cargo xtask plugin <plugin-dir> [--native] [--out DIR]
-       cargo xtask plugin new <name> [--kind effect|gpu-effect|panel|tool|task]
+       cargo xtask plugin new <name> [--kind effect|gpu-effect|panel|tool|task|data]
        cargo xtask plugin dev <plugin-dir> [--bridge PORT]
        cargo xtask plugin render <plugin-dir> [--effect ID] [--set ID=VALUE]... [--in IN.png | --pattern NAME] [--size WxH] [--time S] [--scale F] [--rounds N] [--native] [--out OUT.png]
        cargo xtask plugin bench <plugin-dir> [--rounds N]
@@ -148,6 +148,15 @@ fn build(dir: &Path, native: bool, messages: Messages) -> Result<PathBuf, String
 fn assemble(dir: &Path, out: &Path, with_native: bool, messages: Messages) -> Result<(PathBuf, Value), String> {
     let manifest = json_file(&dir.join("plugin.json"))?;
     let id = manifest["id"].as_str().ok_or("plugin.json has no `id`; add one such as \"com.example.my-effect\"")?;
+    if manifest["entry"].is_null() && !manifest["contributes"].is_null() {
+        let bundle = out.join(id);
+        let io = |e: std::io::Error| format!("{}: {e}", bundle.display());
+        if bundle.exists() {
+            std::fs::remove_dir_all(&bundle).map_err(io)?;
+        }
+        copy_tree(dir, &bundle).map_err(io)?;
+        return Ok((bundle, manifest));
+    }
     let wasm_entry = manifest["entry"]["wasm"].as_str();
     if wasm_entry.is_none() && manifest["entry"]["native"].is_null() {
         return Err("plugin.json `entry` needs a `wasm` file, such as \"entry\": {\"wasm\": \"plugin.wasm\"}".into());
