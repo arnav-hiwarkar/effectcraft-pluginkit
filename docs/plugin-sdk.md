@@ -677,6 +677,23 @@ dragged) lasts between frames. Keep that state per `instance`: it is the same fo
 and differs between two copies of the effect. `render` runs in pooled instances and sees only `cx`. A project with a
 custom value opens without the plugin: the value is kept and the layer renders without the effect.
 
+The row subscribes to app events and arms timers the same way a panel does. This one shows the layers
+selected in the app and blinks while it shows:
+
+```rust
+fn controls(&self, instance: u64, _param: &str, _value: &mut String, ui: &mut Ui) {
+    let mut rows = self.rows.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let row = rows.entry(instance).or_default();
+    if let Some(AppEvent::Selection { layers, .. }) = ui.on(Topic::Selection) {
+        row.selected = layers.len();
+    }
+    if ui.every("blink", 500) {
+        row.lit = !row.lit;
+    }
+    ui.label(&format!("{} layers selected{}", row.selected, if row.lit { " ●" } else { "" }));
+}
+```
+
 `plugins/curves` is a complete example.
 
 ## On-viewer controls

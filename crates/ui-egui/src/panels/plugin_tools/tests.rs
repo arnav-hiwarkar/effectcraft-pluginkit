@@ -6,6 +6,7 @@ use effectcraft_engine::project::LayerId;
 use effectcraft_plugin::ui::Shape;
 use egui::{Pos2, Vec2, pos2};
 use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
 use serde_json::{Value, json};
 
 use crate::EffectcraftApp;
@@ -371,4 +372,55 @@ fn ui_set_and_the_tool_command_pick_a_plugin_tool_and_a_drag_through_the_control
     }
     let texts = tool_texts(&mut harness);
     assert!(texts.first().is_some_and(|t| t.starts_with("Down 40.0 30.0")) && texts.last().is_some_and(|t| t.starts_with("Up 60.0 45.0")), "{texts:?}");
+}
+
+fn lookout_harness() -> (Harness<'static, EffectcraftApp>, LayerId) {
+    let mut session = probe_session();
+    session.execute("layer.newSolid", json!({"name": "Watched", "color": "#000000", "width": 320, "height": 180})).unwrap();
+    session.execute("effect.apply", json!({"layer": "Watched", "effect": "test.viewer-tool-ui.lookout"})).unwrap();
+    let layer = session.active_comp().unwrap().layers[0].clone();
+    let effect = layer.effects().unwrap().groups().next().unwrap();
+    let rows = ["selection", "ticks"].map(|param| format!("effectControls.prop.{}.control", effect.get(param).unwrap().uid));
+    session.state.selected_layers = vec![layer.id];
+    let mut harness = harness(session);
+    harness.state_mut().show_panel(crate::dock::PanelKind::EffectControls);
+    settle(&mut harness, |h| rows.iter().all(|row| h.state().plugin_ui.panels.calls(row) > 0) && h.state().plugin_ui.panels.idle());
+    (harness, layer.id)
+}
+
+#[test]
+fn a_plugin_control_row_subscribed_to_the_selection_draws_again_when_the_selection_changes() {
+    let (mut harness, layer) = lookout_harness();
+    assert!(!harness.state().session.state.selected_props.is_empty(), "applying the effect selected it");
+    harness.state_mut().session.state.selected_props.clear();
+    let shown = format!("selected [{}]", layer.0);
+    settle(&mut harness, |h| h.query_all_by_value(&shown).next().is_some());
+}
+
+#[test]
+fn a_plugin_control_row_with_a_timer_draws_again_without_any_input() {
+    let (mut harness, _) = lookout_harness();
+    settle(&mut harness, |h| h.query_all_by_value("ticks 3").next().is_some());
+}
+
+#[test]
+fn a_control_row_of_a_plugin_built_against_the_sdk_before_row_events_still_draws_in_effect_controls() {
+    static CURVES: OnceLock<tempfile::TempDir> = OnceLock::new();
+    let mut session = session();
+    load(&CURVES, || {
+        let curves = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/curves");
+        let manifest: Value = serde_json::from_slice(&std::fs::read(curves.join("plugin.json")).unwrap()).unwrap();
+        bundle(&wasm(&curves, "curves"), manifest)
+    });
+    session.execute("layer.newSolid", json!({"name": "Graded", "color": "#000000", "width": 320, "height": 180})).unwrap();
+    session.execute("effect.apply", json!({"layer": "Graded", "effect": "org.craftkit.curves.curves"})).unwrap();
+    let layer = session.active_comp().unwrap().layers[0].clone();
+    let row = format!("effectControls.prop.{}.control", layer.effects().unwrap().groups().next().unwrap().get("curves").unwrap().uid);
+    session.state.selected_layers = vec![layer.id];
+    let mut harness = harness(session);
+    harness.state_mut().show_panel(crate::dock::PanelKind::EffectControls);
+    settle(&mut harness, |h| h.state().plugin_ui.panels.calls(&row) > 0 && h.state().plugin_ui.panels.idle());
+    harness.run_steps(2);
+    let hint = "Click to add a point, drag to move it, drag it off or Alt-click to remove it. Arrow keys move the chosen point, Delete removes it.";
+    assert_eq!(harness.query_all_by_value(hint).count(), 1, "the row draws the plugin's own hint");
 }
