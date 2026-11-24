@@ -199,6 +199,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let ctx = ui.ctx().clone();
     let Some(cid) = app.session.active_comp_id() else {
+        crate::panels::viewers::release_panes(app);
         empty_state(app, ui, rect);
         return;
     };
@@ -398,6 +399,7 @@ fn phase_frame(app: &mut EffectcraftApp, v: &mut Vw<'_>) {
     let frame = comp.frame_rate.frame_at(time);
     let key = app.frame_key(cid, frame, scale);
     app.request_frame_urgent(cid, frame, scale);
+    crate::panels::viewers::request_panes(app);
     // The frame on screen. While a drag or a property scrub is rendering, the exact key changes
     // with every edit and its render is still in flight; the newest completed revision of the
     // same frame keeps the picture following the pointer instead of freezing until it stops.

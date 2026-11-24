@@ -218,11 +218,11 @@ impl effectcraft_engine::render::FootageSource for UiThreadReads {
     }
 }
 
-/// Study change #10: the locked viewer and the extra views of a 4-view layout render on the frame
-/// workers, not on the UI thread, and show the same pixels the UI thread rendered before.
-#[test]
-fn side_and_locked_panes_render_on_the_frame_workers() {
-    use crate::panels::viewers::{LOCKED_PANE, aux_pane};
+type PaneHarness = egui_kittest::Harness<'static, crate::EffectcraftApp>;
+
+/// A 64×36 comp with a still, the locked viewer and a 4-view layout; footage reads on the UI
+/// thread counted and the layer cache gated.
+fn panes_app() -> (tempfile::TempDir, PaneHarness, effectcraft_engine::project::ItemId, std::sync::Arc<UiThreadReads>) {
     let dir = tempfile::tempdir().unwrap();
     let png = dir.path().join("still.png");
     image::RgbaImage::from_fn(64, 36, |x, y| image::Rgba([(x * 4) as u8, (y * 7) as u8, 90, 255])).save(&png).unwrap();
@@ -236,19 +236,45 @@ fn side_and_locked_panes_render_on_the_frame_workers() {
     let counter = std::sync::Arc::new(UiThreadReads { inner: session.footage.clone(), ui: std::thread::current().id(), reads: Default::default() });
     session.footage = counter.clone();
     session.layer_cache.set_gate(Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true))));
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_| crate::EffectcraftApp::new(session));
-    let panes = [LOCKED_PANE, aux_pane(0), aux_pane(1), aux_pane(2)];
-    let shown = |h: &egui_kittest::Harness<'_, crate::EffectcraftApp>| panes.iter().filter(|p| h.state().passive_tex.contains_key(p)).count();
-    harness.step();
-    assert_eq!(counter.reads.load(std::sync::atomic::Ordering::SeqCst), 0, "a pane rendered on the UI thread");
+    let harness = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_| crate::EffectcraftApp::new(session));
+    (dir, harness, cid, counter)
+}
+
+const PANES: [u32; 4] = [crate::panels::viewers::LOCKED_PANE, u32::MAX - 1, u32::MAX - 2, u32::MAX - 3];
+
+fn panes_shown(h: &PaneHarness) -> usize {
+    PANES.iter().filter(|p| h.state().passive_tex.contains_key(p)).count()
+}
+
+fn wait_for_panes(h: &mut PaneHarness) {
     for _ in 0..400 {
-        if shown(&harness) == 4 {
+        if panes_shown(h) == 4 {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
-        harness.step();
+        h.step();
     }
-    assert_eq!(shown(&harness), 4, "every pane shows its frame once the workers finish");
+    assert_eq!(panes_shown(h), 4, "every pane shows its frame once the workers finish");
+}
+
+/// Renders nothing, so every queued frame stays queued.
+struct Idle;
+impl crate::frames::RemoteFrames for Idle {
+    fn slots(&self) -> usize {
+        0
+    }
+    fn start(&self, _: crate::frames::RemoteJob, _: crate::frames::RemoteDone) {}
+}
+
+/// Study change #10: the locked viewer and the extra views of a 4-view layout render on the frame
+/// workers, not on the UI thread, and show the same pixels the UI thread rendered before.
+#[test]
+fn side_and_locked_panes_render_on_the_frame_workers() {
+    use crate::panels::viewers::{LOCKED_PANE, aux_pane};
+    let (_dir, mut harness, cid, counter) = panes_app();
+    harness.step();
+    assert_eq!(counter.reads.load(std::sync::atomic::Ordering::SeqCst), 0, "a pane rendered on the UI thread");
+    wait_for_panes(&mut harness);
     assert_eq!(counter.reads.load(std::sync::atomic::Ordering::SeqCst), 0, "a pane rendered on the UI thread");
     for (pane, draft) in [(LOCKED_PANE, false), (aux_pane(0), true)] {
         let app = harness.state();
@@ -259,4 +285,41 @@ fn side_and_locked_panes_render_on_the_frame_workers() {
         assert_eq!(img.size, before.size);
         assert!(img.pixels == before.pixels, "pane {pane} differs from the UI thread's render");
     }
+}
+
+/// The side panes' frames queue behind the frame the active viewer shows.
+#[test]
+fn the_viewer_frame_queues_before_the_side_panes() {
+    let (_dir, mut harness, _, _) = panes_app();
+    harness.state_mut().frames.set_remote(Some(std::sync::Arc::new(Idle)));
+    harness.step();
+    let queued = harness.state().frames.queued();
+    assert!(queued.len() > 1, "the panes queue frames: {queued:?}");
+    assert!(queued[0].1, "the active viewer's frame queues first: {queued:?}");
+}
+
+/// A pane switched to another view shows nothing until that view's frame is in, not the old
+/// view's picture under the new view's label.
+#[test]
+fn a_pane_never_shows_another_view_s_frame() {
+    use crate::panels::viewers::{aux_pane, pane};
+    let (_dir, mut harness, cid, _) = panes_app();
+    wait_for_panes(&mut harness);
+    let ctx = harness.ctx.clone();
+    let app = harness.state_mut();
+    app.frames.set_remote(Some(std::sync::Arc::new(Idle)));
+    let key = app.passive_tex[&aux_pane(0)].0;
+    let top = app.session.state.views3d.get(&cid).cloned().unwrap_or_default().cam(View3D::Top, 64.0, 36.0).state();
+    let opts = effectcraft_engine::render::RenderOpts { scale: f64::from(key.scale) / 1000.0, view: Some(top), draft: true, ..Default::default() };
+    assert!(pane(app, &ctx, aux_pane(0), cid, opts, None).is_none());
+}
+
+/// Closing the last comp gives the panes' textures back.
+#[test]
+fn closing_the_last_comp_frees_the_pane_textures() {
+    let (_dir, mut harness, _, _) = panes_app();
+    wait_for_panes(&mut harness);
+    harness.state_mut().session.activate_comp_none();
+    harness.run_steps(2);
+    assert_eq!(panes_shown(&harness), 0);
 }

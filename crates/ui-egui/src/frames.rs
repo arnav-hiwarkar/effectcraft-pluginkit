@@ -313,6 +313,9 @@ struct Cache {
     playhead: Option<Playhead>,
     /// Scale of the frame on screen (the newest urgent request): frames of other scales go first.
     scale: Option<u32>,
+    /// The frame each side pane waits for, and that frame once finished until the pane takes it
+    /// (an eviction doesn't take it away).
+    panes: HashMap<u32, (FrameKey, Option<FrameImage>)>,
 }
 
 impl Cache {
@@ -336,6 +339,9 @@ impl Cache {
             |t| u64::try_from(t.as_micros()).unwrap_or(u64::MAX).max(1),
         );
         let used = effectcraft_engine::render::memory::tick();
+        for (_, held) in self.panes.values_mut().filter(|(want, _)| *want == k) {
+            *held = Some(img.clone());
+        }
         if let Some(old) = self.map.insert(k, Cached { img, files, since, used, cost_us }) {
             self.forget(&old.img);
         } else {
@@ -897,6 +903,7 @@ impl Frames {
             demoting: false,
             playhead: None,
             scale: None,
+            panes: HashMap::new(),
         }));
         let memory: Arc<dyn effectcraft_engine::render::memory::MemoryHolder> = Arc::new(PreviewMemory(cache.clone()));
         effectcraft_engine::render::memory::Accountant::global().register(&memory);
@@ -1082,6 +1089,11 @@ impl Frames {
             let keys: Vec<_> = cache.map.iter().filter_map(|(key, c)| c.img.is_gpu().then_some(*key)).collect();
             for key in keys {
                 cache.remove(&key);
+            }
+            for (_, held) in cache.panes.values_mut() {
+                if held.as_ref().is_some_and(FrameImage::is_gpu) {
+                    *held = None;
+                }
             }
             let Cache { map, order, .. } = &mut *cache;
             order.retain(|key| map.contains_key(key));
@@ -1528,6 +1540,7 @@ impl Frames {
         if let Ok(mut c) = self.cache.lock() {
             c.map.clear();
             c.order.clear();
+            c.panes.values_mut().for_each(|(_, held)| *held = None);
             c.bytes = 0;
             c.gpu_bytes = 0;
             c.gpu_budget = GPU_BUDGET;
@@ -1617,6 +1630,56 @@ impl Frames {
     /// Queue a prefetch frame (no-op if cached or already queued/rendering).
     pub fn request(&self, src: &RenderSource, key: FrameKey, comp: ItemId, t: Tick, opts: RenderOpts) {
         self.request_with(src, key, comp, t, opts, Want::Prefetch);
+    }
+
+    /// Queue side pane `pane`'s frame as [`Frames::request`] does, in place of the frame it
+    /// asked for before: that one is called off if it hasn't started.
+    pub fn request_pane(&self, pane: u32, src: &RenderSource, key: FrameKey, comp: ItemId, t: Tick, opts: RenderOpts) {
+        let old = self.cache.lock().ok().and_then(|mut c| match c.panes.insert(pane, (key, None)) {
+            Some((k, held)) if k == key => {
+                c.panes.insert(pane, (k, held));
+                None
+            }
+            old => old.map(|(k, _)| k),
+        });
+        if let Some(old) = old {
+            self.withdraw(old);
+        }
+        self.request(src, key, comp, t, opts);
+    }
+
+    /// Pane `pane`'s frame `key`, once finished, even when the cache let it go.
+    pub fn take_pane(&self, pane: u32, key: &FrameKey) -> Option<FrameImage> {
+        let mut c = self.cache.lock().ok()?;
+        c.panes.get_mut(&pane).filter(|(want, _)| want == key)?.1.take()
+    }
+
+    /// Pane `pane` is gone: its queued frame is called off.
+    pub fn release_pane(&self, pane: u32) {
+        if let Some((key, _)) = self.cache.lock().ok().and_then(|mut c| c.panes.remove(&pane)) {
+            self.withdraw(key);
+        }
+    }
+
+    /// Drop the queued prefetch job of `key` unless another pane waits for it.
+    fn withdraw(&self, key: FrameKey) {
+        if self.cache.lock().is_ok_and(|c| c.panes.values().any(|(k, _)| *k == key)) {
+            return;
+        }
+        let Ok(mut q) = self.queue.lock() else { return };
+        let before = q.jobs.len();
+        q.jobs.retain(|j| j.key != key || j.urgent || j.background);
+        if q.jobs.len() < before
+            && let Ok(mut inf) = self.inflight.lock()
+        {
+            inf.remove(&key);
+        }
+    }
+
+    /// The queued jobs in the order they were asked for, and whether each is the viewer's.
+    #[cfg(test)]
+    pub(crate) fn queued(&self) -> Vec<(FrameKey, bool)> {
+        self.queue.lock().map(|q| q.jobs.iter().map(|j| (j.key, j.urgent)).collect()).unwrap_or_default()
     }
 
     /// Queue a frame nobody waits for (Cache Frames When Idle): as [`Frames::request`], but it
