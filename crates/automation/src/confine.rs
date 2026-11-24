@@ -563,6 +563,9 @@ impl FootageSource for ConfinedFootage {
     fn called_off(&self) -> bool {
         self.inner.called_off()
     }
+    fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        self.inner.cancel()
+    }
     /// The files read inside the roots, as the inner source notes them. Footage outside reads
     /// nothing, and what is made without it can't be listed by its files: a refused read makes
     /// the list incomplete, so it never outlives the session in a disk cache (another session

@@ -584,6 +584,10 @@ pub struct Shown {
 
 /// Services the renderer offers effects that look beyond their own pixels.
 pub trait EffectHost: Sync {
+    fn cancel(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        None
+    }
+
     fn layer_data(&self, _plugin: &str, _key: &str) -> Option<Vec<u8>> {
         None
     }

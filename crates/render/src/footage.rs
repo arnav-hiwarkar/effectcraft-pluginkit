@@ -152,6 +152,9 @@ pub trait FootageSource: Send + Sync {
     fn called_off(&self) -> bool {
         false
     }
+    fn cancel(&self) -> Option<Arc<AtomicBool>> {
+        None
+    }
     /// Run `f`, which reads from this source on this thread, noting in `reads` every source file
     /// those reads use, with its identity as read (see [`crate::reads`]): the file a frame was
     /// decoded from, also when it comes from the source's own memory cache (without reading the
@@ -287,6 +290,9 @@ impl FootageSource for CancellableFootage<'_> {
     }
     fn called_off(&self) -> bool {
         self.cancel.load(Ordering::Relaxed) || self.inner.called_off()
+    }
+    fn cancel(&self) -> Option<Arc<AtomicBool>> {
+        Some(self.cancel.clone())
     }
     /// Runs `f` with the inner source, collecting the files it reads into `reads`.
     fn recording(&self, reads: &ReadLog, f: &mut dyn FnMut()) {
