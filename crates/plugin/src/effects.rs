@@ -71,8 +71,11 @@ fn register(loaded: &Arc<Loaded>) {
             migrate: Some(Box::new(move |from, values| migrate(&migrate_plugin, &migrate_spec, from, values))),
             aux: Channel::unique(&spec.reads_aux).iter().flat_map(aux_lookups).collect(),
         });
-        if spec.shader.is_none() && default_plan_runs_on_gpu(loaded, spec) {
-            mark_gpu_planned(&id);
+        if spec.shader.is_none()
+            && let Some(registered) = dynamic::get(&id)
+        {
+            let (probe_plugin, probe_spec) = (loaded.clone(), spec.clone());
+            let _ = registered.gpu_probe.set(Box::new(move || default_plan_runs_on_gpu(&probe_plugin, &probe_spec)));
         }
     }
 }

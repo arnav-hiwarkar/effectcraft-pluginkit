@@ -173,24 +173,32 @@ impl Gpu {
         Gpu { ctx: Arc::new(ctx), auto: Default::default(), declined: Default::default(), scoped_observations: Default::default(), warmed }
     }
 
-    /// Builds the pipelines of every plugin GPU effect on a thread of its own once the set of
-    /// plugin effects changes, so the first frame that shows one does not compile them.
-    pub fn warm_plugins(&self) -> Option<std::thread::JoinHandle<()>> {
+    /// Builds the pipelines of the plugin GPU effects `project` uses on a thread of its own once
+    /// that set changes (a project opened, an effect applied), so the first frame that shows one
+    /// does not compile them. Plugins whose effects the project does not use are not started.
+    pub fn warm_plugins(&self, project: &effectcraft_project::Project) -> Option<std::thread::JoinHandle<()>> {
         if cfg!(target_arch = "wasm32") {
             return None;
         }
-        let generation = effectcraft_effects::dynamic::generation();
-        if self.warmed.swap(generation, std::sync::atomic::Ordering::AcqRel) == generation {
+        let used: std::collections::BTreeSet<&str> = project
+            .comps()
+            .flat_map(|(_, comp)| comp.layers.iter())
+            .filter_map(|layer| layer.effects())
+            .flat_map(|fx| fx.groups())
+            .filter_map(|group| match &group.kind {
+                effectcraft_project::GroupKind::Effect { effect } => Some(effect.as_str()),
+                _ => None,
+            })
+            .collect();
+        let registered: Vec<_> = used.iter().filter_map(|id| effectcraft_effects::dynamic::get(id)).collect();
+        let mut hasher = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&(effectcraft_effects::dynamic::generation(), &used), &mut hasher);
+        let key = std::hash::Hasher::finish(&hasher);
+        if self.warmed.swap(key, std::sync::atomic::Ordering::AcqRel) == key || registered.is_empty() {
             return None;
         }
         let ctx = self.ctx.clone();
-        let warm = move || {
-            for spec in effectcraft_effects::dynamic::specs() {
-                if let Some(registered) = effectcraft_effects::dynamic::get(spec.id) {
-                    fx_plugin::warm(&ctx, &registered);
-                }
-            }
-        };
+        let warm = move || registered.iter().for_each(|registered| fx_plugin::warm(&ctx, registered));
         std::thread::Builder::new().name("gpu plugin warm-up".into()).spawn(warm).ok()
     }
 
@@ -251,7 +259,7 @@ impl Gpu {
     /// readback unless a CPU fallback step needs one). `None` = render on the CPU.
     pub fn render_display(&self, r: &Renderer, comp: ItemId, t: Tick) -> Option<DisplayFrame> {
         self.ctx.check_health().map_err(|e| log::error!("gpu display: {e}")).ok()?;
-        self.warm_plugins();
+        self.warm_plugins(r.project);
         let mut e = Enc::new(&self.ctx);
         let img = walk::render(&mut e, r, comp, t)?;
         let texture = e.display(&img);
@@ -281,7 +289,7 @@ impl Gpu {
     /// Render a frame on the GPU and read it back (`None` = not handled).
     pub fn render(&self, r: &Renderer, comp: ItemId, t: Tick) -> Option<Image> {
         self.ctx.check_health().ok()?;
-        self.warm_plugins();
+        self.warm_plugins(r.project);
         if !self.ctx.can_readback() {
             return None;
         }
@@ -459,7 +467,9 @@ impl Accelerator for Gpu {
     }
 
     fn supports_effect(&self, id: &str) -> bool {
-        self.warm_plugins();
+        if let Some(registered) = effectcraft_effects::dynamic::get(id) {
+            registered.probe_gpu();
+        }
         self.ctx.check_health().is_ok() && self.ctx.can_readback() && effects::supports(id)
     }
 

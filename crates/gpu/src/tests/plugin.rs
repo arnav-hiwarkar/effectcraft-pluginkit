@@ -323,13 +323,21 @@ fn loops_under_the_cap_run_every_iteration_frame_after_frame() {
 }
 
 #[test]
-fn a_plugin_effect_is_built_before_its_first_frame() {
+fn a_plugin_effect_the_project_uses_is_built_before_its_first_frame_and_an_unused_one_is_not() {
     gpu();
     let Some(g) = crate::Gpu::headless() else { return };
-    register("test.gpu.warm", FLIP_WGSL, GpuProgram { passes: vec![pass("flip", GpuSlot::Source, GpuSlot::Output)], ..Default::default() });
+    let flip = || GpuProgram { passes: vec![pass("flip", GpuSlot::Source, GpuSlot::Output)], ..Default::default() };
+    register("test.gpu.warm", FLIP_WGSL, flip());
+    register("test.gpu.unused", FLIP_WGSL, flip());
+    let mut scene = crate::tests::Scene::new(effectcraft_project::BitDepth::Bpc32);
+    let mut layer = scene.solid([1.0; 3], 8, 8);
+    scene.effect(&mut layer, "test.gpu.warm", &[]);
+    scene.push(layer);
     assert!(!g.ctx.plugin_shader_cached("test.gpu.warm"), "a fresh context has built nothing");
-    g.warm_plugins().expect("a new plugin effect starts a warm-up").join().expect("the warm-up finishes");
+    g.warm_plugins(&scene.p).expect("a newly used plugin effect starts a warm-up").join().expect("the warm-up finishes");
     assert!(g.ctx.plugin_shader_cached("test.gpu.warm"), "the shader was built off the frame path");
+    assert!(!g.ctx.plugin_shader_cached("test.gpu.unused"), "an effect the project does not use was built");
+    assert!(g.warm_plugins(&scene.p).is_none(), "an unchanged project warms again");
 }
 
 const TRIANGLE_WGSL: &str = r#"

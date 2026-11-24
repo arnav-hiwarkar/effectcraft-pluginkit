@@ -9,6 +9,7 @@ pub type RenderDyn = Box<dyn Fn(&EffectCtx, Buf) -> Buf + Send + Sync>;
 pub type GpuDyn = Box<dyn Fn(&EffectCtx, Grid) -> Option<GpuProgram> + Send + Sync>;
 pub type StampDyn = Box<dyn Fn() -> u64 + Send + Sync>;
 pub type MarginDyn = Box<dyn Fn(&EffectCtx, f64) -> Option<f64> + Send + Sync>;
+pub type GpuProbeDyn = Box<dyn Fn() -> bool + Send + Sync>;
 pub type MigrateDyn = Box<dyn Fn(u32, &mut std::collections::BTreeMap<String, Value>) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -129,6 +130,19 @@ pub struct Registered {
     pub effect: DynamicEffect,
     pub gpu_planned: std::sync::atomic::AtomicBool,
     pub gpu_stopped: std::sync::OnceLock<String>,
+    pub gpu_probe: std::sync::OnceLock<GpuProbeDyn>,
+    gpu_probed: std::sync::OnceLock<()>,
+}
+
+impl Registered {
+    pub fn probe_gpu(&self) {
+        let Some(probe) = self.gpu_probe.get() else { return };
+        self.gpu_probed.get_or_init(|| {
+            if probe() {
+                self.gpu_planned.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+    }
 }
 
 static REGISTRY: RwLock<Vec<Arc<Registered>>> = RwLock::new(Vec::new());
@@ -185,7 +199,14 @@ pub fn register(effect: DynamicEffect) {
     let mut registry = REGISTRY.write().unwrap_or_else(|poisoned| poisoned.into_inner());
     registry.retain(|r| r.spec.id != spec.id);
     let gpu_planned = std::sync::atomic::AtomicBool::new(effect.shader.as_deref().is_some_and(|wgsl| !wgsl.is_empty()));
-    registry.push(Arc::new(Registered { spec, effect, gpu_planned, gpu_stopped: std::sync::OnceLock::new() }));
+    registry.push(Arc::new(Registered {
+        spec,
+        effect,
+        gpu_planned,
+        gpu_stopped: std::sync::OnceLock::new(),
+        gpu_probe: std::sync::OnceLock::new(),
+        gpu_probed: std::sync::OnceLock::new(),
+    }));
     GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
 }
 

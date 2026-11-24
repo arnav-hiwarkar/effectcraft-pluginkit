@@ -101,17 +101,11 @@ pub struct Plugins {
     inner: Mutex<Inner>,
 }
 
-fn load(bundle: &Bundle, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Result<Arc<Loaded>, String> {
-    let plugin = Plugin::load(bundle, grants, data_dir.clone(), Limits::default()).map_err(|e| e.to_string())?;
+fn load(bundle: &Bundle, digest: &str, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Result<Arc<Loaded>, String> {
+    let plugin = Plugin::open(bundle, digest, grants, data_dir.clone(), Limits::default()).map_err(|e| e.to_string())?;
     let mut hasher = DefaultHasher::new();
     bundle.manifest.version.hash(&mut hasher);
-    match plugin.module_digest() {
-        Some(digest) => digest.hash(&mut hasher),
-        None => {
-            let entry = bundle.entry_path().map_err(|e| e.to_string())?;
-            std::fs::read(&entry).map_err(|e| format!("{}: {e}", entry.display()))?.hash(&mut hasher);
-        }
-    }
+    digest.hash(&mut hasher);
     craft_plugin_host::validate(&bundle.manifest, plugin.contributions())?;
     effects::Engine.admit(plugin.contributions())?;
     let loaded = Loaded { bundle: bundle.clone(), plugin, data_dir, revision: hasher.finish(), render_errors: Mutex::new(BTreeMap::new()) };
@@ -122,12 +116,24 @@ impl Inner {
     fn start(&mut self, bundle: &Bundle) {
         let id = bundle.manifest.id.clone();
         self.stop(&id);
-        let session_only = self.is_session_only(&id);
-        let (bundle, grants) = if session_only {
-            (bundle.clone().with_mode(RunMode::Sandboxed), bundle.manifest.permissions.clone())
+        let (bundle, grants, digest) = if self.is_session_only(&id) {
+            match Bundle::read(&bundle.dir) {
+                Ok((read, digest)) if read.manifest.id == id => {
+                    self.session_only.iter_mut().filter(|kept| kept.manifest.id == id).for_each(|kept| *kept = read.clone());
+                    (read.clone().with_mode(RunMode::Sandboxed), read.manifest.permissions.clone(), digest)
+                }
+                Ok(_) => {
+                    self.failed.insert(id, "its manifest now names another plug-in; load it for this session again".into());
+                    return;
+                }
+                Err(error) => {
+                    self.failed.insert(id, error.to_string());
+                    return;
+                }
+            }
         } else {
-            match self.registry.grants(bundle) {
-                Ok(grants) => (self.registry.running(bundle), grants),
+            match self.registry.approved(bundle) {
+                Ok(approved) => (approved.bundle, approved.grants, approved.digest),
                 Err(refusal) => {
                     self.refused.insert(id, refusal);
                     return;
@@ -151,14 +157,12 @@ impl Inner {
         if unsandboxed {
             self.mark(Some(&id));
         }
-        let loaded = load(&bundle, grants, self.registry.data_dir(&id));
-        let replaced = if session_only { None } else { loaded.as_ref().ok().and_then(|_| self.registry.grants(&bundle).err()) };
+        let loaded = load(&bundle, &digest, grants, self.registry.data_dir(&id));
+        let replaced = loaded.as_ref().ok().filter(|_| unsandboxed).and_then(|_| self.registry.grants(&bundle).err());
         if let Some(refusal) = replaced {
             log::warn!("plugin `{id}` changed while it loaded, so it was not started: {refusal}");
             self.refused.insert(id, refusal);
-            if unsandboxed {
-                self.mark(None);
-            }
+            self.mark(None);
             return;
         }
         match loaded {
@@ -237,8 +241,8 @@ impl Inner {
     fn info(&self, bundle: &Bundle, session_only: bool) -> PluginInfo {
         let manifest = &bundle.manifest;
         let loaded = self.loaded.get(&manifest.id);
-        let failed = self.failed.get(&manifest.id).cloned();
-        let running = loaded.is_some() || self.data.contains(&manifest.id);
+        let failed = self.failed.get(&manifest.id).cloned().or_else(|| loaded.and_then(|loaded| loaded.plugin.failure()));
+        let running = (loaded.is_some() || self.data.contains(&manifest.id)) && failed.is_none();
         let (state, error) = match (running, failed, self.refused.get(&manifest.id)) {
             (true, ..) => (PluginState::Running, None),
             (false, Some(error), _) => (PluginState::Failed, Some(error)),

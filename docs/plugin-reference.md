@@ -49,6 +49,11 @@ returns.
 | `.task(id, title, function)` | A long-running task. `function` is `Fn(&Task) -> Result<serde_json::Value>`. |
 | `.tool(id, name, value)` | A viewer tool in the toolbar. `value` implements `Tool`. |
 
+The app asks a sandboxed plugin for this list once per set of files and keeps the answer; later starts
+register the plugin from it and run the plugin only when something uses it. So build the list from your
+code alone, never from the time, a file or a random number: a list that changes between starts shows the
+first one until the plugin's files change.
+
 ### Task
 
 | Method | Returns |
