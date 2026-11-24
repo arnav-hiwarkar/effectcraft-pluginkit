@@ -778,6 +778,28 @@ fn a_script_cannot_confirm_executing_a_file_for_itself() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn scripts_cant_install_approve_or_unsandbox_plugins() {
+    fn reached(_: &mut Session, id: &str, _: &Value) -> effectcraft_engine::Result<Value> {
+        Ok(json!(id))
+    }
+    let mut s = session();
+    s.plugin_commands = Some(reached);
+    for id in ["plugin.install", "plugin.approve", "plugin.setSandbox", "plugin.disable", "plugin.uninstall", "plugin.load", "plugin.reload"] {
+        for code in [
+            format!("__exec('{id}', JSON.stringify({{id: 'x', path: '/p'}}))"),
+            format!("app.run('engine.batch', {{steps: [{{command: '{id}', params: {{}}}}]}})"),
+        ] {
+            let e = run_code(&mut s, &code, "grant.jsx").error.unwrap_or_else(|| panic!("`{code}` was allowed"));
+            assert!(e.message.contains(&format!("Scripts can't run `{id}`")) && e.message.contains("Manage Plug-ins"), "{code}: {e:?}");
+        }
+        assert_eq!(s.execute(id, json!({})).unwrap(), json!(id));
+    }
+    for id in ["plugin.list", "plugin.run", "plugin.startTask", "plugin.tasks", "plugin.log", "plugin.cancelTask"] {
+        assert_eq!(ok(&mut s, &format!("JSON.parse(__exec('{id}', '{{}}'))")).result, json!(id), "{id}");
+    }
+}
+
 /// #590: a script can't give itself file and network access (or turn off the warning before
 /// executing files) by changing Settings ▸ Scripting & Expressions; the user still can.
 #[test]
