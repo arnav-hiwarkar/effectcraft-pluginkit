@@ -437,7 +437,7 @@ fn a_plugin_effect_followed_by_a_small_blur_and_a_colour_effect_renders_only_the
     assert_eq!(tally(&app), 64_000, "a layer inside the comp renders whole");
 
     let shown = frame(&app, Some([256.0, 32.0, 64.0, 32.0]));
-    assert_eq!(tally(&app) - 64_000, 94 * 62, "the 64x32 part grown by 6 pixels of resampling and 9 of blur on each side");
+    assert_eq!(tally(&app) - 64_000, 210 * 100, "the 64x32 part snapped out to 192x128 and grown by 9 pixels of blur on each side, within the 100 rows");
     for y in 0..32 {
         for x in 0..64 {
             let (part, full) = (shown.data[(y * 64 + x) as usize], whole.data[((y + 32) * 640 + x + 256) as usize]);
