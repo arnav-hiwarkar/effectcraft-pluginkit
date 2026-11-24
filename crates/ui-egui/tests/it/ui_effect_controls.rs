@@ -1605,7 +1605,6 @@ fn register_gain_effect() {
         reads_comp_scene: false,
         reads_param_history: false,
         presets: Vec::new(),
-        groups: Vec::new(),
         revision: 1,
         files: None,
         margin: None,
@@ -1645,7 +1644,7 @@ fn a_plugin_group_row_shows_the_name_its_author_gave_and_twirls_closed() {
         id: "test.ui.tuned.tuned".into(),
         name: "Tuned Test".into(),
         category: "Test".into(),
-        params: vec![DynamicParam { id: "fine_tuning/on".into(), name: "On".into(), default: KV::Bool(true), ui: ParamUi::Checkbox }],
+        params: vec![DynamicParam { id: "Fine Tuning/on".into(), name: "On".into(), default: KV::Bool(true), ui: ParamUi::Checkbox }],
         render: Box::new(|ctx, buf| ctx.unchanged(buf)),
         shader: None,
         gpu: None,
@@ -1654,7 +1653,6 @@ fn a_plugin_group_row_shows_the_name_its_author_gave_and_twirls_closed() {
         reads_comp_scene: false,
         reads_param_history: false,
         presets: Vec::new(),
-        groups: vec![("fine_tuning".into(), "Fine Tuning".into())],
         revision: 1,
         files: None,
         margin: None,
@@ -1663,7 +1661,7 @@ fn a_plugin_group_row_shows_the_name_its_author_gave_and_twirls_closed() {
     s.execute("comp.new", json!({"name": "Main", "width": 640, "height": 360, "frameRate": 30, "duration": 10})).unwrap();
     let layer_id = s.execute("layer.newSolid", json!({"name": "Small", "color": "#ff0000", "width": 200, "height": 100})).unwrap()["layer"].as_u64().unwrap();
     let fx = s.execute("effect.apply", json!({"layers": [layer_id], "effect": "test.ui.tuned.tuned"})).unwrap()["effects"][0].as_u64().unwrap();
-    let group = layer(&s, layer_id).effects().unwrap().groups().find(|g| g.uid == fx).and_then(|g| g.sub("fine_tuning")).map(|g| g.uid).unwrap();
+    let group = layer(&s, layer_id).effects().unwrap().groups().find(|g| g.uid == fx).and_then(|g| g.sub("Fine Tuning")).map(|g| g.uid).unwrap();
     s.state.selected_layers = vec![LayerId(layer_id)];
     let mut app = EffectcraftApp::new(s);
     app.show_panel(PanelKind::EffectControls);

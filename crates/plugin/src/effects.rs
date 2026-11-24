@@ -46,7 +46,6 @@ pub(crate) fn register(loaded: &Arc<Loaded>) {
             reads_comp_scene: spec.reads_scene,
             reads_param_history: spec.reads_param_history,
             presets: spec.presets.iter().map(|preset| (preset.name.clone(), preset_values(spec, &preset.values))).collect(),
-            groups: spec.groups.clone().into_iter().collect(),
             revision: loaded.revision,
             files: Some(revision_stamp(loaded.clone())),
             margin: Some(Box::new(move |ctx, scale| margin(&margin_plugin, &margin_spec, ctx, scale))),

@@ -52,7 +52,6 @@ fn effect(id: &str, wgsl: &str, program: GpuProgram) -> DynamicEffect {
         reads_comp_scene: false,
         reads_param_history: false,
         presets: Vec::new(),
-        groups: Vec::new(),
         revision: 1,
     }
 }

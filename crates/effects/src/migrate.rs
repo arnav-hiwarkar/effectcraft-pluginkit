@@ -18,7 +18,7 @@ use effectcraft_keyframe::Value;
 use effectcraft_project::build::Ids;
 use effectcraft_project::{Node, ParamUi, PropGroup, Property};
 
-use crate::{EffectSpec, ParamSpec, default_value, group_name_in, layer_source_id, nested_group, plugin_group_names};
+use crate::{EffectSpec, ParamSpec, default_value, group_name, layer_source_id, nested_group};
 
 /// Parameter ids renamed since they were first saved: `(effect id, old id, new id)`. The new id
 /// is a spec id (it may include twirl-down group segments, `group/param`).
@@ -254,22 +254,6 @@ fn is_numeric_ui(u: &ParamUi) -> bool {
     matches!(u, ParamUi::Number | ParamUi::Slider { .. } | ParamUi::Percent | ParamUi::Angle | ParamUi::Pixels)
 }
 
-/// A plugin group saved under its display name (`Edge Options`) moves to its id (`edge_options`).
-fn rename_groups(g: &mut PropGroup, names: &[(String, String)]) {
-    for (id, name) in names {
-        if g.sub(id).is_none()
-            && let Some(sub) = g.sub_mut(name)
-        {
-            sub.match_id = id.clone();
-        }
-    }
-    for c in &mut g.children {
-        if let Node::Group(sub) = c {
-            rename_groups(sub, names);
-        }
-    }
-}
-
 /// Bring the saved instance `g` of `spec` up to date (see the module docs). `layer_size` sizes
 /// point defaults of added parameters. Returns whether anything changed.
 pub fn upgrade_instance(spec: &EffectSpec, g: &mut PropGroup, ids: &mut Ids, layer_size: [f64; 2]) -> bool {
@@ -286,8 +270,6 @@ pub fn upgrade_instance(spec: &EffectSpec, g: &mut PropGroup, ids: &mut Ids, lay
         pr.keys.clear();
         pr.ui = ParamUi::Layer;
     }
-    let names = plugin_group_names(spec.id);
-    rename_groups(g, &names);
     for ps in &spec.params {
         // Locate the stored property: at its spec path, under an old id, or at top level
         // before it moved into a twirl-down group.
@@ -324,7 +306,7 @@ pub fn upgrade_instance(spec: &EffectSpec, g: &mut PropGroup, ids: &mut Ids, lay
                 Some(i) if i <= sub.children.len() => sub.children.insert(i, pr.into()),
                 _ => sub.children.push(pr.into()),
             };
-            match path.and_then(|path| nested_group(g, ids, path, &names)) {
+            match path.and_then(|path| nested_group(g, ids, path)) {
                 Some(sub) => at(sub),
                 None => at(g),
             }
@@ -346,7 +328,7 @@ pub fn upgrade_instance(spec: &EffectSpec, g: &mut PropGroup, ids: &mut Ids, lay
                 src.hold_only = true;
                 src
             });
-            match path.and_then(|path| nested_group(g, ids, path, &names)) {
+            match path.and_then(|path| nested_group(g, ids, path)) {
                 Some(sub) => sub.children.push(src.into()),
                 None => g.children.push(src.into()),
             }
@@ -358,19 +340,19 @@ pub fn upgrade_instance(spec: &EffectSpec, g: &mut PropGroup, ids: &mut Ids, lay
         pr.value = Value::Bool(on);
     }
     // Refresh twirl-down group names.
-    fn refresh_names(g: &mut PropGroup, names: &[(String, String)]) {
+    fn names(g: &mut PropGroup) {
         for c in &mut g.children {
             if let Node::Group(sg) = c {
-                let n = group_name_in(names, &sg.match_id);
+                let n = group_name(&sg.match_id);
                 if n != sg.match_id {
                     sg.name = n.to_string();
                 }
-                refresh_names(sg, names);
+                names(sg);
             }
         }
     }
     if !USER_EDITED_CATEGORIES.contains(&spec.category) && spec.params.iter().any(|p| p.id.contains('/')) {
-        refresh_names(g, &names);
+        names(g);
     }
     *g != before
 }
