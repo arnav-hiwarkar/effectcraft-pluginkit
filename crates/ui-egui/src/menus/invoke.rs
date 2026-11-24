@@ -199,6 +199,10 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
         let text = |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default();
         return app.plugin_ui.panels.command(&app.session, text("plugin"), text("command")).map(|()| Value::Null);
     }
+    if id == "plugin.press" {
+        let number = |key: &str| params.get(key).and_then(Value::as_u64).ok_or_else(|| format!("`plugin.press` needs `{key}`, a number"));
+        return crate::panels::effect_controls::press_button(app, number("layer")?, number("prop")?).map(|()| Value::Null);
+    }
     if id == "plugin.form" {
         return Ok(effectcraft_plugin::asked_form(&app.session, |asked| json!({"plugin": asked.plugin, "form": asked.form, "values": asked.values}))
             .unwrap_or(Value::Null));

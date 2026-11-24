@@ -177,6 +177,11 @@ pub(crate) fn form(app: &mut EffectcraftApp, ctx: &egui::Context) {
     }
 }
 
+pub(crate) fn param_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, param: &craft_plugin::Param, enabled: bool, scope: &str) -> bool {
+    let source = Source { plugin: "", images: &mut app.plugin_ui.images };
+    craft_plugin_ui::param_button(ui, param, enabled, scope, &mut AppHost { source, auto: &mut app.auto })
+}
+
 pub(crate) fn triangulate(outline: &[[f64; 2]]) -> Vec<[usize; 3]> {
     effectcraft_model::triangulate::triangulate(outline, &[])
 }

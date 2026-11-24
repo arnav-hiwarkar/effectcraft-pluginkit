@@ -348,7 +348,7 @@ fn run(request: &Request, wake: &Waker, forms: bool) -> Result<Reply, String> {
             .call(call, None, &mut host)
             .map(|ControlsReply { widgets, value, topics, timers }| Reply::Panel(PanelReply { widgets, topics, timers, legacy: false }, value)),
         Call::Drag { .. } => plugin.call(call, None, &mut host).map(Reply::Value),
-        Call::Command { .. } => plugin.call(call, None, &mut host).map(|()| Reply::Value(None)),
+        Call::Command { .. } | Call::Button { .. } => plugin.call(call, None, &mut host).map(|()| Reply::Value(None)),
         _ => plugin.call(call, None, &mut host).map(Reply::Overlay),
     }
     .map_err(|error| error.to_string())
@@ -525,6 +525,20 @@ impl Panels {
         let gesture = Some(command_gesture(&loaded, command));
         let bound = Bound::of(loaded, session, Arc::downgrade(&self.open));
         self.post(Request { key: Key::Command(plugin.to_string()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture });
+        Ok(())
+    }
+
+    pub fn press(&mut self, session: &Session, effect: &str, param: &str, instance: u64, layer: u64) -> Result<(), String> {
+        let (plugin, loaded, local) = crate::manage::effect_owner(effect)?;
+        let name = crate::effects::plugin_param(effect, param)
+            .filter(|declared| declared.kind == craft_plugin_host::ParamKind::Button)
+            .ok_or_else(|| format!("effect `{effect}` has no button `{param}`"))?
+            .name;
+        let mut gesture = Gesture::new(&name);
+        gesture.keeps_own = true;
+        let bound = Bound::of(loaded, session, Arc::downgrade(&self.open));
+        let call = Call::Button { effect: local, param: param.to_string(), instance, layer };
+        self.post(Request { key: Key::Command(plugin), bound, call, edit: None, gesture: Some(gesture) });
         Ok(())
     }
 

@@ -186,6 +186,28 @@ Param::percent("mix", "Mix", 50.0).range(-100.0..=300.0)
 A parameter declared without these behaves as before. `effect.list` reports `sliderMin`, `sliderMax`,
 `log` and `percent` for them.
 
+#### Shown, enabled and buttons
+
+`.visible_when(id, is)` hides a row and `.enabled_when(id, is)` greys it out unless another parameter of the
+same effect has a value. `is` is `Is::Equals(n)` or `Is::NotEquals(n)` for a popup, slider, percent or angle,
+or `Is::On` for a checkbox. `id` is the full id (`"Fine Tuning/detail"` inside a group). The app works this
+out from the current values, with no call to the plugin. A hidden or greyed parameter keeps its value and
+its keyframes, and `render` still receives it. A condition that names an unknown parameter, the parameter
+itself or one of a kind it cannot test stops the plugin from loading with
+`effect `fx`: parameter `soft` depends on `mode`, which is not another of its parameters of a kind that fits On; …`.
+Forms (`host::form`) honour both on their fields.
+
+`Param::button(id, name)` draws a button in Effect Controls. It has no value: `render` does not receive it,
+a preset or `.set` that names it is refused (`takes no value, as it is a button`), and forms refuse it. A
+press calls `Effect::button(&Press { param, instance, layer })` once, on the plugin's queue, with the
+time limit of a command. Host commands, tasks and data writes made in it are one undo step named after the
+button. In EffectCraft `instance` is the effect's group uid and `layer` the layer id, so
+`host::command("prop.set", json!({"layer": press.layer, "path": format!("effects/@{}/amount", press.instance), "value": 0.0}))`
+resets a parameter of that effect. An error is shown in the status bar. The button takes Tab focus and
+Enter or Space presses it. Automation presses it with `ui.click` on `effectControls.prop.<uid>.button` or,
+without the window, `plugin.press {layer, prop}`, which refuses a hidden or greyed button. A hidden row is
+absent from `ui.elements`. Tests press it with `TestPlugin::press(effect, param)`.
+
 #### Gradients
 
 A gradient parameter shows its colours as a strip in Effect Controls; clicking it (or Enter on it) opens the

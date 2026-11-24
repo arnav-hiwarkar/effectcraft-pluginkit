@@ -47,5 +47,6 @@ pub use common::{choose_files_after_apply, reveal_applied, set_lock};
 pub(crate) use common::{gesture_key, scope_lock, shown_layer_id};
 pub(crate) use panel::handle_arrow_key;
 pub use panel::{show, start_rename};
+pub(crate) use rows::press_button;
 pub(crate) use rows::toggle_pick;
 pub use viewer::viewer_hook;
