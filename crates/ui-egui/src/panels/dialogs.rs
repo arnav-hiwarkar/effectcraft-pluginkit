@@ -728,10 +728,13 @@ fn palette(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
                 v.push((c.label.to_string(), c.id.to_string(), json!({}), c.shortcut.unwrap_or("").to_string()));
             }
         }
-        for item in app.session.plugin_items.iter().filter(|item| !item.panel) {
-            let params = effectcraft_engine::shortcuts::plugin_command_params(&item.plugin, &item.id);
-            let keys = app.session.shortcuts().shortcut_of("plugin.run", &params).unwrap_or_default().to_string();
-            v.push((format!("Window ▸ Plug-ins ▸ {}: {}", item.plugin_name, item.title), "plugin.run".into(), params, keys));
+        for top in std::iter::once(None).chain(effectcraft_engine::menus::top_level().into_iter().map(Some)) {
+            for (path, e) in effectcraft_engine::menus::plugin_commands(&app.session, top) {
+                let mut shown = top.map_or(vec!["Window", "Plug-ins"], |top| vec![top]);
+                shown.extend(path);
+                let keys = app.session.shortcuts().shortcut_of("plugin.run", &e.params).unwrap_or_default().to_string();
+                v.push((format!("{} ▸ {}", shown.join(" ▸ "), e.label), e.command, e.params, keys));
+            }
         }
         v
     };

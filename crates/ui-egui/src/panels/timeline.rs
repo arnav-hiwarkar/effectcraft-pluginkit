@@ -6,6 +6,7 @@
 //! keyframe navigator, scrubbable values). Right: time navigator, ruler with work area and cache
 //! bar, layer duration bars, keyframes, the CTI, and the value graph editor.
 
+use effectcraft_engine::PluginContext;
 use effectcraft_engine::color::BlendMode;
 use effectcraft_engine::keyframe::{Interp, Value};
 use effectcraft_engine::project::{
@@ -3145,7 +3146,7 @@ fn layer_row_actions(app: &mut EffectcraftApp, ui: &mut egui::Ui, g: &mut Rw, rc
             None => start_rename(&ctx, layer.id.0, &layer.name),
         }
     }
-    layer_context_menu(row_resp, &comp, layer, selected, LayerMenuCaps::of(&app.session.project, layer), &mut app.auto, &mut *actions);
+    layer_context_menu(app, row_resp, &comp, layer, selected, &mut *actions);
 }
 
 /// The eight layer switches.
@@ -3478,7 +3479,7 @@ fn layer_bar_hits(app: &mut EffectcraftApp, ui: &mut egui::Ui, g: &mut Rw, rc: &
             set_anchor(&ctx, cid, layer.id);
         }
     }
-    layer_context_menu(&body, &comp, layer, selected, LayerMenuCaps::of(&app.session.project, layer), &mut app.auto, &mut *actions);
+    layer_context_menu(app, &body, &comp, layer, selected, &mut *actions);
     BarResps { body, lin, lout }
 }
 
@@ -4616,6 +4617,10 @@ fn background_menus(app: &mut EffectcraftApp, ui: &mut egui::Ui, g: &mut Rw) {
                 actions.push(("comp.openInEssentialGraphics".into(), json!({})));
                 ui.close();
             }
+            let prefix = format!("timeline.context.{area}");
+            if let Some(params) = crate::menus::plugin_context_section(ui, &app.session.plugin_items, PluginContext::Timeline, &mut app.auto, &prefix) {
+                actions.push(("plugin.run".into(), params));
+            }
         });
     }
 }
@@ -5667,14 +5672,14 @@ impl LayerMenuCaps {
 /// of the selection keeps the selection and the menu acts on all of it; right-clicking an
 /// unselected layer selects only that layer.
 fn layer_context_menu(
+    app: &mut EffectcraftApp,
     resp: &egui::Response,
     comp: &Comp,
     layer: &Layer,
     selected: &[LayerId],
-    caps: LayerMenuCaps,
-    auto: &mut crate::automation::Registry,
     actions: &mut Vec<(String, serde_json::Value)>,
 ) {
+    let caps = LayerMenuCaps::of(&app.session.project, layer);
     let in_selection = selected.contains(&layer.id);
     if resp.secondary_clicked() && !in_selection && !layer.switches.locked {
         actions.push(("layer.select".into(), json!({"layers": [layer.id.0]})));
@@ -5684,7 +5689,13 @@ fn layer_context_menu(
     // the layer under the pointer is a text, shape or null layer.
     let any_source = targets.iter().any(|id| comp.layer(LayerId(*id)).is_some_and(|l| l.source.item().is_some()));
     let caps = LayerMenuCaps { source: caps.source || any_source, ..caps };
-    crate::widgets::context_menu(resp, |ui| layer_menu(ui, &targets, caps, (auto, "timeline.layerMenu"), actions));
+    crate::widgets::context_menu(resp, |ui| {
+        layer_menu(ui, &targets, caps, (&mut app.auto, "timeline.layerMenu"), actions);
+        if let Some(params) = crate::menus::plugin_context_section(ui, &app.session.plugin_items, PluginContext::Layers, &mut app.auto, "timeline.layerMenu") {
+            actions.push(("layer.select".into(), json!({"layers": targets})));
+            actions.push(("plugin.run".into(), params));
+        }
+    });
 }
 
 /// The layer switches the layer context menus toggle (After Effects lists them after Time):

@@ -976,6 +976,20 @@ Plugin::new().command("add-null", "Add Control Null", add_null).shortcut("Alt+Sh
 The app keeps the suggestion only when no other command uses those keys; otherwise the command starts
 with no shortcut and the log says which command holds them.
 
+### Put a command in a menu, a context menu and the toolbar
+
+```rust
+Plugin::new()
+    .command("add-null", "Add Control Null", add_null)
+    .menu("Layer/Rigging")
+    .context(Context::Layers)
+    .toolbar()
+    .icon("plus")
+```
+
+This puts **Add Control Null** at the end of **Layer ▸ Rigging**, in the timeline's layer context menu and
+as a toolbar button with a plus sign. All of them run the same command, with the same shortcut.
+
 ## Read and edit the project
 
 Panels and commands use the app's own commands, the same ones the menus, the CLI, and automation use.

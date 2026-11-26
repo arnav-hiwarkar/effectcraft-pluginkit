@@ -236,3 +236,49 @@ fn m3_13_entries_follow_after_effects() {
     }
     assert_eq!(platform_label("Reveal Layer Source in Project", false), "Reveal Layer Source in Project");
 }
+
+fn shown(nodes: &[MenuNode]) -> Vec<String> {
+    nodes
+        .iter()
+        .map(|n| match n {
+            MenuNode::Item(e) => format!("{} [{}]", e.label, e.params["command"].as_str().unwrap_or("")),
+            MenuNode::Separator => "---".into(),
+            MenuNode::Submenu { label, children } => format!("{label} > {}", shown(children).join(", ")),
+            MenuNode::Dynamic { name } => format!("@{name}"),
+        })
+        .collect()
+}
+
+#[test]
+fn plugin_commands_go_into_the_menu_their_path_names() {
+    let mut s = Session::default();
+    let item = |id: &str, menu: Option<&str>| crate::PluginItem {
+        plugin: "test.probe".into(),
+        plugin_name: "Probe".into(),
+        id: id.into(),
+        title: format!("Do {id}"),
+        menu: menu.map(Into::into),
+        ..Default::default()
+    };
+    s.set_plugin_items(vec![
+        item("tidy", Some("Layer/Arrange")),
+        item("sort", Some("Layer / Arrange /")),
+        item("flat", Some("Layer")),
+        item("own", Some("Tidy Kit/Extra")),
+        item("plain", None),
+        crate::PluginItem { panel: true, ..item("panel", Some("Layer")) },
+    ]);
+    let cx = DynCtx::default();
+    assert_eq!(shown(&dynamic_nodes(&s, "pluginMenu:Layer", &cx).0), ["---", "Arrange > Do tidy [tidy], Do sort [sort]", "Do flat [flat]"]);
+    assert_eq!(shown(&dynamic_nodes(&s, "pluginCommands", &cx).0), ["Tidy Kit > Extra > Do own [own]", "Probe: Do plain [plain]"]);
+    let (file, empty) = dynamic_nodes(&s, "pluginMenu:File", &cx);
+    assert_eq!((shown(&file), empty), (vec![], None));
+    let layer = menu_bar().iter().find_map(|n| match n {
+        MenuNode::Submenu { label, children } if label == "Layer" => children.last(),
+        _ => None,
+    });
+    assert_eq!(layer.map(|n| shown(std::slice::from_ref(n))), Some(vec!["@pluginMenu:Layer".to_string()]));
+    s.set_plugin_items(vec![]);
+    let (none, empty) = dynamic_nodes(&s, "pluginCommands", &cx);
+    assert_eq!((shown(&none), empty), (vec![], Some("No Plug-in Commands")));
+}

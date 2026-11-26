@@ -69,6 +69,31 @@ register the plugin from it and run the plugin only when something uses it. So b
 code alone, never from the time, a file or a random number: a list that changes between starts shows the
 first one until the plugin's files change.
 
+### Command places
+
+A command always runs as `plugin.run {"plugin", "command"}`, wherever it is shown, so its shortcut and
+automation stay the same.
+
+- **Menus.** A `.menu` path whose first part is the English label of a top-level app menu (`File`, `Edit`,
+  `Composition`, `Layer`, `Effect`, `Animation`, `View`, `Window`, `Help`) puts the command at the end of
+  that menu, after a separator, in submenus named by the rest of the path (`"Layer/Arrange"` gives
+  Layer ▸ Arrange ▸ title). Any other path makes submenus of **Window ▸ Plug-ins**. Empty parts and spaces
+  around `/` are ignored. A command with no path stays in Window ▸ Plug-ins, labelled `Plugin: Title`;
+  one with a path is labelled with its title alone. Commands with the same path share the submenu.
+- **Context menus.** `Context::Layers` adds the command to the timeline's layer context menu, which first
+  selects the layers the menu acts on; `Context::Timeline` to the menu of the timeline's empty area;
+  `Context::Viewer` to the viewer's context menu. Each menu lists plug-in commands after a separator at its
+  end. Automation ids: `timeline.layerMenu.plugin.<plugin>.<command>`,
+  `timeline.context.<outline|graph>.plugin.<plugin>.<command>`, `viewer.context.plugin.<plugin>.<command>`.
+- **Toolbar.** `.toolbar()` adds a button after the plug-in tools, drawn with the `.icon` (or the title's
+  first letter when the app has no drawing for that name), with the title as tooltip and accessible name.
+  It runs by click and by Enter or Space once focused. Automation id `tools.command.<plugin>.<command>`.
+
+EffectCraft draws these `ICONS` names: brush, pen, eraser, sparkles, sun, image, film, music, text, square,
+circle, star, grid, list, folder, search, settings, play, pause, plus, minus, trash, eye, lock, link,
+clock, chart, camera, rotate, zoom, code, refresh, close. The others show the title's first letter. Menu rows
+show no icons.
+
 ### Task
 
 | Method | Returns |

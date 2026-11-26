@@ -953,6 +953,11 @@ fn phase_menu(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx, v: &m
             context_actions.push(("comp.settings".to_owned(), serde_json::json!({"comp": cid.0})));
             ui.close();
         }
+        if let Some(params) =
+            crate::menus::plugin_context_section(ui, &app.session.plugin_items, effectcraft_engine::PluginContext::Viewer, &mut app.auto, "viewer.context")
+        {
+            context_actions.push(("plugin.run".to_owned(), params));
+        }
     });
     for (id, params) in context_actions {
         if let Err(e) = crate::menus::invoke(app, &ctx, &id, params) {

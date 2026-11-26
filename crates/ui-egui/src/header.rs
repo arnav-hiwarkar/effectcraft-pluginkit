@@ -30,6 +30,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let x = brand_and_home(app, ui, &p, x, cy);
     let x = tool_slots(app, ui, &p, x, cy);
     let x = crate::panels::plugin_tools::toolbar(app, ui, x, cy);
+    let x = crate::menus::plugin_toolbar(app, ui, x, cy);
     let x = tool_options_bar(app, ui, &p, x + 10.0, cy);
     let x = snapping_toggle(app, ui, &p, x, cy);
     right_side(app, ui, &p, rect, x, cy);

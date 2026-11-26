@@ -297,7 +297,7 @@ pub type ScriptRunner = fn(&mut Session, &ScriptRequest) -> Value;
 
 pub type PluginCommands = fn(&mut Session, &str, &Value) -> Result<Value>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PluginItem {
     pub plugin: String,
     pub plugin_name: String,
@@ -305,6 +305,17 @@ pub struct PluginItem {
     pub title: String,
     pub panel: bool,
     pub shortcut: Option<String>,
+    pub menu: Option<String>,
+    pub context: Vec<PluginContext>,
+    pub toolbar: bool,
+    pub icon: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PluginContext {
+    Layers,
+    Timeline,
+    Viewer,
 }
 
 impl Default for Session {
