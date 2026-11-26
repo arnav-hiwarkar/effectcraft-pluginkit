@@ -294,7 +294,7 @@ fn a_plugin_tool_gets_the_pen_pressure_tilt_and_end_of_each_event_and_a_mouse_ge
     let pen = crate::PenSource::default();
     harness.state_mut().hooks.pen = Some(pen.clone());
     let (from, to) = (comp_point(&harness, [40.0, 30.0]), comp_point(&harness, [50.0, 35.0]));
-    let reading = |pressure, tilt| Some(effectcraft_plugin::viewer::Pen { pressure, tilt, eraser: true });
+    let reading = |pressure, tilt| Some(effectcraft_plugin::viewer::Pen { pressure, tilt, eraser: true, rotation: 0.0 });
     let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
     let gesture = [
         (reading(0.0, [0.0, 0.0]), egui::Event::PointerMoved(from)),

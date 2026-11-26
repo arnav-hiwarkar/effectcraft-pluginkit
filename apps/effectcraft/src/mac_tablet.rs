@@ -15,6 +15,7 @@ struct RawEvent {
     subtype: i16,
     pressure: f32,
     tilt: [f64; 2],
+    rotation: f32,
     device: usize,
     entering: bool,
 }
@@ -43,11 +44,12 @@ fn update(eraser: &mut bool, event: &RawEvent) -> Update {
     if event.proximity() {
         *eraser = event.entering && event.device == DEVICE_ERASER;
         let near = event.entering && event.device != DEVICE_CURSOR;
-        return Update::Set(near.then_some(Pen { pressure: 0.0, tilt: [0.0; 2], eraser: *eraser }));
+        return Update::Set(near.then_some(Pen { pressure: 0.0, tilt: [0.0; 2], eraser: *eraser, rotation: 0.0 }));
     }
     if event.point() {
         let tilt = event.tilt.map(|tilt| (tilt.clamp(-1.0, 1.0) * MOST_TILT) as f32);
-        return Update::Set(Some(Pen { pressure: event.pressure, tilt, eraser: *eraser }));
+        let rotation = event.rotation.to_radians();
+        return Update::Set(Some(Pen { pressure: event.pressure, tilt, eraser: *eraser, rotation }));
     }
     if event.mouse() { Update::Set(None) } else { Update::Keep }
 }
@@ -108,6 +110,7 @@ mod monitor {
             raw.pressure = event.pressure();
             let tilt = event.tilt();
             raw.tilt = [tilt.x, tilt.y];
+            raw.rotation = event.rotation();
         }
         if raw.proximity() {
             raw.device = event.pointingDeviceType().0;
@@ -136,11 +139,28 @@ mod tests {
     fn a_pens_drag_gives_its_pressure_and_tilt_in_radians_and_the_eraser_end_marks_its_readings() {
         let mut eraser = false;
         let third = std::f32::consts::FRAC_PI_3;
-        assert_eq!(update(&mut eraser, &point(DRAG, 0.5, [0.5, -1.0])), Update::Set(Some(Pen { pressure: 0.5, tilt: [third / 2.0, -third], eraser: false })));
-        assert_eq!(update(&mut eraser, &proximity(DEVICE_ERASER, true)), Update::Set(Some(Pen { pressure: 0.0, tilt: [0.0; 2], eraser: true })));
-        assert_eq!(update(&mut eraser, &point(TABLET_POINT, 0.25, [4.0, 0.0])), Update::Set(Some(Pen { pressure: 0.25, tilt: [third, 0.0], eraser: true })));
+        assert_eq!(
+            update(&mut eraser, &point(DRAG, 0.5, [0.5, -1.0])),
+            Update::Set(Some(Pen { pressure: 0.5, tilt: [third / 2.0, -third], eraser: false, rotation: 0.0 }))
+        );
+        assert_eq!(update(&mut eraser, &proximity(DEVICE_ERASER, true)), Update::Set(Some(Pen { pressure: 0.0, tilt: [0.0; 2], eraser: true, rotation: 0.0 })));
+        assert_eq!(
+            update(&mut eraser, &point(TABLET_POINT, 0.25, [4.0, 0.0])),
+            Update::Set(Some(Pen { pressure: 0.25, tilt: [third, 0.0], eraser: true, rotation: 0.0 }))
+        );
         assert_eq!(update(&mut eraser, &proximity(DEVICE_ERASER, false)), Update::Set(None), "the pen left");
-        assert_eq!(update(&mut eraser, &point(DRAG, 0.75, [0.0, 0.0])), Update::Set(Some(Pen { pressure: 0.75, tilt: [0.0; 2], eraser: false })));
+        assert_eq!(
+            update(&mut eraser, &point(DRAG, 0.75, [0.0, 0.0])),
+            Update::Set(Some(Pen { pressure: 0.75, tilt: [0.0; 2], eraser: false, rotation: 0.0 }))
+        );
+    }
+
+    #[test]
+    fn a_pens_barrel_rotation_in_degrees_reaches_the_tool_in_radians() {
+        let mut eraser = false;
+        let turned = RawEvent { rotation: 90.0, ..point(DRAG, 0.5, [0.0, 0.0]) };
+        let Update::Set(Some(pen)) = update(&mut eraser, &turned) else { panic!("a pen reading") };
+        assert!((pen.rotation - std::f32::consts::FRAC_PI_2).abs() < 1e-6, "{}", pen.rotation);
     }
 
     #[test]

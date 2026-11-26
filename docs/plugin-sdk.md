@@ -979,7 +979,7 @@ an edit made elsewhere during the gesture stays its own step. Changing the proje
 `document.write` permission. Events reach `event` in order; moves made while `event` was busy arrive as
 the latest one.
 
-A pen tablet's pressure, tilt and end come in `event.pen`; a mouse gives `None`:
+A pen tablet's pressure, tilt, end and barrel rotation come in `event.pen`; a mouse gives `None`:
 
 ```rust
 let width = match event.pen {

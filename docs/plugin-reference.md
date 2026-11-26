@@ -905,7 +905,7 @@ overlay it draws starts in `Space::Comp` and stays on screen until the next repl
 | `layer`, `layer_id` | The pointer in the first selected layer's pixels, and that layer's id, or `None` |
 | `modifiers` | `shift`, `alt`, `command` |
 | `pressure` | While the button is down, the pen's pressure, or 1 for a mouse; 0 otherwise |
-| `pen` | `Some(Pen { pressure, tilt, eraser })` when a tablet pen is the pointer, `None` for a mouse. `pressure` is 0 to 1 (0 while the pen hovers), `tilt` is `[x, y]` in radians (x positive to the right, y positive towards the bottom of the screen, at most ±π/3 from upright), `eraser` says the eraser end is the one near the tablet |
+| `pen` | `Some(Pen { pressure, tilt, eraser, rotation })` when a tablet pen is the pointer, `None` for a mouse. `pressure` is 0 to 1 (0 while the pen hovers), `tilt` is `[x, y]` in radians (x positive to the right, y positive towards the bottom of the screen, at most ±π/3 from upright), `eraser` says the eraser end is the one near the tablet, `rotation` is the barrel's turn in radians from -π to π (0 on pens that cannot report it) |
 | `scroll` | The wheel delta of a `Scroll` |
 | `key` | The key of a `Key`, such as `Escape`, `Enter`, `A` |
 | `zoom` | Screen points per comp pixel |
