@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use craft_plugin::{PanelPlace, PanelSize, PanelSpec};
 use craft_plugin_ui::Theme;
-use effectcraft_engine::PluginItem;
+use effectcraft_engine::{PluginItem, Session};
 use effectcraft_plugin::Surface;
 use effectcraft_plugin::ui::{Drag, Dropped, UiEvent, Widget};
 use egui::{Rect, RichText, UiBuilder, pos2, vec2};
@@ -53,6 +55,43 @@ pub(crate) fn submit(app: &mut EffectcraftApp, ui: &egui::Ui, key: &str, events:
 #[derive(Default)]
 pub(crate) struct Images {
     textures: HashMap<(String, String), (u64, egui::TextureHandle)>,
+    frames: HashMap<(String, String), Preview>,
+}
+
+type Rendered = Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>;
+
+struct Preview {
+    asked: Option<u64>,
+    shown: Result<Option<egui::TextureHandle>, String>,
+    pending: Option<Rendered>,
+    drawn: f64,
+}
+
+const PREVIEW_KEPT_SECONDS: f64 = 5.0;
+
+fn project_state(session: &Session) -> u64 {
+    let mut state = DefaultHasher::new();
+    let reloads = session.footage_reloads.load(std::sync::atomic::Ordering::Relaxed);
+    (session.revision, session.prefs_revision, reloads, session.active_comp_id().map(|comp| comp.0)).hash(&mut state);
+    state.finish()
+}
+
+fn rendered(job: effectcraft_plugin::Job<effectcraft_plugin::Pixels>) -> Option<Rendered> {
+    let slot = Rendered::default();
+    let fill = slot.clone();
+    let run = move || {
+        let pixels = job();
+        let image = effectcraft_engine::raster::Image { width: pixels.width, height: pixels.height, data: pixels.data };
+        if let Ok(mut fill) = fill.lock() {
+            *fill = Some((image.width, image.height, image.to_rgba8()));
+        }
+    };
+    if cfg!(target_arch = "wasm32") {
+        run();
+    } else {
+        std::thread::Builder::new().name("plugin-frame".into()).spawn(run).ok()?;
+    }
+    Some(slot)
 }
 
 impl Images {
@@ -77,11 +116,48 @@ impl Images {
     pub fn prune(&mut self) {
         self.textures.retain(|(plugin, _), _| effectcraft_plugin::plugins().is_some_and(|p| p.get(plugin).is_some()));
     }
+
+    fn frame(
+        &mut self,
+        ctx: &egui::Context,
+        session: &Session,
+        plugin: &str,
+        request: &craft_plugin::FrameRequest,
+    ) -> &Result<Option<egui::TextureHandle>, String> {
+        let now = ctx.input(|i| i.time);
+        self.frames.retain(|_, preview| now - preview.drawn < PREVIEW_KEPT_SECONDS);
+        let key = (plugin.to_string(), serde_json::to_string(request).unwrap_or_default());
+        let preview = self.frames.entry(key).or_insert(Preview { asked: None, shown: Ok(None), pending: None, drawn: now });
+        preview.drawn = now;
+        if let Some(pending) = &preview.pending {
+            match pending.lock().ok().and_then(|mut done| done.take()) {
+                Some((width, height, rgba)) => {
+                    let pixels = egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &rgba);
+                    preview.shown = Ok(Some(ctx.load_texture(format!("plugin.{plugin}.frame"), pixels, egui::TextureOptions::LINEAR)));
+                    preview.pending = None;
+                }
+                None => ctx.request_repaint_after(Duration::from_millis(30)),
+            }
+        }
+        let state = project_state(session);
+        if preview.pending.is_none() && preview.asked != Some(state) {
+            preview.asked = Some(state);
+            match effectcraft_plugin::panel_frame(session, plugin, request) {
+                Ok(job) => {
+                    preview.pending = rendered(job);
+                    ctx.request_repaint();
+                }
+                Err(error) => preview.shown = Err(error),
+            }
+        }
+        &preview.shown
+    }
 }
 
 pub(crate) struct Source<'a> {
     pub plugin: &'a str,
     pub images: &'a mut Images,
+    pub session: Option<&'a Session>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,7 +230,7 @@ fn shown(app: &mut EffectcraftApp, body: &mut egui::Ui, scope: &str, surface: Su
             if let Some(error) = shown.error {
                 failed(body, error);
             }
-            let source = Source { plugin: shown.plugin, images: &mut app.plugin_ui.images };
+            let source = Source { plugin: shown.plugin, images: &mut app.plugin_ui.images, session: Some(&app.session) };
             match scroll {
                 Some(key) => {
                     let area = egui::ScrollArea::both().id_salt(("plugin-panel", key)).auto_shrink([false, false]);
@@ -269,7 +345,8 @@ pub(crate) fn paint_icon(app: &mut EffectcraftApp, painter: &egui::Painter, rect
     let Some(item) = running_panel(app, kind) else { return false };
     let Some(icon) = effectcraft_plugin::panel_spec(&item.plugin, &item.id).and_then(|spec| spec.icon) else { return false };
     let (plugin, title) = (item.plugin.clone(), item.title.clone());
-    let mut host = AppHost { source: Source { plugin: &plugin, images: &mut app.plugin_ui.images }, auto: &mut app.auto, tokens: app.tokens };
+    let source = Source { plugin: &plugin, images: &mut app.plugin_ui.images, session: Some(&app.session) };
+    let mut host = AppHost { source, auto: &mut app.auto, tokens: app.tokens };
     craft_plugin_ui::paint_icon(&mut host, painter, rect, &icon, &title, color);
     true
 }
@@ -376,7 +453,7 @@ pub(crate) fn form(app: &mut EffectcraftApp, ctx: &egui::Context) {
     let answered = effectcraft_plugin::asked_form(&app.session, |asked| {
         let mut answer = None;
         super::dialogs::modal(ctx, &asked.form.title, egui::vec2(420.0, 160.0), &tokens, |ui| {
-            let mut host = AppHost { source: Source { plugin: &asked.plugin, images }, auto, tokens };
+            let mut host = AppHost { source: Source { plugin: &asked.plugin, images, session: None }, auto, tokens };
             answer = craft_plugin_ui::draw_form(ui, &asked.form, &mut asked.values, "plugin.form", &mut host);
         });
         answer.map(|answer| (answer == craft_plugin_ui::Answer::Ok).then(|| asked.values.clone()))
@@ -389,7 +466,7 @@ pub(crate) fn form(app: &mut EffectcraftApp, ctx: &egui::Context) {
 }
 
 pub(crate) fn param_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, param: &craft_plugin::Param, enabled: bool, scope: &str) -> bool {
-    let source = Source { plugin: "", images: &mut app.plugin_ui.images };
+    let source = Source { plugin: "", images: &mut app.plugin_ui.images, session: None };
     craft_plugin_ui::param_button(ui, param, enabled, scope, &mut AppHost { source, auto: &mut app.auto, tokens: app.tokens })
 }
 
@@ -516,6 +593,32 @@ impl craft_plugin_ui::Host for AppHost<'_> {
         Some((response, (after != before).then(|| plugin_gradient(&after))))
     }
 
+    fn frame(&mut self, ui: &mut egui::Ui, request: &craft_plugin::FrameRequest, size: egui::Vec2) -> Option<egui::Response> {
+        let session = self.source.session?;
+        let tokens = self.tokens;
+        match self.source.images.frame(ui.ctx(), session, self.source.plugin, request) {
+            Err(error) => Some(ui.label(RichText::new(error).font(Tokens::ui(12.0)).color(tokens.text_dim))),
+            Ok(shown) => {
+                let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, tr("Frame")));
+                ui.painter().rect_filled(rect, 2.0, tokens.field_bg);
+                match shown {
+                    Some(texture) => {
+                        let [width, height] = texture.size().map(|side| side as f32);
+                        let scale = (rect.width() / width.max(1.0)).min(rect.height() / height.max(1.0));
+                        let fitted = Rect::from_center_size(rect.center(), vec2(width * scale, height * scale));
+                        ui.painter().image(texture.id(), fitted, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
+                    }
+                    None => {
+                        let side = rect.height().min(rect.width()).min(16.0);
+                        ui.put(Rect::from_center_size(rect.center(), vec2(side, side)), egui::Spinner::new().color(tokens.text_dim));
+                    }
+                }
+                Some(response)
+            }
+        }
+    }
+
     fn combo_box(&self, ui: &mut egui::Ui, id: egui::IdSalt, label: &str, selected: String, menu: &mut dyn FnMut(&mut egui::Ui)) -> egui::Response {
         craft_ui::ComboBox::new(id, label).selected_text(selected).show_ui(ui, menu).response
     }
@@ -523,6 +626,8 @@ impl craft_plugin_ui::Host for AppHost<'_> {
 
 #[cfg(test)]
 mod controls_tests;
+#[cfg(test)]
+mod frame_tests;
 #[cfg(test)]
 pub(crate) mod glide_tests;
 #[cfg(test)]
@@ -550,7 +655,7 @@ mod tests {
             move |ui, events: &mut Vec<UiEvent>| {
                 let mut auto = Registry::default();
                 let mut images = Images::default();
-                events.extend(draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin, images: &mut images }));
+                events.extend(draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin, images: &mut images, session: None }));
             },
             Vec::new(),
         )
@@ -660,7 +765,7 @@ mod tests {
             move |ui, labels: &mut Vec<String>| {
                 let mut auto = Registry::default();
                 let mut images = Images::default();
-                draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin: "test", images: &mut images });
+                draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin: "test", images: &mut images, session: None });
                 *labels = (0..3)
                     .filter_map(|n| auto.find(&format!("plugin.test.panel.label.{n}")))
                     .map(|element| format!("{} {}", element.id, element.label))
