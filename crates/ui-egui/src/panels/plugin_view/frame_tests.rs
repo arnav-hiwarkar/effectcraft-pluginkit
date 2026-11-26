@@ -40,6 +40,7 @@ fn near(colour: Option<[u8; 3]>, wanted: [u8; 3]) -> bool {
 
 #[test]
 fn a_plugin_frame_shows_the_red_comp_rendered_by_the_app_and_redraws_on_an_edit_without_calling_the_plugin() {
+    let _gpu = crate::frames::gpu_slot_test();
     let mut harness = open_preview();
     until(&mut harness, "the red comp in the frame", |h| near(colour_at_frame_centre(h), [255, 0, 0]));
     let calls = harness.state().plugin_ui.panels.calls(PREVIEW);
