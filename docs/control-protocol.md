@@ -118,6 +118,8 @@ write the file immediately. Through `ui.menu.invoke` they return an error when i
 `engine.execute` hands them to the UI and returns `{frontend}` first, so check
 `workspaceStorageError` there. The changed workspaces still apply for the session, and a later
 save retries them.
+Through `ui.menu.invoke`, a UI command that has a result returns it in place of `{frontend}`:
+`window.pluginPanel` returns `{panel, open, instance}`, with the key of the instance it opened.
 
 ## Input
 
