@@ -258,6 +258,8 @@ impl craft_plugin_ui::Host for AppHost<'_> {
 #[cfg(test)]
 pub(crate) mod glide_tests;
 #[cfg(test)]
+mod list_tests;
+#[cfg(test)]
 mod panel_tests;
 
 #[cfg(test)]

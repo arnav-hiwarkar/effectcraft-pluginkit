@@ -712,6 +712,21 @@ if let Some(row) = picked.activated {
 Only the rows near the view are built, so the list can hold 100 000 files. Use `ui.table` for columns and
 `Item::depth` and `Item::open` for a tree.
 
+### Show a tree
+
+```rust
+if let Some((row, open)) = ui.toggled("folders") {
+    self.set_open(self.shown[row], open);
+}
+let picked = ui.list("folders", self.shown.len(), &mut self.selected, |row| {
+    let folder = &self.folders[self.shown[row]];
+    Item::new(&folder.name).depth(folder.depth).open(folder.open)
+});
+```
+
+`set_open` updates `shown`, the folders whose parents are open. Right and Left open and close rows from the
+keyboard; the probe's `tree` panel is a full example with a table of 10 000 rows beside it.
+
 ### React to the app
 
 `ui.on(topic)` subscribes the panel to an app event and returns it on the call it arrived in. Ask for it
