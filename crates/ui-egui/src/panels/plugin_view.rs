@@ -269,7 +269,7 @@ pub(crate) fn paint_icon(app: &mut EffectcraftApp, painter: &egui::Painter, rect
     let Some(item) = running_panel(app, kind) else { return false };
     let Some(icon) = effectcraft_plugin::panel_spec(&item.plugin, &item.id).and_then(|spec| spec.icon) else { return false };
     let (plugin, title) = (item.plugin.clone(), item.title.clone());
-    let mut host = AppHost { source: Source { plugin: &plugin, images: &mut app.plugin_ui.images }, auto: &mut app.auto };
+    let mut host = AppHost { source: Source { plugin: &plugin, images: &mut app.plugin_ui.images }, auto: &mut app.auto, tokens: app.tokens };
     craft_plugin_ui::paint_icon(&mut host, painter, rect, &icon, &title, color);
     true
 }
