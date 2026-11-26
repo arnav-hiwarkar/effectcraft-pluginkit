@@ -697,6 +697,15 @@ impl Panels {
         Ok(Shown { plugin: &slot.loaded.bundle.manifest.id, widgets: slot.retained.widgets(), error: slot.retained.error() })
     }
 
+    pub fn close(&mut self, session: &Session, key: &str, surface: Surface) {
+        self.slots.remove(key);
+        if let Ok((loaded, Call::Panel { panel, input })) = find(surface) {
+            let call = Call::Panel { panel, input: UiInput { closed: true, ..input } };
+            let bound = Bound::of(loaded, session, Arc::downgrade(&self.open));
+            self.post(Request { key: Key::Slot(key.to_string()), bound, call, edit: None, gesture: None });
+        }
+    }
+
     fn schedule(&mut self, key: &str) {
         let due = self.slots.get(key).and_then(|slot| slot.retained.next_due());
         if let Some(due) = due

@@ -146,6 +146,13 @@ fn each_instance_of_a_panel_each_is_called_with_its_instance_and_keeps_its_own_t
     assert_eq!(type_into(&mut app, &mut panels, "1", "milk"), ["note 1: milk"]);
     assert_eq!(type_into(&mut app, &mut panels, "2", "eggs"), ["note 2: eggs"]);
     assert_eq!(type_into(&mut app, &mut panels, "1", "milk and tea"), ["note 1: milk and tea"]);
+    let one = Surface::Panel { plugin: &id, panel: "notes", instance: Some("1") };
+    panels.close(&app.session, "plugin.notes.1", one);
+    assert_eq!(lines(&settled(&mut app, &mut panels, "plugin.notes.1", one, &mut frame)), ["note 1: "], "a closed instance starts again empty");
+    assert_eq!(
+        lines(&settled(&mut app, &mut panels, "plugin.notes.2", Surface::Panel { plugin: &id, panel: "notes", instance: Some("2") }, &mut frame)),
+        ["note 2: eggs"]
+    );
 }
 
 #[test]
