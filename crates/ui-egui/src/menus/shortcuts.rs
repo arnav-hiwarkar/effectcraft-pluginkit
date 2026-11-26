@@ -354,7 +354,7 @@ fn plugin_panel_keys(app: &mut EffectcraftApp, ctx: &egui::Context) {
     if ctx.text_edit_focused() || crate::widgets::any_menu_open(ctx) || app.dialog.is_some() {
         return;
     }
-    let Some((scope, chords)) = crate::panels::plugin_view::key_target(app) else { return };
+    let Some((owner, chords)) = crate::panels::plugin_view::key_target(app) else { return };
     let pressed: Vec<(egui::Key, egui::Modifiers)> = ctx.input(|i| {
         i.events
             .iter()
@@ -370,7 +370,7 @@ fn plugin_panel_keys(app: &mut EffectcraftApp, ctx: &egui::Context) {
             continue;
         }
         if let Some(chord) = chords.iter().find(|chord| parse_shortcut(chord).is_some_and(|(m, k)| k == key && mods_match(m, mods))) {
-            app.plugin_ui.panels.press_key(&scope, chord);
+            app.plugin_ui.panels.press_key(&owner, chord);
             ctx.input_mut(|i| i.consume_key(mods, key));
         }
     }

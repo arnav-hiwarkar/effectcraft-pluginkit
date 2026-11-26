@@ -294,6 +294,40 @@ fn a_plugin_tool_receives_its_gesture_in_comp_coordinates_at_half_and_double_zoo
 }
 
 #[test]
+fn two_taps_that_arrive_in_one_pass_send_one_open_after_the_second_release() {
+    let _one_at_a_time = STAMP_TOOL.lock().unwrap_or_else(|e| e.into_inner());
+    let mut harness = harness(probe_session());
+    settle(&mut harness, |h| h.state().auto.find("tools.plugin.test.viewer-tool-ui.stamp").is_some());
+    let stamp = element(&harness, "tools.plugin.test.viewer-tool-ui.stamp").center();
+    press_drag_release(&mut harness, &[stamp]);
+    harness.state_mut().ui.viewer.zoom = Some(1.0);
+    harness.step();
+    harness.step();
+    let at = comp_point(&harness, [40.0, 30.0]);
+    let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    harness.input_mut().events.extend([egui::Event::PointerMoved(at), button(true), button(false), button(true), button(false)]);
+    settle(&mut harness, |h| h.state().plugin_ui.panels.idle());
+    let names: Vec<String> = harness.state().session.active_comp().unwrap().layers.iter().map(|layer| layer.name.clone()).collect();
+    assert_eq!(names.iter().filter(|name| name.starts_with("Opened")).count(), 1, "{names:?}");
+    assert_eq!(tool_texts(&mut harness), ["Down 40.0 30.0", "Up 40.0 30.0", "Open 40.0 30.0"]);
+}
+
+#[test]
+fn every_viewer_drawn_in_one_pass_gets_the_same_pen_samples() {
+    let pen = crate::PenSource::default();
+    let reading = |pressure| Some(effectcraft_plugin::viewer::Pen { pressure, tilt: [0.0, 0.0], eraser: false, rotation: 0.0 });
+    for pressure in [0.25, 0.5, 0.75] {
+        pen.set(reading(pressure));
+    }
+    let events = [egui::Event::PointerMoved(pos2(1.0, 1.0)), egui::Event::PointerMoved(pos2(2.0, 2.0)), egui::Event::PointerMoved(pos2(3.0, 3.0))];
+    let ctx = egui::Context::default();
+    let first = super::pens_of_this_pass(Some(&pen), &ctx, &events);
+    let second = super::pens_of_this_pass(Some(&pen), &ctx, &events);
+    assert_eq!(first, [reading(0.25), reading(0.5), reading(0.75)]);
+    assert_eq!(second, first, "the second viewer in the pass reads the samples the first one took");
+}
+
+#[test]
 fn a_plugin_tool_gets_the_pen_pressure_tilt_and_end_of_each_event_and_a_mouse_gesture_has_no_pen() {
     let _one_at_a_time = STAMP_TOOL.lock().unwrap_or_else(|e| e.into_inner());
     let mut harness = harness(probe_session());
@@ -442,7 +476,7 @@ fn lookout_harness() -> (Harness<'static, EffectcraftApp>, LayerId) {
     session.execute("effect.apply", json!({"layer": "Watched", "effect": "test.viewer-tool-ui.lookout"})).unwrap();
     let layer = session.active_comp().unwrap().layers[0].clone();
     let effect = layer.effects().unwrap().groups().next().unwrap();
-    let rows = ["selection", "ticks"].map(|param| format!("effectControls.prop.{}.control", effect.get(param).unwrap().uid));
+    let rows = ["selection", "ticks"].map(|param| effectcraft_plugin::Owner::Control(effect.get(param).unwrap().uid));
     session.state.selected_layers = vec![layer.id];
     let mut harness = harness(session);
     harness.state_mut().show_panel(crate::dock::PanelKind::EffectControls);
@@ -488,7 +522,7 @@ fn a_control_row_of_a_plugin_built_against_the_sdk_before_row_events_still_draws
     session.execute("layer.newSolid", json!({"name": "Graded", "color": "#000000", "width": 320, "height": 180})).unwrap();
     session.execute("effect.apply", json!({"layer": "Graded", "effect": "org.craftkit.curves.curves"})).unwrap();
     let layer = session.active_comp().unwrap().layers[0].clone();
-    let row = format!("effectControls.prop.{}.control", layer.effects().unwrap().groups().next().unwrap().get("curves").unwrap().uid);
+    let row = effectcraft_plugin::Owner::Control(layer.effects().unwrap().groups().next().unwrap().get("curves").unwrap().uid);
     session.state.selected_layers = vec![layer.id];
     let mut harness = harness(session);
     harness.state_mut().show_panel(crate::dock::PanelKind::EffectControls);

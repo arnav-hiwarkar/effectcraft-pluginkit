@@ -16,7 +16,7 @@ fn open(harness: &mut Harness<'_, EffectcraftApp>, params: Value) -> Value {
 }
 
 fn type_note(harness: &mut Harness<'_, EffectcraftApp>, instance: &str, text: &str) {
-    let scope = element(harness, &format!("plugin.{PROBE}.notes.{instance}"));
+    let scope = element(harness, &format!("plugin.{PROBE}.notes#{instance}"));
     let field = harness
         .query_all(egui_kittest::kittest::by().role(egui::accesskit::Role::TextInput))
         .find(|node| scope.contains(node.rect().center()))
@@ -71,13 +71,15 @@ fn new_notes_opens_numbered_instances_beside_the_timeline_that_keep_their_own_te
     assert_eq!(open(&mut harness, json!({"plugin": PROBE, "panel": "notes"}))["instance"], "1");
     assert!(harness.state().ui.dock.group_of(one).contains(&PanelKind::Timeline), "a never-placed Bottom panel opens beside the Timeline");
     until(&mut harness, "note 1", |h| {
-        h.state().auto.find(&format!("plugin.{PROBE}.notes.1")).is_some() && !h.state().plugin_ui.panels.busy(&format!("plugin.{PROBE}.notes.1"))
+        h.state().auto.find(&format!("plugin.{PROBE}.notes#1")).is_some()
+            && !h.state().plugin_ui.panels.busy(&effectcraft_plugin::Owner::panel(PROBE, "notes", Some("1")))
     });
     type_note(&mut harness, "1", "milk");
     until(&mut harness, "note 1 holding its text", |h| shows(h, "note 1: milk"));
     assert_eq!(open(&mut harness, json!({"plugin": PROBE, "panel": "notes"}))["instance"], "2");
     until(&mut harness, "note 2", |h| {
-        h.state().auto.find(&format!("plugin.{PROBE}.notes.2")).is_some() && !h.state().plugin_ui.panels.busy(&format!("plugin.{PROBE}.notes.2"))
+        h.state().auto.find(&format!("plugin.{PROBE}.notes#2")).is_some()
+            && !h.state().plugin_ui.panels.busy(&effectcraft_plugin::Owner::panel(PROBE, "notes", Some("2")))
     });
     type_note(&mut harness, "2", "eggs");
     until(&mut harness, "note 2 holding its text", |h| shows(h, "note 2: eggs"));
@@ -92,8 +94,9 @@ fn new_notes_opens_numbered_instances_beside_the_timeline_that_keep_their_own_te
 }
 
 fn note_shown(harness: &mut Harness<'_, EffectcraftApp>, instance: &str) {
-    let scope = format!("plugin.{PROBE}.notes.{instance}");
-    until(harness, &format!("note {instance}"), |h| h.state().auto.find(&scope).is_some() && !h.state().plugin_ui.panels.busy(&scope));
+    let scope = format!("plugin.{PROBE}.notes#{instance}");
+    let owner = effectcraft_plugin::Owner::panel(PROBE, "notes", Some(instance));
+    until(harness, &format!("note {instance}"), |h| h.state().auto.find(&scope).is_some() && !h.state().plugin_ui.panels.busy(&owner));
 }
 
 #[test]
@@ -143,4 +146,39 @@ fn a_status_item_cannot_be_closed_and_says_why() {
     let ctx = harness.ctx.clone();
     let refused = super::open(harness.state_mut(), &ctx, PROBE, "status", None, true).unwrap_err();
     assert!(refused.contains("cannot be opened or closed"), "{refused}");
+}
+
+#[test]
+fn a_notes_instance_named_1_and_a_panel_named_notes_dot_1_keep_their_own_text_and_close_apart() {
+    let mut harness = harness(probe_session());
+    until(&mut harness, "the probe's dotted notes panel registering", |h| {
+        h.state().session.plugin_items.iter().any(|item| item.plugin == PROBE && item.id == "notes.1")
+    });
+    open(&mut harness, json!({"plugin": PROBE, "panel": "notes", "instance": "1"}));
+    note_shown(&mut harness, "1");
+    type_note(&mut harness, "1", "milk");
+    until(&mut harness, "note 1 holding its text", |h| shows(h, "note 1: milk"));
+    open(&mut harness, json!({"plugin": PROBE, "panel": "notes.1"}));
+    let (dotted, owner) = (format!("plugin.{PROBE}.notes%2E1"), effectcraft_plugin::Owner::panel(PROBE, "notes.1", None));
+    until(&mut harness, "the dotted panel, empty", |h| {
+        h.state().auto.find(&dotted).is_some() && !h.state().plugin_ui.panels.busy(&owner) && shows(h, "note -: ")
+    });
+    assert!(shows(&harness, "note 1: milk"), "the instance keeps its own text beside the dotted panel");
+    let ctx = harness.ctx.clone();
+    let one = PanelKind::plugin_instance(PROBE, "notes", "1");
+    harness.state_mut().dock_command(&ctx, craft_ui::docking::Action::Close { panel: one }).unwrap();
+    until(&mut harness, "the instance forgotten", |h| !h.state().ui.plugin_instances.iter().any(|open| open.plugin == PROBE && open.panel == "notes"));
+    let field = element(&harness, &dotted);
+    let input = harness
+        .get_all(egui_kittest::kittest::by().role(egui::accesskit::Role::TextInput))
+        .find(|node| field.contains(node.rect().center()))
+        .expect("the dotted panel shows its text field");
+    input.click();
+    harness.step();
+    harness
+        .get_all(egui_kittest::kittest::by().role(egui::accesskit::Role::TextInput))
+        .find(|node| field.contains(node.rect().center()))
+        .unwrap()
+        .type_text("tea");
+    until(&mut harness, "the dotted panel taking its own text after the instance closed", |h| shows(h, "note -: tea"));
 }

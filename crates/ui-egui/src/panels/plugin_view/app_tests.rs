@@ -33,8 +33,8 @@ fn with_app_panel() -> Harness<'static, EffectcraftApp> {
     until(&mut harness, "the app panel registering", |h| super::running_panel(h.state(), kind).is_some());
     let ctx = harness.ctx.clone();
     crate::menus::invoke(harness.state_mut(), &ctx, "window.pluginPanel", json!({"plugin": PROBE, "panel": "app"})).unwrap();
-    let scope = format!("plugin.{PROBE}.app");
-    until(&mut harness, "the app panel drawn", |h| shows(h, "Opacity") && !h.state().plugin_ui.panels.busy(&scope));
+    let owner = effectcraft_plugin::Owner::panel(PROBE, "app", None);
+    until(&mut harness, "the app panel drawn", |h| shows(h, "Opacity") && !h.state().plugin_ui.panels.busy(&owner));
     harness
 }
 

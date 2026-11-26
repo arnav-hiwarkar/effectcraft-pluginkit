@@ -7,7 +7,6 @@ use crate::dock::{PanelKind, WorkspaceExt};
 use crate::panels::plugin_tools::tests::{harness, probe_session};
 
 const PROBE: &str = "test.viewer-tool-ui";
-const FILES: &str = "plugin.test.viewer-tool-ui.files";
 
 fn rows(harness: &Harness<'_, EffectcraftApp>) -> Vec<u32> {
     harness
@@ -42,7 +41,7 @@ fn a_hundred_thousand_row_plugin_list_scrolls_in_a_few_calls_and_enter_on_a_row_
     let ctx = harness.ctx.clone();
     crate::menus::invoke(harness.state_mut(), &ctx, "window.pluginPanel", json!({"plugin": PROBE, "panel": "files"})).unwrap();
     until(&mut harness, "the list showing", |h| shows(h, "file 3"));
-    let before = harness.state().plugin_ui.panels.calls(FILES);
+    let before = harness.state().plugin_ui.panels.calls(&effectcraft_plugin::Owner::panel(PROBE, "files", None));
     harness.get_by_label("file 3").hover();
     harness.step();
     let wheel = egui::Event::MouseWheel {
@@ -53,13 +52,15 @@ fn a_hundred_thousand_row_plugin_list_scrolls_in_a_few_calls_and_enter_on_a_row_
         modifiers: egui::Modifiers::NONE,
     };
     harness.event(wheel);
-    until(&mut harness, "rows far down the list", |h| rows(h).iter().any(|row| *row > 1_000) && !h.state().plugin_ui.panels.busy(FILES));
+    until(&mut harness, "rows far down the list", |h| {
+        rows(h).iter().any(|row| *row > 1_000) && !h.state().plugin_ui.panels.busy(&effectcraft_plugin::Owner::panel(PROBE, "files", None))
+    });
     let mut last = Vec::new();
     until(&mut harness, "the scroll coming to rest", |h| {
         let now = rows(h);
         std::mem::replace(&mut last, now.clone()) == now
     });
-    let calls = harness.state().plugin_ui.panels.calls(FILES) - before;
+    let calls = harness.state().plugin_ui.panels.calls(&effectcraft_plugin::Owner::panel(PROBE, "files", None)) - before;
     assert!((1..=4).contains(&calls), "scrolling 40 000 points took {calls} plugin calls");
     let row = rows(&harness).into_iter().filter(|row| *row > 1_000).nth(2).expect("rows far down the list are on screen");
     harness.get_by_label(&format!("file {row}")).click();
