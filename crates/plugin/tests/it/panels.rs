@@ -261,6 +261,16 @@ fn a_click_queued_behind_a_busy_panel_call_is_dropped_when_another_project_opens
 }
 
 #[test]
+fn a_panel_that_asks_to_close_a_status_item_is_told_it_cannot() {
+    let mut app = app("test.panels-close-status", &[]);
+    let (mut panels, mut frame) = (Panels::default(), 0);
+    relay(&mut app, &mut panels, &mut frame, json!({"close_panel": "status"}), false);
+    let said = relay_said(&mut app, &mut panels, &mut frame);
+    assert!(said.contains("cannot be opened or closed"), "{said}");
+    assert!(!app.session.events.iter().any(|event| matches!(event, effectcraft_engine::Event::Frontend { command, .. } if command == "window.pluginPanel")));
+}
+
+#[test]
 fn a_reload_during_a_panel_call_drops_the_old_calls_edit_and_shows_the_new_load() {
     let mut app = app("test.panels-reloaded", &["document.read", "document.write"]);
     let (mut panels, mut frame) = (Panels::default(), 0);

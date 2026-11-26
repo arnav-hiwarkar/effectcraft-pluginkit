@@ -460,18 +460,11 @@ pub(crate) fn option_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui, x: f32, cy
 pub(crate) fn open(app: &mut EffectcraftApp, ctx: &egui::Context, plugin: &str, panel: &str, instance: Option<&str>, close: bool) -> Result<Value, String> {
     use crate::dock::WorkspaceExt;
     use craft_ui::docking::Action;
-    let spec = effectcraft_plugin::panel_spec(plugin, panel).ok_or_else(|| format!("no running plug-in `{plugin}` has a panel `{panel}`"))?;
-    if matches!(spec.place, PanelPlace::Status | PanelPlace::Bar) {
-        return Err(format!(
-            "panel `{panel}` is a status item or an option bar, which the app shows by itself while the plug-in runs or its tool is active; it cannot be opened or closed"
-        ));
-    }
+    let spec = effectcraft_plugin::panel_request(plugin, panel, instance, close)?;
     let instance = match (spec.multiple, instance) {
         (true, Some(key)) => Some(key.to_string()),
-        (true, None) if close => return Err(format!("say which `{panel}` to close: host::close_panel(\"{panel}\", Some(key))")),
         (true, None) => (1..).map(|n: u32| n.to_string()).find(|key| !app.ui.plugin_instances.iter().any(|open| open.named(plugin, panel, key))),
-        (false, None) => None,
-        (false, Some(_)) => return Err(format!("panel `{panel}` has one instance; declare it with Plugin::panel_each to open one per key")),
+        (false, _) => None,
     };
     let kind = match &instance {
         Some(key) => match app.ui.plugin_instances.iter().find(|open| open.named(plugin, panel, key)) {
