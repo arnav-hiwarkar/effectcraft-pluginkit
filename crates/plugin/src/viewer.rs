@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-pub use craft_plugin_host::viewer::{Bind, Cursor, Handle, Mark, Overlay, Space, ToolEvent, ToolEventKind, ToolSpec};
+pub use craft_plugin_host::viewer::{Bind, Cursor, Handle, Mark, Overlay, Pen, Space, ToolEvent, ToolEventKind, ToolSpec};
 use craft_plugin_host::{Call, RenderCx, Value as Wire};
 use effectcraft_engine::Session;
 use effectcraft_engine::effects::dynamic::Grid;

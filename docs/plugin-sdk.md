@@ -946,6 +946,17 @@ an edit made elsewhere during the gesture stays its own step. Changing the proje
 `document.write` permission. Events reach `event` in order; moves made while `event` was busy arrive as
 the latest one.
 
+A pen tablet's pressure, tilt and end come in `event.pen`; a mouse gives `None`:
+
+```rust
+let width = match event.pen {
+    Some(pen) if pen.eraser => return Ok(()),
+    Some(pen) => 1.0 + 9.0 * f64::from(pen.pressure),
+    None => 4.0,
+};
+overlay.circle(event.comp, width);
+```
+
 ## Add a command
 
 ```rust

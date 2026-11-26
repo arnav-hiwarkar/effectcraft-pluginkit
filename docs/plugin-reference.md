@@ -828,7 +828,8 @@ overlay it draws starts in `Space::Comp` and stays on screen until the next repl
 | `comp` | The pointer in comp pixels |
 | `layer`, `layer_id` | The pointer in the first selected layer's pixels, and that layer's id, or `None` |
 | `modifiers` | `shift`, `alt`, `command` |
-| `pressure` | 1 while the button is down, else 0 |
+| `pressure` | While the button is down, the pen's pressure, or 1 for a mouse; 0 otherwise |
+| `pen` | `Some(Pen { pressure, tilt, eraser })` when a tablet pen is the pointer, `None` for a mouse. `pressure` is 0 to 1 (0 while the pen hovers), `tilt` is `[x, y]` in radians (x positive to the right, y positive towards the bottom of the screen, at most ±π/3 from upright), `eraser` says the eraser end is the one near the tablet |
 | `scroll` | The wheel delta of a `Scroll` |
 | `key` | The key of a `Key`, such as `Escape`, `Enter`, `A` |
 | `zoom` | Screen points per comp pixel |
@@ -838,6 +839,8 @@ overlay it draws starts in `Space::Comp` and stays on screen until the next repl
 and the command `tool.plugin/tool` (through `engine.execute` or `ui.menu.invoke`) pick it, like the built-in tools,
 and any built-in tool picked afterwards puts it away. An unknown name is an error that lists the loaded plugin tools.
 `ui.click`, `ui.drag` and `ui.scroll` over the viewer then reach the tool as `Down`, `Move`, `Up` and `Scroll` events.
+
+The app pairs each pen reading with the pointer event it came with: `Down` gets the first touch, each `Move` its own reading, and a hovering pen sends `Move` with `pressure` 0. When several readings arrive between two frames they spread over that frame's moves, and a reading of pressure 0 as the pen lifts is dropped when the same frame also has a touch, so a tap shorter than a frame keeps its pressure. Pen data comes from AppKit on macOS; on other systems a pen arrives as a mouse.
 
 `Move` comes while the pointer is over the viewer or the button is held. `Scroll` and `Key` come while the
 pointer is over the viewer and no text field has the keyboard. The project changes a tool makes with

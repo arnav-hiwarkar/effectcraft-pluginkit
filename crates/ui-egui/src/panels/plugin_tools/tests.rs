@@ -282,6 +282,46 @@ fn a_plugin_tool_receives_its_gesture_in_comp_coordinates_at_half_and_double_zoo
 }
 
 #[test]
+fn a_plugin_tool_gets_the_pen_pressure_tilt_and_end_of_each_event_and_a_mouse_gesture_has_no_pen() {
+    let _one_at_a_time = STAMP_TOOL.lock().unwrap_or_else(|e| e.into_inner());
+    let mut harness = harness(probe_session());
+    settle(&mut harness, |h| h.state().auto.find("tools.plugin.test.viewer-tool-ui.stamp").is_some());
+    let stamp = element(&harness, "tools.plugin.test.viewer-tool-ui.stamp").center();
+    press_drag_release(&mut harness, &[stamp]);
+    harness.state_mut().ui.viewer.zoom = Some(2.0);
+    harness.step();
+    harness.step();
+    let pen = crate::PenSource::default();
+    harness.state_mut().hooks.pen = Some(pen.clone());
+    let (from, to) = (comp_point(&harness, [40.0, 30.0]), comp_point(&harness, [50.0, 35.0]));
+    let reading = |pressure, tilt| Some(effectcraft_plugin::viewer::Pen { pressure, tilt, eraser: true });
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    let gesture = [
+        (reading(0.0, [0.0, 0.0]), egui::Event::PointerMoved(from)),
+        (reading(0.25, [0.5, -0.25]), button(from, true)),
+        (reading(0.75, [0.25, 0.5]), egui::Event::PointerMoved(to)),
+        (reading(0.0, [0.25, 0.5]), button(to, false)),
+    ];
+    for (reading, event) in gesture {
+        pen.set(reading);
+        harness.input_mut().events.push(event);
+        settle(&mut harness, |h| h.state().plugin_ui.panels.idle());
+    }
+    assert_eq!(
+        tool_texts(&mut harness),
+        [
+            "Down 40.0 30.0 pen 0.25 0.50 -0.25 eraser at 0.25",
+            "Move 50.0 35.0 pen 0.75 0.25 0.50 eraser at 0.75",
+            "Up 50.0 35.0 pen 0.00 0.25 0.50 eraser at 0.00"
+        ]
+    );
+    pen.set(None);
+    press_drag_release(&mut harness, &[from]);
+    settle(&mut harness, |h| h.state().plugin_ui.panels.idle());
+    assert_eq!(tool_texts(&mut harness), ["Down 40.0 30.0", "Up 40.0 30.0"], "a mouse gesture has no pen");
+}
+
+#[test]
 fn a_plugin_menu_command_is_queued_and_the_menu_returns_before_it_runs() {
     let mut harness = harness(probe_session());
     harness.step();

@@ -79,6 +79,8 @@ fn put_away(app: &mut EffectcraftApp, ctx: &egui::Context) {
 }
 
 pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx, map: &ViewerMap, painter: &egui::Painter) -> bool {
+    let (events, held) = ui.ctx().input(|i| (i.events.clone(), i.modifiers));
+    let pens = app.hooks.pen.as_ref().map_or_else(Vec::new, |source| source.pens(&events));
     let Some(pick) = active(app).cloned() else {
         put_away(app, ui.ctx());
         return false;
@@ -93,9 +95,8 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
     let l2c = layer.map(|layer| crate::panels::viewer::l2c(ectx, layer).0);
     let hover = ctx.input(|i| i.pointer.hover_pos()).filter(|pos| map.area.contains(*pos));
     let mut pressed = ctx.data(|d| d.get_temp::<bool>(pressed_id())).unwrap_or(false);
-    let (events, held) = ctx.input(|i| (i.events.clone(), i.modifiers));
     let typing = ctx.egui_wants_keyboard_input();
-    for event in events {
+    for (nr, event) in events.into_iter().enumerate() {
         let found = |kind: ToolEventKind, pos: Pos2, modifiers: egui::Modifiers| {
             let comp = map.to_comp(pos);
             let modifiers = effectcraft_plugin::ui::Modifiers { shift: modifiers.shift, alt: modifiers.alt, command: modifiers.command };
@@ -137,7 +138,8 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
             _ => None,
         };
         let Some(mut event) = event else { continue };
-        event.pressure = f32::from(u8::from(pressed));
+        event.pen = pens.get(nr).copied().flatten();
+        event.pressure = if pressed { event.pen.map_or(1.0, |pen| pen.pressure) } else { 0.0 };
         if let Err(error) = app.plugin_ui.panels.tool(&app.session, &pick.plugin, &pick.tool, event) {
             app.ui.status = error;
         }
