@@ -17,6 +17,21 @@ measured speed before and after is [speed.md](speed.md).
 | Authoring | `plugin new --kind`, `params!` typed parameters, the test kit with stored frames, `plugin render`, `bench`, `check` and `dev`, a quickstart that was run from a fresh clone and a cookbook whose every snippet is compiled. |
 | App | Auto-saves keep the open comps and their origin; a recovered project saves over its original. Five built-in effects quantise as they write. A comp in which nothing animates serves frames from memory. Layer cache keys hash values. Four built-in effects that change with time are now declared so. |
 
+## Plugin UI programme (2026-11-26/27)
+
+Plan, contract and decisions: `pluginkit/PROGRAM-UI.md`; owner summary: `pluginkit/reports/ui-lead.md`.
+- Built: panel places, sizes, icons and help; floating windows; status items; tool option bars; numbered
+  panel instances; virtualised lists, tables and trees with keyboard work, rename, reorder and sort; icon
+  buttons, toggles, radios, text areas, rich text, gaps, menus and context menus, split panes, curve, gradient
+  and colour editors drawn by the app, app-rendered frame previews; commands in any menu, context menus and the
+  toolbar, with enabled and checked state; panel keys and panel menus; one undo step per panel drag; right-click
+  and double-click on canvases and tools; pen pressure, tilt, eraser and rotation on macOS; worker lanes so a slow
+  panel call does not hold back overlays and tools; a UI level so newer events reach only plugins that know them.
+- The framework painter (`craft-plugin-ui-framework`) lives on craft-libs `pluginkit-next`; the same 36
+  conformance cases pass on both painters. The EffectCraft port checklist is in `reports/ui-lead.md`.
+- Left: pen data on Windows, Linux and the web; a sandboxed command still waits for a running panel call;
+  `known-issues.md` lists the rest.
+
 ## Deferred by the owner, for a later run
 
 | Unit | Why it waits | What exists |
