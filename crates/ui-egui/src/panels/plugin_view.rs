@@ -756,11 +756,16 @@ impl craft_plugin_ui::Host for AppHost<'_> {
     fn gradient(&mut self, ui: &mut egui::Ui, key: &str, value: &craft_plugin::Gradient) -> Option<(egui::Response, Option<craft_plugin::Gradient>)> {
         use super::gradient_editor::{Draft, Track, stop_track};
         let selected_id = egui::Id::unique(("plugin-gradient-stop", key));
-        let mut draft = Draft::new(&app_gradient(value), None, Vec::new());
-        draft.selected = ui.data(|data| data.get_temp::<(Track, u64)>(selected_id));
+        let kept_id = egui::Id::unique(("plugin-gradient-draft", key));
+        let kept = ui.data(|data| data.get_temp::<Draft>(kept_id)).filter(|draft| plugin_gradient(&draft.gradient()) == *value);
+        let mut draft = kept.unwrap_or_else(|| {
+            let mut draft = Draft::new(&app_gradient(value), None, Vec::new());
+            draft.selected = ui.data(|data| data.get_temp::<(Track, u64)>(selected_id));
+            draft
+        });
         let before = draft.gradient();
         let width = ui.available_width().clamp(160.0, 320.0);
-        let response = stop_track(ui, &mut draft, width, &self.tokens, self.auto, key);
+        let response = stop_track(ui, &mut draft, width, &self.tokens, self.auto, key, craft_plugin::MAX_GRADIENT_STOPS);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Group, true, ""));
         let selected = draft.selected.and_then(|(track, id)| draft.index_of(track, id).map(|index| (track, id, index)));
         if let Some((track, id, index)) = selected {
@@ -787,6 +792,7 @@ impl craft_plugin_ui::Host for AppHost<'_> {
             None => data.remove::<(Track, u64)>(selected_id),
         });
         let after = draft.gradient();
+        ui.data_mut(|data| data.insert_temp(kept_id, draft));
         Some((response, (after != before).then(|| plugin_gradient(&after))))
     }
 
