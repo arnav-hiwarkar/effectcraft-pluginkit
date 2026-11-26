@@ -745,6 +745,70 @@ let picked = ui.list("folders", self.shown.len(), &mut self.selected, |row| {
 `set_open` updates `shown`, the folders whose parents are open. Right and Left open and close rows from the
 keyboard; the probe's `tree` panel is a full example with a table of 10 000 rows beside it.
 
+### Let the user rename, reorder and sort
+
+```rust
+for event in ui.list_events("shots") {
+    match event {
+        ListEvent::Sort { column, descending } => self.sort(*column as usize, *descending),
+        ListEvent::Rename { row, text } => self.shots[*row as usize].name = text.clone(),
+        ListEvent::Move { rows, to } => self.move_rows(rows, *to as usize),
+        _ => {}
+    }
+}
+let options = ListOptions { columns: &["Shot", "Length"], rename: true, reorder: true, sortable: true, sorted: self.sorted, ..Default::default() };
+ui.list_with("shots", &options, self.shots.len(), &mut self.selected, |row| self.shots[row].item());
+```
+
+F2 renames the focused row, dragging or Alt+Up and Alt+Down move the selected rows, and a heading click
+sorts. Reading the events before `list_with` builds the rows in their new order in the same call.
+
+### A canvas you can zoom and pan
+
+```rust
+ui.canvas("graph", [400.0, 300.0], |c| {
+    for p in &c.pointers {
+        let [x, y, zoom] = &mut self.view;
+        match p.phase {
+            PointerPhase::Drag => if let Some(last) = self.grab.replace(p.pos) { (*x, *y) = (*x + p.pos[0] - last[0], *y + p.pos[1] - last[1]) },
+            PointerPhase::Hover if p.scroll[1] != 0.0 => {
+                let next = (*zoom * (p.scroll[1] / 200.0).exp()).clamp(0.05, 50.0);
+                (*x, *y) = (p.pos[0] - (p.pos[0] - *x) * next / *zoom, p.pos[1] - (p.pos[1] - *y) * next / *zoom);
+                *zoom = next;
+            }
+            _ => self.grab = (p.phase == PointerPhase::Down).then_some(p.pos),
+        }
+    }
+    let to_screen = |[px, py]: [f32; 2]| [self.view[0] + px * self.view[2], self.view[1] + py * self.view[2]];
+    c.line(&self.points.iter().copied().map(to_screen).collect::<Vec<_>>(), Paint::Accent, 1.5);
+});
+```
+
+`view` is `[pan x, pan y, zoom]` (start it at `[0.0, 0.0, 1.0]`) and `grab` the last drag position. The
+wheel zooms about the pointer, so the point under it stays put; a drag pans. A canvas gets every pointer
+event of the call in `c.pointers`, so a fast drag loses no motion.
+
+### Keep a panel's view across restarts
+
+```rust
+fn ui(&mut self, ui: &mut Ui) {
+    if !self.loaded {
+        let saved = host::read_file(Root::Data, "view.json").ok().and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        (self.view, self.loaded) = (saved.unwrap_or([0.0, 0.0, 1.0]), true);
+    }
+    let before = self.view;
+    self.draw_canvas(ui);
+    if self.view != before && let Ok(bytes) = serde_json::to_vec(&self.view) {
+        let _ = host::write_file(Root::Data, "view.json", &bytes);
+    }
+}
+```
+
+`Root::Data` is the plugin's private folder (`Plugins/.data/<id>/`, outside the bundle), kept across restarts and always writable. Read it on the
+first call, not in `Default`: the app builds panels when it lists the plugin's contributions. Write only when
+the view changed, so a panel called for an unrelated event touches no file. A panel per document
+(`panel_each`) names its file after `ui.instance()`.
+
 ### A small settings panel
 
 ```rust
