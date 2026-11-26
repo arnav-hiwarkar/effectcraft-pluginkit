@@ -110,6 +110,7 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
                 key: String::new(),
                 zoom: f64::from(map.zoom),
                 time: ectx.time.seconds(),
+                pen: None,
             })
         };
         let primary = egui::PointerButton::Primary;
@@ -153,4 +154,4 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

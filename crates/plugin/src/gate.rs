@@ -307,6 +307,16 @@ impl Host for SessionHost<'_> {
         self.session.events.push(Event::Toast { message, error: false });
     }
 
+    fn panel(&mut self, panel: &str, instance: Option<&str>, open: bool) -> Result<(), String> {
+        let plugin = &self.plugin.bundle.manifest.id;
+        if !self.plugin.plugin.contributions().panels.iter().any(|spec| spec.id == panel) {
+            return Err(format!("this plugin has no panel `{panel}`; declare it with Plugin::panel"));
+        }
+        let params = serde_json::json!({"plugin": plugin, "panel": panel, "instance": instance, "close": !open});
+        self.session.events.push(Event::Frontend { command: "window.pluginPanel".into(), params });
+        Ok(())
+    }
+
     fn command(&mut self, id: &str, params: Value) -> Result<Value, String> {
         self.property_writes_allowed(id, &params)?;
         self.files_allowed(id, &params)?;
