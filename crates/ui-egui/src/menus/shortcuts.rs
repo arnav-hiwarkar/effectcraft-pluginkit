@@ -354,7 +354,7 @@ fn plugin_panel_keys(app: &mut EffectcraftApp, ctx: &egui::Context) {
     if ctx.text_edit_focused() || crate::widgets::any_menu_open(ctx) || app.dialog.is_some() {
         return;
     }
-    let Some((scope, chords)) = crate::panels::plugin_view::key_target(app) else { return };
+    let Some((owner, chords)) = crate::panels::plugin_view::key_target(app) else { return };
     let pressed: Vec<(egui::Key, egui::Modifiers)> = ctx.input(|i| {
         i.events
             .iter()
@@ -366,11 +366,18 @@ fn plugin_panel_keys(app: &mut EffectcraftApp, ctx: &egui::Context) {
     });
     let binds = bindings(&app.session);
     for (key, mods) in pressed {
-        if binds.iter().any(|(m, k, id, _)| *k == key && mods_match(*m, mods) && KEPT_BY_THE_APP.contains(&id.as_str())) {
+        if let Some((_, _, id, params)) = binds.iter().find(|(m, k, id, _)| *k == key && mods_match(*m, mods) && KEPT_BY_THE_APP.contains(&id.as_str())) {
+            if ctx.egui_wants_keyboard_input() {
+                ctx.input_mut(|i| i.consume_key(mods, key));
+                let params = if params.is_null() { json!({}) } else { params.clone() };
+                if let Err(error) = invoke(app, ctx, id, params) {
+                    app.ui.status = error;
+                }
+            }
             continue;
         }
         if let Some(chord) = chords.iter().find(|chord| parse_shortcut(chord).is_some_and(|(m, k)| k == key && mods_match(m, mods))) {
-            app.plugin_ui.panels.press_key(&scope, chord);
+            app.plugin_ui.panels.press_key(&owner, chord);
             ctx.input_mut(|i| i.consume_key(mods, key));
         }
     }

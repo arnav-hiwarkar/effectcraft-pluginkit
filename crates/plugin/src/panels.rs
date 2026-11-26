@@ -371,7 +371,7 @@ impl Host for Remote {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Key {
-    Slot(String),
+    Slot(Owner),
     Effect(String, u64),
     Tool(String, String),
     Command(String),
@@ -473,29 +473,69 @@ pub enum Surface<'a> {
     Control { effect: &'a str, param: &'a str, instance: u64, value: &'a str, edit: Option<&'a Target> },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Owner {
+    Panel { plugin: String, panel: String, instance: Option<String> },
+    Control(u64),
+}
+
+impl Owner {
+    pub fn panel(plugin: &str, panel: &str, instance: Option<&str>) -> Owner {
+        Owner::Panel { plugin: plugin.into(), panel: panel.into(), instance: instance.map(str::to_string) }
+    }
+}
+
+impl Surface<'_> {
+    pub fn owner(&self) -> Owner {
+        match *self {
+            Surface::Panel { plugin, panel, instance } => Owner::panel(plugin, panel, instance),
+            Surface::Control { instance, .. } => Owner::Control(instance),
+        }
+    }
+}
+
 struct Slot {
     retained: Retained,
     loaded: Arc<Loaded>,
+    project: Arc<AtomicBool>,
     open: Arc<()>,
     shown: bool,
     hidden: bool,
     value: Option<String>,
     held: bool,
-    gesture: Option<Gesture>,
+    gestures: Vec<(u64, Gesture)>,
 }
 
 impl Slot {
-    fn new(loaded: &Arc<Loaded>) -> Slot {
+    fn new(loaded: &Arc<Loaded>, session: &Session) -> Slot {
         let retained = Retained::with_level(loaded.plugin.contributions().event_level());
-        Slot { retained, loaded: loaded.clone(), open: Arc::default(), shown: false, hidden: false, value: None, held: false, gesture: None }
+        let project = session.project_closed.clone();
+        Slot { retained, loaded: loaded.clone(), project, open: Arc::default(), shown: false, hidden: false, value: None, held: false, gestures: Vec::new() }
     }
 
-    fn gesture(&mut self) -> Gesture {
-        let fresh = || Gesture::new(&self.loaded.bundle.manifest.name);
-        if self.held {
-            return self.gesture.get_or_insert_with(fresh).clone();
+    fn redraw_for(&mut self, session: &Session) {
+        self.retained.reset();
+        (self.project, self.open, self.value, self.held) = (session.project_closed.clone(), Arc::default(), None, false);
+        self.gestures.clear();
+    }
+
+    fn hold(&mut self, held: bool) {
+        if held && !self.held {
+            self.retained.split();
+            self.gestures.push((self.retained.gesture(), Gesture::new(&self.loaded.bundle.manifest.name)));
         }
-        self.gesture.clone().unwrap_or_else(fresh)
+        self.held = held;
+    }
+
+    fn started_gesture(&self) -> Gesture {
+        let started = self.retained.started_gesture();
+        let held = self.gestures.iter().find(|(gesture, _)| *gesture == started);
+        held.map_or_else(|| Gesture::new(&self.loaded.bundle.manifest.name), |(_, gesture)| gesture.clone())
+    }
+
+    fn forget_ended_gestures(&mut self) {
+        let (current, held, retained) = (self.retained.gesture(), self.held, &self.retained);
+        self.gestures.retain(|(gesture, _)| (held && *gesture == current) || retained.pending_in(*gesture));
     }
 }
 
@@ -532,7 +572,7 @@ impl Default for Inbox {
 
 #[derive(Default)]
 pub struct Panels {
-    slots: HashMap<String, Slot>,
+    slots: HashMap<Owner, Slot>,
     pub(crate) overlays: HashMap<(String, u64), Overlaid>,
     pub(crate) tool: Option<Tooling>,
     pub(crate) lanes: HashMap<Key, VecDeque<Request>>,
@@ -604,33 +644,33 @@ impl Panels {
         self.scheduled.map(|due| due.saturating_sub(now))
     }
 
-    pub fn submit(&mut self, key: &str, events: Vec<UiEvent>, keys: &str) {
+    pub fn submit(&mut self, key: &Owner, events: Vec<UiEvent>, keys: &str) {
         if let Some(slot) = self.slots.get_mut(key) {
             slot.retained.push(events, keys);
         }
     }
 
-    pub fn hold(&mut self, key: &str, held: bool) {
+    pub fn hold(&mut self, key: &Owner, held: bool) {
         if let Some(slot) = self.slots.get_mut(key) {
-            slot.held = held;
+            slot.hold(held);
         }
     }
 
-    pub fn press_key(&mut self, key: &str, chord: &str) {
+    pub fn press_key(&mut self, key: &Owner, chord: &str) {
         if let Some(slot) = self.slots.get_mut(key) {
             slot.retained.press(chord);
         }
     }
 
-    pub fn menu(&self, key: &str) -> &[craft_plugin_host::ui::MenuItem] {
+    pub fn menu(&self, key: &Owner) -> &[craft_plugin_host::ui::MenuItem] {
         self.slots.get(key).map_or(&[], |slot| slot.retained.menu())
     }
 
-    pub fn busy(&self, key: &str) -> bool {
+    pub fn busy(&self, key: &Owner) -> bool {
         self.slots.get(key).is_some_and(|slot| slot.retained.in_flight())
     }
 
-    pub fn calls(&self, key: &str) -> u64 {
+    pub fn calls(&self, key: &Owner) -> u64 {
         self.slots.get(key).map_or(0, |slot| slot.retained.calls())
     }
 
@@ -657,11 +697,15 @@ impl Panels {
         Ok(())
     }
 
-    pub fn show(&mut self, session: &mut Session, key: &str, surface: Surface, size: [f32; 2]) -> Result<Shown<'_>, String> {
+    pub fn show(&mut self, session: &mut Session, surface: Surface, size: [f32; 2]) -> Result<Shown<'_>, String> {
         let (loaded, call) = find(surface)?;
-        let slot = self.slots.entry(key.to_string()).or_insert_with(|| Slot::new(&loaded));
+        let owner = surface.owner();
+        let key = &owner;
+        let slot = self.slots.entry(owner.clone()).or_insert_with(|| Slot::new(&loaded, session));
         if !Arc::ptr_eq(&slot.loaded, &loaded) {
-            *slot = Slot::new(&loaded);
+            *slot = Slot::new(&loaded, session);
+        } else if !Arc::ptr_eq(&slot.project, &session.project_closed) {
+            slot.redraw_for(session);
         }
         slot.shown = true;
         let mut edit = None;
@@ -672,18 +716,18 @@ impl Panels {
                 slot.retained.invalidate();
             }
         }
-        let gesture = matches!(call, Call::Panel { .. }).then(|| slot.gesture());
+        let panel = matches!(call, Call::Panel { .. });
         let bound = Bound::of(loaded, session, Arc::downgrade(&slot.open));
-        while let Some(input) = self.slots.get_mut(key).and_then(|slot| {
+        while let Some((input, gesture)) = self.slots.get_mut(key).and_then(|slot| {
             let input = slot.retained.start(size, self.now)?;
             slot.hidden = false;
-            Some(input)
+            Some((input, panel.then(|| slot.started_gesture())))
         }) {
             let mut call = call.clone();
             if let Call::Panel { input: given, .. } | Call::Controls { input: given, .. } = &mut call {
                 *given = UiInput { instance: given.instance.take(), ..input };
             }
-            self.send(Request { key: Key::Slot(key.to_string()), bound: bound.clone(), call, edit: edit.clone(), gesture: gesture.clone() });
+            self.send(Request { key: Key::Slot(owner.clone()), bound: bound.clone(), call, edit: edit.clone(), gesture });
             self.wait(session, |panels| !panels.busy(key));
             if self.busy(key) || edit.is_some() || self.spent() {
                 break;
@@ -691,22 +735,20 @@ impl Panels {
         }
         self.schedule(key);
         let slot = self.slots.get_mut(key).ok_or("the panel closed")?;
-        if !slot.held && !slot.retained.pending() {
-            slot.gesture = None;
-        }
+        slot.forget_ended_gestures();
         Ok(Shown { plugin: &slot.loaded.bundle.manifest.id, widgets: slot.retained.widgets(), error: slot.retained.error() })
     }
 
-    pub fn close(&mut self, session: &Session, key: &str, surface: Surface) {
-        self.slots.remove(key);
+    pub fn close(&mut self, session: &Session, surface: Surface) {
+        self.slots.remove(&surface.owner());
         if let Ok((loaded, Call::Panel { panel, input })) = find(surface) {
             let call = Call::Panel { panel, input: UiInput { closed: true, ..input } };
             let bound = Bound::of(loaded, session, Arc::downgrade(&self.open));
-            self.post(Request { key: Key::Slot(key.to_string()), bound, call, edit: None, gesture: None });
+            self.send(Request { key: Key::Slot(surface.owner()), bound, call, edit: None, gesture: None });
         }
     }
 
-    fn schedule(&mut self, key: &str) {
+    fn schedule(&mut self, key: &Owner) {
         let due = self.slots.get(key).and_then(|slot| slot.retained.next_due());
         if let Some(due) = due
             && self.scheduled.is_none_or(|scheduled| due < scheduled)

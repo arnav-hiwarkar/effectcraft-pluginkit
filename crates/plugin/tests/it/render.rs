@@ -123,7 +123,7 @@ fn a_plugin_effect_changes_its_cache_key_when_a_file_in_its_data_folder_changes(
 fn controls_of(app: &mut App, effect: &str, instance: u64, value: &str) -> Vec<Widget> {
     let mut panels = effectcraft_plugin::Panels::default();
     let surface = effectcraft_plugin::Surface::Control { effect, param: "level", instance, value, edit: None };
-    crate::panels::settled(app, &mut panels, "control", surface, &mut 0)
+    crate::panels::settled(app, &mut panels, surface, &mut 0)
 }
 
 #[test]
@@ -139,11 +139,11 @@ fn a_custom_control_draws_widgets_for_the_current_value_and_sets_the_edited_valu
     let surface =
         effectcraft_plugin::Surface::Control { effect: "test.render-controls.scale", param: "level", instance: target.prop, value: "1", edit: Some(&target) };
     let mut frame = 0;
-    let widgets = crate::panels::settled(&mut app, &mut panels, "control", surface, &mut frame);
+    let widgets = crate::panels::settled(&mut app, &mut panels, surface, &mut frame);
     assert!(matches!(&widgets[0], Widget::Label { text, style: TextStyle::Body, .. } if text == "Level 1"), "{:?}", widgets[0]);
     let Widget::Button { id, .. } = widgets[2] else { panic!("a button, not {:?}", widgets[2]) };
-    panels.submit("control", vec![UiEvent { id, kind: UiEventKind::Click }], "");
-    crate::panels::settled(&mut app, &mut panels, "control", surface, &mut frame);
+    panels.submit(&surface.owner(), vec![UiEvent { id, kind: UiEventKind::Click }], "");
+    crate::panels::settled(&mut app, &mut panels, surface, &mut frame);
     let level = app.session.execute("prop.get", json!({"layer": "Scaled", "path": "effects/#1/level"})).unwrap()["value"].clone();
     assert_eq!(level, json!("0.5"));
 }

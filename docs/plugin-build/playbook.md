@@ -30,8 +30,11 @@ a slow panel call hold back the plugin's overlay and tool, so the queue became t
 command), each one worker thread; the identity checks and the per-surface in-flight rule did not change.
 Moving a call kind to another thread is only half the fix in a sandbox: it must also leave the shared
 wasm instance (overlays and drags went to the render pool, tools to an instance of their own). That move
-also applies to sandboxed plugins built before it: their tools and overlays stop sharing statics with their
-panels. No reference plugin relied on it, so the lanes stayed and the reference says so (ui-fix).
+would also take statics away from sandboxed plugins built before it, so the instance choice follows the
+plugin's `event_level()`: below 2 a plugin keeps one instance for panels, tools, overlays and drags, and a
+stored old-SDK fixture (`shared-before-levels.wasm`) checks that its tool and overlay read what its panel set
+(ui-fix-2). Key retained surfaces on a structured identity (plugin, panel, instance), not on a dotted
+string: a `panel_each` instance `1` of `notes` and a panel named `notes.1` shared one slot (ui-fix-2).
 
 **Test a new delivery rule with a plugin built before it.** `Contributions.ui_level` defaults to 0 for
 every plugin built before wave 2 of the UI programme, and the first filter compared events against that 0,

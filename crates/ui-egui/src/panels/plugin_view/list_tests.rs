@@ -7,12 +7,11 @@ use crate::dock::PanelKind;
 use crate::panels::plugin_tools::tests::{harness, probe_session};
 
 const PROBE: &str = "test.viewer-tool-ui";
-const TREE: &str = "plugin.test.viewer-tool-ui.tree";
 
 fn until(harness: &mut Harness<'_, EffectcraftApp>, what: &str, mut done: impl FnMut(&mut Harness<'_, EffectcraftApp>) -> bool) {
     for _ in 0..2_000 {
         harness.step();
-        if done(harness) && !harness.state().plugin_ui.panels.busy(TREE) {
+        if done(harness) && !harness.state().plugin_ui.panels.busy(&effectcraft_plugin::Owner::panel(PROBE, "tree", None)) {
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));

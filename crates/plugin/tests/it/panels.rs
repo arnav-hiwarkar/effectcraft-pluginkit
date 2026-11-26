@@ -12,22 +12,20 @@ use serde_json::{Value, json};
 
 use crate::{App, app};
 
-const KEY: &str = "plugin.test.panels-watch.watch";
-const RELAY: &str = "plugin.test.relay";
 const SIZE: [f32; 2] = [300.0, 200.0];
 
 fn ms(n: u64) -> Duration {
     Duration::from_millis(n)
 }
 
-pub(crate) fn settled(app: &mut App, panels: &mut Panels, key: &str, surface: Surface, frame: &mut u64) -> Vec<Widget> {
+pub(crate) fn settled(app: &mut App, panels: &mut Panels, surface: Surface, frame: &mut u64) -> Vec<Widget> {
     for _ in 0..5000 {
         *frame += 1;
         panels.frame(&mut app.session, ms(16 * *frame));
-        let shown = panels.show(&mut app.session, key, surface, SIZE).expect("the probe surface shows");
+        let shown = panels.show(&mut app.session, surface, SIZE).expect("the probe surface shows");
         assert_eq!(shown.error, None);
         let drawn = shown.widgets.to_vec();
-        if !panels.busy(key) {
+        if !panels.busy(&surface.owner()) {
             return drawn;
         }
         std::thread::sleep(ms(2));
@@ -37,7 +35,15 @@ pub(crate) fn settled(app: &mut App, panels: &mut Panels, key: &str, surface: Su
 
 fn show(app: &mut App, panels: &mut Panels, frame: &mut u64) -> Vec<Widget> {
     let id = app.id.clone();
-    settled(app, panels, KEY, Surface::Panel { plugin: &id, panel: "watch", instance: None }, frame)
+    settled(app, panels, Surface::Panel { plugin: &id, panel: "watch", instance: None }, frame)
+}
+
+fn watch(app: &App) -> effectcraft_plugin::Owner {
+    effectcraft_plugin::Owner::panel(&app.id, "watch", None)
+}
+
+fn relay_owner(app: &App) -> effectcraft_plugin::Owner {
+    effectcraft_plugin::Owner::panel(&app.id, "relay", None)
 }
 
 fn lines(widgets: &[Widget]) -> Vec<String> {
@@ -75,21 +81,21 @@ pub(crate) fn release(app: &App) {
 
 pub(crate) fn relay(app: &mut App, panels: &mut Panels, frame: &mut u64, relayed: Value, held: bool) {
     let (id, bundle) = (app.id.clone(), app.bundle.path().to_path_buf());
-    relay_in(app, panels, frame, (RELAY, &id, &bundle), relayed, held);
+    relay_in(app, panels, frame, (&id, &bundle), relayed, held);
 }
 
-fn relay_in(app: &mut App, panels: &mut Panels, frame: &mut u64, (key, plugin, bundle): (&str, &str, &std::path::Path), relayed: Value, held: bool) {
+fn relay_in(app: &mut App, panels: &mut Panels, frame: &mut u64, (plugin, bundle): (&str, &std::path::Path), relayed: Value, held: bool) {
     let surface = Surface::Panel { plugin, panel: "relay", instance: None };
-    let relay = button(&settled(app, panels, key, surface, frame), 0);
+    let relay = button(&settled(app, panels, surface, frame), 0);
     std::fs::write(bundle.join("relay.json"), relayed.to_string()).expect("write the relayed request");
     if held {
         hold_in(bundle);
     }
     let before = held_notices(app);
-    panels.submit(key, vec![click(relay)], "");
+    panels.submit(&surface.owner(), vec![click(relay)], "");
     *frame += 1;
     panels.frame(&mut app.session, ms(16 * *frame));
-    panels.show(&mut app.session, key, surface, SIZE).expect("the relay panel shows");
+    panels.show(&mut app.session, surface, SIZE).expect("the relay panel shows");
     for _ in 0..5000 {
         if !held || held_notices(app) > before {
             break;
@@ -99,7 +105,7 @@ fn relay_in(app: &mut App, panels: &mut Panels, frame: &mut u64, (key, plugin, b
         std::thread::sleep(ms(2));
     }
     assert!(!held || held_notices(app) > before, "the relay call never started waiting on the hold");
-    assert!(!held || panels.busy(key), "the relay call waits while the bundle holds");
+    assert!(!held || panels.busy(&surface.owner()), "the relay call waits while the bundle holds");
 }
 
 fn held_notices(app: &App) -> usize {
@@ -108,7 +114,7 @@ fn held_notices(app: &App) -> usize {
 
 fn relay_said(app: &mut App, panels: &mut Panels, frame: &mut u64) -> String {
     let id = app.id.clone();
-    lines(&settled(app, panels, RELAY, Surface::Panel { plugin: &id, panel: "relay", instance: None }, frame)).join("")
+    lines(&settled(app, panels, Surface::Panel { plugin: &id, panel: "relay", instance: None }, frame)).join("")
 }
 
 #[test]
@@ -122,10 +128,10 @@ fn a_plugin_built_before_ui_levels_still_gets_its_panel_clicks_and_its_tool_even
     std::fs::write(bundle.path().join("plugin.json"), manifest.to_string()).unwrap();
     app.plugins.load_for_session(bundle.path()).expect("a plugin built before UI levels loads");
     let (mut panels, mut frame) = (Panels::default(), 0);
-    let (key, surface) = ("plugin.test.before-levels.counter", Surface::Panel { plugin: "test.before-levels", panel: "counter", instance: None });
-    let count = button(&settled(&mut app, &mut panels, key, surface, &mut frame), 0);
-    panels.submit(key, vec![click(count)], "");
-    assert_eq!(lines(&settled(&mut app, &mut panels, key, surface, &mut frame)), ["1 clicks at speed 0"]);
+    let surface = Surface::Panel { plugin: "test.before-levels", panel: "counter", instance: None };
+    let count = button(&settled(&mut app, &mut panels, surface, &mut frame), 0);
+    panels.submit(&surface.owner(), vec![click(count)], "");
+    assert_eq!(lines(&settled(&mut app, &mut panels, surface, &mut frame)), ["1 clicks at speed 0"]);
     panels.tool(&app.session, "test.before-levels", "stamp", crate::viewer::event(ToolEventKind::Down, [4.0, 5.0])).unwrap();
     crate::viewer::settle(&mut app, &mut panels);
     assert_eq!(app.layer_names(), ["Stamp"]);
@@ -135,24 +141,22 @@ fn a_plugin_built_before_ui_levels_still_gets_its_panel_clicks_and_its_tool_even
 fn each_instance_of_a_panel_each_is_called_with_its_instance_and_keeps_its_own_text() {
     let mut app = app("test.panels-notes", &[]);
     let (mut panels, mut frame, id) = (Panels::default(), 0, app.id.clone());
-    let mut type_into = |app: &mut App, panels: &mut Panels, instance: &str, text: &str| {
-        let (key, surface) = (format!("plugin.notes.{instance}"), Surface::Panel { plugin: &id, panel: "notes", instance: Some(instance) });
-        let Widget::TextEdit { id: field, .. } = settled(app, panels, &key, surface, &mut frame)[0] else {
-            panic!("the notes panel starts with its text field")
-        };
-        panels.submit(&key, vec![UiEvent { id: field, kind: UiEventKind::Text(text.into()) }], "");
-        lines(&settled(app, panels, &key, surface, &mut frame))
+    let type_into = |app: &mut App, panels: &mut Panels, frame: &mut u64, instance: &str, text: &str| {
+        let surface = Surface::Panel { plugin: &id, panel: "notes", instance: Some(instance) };
+        let Widget::TextEdit { id: field, .. } = settled(app, panels, surface, frame)[0] else { panic!("the notes panel starts with its text field") };
+        panels.submit(&surface.owner(), vec![UiEvent { id: field, kind: UiEventKind::Text(text.into()) }], "");
+        lines(&settled(app, panels, surface, frame))
     };
-    assert_eq!(type_into(&mut app, &mut panels, "1", "milk"), ["note 1: milk"]);
-    assert_eq!(type_into(&mut app, &mut panels, "2", "eggs"), ["note 2: eggs"]);
-    assert_eq!(type_into(&mut app, &mut panels, "1", "milk and tea"), ["note 1: milk and tea"]);
+    assert_eq!(type_into(&mut app, &mut panels, &mut frame, "1", "milk"), ["note 1: milk"]);
+    assert_eq!(type_into(&mut app, &mut panels, &mut frame, "2", "eggs"), ["note 2: eggs"]);
+    assert_eq!(type_into(&mut app, &mut panels, &mut frame, "1", "milk and tea"), ["note 1: milk and tea"]);
     let one = Surface::Panel { plugin: &id, panel: "notes", instance: Some("1") };
-    panels.close(&app.session, "plugin.notes.1", one);
-    assert_eq!(lines(&settled(&mut app, &mut panels, "plugin.notes.1", one, &mut frame)), ["note 1: "], "a closed instance starts again empty");
-    assert_eq!(
-        lines(&settled(&mut app, &mut panels, "plugin.notes.2", Surface::Panel { plugin: &id, panel: "notes", instance: Some("2") }, &mut frame)),
-        ["note 2: eggs"]
-    );
+    panels.close(&app.session, one);
+    assert_eq!(lines(&settled(&mut app, &mut panels, one, &mut frame)), ["note 1: "], "a closed instance starts again empty");
+    assert_eq!(type_into(&mut app, &mut panels, &mut frame, "1", "bread"), ["note 1: bread"]);
+    panels.close(&app.session, one);
+    assert_eq!(lines(&settled(&mut app, &mut panels, one, &mut frame)), ["note 1: "], "an instance closed a second time starts again empty");
+    assert_eq!(lines(&settled(&mut app, &mut panels, Surface::Panel { plugin: &id, panel: "notes", instance: Some("2") }, &mut frame)), ["note 2: eggs"]);
 }
 
 #[test]
@@ -176,7 +180,7 @@ fn a_panel_gets_each_app_event_it_subscribed_to_once_with_its_contents_and_key_e
     }
     let Widget::Canvas { id, .. } = first[0] else { panic!("canvas expected, got {first:?}") };
     let shift = Modifiers { shift: true, alt: false, command: false };
-    panels.submit(KEY, vec![UiEvent { id, kind: UiEventKind::Key(Key { name: "Left".into(), modifiers: shift }) }], "");
+    panels.submit(&watch(&app), vec![UiEvent { id, kind: UiEventKind::Key(Key { name: "Left".into(), modifiers: shift }) }], "");
     let last = show(&mut app, &mut panels, &mut frame);
     assert_eq!(
         lines(&last),
@@ -188,7 +192,7 @@ fn a_panel_gets_each_app_event_it_subscribed_to_once_with_its_contents_and_key_e
             "key Left shift true".to_string(),
         ]
     );
-    assert_eq!(panels.calls(KEY), 5);
+    assert_eq!(panels.calls(&watch(&app)), 5);
 
     app.session.execute("comp.new", json!({"name": "Second", "width": 32, "height": 18, "frameRate": 24, "duration": 1})).expect("comp.new");
     let second = app.session.active_comp_id().expect("the new comp").0;
@@ -239,17 +243,45 @@ fn an_edit_a_panel_asks_for_after_its_project_closed_is_dropped() {
 }
 
 #[test]
+fn a_click_queued_behind_a_busy_panel_call_is_dropped_when_another_project_opens() {
+    let mut app = app("test.panels-queued-closed", &["document.read", "document.write"]);
+    let (mut panels, mut frame) = (Panels::default(), 0);
+    relay(&mut app, &mut panels, &mut frame, json!({"command": "layer.newNull", "params": {"name": "From Panel"}}), true);
+    let id = app.id.clone();
+    let surface = Surface::Panel { plugin: &id, panel: "relay", instance: None };
+    let relay = button(panels.show(&mut app.session, surface, SIZE).unwrap().widgets, 0);
+    panels.submit(&surface.owner(), vec![click(relay)], "");
+    app.session.execute("file.newProject", json!({})).unwrap();
+    app.session.execute("comp.new", json!({"name": "Next", "width": 64, "height": 36, "frameRate": 24, "duration": 2})).unwrap();
+    release(&app);
+    for _ in 0..20 {
+        relay_said(&mut app, &mut panels, &mut frame);
+    }
+    assert_eq!(app.layer_names(), Vec::<String>::new());
+}
+
+#[test]
+fn a_panel_that_asks_to_close_a_status_item_is_told_it_cannot() {
+    let mut app = app("test.panels-close-status", &[]);
+    let (mut panels, mut frame) = (Panels::default(), 0);
+    relay(&mut app, &mut panels, &mut frame, json!({"close_panel": "status"}), false);
+    let said = relay_said(&mut app, &mut panels, &mut frame);
+    assert!(said.contains("cannot be opened or closed"), "{said}");
+    assert!(!app.session.events.iter().any(|event| matches!(event, effectcraft_engine::Event::Frontend { command, .. } if command == "window.pluginPanel")));
+}
+
+#[test]
 fn a_reload_during_a_panel_call_drops_the_old_calls_edit_and_shows_the_new_load() {
     let mut app = app("test.panels-reloaded", &["document.read", "document.write"]);
     let (mut panels, mut frame) = (Panels::default(), 0);
     relay(&mut app, &mut panels, &mut frame, json!({"command": "layer.newNull", "params": {"name": "From Panel"}}), true);
-    assert_eq!(panels.calls(RELAY), 2);
+    assert_eq!(panels.calls(&relay_owner(&app)), 2);
     app.plugins.load_for_session(app.bundle.path()).unwrap();
     let id = app.id.clone();
     frame += 1;
     panels.frame(&mut app.session, ms(16 * frame));
-    panels.show(&mut app.session, RELAY, Surface::Panel { plugin: &id, panel: "relay", instance: None }, SIZE).unwrap();
-    assert_eq!(panels.calls(RELAY), 1, "the reloaded plugin gets a slot of its own at once");
+    panels.show(&mut app.session, Surface::Panel { plugin: &id, panel: "relay", instance: None }, SIZE).unwrap();
+    assert_eq!(panels.calls(&relay_owner(&app)), 1, "the reloaded plugin gets a slot of its own at once");
     release(&app);
     assert_eq!(relay_said(&mut app, &mut panels, &mut frame), "");
     app.run("greet").unwrap();
@@ -308,12 +340,12 @@ fn a_panel_shown_again_after_it_was_hidden_wakes_the_app_for_its_timer() {
     let id = app.id.clone();
     let surface = Surface::Panel { plugin: &id, panel: "ticker", instance: None };
     let mut frame = 0;
-    settled(&mut app, &mut panels, "ticker", surface, &mut frame);
+    settled(&mut app, &mut panels, surface, &mut frame);
     frame += 2;
     panels.frame(&mut app.session, ms(16 * (frame - 1)));
     assert_eq!(panels.frame(&mut app.session, ms(16 * frame)), None, "a hidden panel's timer is not scheduled");
     wakes.store(0, Ordering::SeqCst);
-    panels.show(&mut app.session, "ticker", surface, SIZE).unwrap();
+    panels.show(&mut app.session, surface, SIZE).unwrap();
     assert_eq!(wakes.load(Ordering::SeqCst), 1, "showing the panel again wakes the app");
     frame += 1;
     assert_eq!(panels.frame(&mut app.session, ms(16 * frame)), Some(ms(84)));
@@ -334,13 +366,13 @@ fn level(app: &mut App) -> Value {
 fn halve_held(app: &mut App, panels: &mut Panels, target: &Target, frame: &mut u64) {
     let effect = format!("{}.scale", app.id);
     let surface = Surface::Control { effect: &effect, param: "level", instance: target.prop, value: "1", edit: Some(target) };
-    let halve = button(&settled(app, panels, "control", surface, frame), 2);
+    let halve = button(&settled(app, panels, surface, frame), 2);
     hold(app);
-    panels.submit("control", vec![click(halve)], "");
+    panels.submit(&surface.owner(), vec![click(halve)], "");
     *frame += 1;
     panels.frame(&mut app.session, ms(16 * *frame));
-    panels.show(&mut app.session, "control", surface, SIZE).unwrap();
-    assert!(panels.busy("control"), "the control call waits while the bundle holds");
+    panels.show(&mut app.session, surface, SIZE).unwrap();
+    assert!(panels.busy(&surface.owner()), "the control call waits while the bundle holds");
 }
 
 #[test]
@@ -387,7 +419,7 @@ fn a_control_edit_keys_the_time_it_was_made_at_even_when_the_playhead_moved_mean
     release(&app);
     let effect = format!("{}.scale", app.id);
     let surface = Surface::Control { effect: &effect, param: "level", instance: target.prop, value: "1", edit: Some(&target) };
-    settled(&mut app, &mut panels, "control", surface, &mut frame);
+    settled(&mut app, &mut panels, surface, &mut frame);
     let keys: Vec<Value> = level(&mut app)["keys"].as_array().unwrap().iter().map(|key| key["value"].clone()).collect();
     assert_eq!(keys, vec![json!("0.5"), json!("1")]);
 }
@@ -452,14 +484,14 @@ fn two_clicks_on_a_control_answered_in_one_frame_each_start_from_the_value_the_o
     let effect = format!("{}.scale", app.id);
     let (mut panels, mut frame) = (Panels::default(), 0);
     let surface = Surface::Control { effect: &effect, param: "level", instance: target.prop, value: "1", edit: Some(&target) };
-    let halve = button(&settled(&mut app, &mut panels, "control", surface, &mut frame), 2);
-    panels.submit("control", vec![click(halve), click(halve)], "");
+    let halve = button(&settled(&mut app, &mut panels, surface, &mut frame), 2);
+    panels.submit(&surface.owner(), vec![click(halve), click(halve)], "");
     for _ in 0..200 {
         frame += 1;
         panels.frame(&mut app.session, ms(16 * frame));
         let value = level(&mut app)["value"].as_str().unwrap_or_default().to_string();
         let surface = Surface::Control { effect: &effect, param: "level", instance: target.prop, value: &value, edit: Some(&target) };
-        panels.show(&mut app.session, "control", surface, SIZE).unwrap();
+        panels.show(&mut app.session, surface, SIZE).unwrap();
         std::thread::sleep(ms(2));
     }
     assert_eq!(level(&mut app)["value"], json!("0.25"));
@@ -487,8 +519,7 @@ fn a_held_panel_call_holds_back_neither_overlay_nor_tool_and_only_a_sandboxed_co
         app.session.execute("layer.newSolid", json!({"name": "Aim", "color": "#204060", "width": 64, "height": 36})).unwrap();
         app.session.execute("effect.apply", json!({"layer": "Aim", "effect": format!("{plugin}.aim")})).unwrap();
         app.session.events.clear();
-        let key = format!("plugin.{plugin}.relay");
-        relay_in(&mut app, &mut panels, &mut frame, (&key, &plugin, &bundle), json!({"command": "comp.info", "params": {}}), true);
+        relay_in(&mut app, &mut panels, &mut frame, (&plugin, &bundle), json!({"command": "comp.info", "params": {}}), true);
         let hold = bundle.join("hold");
         let start = Instant::now();
         let releaser = std::thread::spawn(move || {
@@ -543,18 +574,18 @@ fn a_slider_dragged_over_five_panel_calls_that_each_set_a_property_is_one_undo_s
     let mut app = app("test.panels-drag", &["document.read", "document.write"]);
     app.session.execute("layer.newSolid", json!({"name": "Dragged", "color": "#ffffff", "width": 64, "height": 36})).unwrap();
     let (mut panels, mut frame, id) = (Panels::default(), 0, app.id.clone());
-    let (key, surface) = ("plugin.app", Surface::Panel { plugin: &id, panel: "app", instance: None });
-    let slider = widget_id(&settled(&mut app, &mut panels, key, surface, &mut frame), "Opacity");
+    let surface = Surface::Panel { plugin: &id, panel: "app", instance: None };
+    let slider = widget_id(&settled(&mut app, &mut panels, surface, &mut frame), "Opacity");
     let (start, steps) = (opacity(&mut app), app.session.history.undo.len());
     let mut drag = |app: &mut App, panels: &mut Panels, value: f64| {
-        panels.submit(key, vec![UiEvent { id: slider, kind: UiEventKind::Number(value) }], "");
-        settled(app, panels, key, surface, &mut frame);
+        panels.submit(&surface.owner(), vec![UiEvent { id: slider, kind: UiEventKind::Number(value) }], "");
+        settled(app, panels, surface, &mut frame);
     };
-    panels.hold(key, true);
+    panels.hold(&surface.owner(), true);
     for value in [10.0, 20.0, 30.0, 40.0] {
         drag(&mut app, &mut panels, value);
     }
-    panels.hold(key, false);
+    panels.hold(&surface.owner(), false);
     drag(&mut app, &mut panels, 50.0);
     assert_eq!((app.session.history.undo.len() - steps, opacity(&mut app)), (1, Some(50.0)));
     drag(&mut app, &mut panels, 70.0);
@@ -566,14 +597,54 @@ fn a_slider_dragged_over_five_panel_calls_that_each_set_a_property_is_one_undo_s
 }
 
 #[test]
+fn two_drags_queued_behind_a_slow_panel_call_stay_two_undo_steps() {
+    let mut app = app("test.panels-two-drags", &["document.read", "document.write"]);
+    app.session.execute("layer.newSolid", json!({"name": "Dragged", "color": "#ffffff", "width": 64, "height": 36})).unwrap();
+    let (mut panels, mut frame, id) = (Panels::default(), 0, app.id.clone());
+    let surface = Surface::Panel { plugin: &id, panel: "app", instance: None };
+    let slider = widget_id(&settled(&mut app, &mut panels, surface, &mut frame), "Opacity");
+    let owner = surface.owner();
+    let value = |value: f64| vec![UiEvent { id: slider, kind: UiEventKind::Number(value) }];
+    hold(&app);
+    let before = held_notices(&app);
+    panels.hold(&owner, true);
+    panels.submit(&owner, value(10.0), "");
+    for _ in 0..5000 {
+        frame += 1;
+        panels.frame(&mut app.session, ms(16 * frame));
+        panels.show(&mut app.session, surface, SIZE).unwrap();
+        if held_notices(&app) > before {
+            break;
+        }
+        std::thread::sleep(ms(2));
+    }
+    assert!(panels.busy(&owner), "the first drag's call waits while the bundle holds");
+    panels.submit(&owner, value(20.0), "");
+    panels.hold(&owner, false);
+    panels.hold(&owner, true);
+    panels.submit(&owner, value(60.0), "");
+    panels.submit(&owner, value(70.0), "");
+    panels.hold(&owner, false);
+    release(&app);
+    for _ in 0..3 {
+        settled(&mut app, &mut panels, surface, &mut frame);
+    }
+    assert_eq!(opacity(&mut app), Some(70.0));
+    app.session.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(opacity(&mut app), Some(20.0), "the first undo restores the end of the first drag");
+    app.session.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(opacity(&mut app), Some(100.0), "the second undo restores the start");
+}
+
+#[test]
 fn a_command_its_plugin_turned_off_is_marked_off_and_refused_by_name_until_turned_on_again() {
     let mut app = app("test.panels-state", &[]);
     let (mut panels, mut frame, id) = (Panels::default(), 0, app.id.clone());
-    let (key, surface) = ("plugin.app", Surface::Panel { plugin: &id, panel: "app", instance: None });
-    let disable = widget_id(&settled(&mut app, &mut panels, key, surface, &mut frame), "Disable Probe Action");
+    let surface = Surface::Panel { plugin: &id, panel: "app", instance: None };
+    let disable = widget_id(&settled(&mut app, &mut panels, surface, &mut frame), "Disable Probe Action");
     let mut set = |app: &mut App, panels: &mut Panels, off: bool| {
-        panels.submit(key, vec![UiEvent { id: disable, kind: UiEventKind::Bool(off) }], "");
-        settled(app, panels, key, surface, &mut frame);
+        panels.submit(&surface.owner(), vec![UiEvent { id: disable, kind: UiEventKind::Bool(off) }], "");
+        settled(app, panels, surface, &mut frame);
         let item = app.session.plugin_items.iter().find(|item| item.plugin == id && item.id == "app-act").cloned().unwrap_or_default();
         (item.disabled, item.checked)
     };

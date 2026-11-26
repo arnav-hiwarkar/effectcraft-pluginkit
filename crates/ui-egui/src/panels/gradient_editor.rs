@@ -326,7 +326,15 @@ pub(super) fn to_color32(c: [f32; 4]) -> Color32 {
 /// click in a row adds a stop, a drag moves one, a click selects it. Automation ids are
 /// `<prefix>.bar`, `<prefix>.addOpacity`, `<prefix>.addColor`, `<prefix>.opacityStop.<i>` and
 /// `<prefix>.colorStop.<i>`. Returns the response of the whole track.
-pub(crate) fn stop_track(ui: &mut egui::Ui, draft: &mut Draft, w: f32, t: &Tokens, auto: &mut crate::automation::Registry, prefix: &str) -> egui::Response {
+pub(crate) fn stop_track(
+    ui: &mut egui::Ui,
+    draft: &mut Draft,
+    w: f32,
+    t: &Tokens,
+    auto: &mut crate::automation::Registry,
+    prefix: &str,
+    most_stops: usize,
+) -> egui::Response {
     let (area, track_response) = ui.allocate_exact_size(vec2(w, 72.0), Sense::hover());
     let bar = Rect::from_min_max(pos2(area.min.x + 8.0, area.min.y + 22.0), pos2(area.max.x - 8.0, area.min.y + 48.0));
     let opacity_row = Rect::from_min_max(pos2(bar.min.x, area.min.y), pos2(bar.max.x, bar.min.y - 2.0));
@@ -364,7 +372,8 @@ pub(crate) fn stop_track(ui: &mut egui::Ui, draft: &mut Draft, w: f32, t: &Token
 
     // Clicking a row's empty space adds a stop there.
     for (track, rowr, id) in [(Track::Opacity, opacity_row, format!("{prefix}.addOpacity")), (Track::Color, color_row, format!("{prefix}.addColor"))] {
-        let r = ui.interact(rowr, egui::Id::unique(("gradient-add", &id)), Sense::click());
+        let sense = if draft.len(track) < most_stops { Sense::click() } else { Sense::hover() };
+        let r = ui.interact(rowr, egui::Id::unique(("gradient-add", &id)), sense);
         auto.add(&id, rowr, &id);
         if r.clicked()
             && let Some(p) = r.interact_pointer_pos()
@@ -425,7 +434,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
     // At the lower right, undimmed: the canvas it edits stays in view (After Effects).
     super::dialogs::modal_placed(ctx, tr("Gradient Editor"), vec2(520.0, 270.0), t, super::live_preview::PLACE, |ui| {
         let w = ui.available_width().max(200.0);
-        stop_track(ui, &mut app.dialog_state.gradient, w, t, &mut app.auto, "dialog.gradient");
+        stop_track(ui, &mut app.dialog_state.gradient, w, t, &mut app.auto, "dialog.gradient", usize::MAX);
         ui.add_space(8.0);
 
         // The selected stop's fields.

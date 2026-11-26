@@ -583,6 +583,20 @@ pub fn panel_spec(plugin: &str, panel: &str) -> Option<craft_plugin_host::ui::Pa
     plugins()?.get(plugin)?.plugin.contributions().panels.iter().find(|spec| spec.id == panel).cloned()
 }
 
+pub fn panel_request(plugin: &str, panel: &str, instance: Option<&str>, close: bool) -> Result<craft_plugin_host::ui::PanelSpec, String> {
+    let spec = panel_spec(plugin, panel).ok_or_else(|| format!("no running plug-in `{plugin}` has a panel `{panel}`"))?;
+    if matches!(spec.place, PanelPlace::Status | PanelPlace::Bar) {
+        return Err(format!(
+            "panel `{panel}` is a status item or an option bar, which the app shows by itself while the plug-in runs or its tool is active; it cannot be opened or closed"
+        ));
+    }
+    match (spec.multiple, instance) {
+        (true, None) if close => Err(format!("say which `{panel}` to close: host::close_panel(\"{panel}\", Some(key))")),
+        (false, Some(_)) => Err(format!("panel `{panel}` has one instance; declare it with Plugin::panel_each to open one per key")),
+        _ => Ok(spec),
+    }
+}
+
 pub fn placed_panels(place: PanelPlace) -> Vec<(String, craft_plugin_host::ui::PanelSpec)> {
     let at = |loaded: &Arc<Loaded>| {
         let panels = loaded.plugin.contributions().panels.iter().filter(|spec| spec.place == place);

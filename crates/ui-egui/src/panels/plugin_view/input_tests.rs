@@ -17,7 +17,11 @@ fn open_pad(harness: &mut Harness<'_, EffectcraftApp>) -> egui::Rect {
     until(harness, "the pad panel registering", |h| h.state().session.plugin_items.iter().any(|item| item.plugin == PROBE && item.id == "pad"));
     let ctx = harness.ctx.clone();
     crate::menus::invoke(harness.state_mut(), &ctx, "window.pluginPanel", json!({"plugin": PROBE, "panel": "pad"})).expect("the pad opens");
-    until(harness, "the pad drawn", |h| h.state().auto.find(&scope).is_some() && !h.state().plugin_ui.panels.busy(&scope) && !pad_text(h).is_empty());
+    until(harness, "the pad drawn", |h| {
+        h.state().auto.find(&scope).is_some()
+            && !h.state().plugin_ui.panels.busy(&effectcraft_plugin::Owner::panel(PROBE, "pad", None))
+            && !pad_text(h).is_empty()
+    });
     element(harness, &scope)
 }
 

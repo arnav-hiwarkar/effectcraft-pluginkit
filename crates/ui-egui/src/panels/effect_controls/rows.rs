@@ -740,7 +740,7 @@ fn custom_control(
     body.set_clip_rect(clip.intersect(ui.clip_rect()));
     let scope = format!("effectControls.prop.{uid}.control");
     let surface = effectcraft_plugin::Surface::Control { effect, param, instance: uid, value: &value, edit: edit.as_ref() };
-    let events = match app.plugin_ui.panels.show(&mut app.session, &scope, surface, [block.width(), budget]) {
+    let events = match app.plugin_ui.panels.show(&mut app.session, surface, [block.width(), budget]) {
         Ok(shown) => {
             if let Some(error) = shown.error {
                 body.label(
@@ -758,7 +758,7 @@ fn custom_control(
             Vec::new()
         }
     };
-    crate::panels::plugin_view::submit(app, ui, &scope, events, "");
+    crate::panels::plugin_view::submit(app, ui, &surface.owner(), events, "");
     let height = body.min_rect().height().max(ROW);
     if app.plugin_ui.control_heights.insert(uid, height) != Some(height) {
         ui.ctx().request_repaint();

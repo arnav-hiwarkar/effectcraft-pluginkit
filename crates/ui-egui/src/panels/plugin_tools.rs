@@ -75,12 +75,34 @@ fn cursor(cursor: Cursor) -> egui::CursorIcon {
 
 fn put_away(app: &mut EffectcraftApp, ctx: &egui::Context) {
     app.plugin_ui.panels.put_tool_away();
-    ctx.data_mut(|d| d.remove::<bool>(pressed_id()));
+    ctx.data_mut(|d| d.remove::<egui::Id>(pressed_id()));
+}
+
+fn pens_id() -> egui::Id {
+    egui::Id::unique("viewer-plugin-tool-pens")
+}
+
+type PassPens = (u64, Vec<Option<effectcraft_plugin::viewer::Pen>>);
+
+pub(crate) fn pens_of_this_pass(
+    source: Option<&crate::PenSource>,
+    ctx: &egui::Context,
+    events: &[egui::Event],
+) -> Vec<Option<effectcraft_plugin::viewer::Pen>> {
+    let pass = ctx.cumulative_pass_nr();
+    if let Some((paired, pens)) = ctx.data(|d| d.get_temp::<PassPens>(pens_id()))
+        && paired == pass
+    {
+        return pens;
+    }
+    let pens = source.map_or_else(Vec::new, |source| source.pens(events));
+    ctx.data_mut(|d| d.insert_temp(pens_id(), (pass, pens.clone())));
+    pens
 }
 
 pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx, map: &ViewerMap, painter: &egui::Painter) -> bool {
     let (events, held) = ui.ctx().input(|i| (i.events.clone(), i.modifiers));
-    let pens = app.hooks.pen.as_ref().map_or_else(Vec::new, |source| source.pens(&events));
+    let pens = pens_of_this_pass(app.hooks.pen.as_ref(), ui.ctx(), &events);
     let Some(pick) = active(app).cloned() else {
         put_away(app, ui.ctx());
         return false;
@@ -94,9 +116,12 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
     let layer = app.session.state.selected_layers.first().and_then(|id| ectx.comp.layer(*id));
     let l2c = layer.map(|layer| crate::panels::viewer::l2c(ectx, layer).0);
     let hover = ctx.input(|i| i.pointer.hover_pos()).filter(|pos| map.area.contains(*pos));
-    let mut pressed = ctx.data(|d| d.get_temp::<bool>(pressed_id())).unwrap_or(false);
+    let me = ui.scope_id();
+    let mut owner = ctx.data(|d| d.get_temp::<egui::Id>(pressed_id()));
     let typing = ctx.egui_wants_keyboard_input();
     let double = ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
+    let last_release =
+        events.iter().rposition(|event| matches!(event, egui::Event::PointerButton { button: egui::PointerButton::Primary, pressed: false, .. }));
     for (nr, event) in events.into_iter().enumerate() {
         let found = |kind: ToolEventKind, pos: Pos2, modifiers: egui::Modifiers| {
             let comp = map.to_comp(pos);
@@ -116,19 +141,20 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
             })
         };
         let primary = egui::PointerButton::Primary;
+        let pressed = owner == Some(me);
         let event = match event {
             egui::Event::PointerButton { pos, button, pressed: true, modifiers } if button == primary && map.area.contains(pos) => {
-                pressed = true;
+                owner = Some(me);
                 found(ToolEventKind::Down, pos, modifiers)
             }
             egui::Event::PointerButton { pos, button, pressed: false, modifiers } if button == primary && pressed => {
-                pressed = false;
+                owner = None;
                 found(ToolEventKind::Up, pos, modifiers)
             }
             egui::Event::PointerButton { pos, button: egui::PointerButton::Secondary, pressed: true, modifiers } if map.area.contains(pos) => {
                 found(ToolEventKind::Context, pos, modifiers)
             }
-            egui::Event::PointerMoved(pos) if pressed || map.area.contains(pos) => found(ToolEventKind::Move, pos, held),
+            egui::Event::PointerMoved(pos) if pressed || (owner.is_none() && map.area.contains(pos)) => found(ToolEventKind::Move, pos, held),
             egui::Event::MouseWheel { delta, modifiers, .. } => hover.and_then(|pos| found(ToolEventKind::Scroll, pos, modifiers)).map(|mut event| {
                 event.scroll = [delta.x, delta.y];
                 event
@@ -143,15 +169,21 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
         };
         let Some(mut event) = event else { continue };
         event.pen = pens.get(nr).copied().flatten();
-        event.pressure = if pressed { event.pen.map_or(1.0, |pen| pen.pressure) } else { 0.0 };
-        let opened = (double && event.kind == ToolEventKind::Up).then(|| ToolEvent { kind: ToolEventKind::Open, ..event.clone() });
+        event.pressure = if owner == Some(me) { event.pen.map_or(1.0, |pen| pen.pressure) } else { 0.0 };
+        let opened = (double && event.kind == ToolEventKind::Up && last_release == Some(nr)).then(|| ToolEvent { kind: ToolEventKind::Open, ..event.clone() });
         for event in std::iter::once(event).chain(opened) {
             if let Err(error) = app.plugin_ui.panels.tool(&app.session, &pick.plugin, &pick.tool, event) {
                 app.ui.status = error;
             }
         }
     }
-    ctx.data_mut(|d| d.insert_temp(pressed_id(), pressed));
+    ctx.data_mut(|d| {
+        if let Some(owner) = owner {
+            d.insert_temp(pressed_id(), owner);
+        } else {
+            d.remove::<egui::Id>(pressed_id());
+        }
+    });
     let tokens = app.tokens;
     if let Some(overlay) = app.plugin_ui.panels.tool_overlay(&mut app.session) {
         draw_marks(&tokens, painter, map, &overlay.marks, l2c.as_ref());
