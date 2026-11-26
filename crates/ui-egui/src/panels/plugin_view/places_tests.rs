@@ -10,6 +10,8 @@ use crate::panels::plugin_tools::tests::{STAMP_TOOL, element, harness, press_dra
 
 const PROBE: &str = "test.viewer-tool-ui";
 
+static NOTES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn open(harness: &mut Harness<'_, EffectcraftApp>, params: Value) -> Value {
     let ctx = harness.ctx.clone();
     crate::menus::invoke(harness.state_mut(), &ctx, "window.pluginPanel", params).expect("the panel opens")
@@ -63,6 +65,7 @@ fn the_stamp_option_bar_shows_only_while_the_stamp_tool_is_active() {
 
 #[test]
 fn new_notes_opens_numbered_instances_beside_the_timeline_that_keep_their_own_text() {
+    let _notes = NOTES.lock().unwrap_or_else(|e| e.into_inner());
     let mut harness = harness(probe_session());
     until(&mut harness, "the probe's notes panel registering", |h| {
         h.state().session.plugin_items.iter().any(|item| item.plugin == PROBE && item.id == "notes")
@@ -101,6 +104,7 @@ fn note_shown(harness: &mut Harness<'_, EffectcraftApp>, instance: &str) {
 
 #[test]
 fn a_closed_notes_instance_is_forgotten_so_the_next_new_notes_starts_empty() {
+    let _notes = NOTES.lock().unwrap_or_else(|e| e.into_inner());
     let mut harness = harness(probe_session());
     until(&mut harness, "the probe's notes panel registering", |h| {
         h.state().session.plugin_items.iter().any(|item| item.plugin == PROBE && item.id == "notes")
@@ -121,6 +125,7 @@ fn a_closed_notes_instance_is_forgotten_so_the_next_new_notes_starts_empty() {
 
 #[test]
 fn two_instance_keys_whose_dock_keys_would_fold_together_open_two_tabs_with_their_own_text() {
+    let _notes = NOTES.lock().unwrap_or_else(|e| e.into_inner());
     assert_eq!(PanelKind::plugin_instance(PROBE, "notes", "k384"), PanelKind::plugin_instance(PROBE, "notes", "k608"), "the keys fold to one u16");
     let mut harness = harness(probe_session());
     until(&mut harness, "the probe's notes panel registering", |h| {
@@ -150,6 +155,7 @@ fn a_status_item_cannot_be_closed_and_says_why() {
 
 #[test]
 fn a_notes_instance_named_1_and_a_panel_named_notes_dot_1_keep_their_own_text_and_close_apart() {
+    let _notes = NOTES.lock().unwrap_or_else(|e| e.into_inner());
     let mut harness = harness(probe_session());
     until(&mut harness, "the probe's dotted notes panel registering", |h| {
         h.state().session.plugin_items.iter().any(|item| item.plugin == PROBE && item.id == "notes.1")
@@ -185,6 +191,7 @@ fn a_notes_instance_named_1_and_a_panel_named_notes_dot_1_keep_their_own_text_an
 
 #[test]
 fn a_notes_instance_in_a_saved_workspace_keeps_its_title_and_text_after_switching_away_and_back() {
+    let _notes = NOTES.lock().unwrap_or_else(|e| e.into_inner());
     let mut harness = harness(probe_session());
     until(&mut harness, "the probe's notes panel registering", |h| {
         h.state().session.plugin_items.iter().any(|item| item.plugin == PROBE && item.id == "notes")
