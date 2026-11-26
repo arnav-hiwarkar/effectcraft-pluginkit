@@ -36,15 +36,20 @@ fn shape(harness: &Harness<'_, EffectcraftApp>) -> egui::Rect {
 }
 
 #[test]
-fn tab_from_the_focused_notes_reaches_every_plugin_control_in_the_dock() {
+fn the_controls_panel_is_toured_by_tab_from_its_focused_notes_and_counts_a_point_dragged_onto_its_curve() {
     let mut harness = open_controls();
-    until(&mut harness, "the notes taking the focus the panel asked for", |h| focused(h).as_deref() == Some("Notes"));
+    tab_from_the_focused_notes_reaches_every_plugin_control_in_the_dock(&mut harness);
+    dragging_on_the_plugin_curve_adds_a_point_that_the_plugin_counts(&mut harness);
+}
+
+fn tab_from_the_focused_notes_reaches_every_plugin_control_in_the_dock(harness: &mut Harness<'static, EffectcraftApp>) {
+    until(harness, "the notes taking the focus the panel asked for", |h| focused(h).as_deref() == Some("Notes"));
     let wanted = ["Live", "Plain", "Soft", "Hard", "Clear the notes", "More", "Divider"];
     let mut reached = Vec::new();
     for _ in 0..600 {
         harness.key_press(egui::Key::Tab);
         harness.step();
-        if let Some(label) = focused(&harness) {
+        if let Some(label) = focused(harness) {
             if label == "Notes" {
                 break;
             }
@@ -55,11 +60,9 @@ fn tab_from_the_focused_notes_reaches_every_plugin_control_in_the_dock() {
     assert!(missing.is_empty(), "Tab never reached {missing:?}; it reached {reached:?}");
 }
 
-#[test]
-fn dragging_on_the_plugin_curve_adds_a_point_that_the_plugin_counts() {
-    let mut harness = open_controls();
-    until(&mut harness, "the curve before the edit", |h| shows(h, "2 points"));
-    let graph = shape(&harness);
+fn dragging_on_the_plugin_curve_adds_a_point_that_the_plugin_counts(harness: &mut Harness<'static, EffectcraftApp>) {
+    until(harness, "the curve before the edit", |h| shows(h, "2 points"));
+    let graph = shape(harness);
     let start = graph.lerp_inside(egui::vec2(0.3, 0.2));
     let end = graph.lerp_inside(egui::vec2(0.35, 0.15));
     let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
@@ -67,5 +70,5 @@ fn dragging_on_the_plugin_curve_adds_a_point_that_the_plugin_counts() {
         harness.event(event);
         harness.step();
     }
-    until(&mut harness, "the plugin counting the new point", |h| shows(h, "3 points"));
+    until(harness, "the plugin counting the new point", |h| shows(h, "3 points"));
 }

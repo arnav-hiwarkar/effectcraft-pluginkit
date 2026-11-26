@@ -13,7 +13,7 @@ fn names(harness: &Harness<'_, EffectcraftApp>) -> Vec<String> {
 }
 
 fn made(harness: &Harness<'_, EffectcraftApp>) -> usize {
-    names(harness).iter().filter(|name| *name == "From Plugin").count()
+    names(harness).iter().filter(|name| name.starts_with("From Plugin")).count()
 }
 
 fn center(harness: &Harness<'_, EffectcraftApp>, id: &str) -> Pos2 {
@@ -29,6 +29,10 @@ fn click(harness: &mut Harness<'_, EffectcraftApp>, pos: Pos2, button: egui::Poi
     harness.run_steps(2);
 }
 
+fn menu_row(name: &str) -> egui_kittest::kittest::By<'_> {
+    egui_kittest::kittest::by().predicate(move |node| node.label().is_some_and(|label| label.trim() == name))
+}
+
 #[test]
 fn a_plugin_command_with_a_menu_path_runs_from_layer_probe_tools() {
     let mut harness = harness(probe_session());
@@ -37,10 +41,16 @@ fn a_plugin_command_with_a_menu_path_runs_from_layer_probe_tools() {
     settle(&mut harness, |h| h.state().auto.find("menu.Layer").is_some());
     let layer = center(&harness, "menu.Layer");
     click(&mut harness, layer, egui::PointerButton::Primary);
-    assert_eq!(harness.query_all_by_label("Probe: Edit Document").count(), 0, "a command with a menu path leaves Window ▸ Plug-ins");
-    harness.get_by_label("Probe Tools").hover();
+    let edit = json!({"plugin": PROBE, "command": "edit"});
+    let in_plugins_menu = effectcraft_engine::menus::plugin_commands(&harness.state().session, None).iter().any(|(_, entry)| entry.params == edit);
+    assert!(!in_plugins_menu, "a command with a menu path leaves Window ▸ Plug-ins");
+    harness.get(menu_row("Probe Tools")).hover();
     harness.run_steps(3);
-    harness.get_by_label("Edit Document").click();
+    let toolbar_button = center(&harness, &format!("tools.command.{PROBE}.edit"));
+    let entries: Vec<_> = harness.query_all(menu_row("Edit Document")).filter(|node| !node.rect().contains(toolbar_button)).collect();
+    assert_eq!(entries.len(), 1, "Layer ▸ Probe Tools lists Edit Document once");
+    entries[0].click();
+    drop(entries);
     settle(&mut harness, |h| made(h) == 1);
     assert_eq!(names(&harness), ["From Plugin"]);
 }
@@ -82,7 +92,7 @@ fn a_toolbar_command_runs_by_pointer_and_by_keyboard_and_is_named_by_its_title()
     harness.run_steps(2);
     harness.key_press(egui::Key::Enter);
     settle(&mut harness, |h| made(h) == 2);
-    assert_eq!(made(&harness), 2);
+    assert_eq!(names(&harness), ["From Plugin 2", "From Plugin"]);
 }
 
 #[test]
