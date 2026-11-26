@@ -29,6 +29,7 @@ pub(crate) struct PluginUi {
 }
 
 pub(crate) fn tick(app: &mut EffectcraftApp, ctx: &egui::Context) {
+    forget_closed_instances(app);
     let panels = &mut app.plugin_ui.panels;
     if !panels.has_waker() {
         let waker = ctx.clone();
@@ -56,13 +57,13 @@ pub(crate) fn submit(app: &mut EffectcraftApp, ui: &egui::Ui, key: &str, events:
 #[derive(Default)]
 pub(crate) struct Images {
     textures: HashMap<(String, String), (u64, egui::TextureHandle)>,
-    frames: HashMap<(String, String), Preview>,
+    frames: HashMap<(String, egui::Id), Preview>,
 }
 
 type Rendered = Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>;
 
 struct Preview {
-    asked: Option<u64>,
+    asked: Option<(u64, String)>,
     shown: Result<Option<egui::TextureHandle>, String>,
     pending: Option<Rendered>,
     drawn: f64,
@@ -123,12 +124,12 @@ impl Images {
         ctx: &egui::Context,
         session: &Session,
         plugin: &str,
+        widget: egui::Id,
         request: &craft_plugin::FrameRequest,
     ) -> &Result<Option<egui::TextureHandle>, String> {
         let now = ctx.input(|i| i.time);
         self.frames.retain(|_, preview| now - preview.drawn < PREVIEW_KEPT_SECONDS);
-        let key = (plugin.to_string(), serde_json::to_string(request).unwrap_or_default());
-        let preview = self.frames.entry(key).or_insert(Preview { asked: None, shown: Ok(None), pending: None, drawn: now });
+        let preview = self.frames.entry((plugin.to_string(), widget)).or_insert(Preview { asked: None, shown: Ok(None), pending: None, drawn: now });
         preview.drawn = now;
         if let Some(pending) = &preview.pending {
             match pending.lock().ok().and_then(|mut done| done.take()) {
@@ -140,9 +141,9 @@ impl Images {
                 None => ctx.request_repaint_after(Duration::from_millis(30)),
             }
         }
-        let state = project_state(session);
-        if preview.pending.is_none() && preview.asked != Some(state) {
-            preview.asked = Some(state);
+        let wanted = (project_state(session), serde_json::to_string(request).unwrap_or_default());
+        if preview.pending.is_none() && preview.asked.as_ref() != Some(&wanted) {
+            preview.asked = Some(wanted);
             match effectcraft_plugin::panel_frame(session, plugin, request) {
                 Ok(job) => {
                     preview.pending = rendered(job);
@@ -166,11 +167,25 @@ pub struct PanelInstance {
     pub plugin: String,
     pub panel: String,
     pub instance: String,
+    #[serde(default)]
+    pub salt: u32,
 }
 
 impl PanelInstance {
     fn kind(&self) -> PanelKind {
-        PanelKind::plugin_instance(&self.plugin, &self.panel, &self.instance)
+        match self.salt {
+            0 => PanelKind::plugin_instance(&self.plugin, &self.panel, &self.instance),
+            salt => PanelKind::plugin_instance(&self.plugin, &self.panel, &format!("{}#{salt}", self.instance)),
+        }
+    }
+
+    fn named(&self, plugin: &str, panel: &str, instance: &str) -> bool {
+        self.plugin == plugin && self.panel == panel && self.instance == instance
+    }
+
+    fn surface(&self) -> (String, Surface<'_>) {
+        let scope = format!("plugin.{}.{}.{}", self.plugin, self.panel, self.instance);
+        (scope, Surface::Panel { plugin: &self.plugin, panel: &self.panel, instance: Some(&self.instance) })
     }
 
     fn of(&self, item: &PluginItem) -> bool {
@@ -180,6 +195,25 @@ impl PanelInstance {
 
 fn instance_of(app: &EffectcraftApp, kind: PanelKind) -> Option<&PanelInstance> {
     app.ui.plugin_instances.iter().find(|open| open.kind() == kind)
+}
+
+fn new_instance(app: &EffectcraftApp, plugin: &str, panel: &str, instance: &str) -> PanelInstance {
+    let taken =
+        |kind: PanelKind| instance_of(app, kind).is_some() || app.session.plugin_items.iter().any(|item| PanelKind::plugin(&item.plugin, &item.id) == kind);
+    (0..)
+        .map(|salt| PanelInstance { plugin: plugin.into(), panel: panel.into(), instance: instance.into(), salt })
+        .find(|open| !taken(open.kind()))
+        .unwrap_or_else(|| PanelInstance { plugin: plugin.into(), panel: panel.into(), instance: instance.into(), salt: u32::MAX })
+}
+
+fn forget_closed_instances(app: &mut EffectcraftApp) {
+    use crate::dock::WorkspaceExt;
+    let dock = &app.ui.dock;
+    let closed: Vec<PanelInstance> = app.ui.plugin_instances.extract_if(.., |open| !dock.is_open(open.kind())).collect();
+    for open in &closed {
+        let (scope, surface) = open.surface();
+        app.plugin_ui.panels.close(&app.session, &scope, surface);
+    }
 }
 
 fn claimants(app: &EffectcraftApp, kind: PanelKind) -> impl Iterator<Item = &PluginItem> {
@@ -335,6 +369,9 @@ pub(crate) fn status_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect
     ui.painter().rect_filled(rect, 0.0, app.tokens.header_bg);
     let mut right = rect.max.x - ROW_GAP;
     for (plugin, spec) in items {
+        if right - rect.min.x < ROW_GAP {
+            break;
+        }
         let width = row_width(spec.size).min(right - rect.min.x);
         let item = Rect::from_min_max(pos2(right - width, rect.min.y), pos2(right, rect.max.y));
         row(app, ui, item, plugin, spec);
@@ -359,24 +396,28 @@ pub(crate) fn open(app: &mut EffectcraftApp, ctx: &egui::Context, plugin: &str, 
     use craft_ui::docking::Action;
     let spec = effectcraft_plugin::panel_spec(plugin, panel).ok_or_else(|| format!("no running plug-in `{plugin}` has a panel `{panel}`"))?;
     if matches!(spec.place, PanelPlace::Status | PanelPlace::Bar) {
-        return Ok(json!({"place": spec.place, "open": true}));
+        return Err(format!(
+            "panel `{panel}` is a status item or an option bar, which the app shows by itself while the plug-in runs or its tool is active; it cannot be opened or closed"
+        ));
     }
     let instance = match (spec.multiple, instance) {
         (true, Some(key)) => Some(key.to_string()),
         (true, None) if close => return Err(format!("say which `{panel}` to close: host::close_panel(\"{panel}\", Some(key))")),
-        (true, None) => (1..).map(|n: u32| n.to_string()).find(|key| !app.ui.dock.is_open(PanelKind::plugin_instance(plugin, panel, key))),
+        (true, None) => (1..).map(|n: u32| n.to_string()).find(|key| !app.ui.plugin_instances.iter().any(|open| open.named(plugin, panel, key))),
         (false, None) => None,
         (false, Some(_)) => return Err(format!("panel `{panel}` has one instance; declare it with Plugin::panel_each to open one per key")),
     };
     let kind = match &instance {
-        Some(key) => {
-            let open = PanelInstance { plugin: plugin.into(), panel: panel.into(), instance: key.clone() };
-            let kind = open.kind();
-            if !close && !app.ui.plugin_instances.contains(&open) {
+        Some(key) => match app.ui.plugin_instances.iter().find(|open| open.named(plugin, panel, key)) {
+            Some(open) => open.kind(),
+            None if close => return Err(format!("no `{panel}` `{key}` is open")),
+            None => {
+                let open = new_instance(app, plugin, panel, key);
+                let kind = open.kind();
                 app.ui.plugin_instances.push(open);
+                kind
             }
-            kind
-        }
+        },
         None => PanelKind::plugin(plugin, panel),
     };
     if running_panel(app, kind).is_none() {
@@ -394,7 +435,7 @@ pub(crate) fn open(app: &mut EffectcraftApp, ctx: &egui::Context, plugin: &str, 
         app.apply_dock(Action::Open { panel: kind, anchor: Some(PanelKind::Timeline) })?;
     }
     app.show_panel(kind);
-    if spec.place == PanelPlace::Float && !was_open {
+    if spec.place == PanelPlace::Float && !was_open && !placed_before {
         let rect = float_rect(ctx.content_rect(), spec.size);
         app.dock_command(ctx, Action::Float { panel: kind, rect })?;
     }
@@ -474,6 +515,31 @@ pub(crate) fn named_icon(name: &str) -> Option<crate::icons::Icon> {
         "code" => Icon::Code,
         "refresh" => Icon::Loop,
         "close" => Icon::Close,
+        "shapes" => Icon::ShapeLayer,
+        "wand" => Icon::Wand,
+        "sliders" => Icon::Sliders,
+        "palette" => Icon::Palette,
+        "droplet" => Icon::Droplet,
+        "heart" => Icon::Heart,
+        "layers" => Icon::Layers,
+        "file" => Icon::File,
+        "info" => Icon::Info,
+        "warning" => Icon::Warning,
+        "help" => Icon::Help,
+        "stop" => Icon::Stop,
+        "copy" => Icon::Copy,
+        "crop" => Icon::Crop,
+        "move" => Icon::Move,
+        "magnet" => Icon::Magnet,
+        "flag" => Icon::Flag,
+        "tag" => Icon::Tag,
+        "bookmark" => Icon::Bookmark,
+        "bell" => Icon::Bell,
+        "terminal" => Icon::Terminal,
+        "puzzle" => Icon::Puzzle,
+        "download" => Icon::Download,
+        "upload" => Icon::Upload,
+        "check" => Icon::Check,
         _ => return None,
     })
 }
@@ -616,10 +682,15 @@ impl craft_plugin_ui::Host for AppHost<'_> {
         Some((response, edit.changed.map(|edited| edited.0.iter().map(|point| [round(point[0]), round(point[1])]).collect())))
     }
 
-    fn color(&mut self, ui: &mut egui::Ui, _key: &str, value: [f32; 4]) -> Option<(egui::Response, Option<[f32; 4]>)> {
+    fn color(&mut self, ui: &mut egui::Ui, key: &str, value: [f32; 4]) -> Option<(egui::Response, Option<[f32; 4]>)> {
         let mut rgb = [value[0], value[1], value[2]];
         let response = crate::widgets::srgb_color_button(ui, &mut rgb);
-        let picked = response.changed().then_some([rgb[0], rgb[1], rgb[2], value[3]]);
+        let mut percent = f64::from(value[3].clamp(0.0, 1.0)) * 100.0;
+        let alpha = ui.add(egui::DragValue::new(&mut percent).range(0.0..=100.0).max_decimals(0).suffix("%"));
+        ui.ctx().accesskit_node_builder(alpha.id, |node| node.set_label(tr("Opacity").to_string()));
+        self.auto.add_response(&format!("{key}.alpha"), &alpha, "Opacity");
+        let opacity = if alpha.changed() { (percent / 100.0) as f32 } else { value[3] };
+        let picked = (response.changed() || alpha.changed()).then_some([rgb[0], rgb[1], rgb[2], opacity]);
         Some((response, picked))
     }
 
@@ -663,7 +734,7 @@ impl craft_plugin_ui::Host for AppHost<'_> {
     fn frame(&mut self, ui: &mut egui::Ui, request: &craft_plugin::FrameRequest, size: egui::Vec2) -> Option<egui::Response> {
         let session = self.source.session?;
         let tokens = self.tokens;
-        match self.source.images.frame(ui.ctx(), session, self.source.plugin, request) {
+        match self.source.images.frame(ui.ctx(), session, self.source.plugin, ui.scope_id(), request) {
             Err(error) => Some(ui.label(RichText::new(error).font(Tokens::ui(12.0)).color(tokens.text_dim))),
             Ok(shown) => {
                 let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
@@ -760,6 +831,24 @@ mod tests {
         effectcraft_plugin::run_command(&mut session, PROBE, "read-user").unwrap();
         let data = plugins.get(PROBE).unwrap().data_dir.join("read.txt");
         assert_eq!(std::fs::read_to_string(data).unwrap(), "dropped footage");
+    }
+
+    #[test]
+    fn dragging_a_plugin_colours_opacity_field_lowers_its_alpha_and_keeps_its_colour() {
+        let mut harness = harness(vec![Widget::Color { id: 3, text: "Ink".into(), value: [0.25, 0.5, 0.75, 1.0] }]);
+        harness.run();
+        let field = harness.get_by_label("Opacity").rect().center();
+        harness.drag_at(field);
+        harness.run();
+        harness.hover_at(field - egui::vec2(50.0, 0.0));
+        harness.run();
+        harness.drop_at(field - egui::vec2(50.0, 0.0));
+        harness.run();
+        let last = harness.state().last().cloned();
+        assert!(
+            matches!(last, Some(UiEvent { id: 3, kind: UiEventKind::Color([r, g, b, a]) }) if [r, g, b] == [0.25, 0.5, 0.75] && a < 0.9 && a > 0.0),
+            "{last:?}"
+        );
     }
 
     #[test]
