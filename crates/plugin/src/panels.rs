@@ -486,7 +486,7 @@ struct Slot {
 
 impl Slot {
     fn new(loaded: &Arc<Loaded>) -> Slot {
-        let retained = Retained::with_level(loaded.plugin.contributions().ui_level);
+        let retained = Retained::with_level(loaded.plugin.contributions().event_level());
         Slot { retained, loaded: loaded.clone(), open: Arc::default(), shown: false, hidden: false, value: None, held: false, gesture: None }
     }
 
@@ -695,6 +695,15 @@ impl Panels {
             slot.gesture = None;
         }
         Ok(Shown { plugin: &slot.loaded.bundle.manifest.id, widgets: slot.retained.widgets(), error: slot.retained.error() })
+    }
+
+    pub fn close(&mut self, session: &Session, key: &str, surface: Surface) {
+        self.slots.remove(key);
+        if let Ok((loaded, Call::Panel { panel, input })) = find(surface) {
+            let call = Call::Panel { panel, input: UiInput { closed: true, ..input } };
+            let bound = Bound::of(loaded, session, Arc::downgrade(&self.open));
+            self.post(Request { key: Key::Slot(key.to_string()), bound, call, edit: None, gesture: None });
+        }
     }
 
     fn schedule(&mut self, key: &str) {

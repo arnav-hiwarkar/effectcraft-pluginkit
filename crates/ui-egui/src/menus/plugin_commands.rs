@@ -49,7 +49,7 @@ pub(crate) fn toolbar(app: &mut EffectcraftApp, ui: &mut egui::Ui, mut x: f32, c
         match item.icon.as_deref().and_then(crate::panels::plugin_view::named_icon) {
             Some(named) => crate::icons::paint(ui.painter(), icon, named, ink),
             None => {
-                let letter: String = item.title.chars().take(1).flat_map(char::to_uppercase).collect();
+                let letter: String = item.title.chars().find(|c| c.is_alphanumeric()).into_iter().flat_map(char::to_uppercase).collect();
                 ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, letter, egui::FontId::proportional(13.0), ink);
             }
         }

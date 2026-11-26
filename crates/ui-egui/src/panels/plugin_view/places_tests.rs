@@ -90,3 +90,57 @@ fn new_notes_opens_numbered_instances_beside_the_timeline_that_keep_their_own_te
     until(&mut harness, "note 1 raised with its own text", |h| shows(h, "note 1: milk"));
     assert!(harness.state().ui.dock.is_open(two));
 }
+
+fn note_shown(harness: &mut Harness<'_, EffectcraftApp>, instance: &str) {
+    let scope = format!("plugin.{PROBE}.notes.{instance}");
+    until(harness, &format!("note {instance}"), |h| h.state().auto.find(&scope).is_some() && !h.state().plugin_ui.panels.busy(&scope));
+}
+
+#[test]
+fn a_closed_notes_instance_is_forgotten_so_the_next_new_notes_starts_empty() {
+    let mut harness = harness(probe_session());
+    until(&mut harness, "the probe's notes panel registering", |h| {
+        h.state().session.plugin_items.iter().any(|item| item.plugin == PROBE && item.id == "notes")
+    });
+    assert_eq!(open(&mut harness, json!({"plugin": PROBE, "panel": "notes"}))["instance"], "1");
+    note_shown(&mut harness, "1");
+    type_note(&mut harness, "1", "milk");
+    until(&mut harness, "note 1 holding its text", |h| shows(h, "note 1: milk"));
+    let ctx = harness.ctx.clone();
+    let one = PanelKind::plugin_instance(PROBE, "notes", "1");
+    harness.state_mut().dock_command(&ctx, craft_ui::docking::Action::Close { panel: one }).unwrap();
+    until(&mut harness, "the instance forgotten", |h| !h.state().ui.plugin_instances.iter().any(|open| open.plugin == PROBE && open.panel == "notes"));
+    assert_eq!(open(&mut harness, json!({"plugin": PROBE, "panel": "notes"}))["instance"], "1");
+    note_shown(&mut harness, "1");
+    until(&mut harness, "the new note 1, empty", |h| shows(h, "note 1: "));
+    assert!(!shows(&harness, "note 1: milk"));
+}
+
+#[test]
+fn two_instance_keys_whose_dock_keys_would_fold_together_open_two_tabs_with_their_own_text() {
+    assert_eq!(PanelKind::plugin_instance(PROBE, "notes", "k384"), PanelKind::plugin_instance(PROBE, "notes", "k608"), "the keys fold to one u16");
+    let mut harness = harness(probe_session());
+    until(&mut harness, "the probe's notes panel registering", |h| {
+        h.state().session.plugin_items.iter().any(|item| item.plugin == PROBE && item.id == "notes")
+    });
+    open(&mut harness, json!({"plugin": PROBE, "panel": "notes", "instance": "k384"}));
+    note_shown(&mut harness, "k384");
+    type_note(&mut harness, "k384", "milk");
+    until(&mut harness, "the first note holding its text", |h| shows(h, "note k384: milk"));
+    open(&mut harness, json!({"plugin": PROBE, "panel": "notes", "instance": "k608"}));
+    note_shown(&mut harness, "k608");
+    until(&mut harness, "the second note, empty", |h| shows(h, "note k608: "));
+    let kinds: Vec<PanelKind> = harness.state().ui.plugin_instances.iter().filter(|open| open.plugin == PROBE).map(|open| open.kind()).collect();
+    assert_eq!(kinds.len(), 2);
+    assert_ne!(kinds[0], kinds[1]);
+    assert!(kinds.iter().all(|kind| harness.state().ui.dock.is_open(*kind)), "both tabs are open");
+}
+
+#[test]
+fn a_status_item_cannot_be_closed_and_says_why() {
+    let mut harness = harness(probe_session());
+    until(&mut harness, "the status item", |h| shows(h, "0 pings"));
+    let ctx = harness.ctx.clone();
+    let refused = super::open(harness.state_mut(), &ctx, PROBE, "status", None, true).unwrap_err();
+    assert!(refused.contains("cannot be opened or closed"), "{refused}");
+}

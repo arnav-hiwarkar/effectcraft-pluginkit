@@ -76,3 +76,24 @@ fn a_hundred_thousand_row_plugin_list_scrolls_in_a_few_calls_and_enter_on_a_row_
     plugin_close.click();
     until(&mut harness, "the inspector closing", |h| !h.state().ui.dock.is_open(inspector));
 }
+
+#[test]
+fn a_float_panel_docked_by_the_user_and_closed_opens_again_where_it_was_left() {
+    let mut harness = harness(probe_session());
+    let inspector = PanelKind::plugin(PROBE, "inspector");
+    until(&mut harness, "the inspector registering", |h| crate::panels::plugin_view::running_panel(h.state(), inspector).is_some());
+    let ctx = harness.ctx.clone();
+    let show = json!({"plugin": PROBE, "panel": "inspector"});
+    crate::menus::invoke(harness.state_mut(), &ctx, "window.pluginPanel", show.clone()).unwrap();
+    harness.run_steps(2);
+    assert!(harness.state().ui.dock.is_floating(inspector), "a Float panel opens floating the first time");
+    let dock = craft_ui::docking::Action::Move { panel: inspector, anchor: PanelKind::Timeline, placement: craft_ui::docking::Placement::Tab { before: None } };
+    harness.state_mut().dock_command(&ctx, dock).unwrap();
+    harness.run_steps(2);
+    assert!(!harness.state().ui.dock.is_floating(inspector));
+    harness.state_mut().dock_command(&ctx, craft_ui::docking::Action::Close { panel: inspector }).unwrap();
+    harness.run_steps(2);
+    crate::menus::invoke(harness.state_mut(), &ctx, "window.pluginPanel", show).unwrap();
+    harness.run_steps(2);
+    assert!(harness.state().ui.dock.is_open(inspector) && !harness.state().ui.dock.is_floating(inspector), "it opens docked where the user left it");
+}

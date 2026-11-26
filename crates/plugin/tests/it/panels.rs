@@ -112,6 +112,26 @@ fn relay_said(app: &mut App, panels: &mut Panels, frame: &mut u64) -> String {
 }
 
 #[test]
+fn a_plugin_built_before_ui_levels_still_gets_its_panel_clicks_and_its_tool_events() {
+    let mut app = app("test.panels-before-levels-host", &[]);
+    let bundle = tempfile::tempdir().unwrap();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/legacy/probe-before-regions.wasm");
+    std::fs::copy(fixture, bundle.path().join("probe.wasm")).unwrap();
+    let permissions = ["document.read", "document.write"];
+    let manifest = json!({"id": "test.before-levels", "name": "Old Probe", "version": "1.0.0", "entry": {"wasm": "probe.wasm"}, "permissions": permissions});
+    std::fs::write(bundle.path().join("plugin.json"), manifest.to_string()).unwrap();
+    app.plugins.load_for_session(bundle.path()).expect("a plugin built before UI levels loads");
+    let (mut panels, mut frame) = (Panels::default(), 0);
+    let (key, surface) = ("plugin.test.before-levels.counter", Surface::Panel { plugin: "test.before-levels", panel: "counter", instance: None });
+    let count = button(&settled(&mut app, &mut panels, key, surface, &mut frame), 0);
+    panels.submit(key, vec![click(count)], "");
+    assert_eq!(lines(&settled(&mut app, &mut panels, key, surface, &mut frame)), ["1 clicks at speed 0"]);
+    panels.tool(&app.session, "test.before-levels", "stamp", crate::viewer::event(ToolEventKind::Down, [4.0, 5.0])).unwrap();
+    crate::viewer::settle(&mut app, &mut panels);
+    assert_eq!(app.layer_names(), ["Stamp"]);
+}
+
+#[test]
 fn each_instance_of_a_panel_each_is_called_with_its_instance_and_keeps_its_own_text() {
     let mut app = app("test.panels-notes", &[]);
     let (mut panels, mut frame, id) = (Panels::default(), 0, app.id.clone());
@@ -126,6 +146,13 @@ fn each_instance_of_a_panel_each_is_called_with_its_instance_and_keeps_its_own_t
     assert_eq!(type_into(&mut app, &mut panels, "1", "milk"), ["note 1: milk"]);
     assert_eq!(type_into(&mut app, &mut panels, "2", "eggs"), ["note 2: eggs"]);
     assert_eq!(type_into(&mut app, &mut panels, "1", "milk and tea"), ["note 1: milk and tea"]);
+    let one = Surface::Panel { plugin: &id, panel: "notes", instance: Some("1") };
+    panels.close(&app.session, "plugin.notes.1", one);
+    assert_eq!(lines(&settled(&mut app, &mut panels, "plugin.notes.1", one, &mut frame)), ["note 1: "], "a closed instance starts again empty");
+    assert_eq!(
+        lines(&settled(&mut app, &mut panels, "plugin.notes.2", Surface::Panel { plugin: &id, panel: "notes", instance: Some("2") }, &mut frame)),
+        ["note 2: eggs"]
+    );
 }
 
 #[test]

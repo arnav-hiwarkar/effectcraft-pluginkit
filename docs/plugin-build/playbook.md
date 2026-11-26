@@ -29,7 +29,15 @@ later moved onto the same queue and the special `settle` wait was deleted (row 9
 a slow panel call hold back the plugin's overlay and tool, so the queue became three lanes (UI, viewer,
 command), each one worker thread; the identity checks and the per-surface in-flight rule did not change.
 Moving a call kind to another thread is only half the fix in a sandbox: it must also leave the shared
-wasm instance (overlays and drags went to the render pool, tools to an instance of their own).
+wasm instance (overlays and drags went to the render pool, tools to an instance of their own). That move
+also applies to sandboxed plugins built before it: their tools and overlays stop sharing statics with their
+panels. No reference plugin relied on it, so the lanes stayed and the reference says so (ui-fix).
+
+**Test a new delivery rule with a plugin built before it.** `Contributions.ui_level` defaults to 0 for
+every plugin built before wave 2 of the UI programme, and the first filter compared events against that 0,
+so old plugins got no panel, control or tool events. The kit tests stood for "old" with `Retained::new()`
+(level 1) and passed. `Contributions::event_level()` now decides the level once, and tests drive the stored
+pre-programme probe (`probe-before-regions.wasm`) through a panel click and a tool press (ui-fix).
 
 **App-independent code at the lowest shared layer.** The kit started inside EffectCraft as two crates with
 no EffectCraft types (row 2), which made the later move to craft-libs a pure move (w7-libs-move). The panel

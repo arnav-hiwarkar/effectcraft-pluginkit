@@ -93,6 +93,39 @@ fn a_toolbar_command_runs_by_pointer_and_by_keyboard_and_is_named_by_its_title()
 
 #[test]
 fn the_app_draws_every_kit_icon_name_it_has_a_drawing_for() {
-    let drawn = craft_plugin::ICONS.iter().filter(|name| crate::panels::plugin_view::named_icon(name).is_some()).count();
-    assert_eq!(drawn, 33);
+    let missing: Vec<&str> = craft_plugin::ICONS.iter().copied().filter(|name| crate::panels::plugin_view::named_icon(name).is_none()).collect();
+    assert!(missing.is_empty(), "no drawing for {missing:?}");
+}
+
+fn marked(harness: &Harness<'_, EffectcraftApp>) -> usize {
+    names(harness).iter().filter(|name| name.starts_with("From Context")).count()
+}
+
+#[test]
+fn a_timeline_command_runs_from_the_empty_timeline_context_menu() {
+    let mut harness = harness(probe_session());
+    settle(&mut harness, |h| h.state().auto.find("timeline.empty").is_some() && h.state().session.plugin_items.iter().any(|item| item.id == "mark"));
+    let pos = center(&harness, "timeline.empty");
+    click(&mut harness, pos, egui::PointerButton::Secondary);
+    let entry = format!("timeline.context.graph.plugin.{PROBE}.mark");
+    settle(&mut harness, |h| h.state().auto.find(&entry).is_some());
+    assert!(harness.state().auto.find(&format!("timeline.context.graph.plugin.{PROBE}.edit")).is_none(), "a Layers command stays out");
+    let pos = center(&harness, &entry);
+    click(&mut harness, pos, egui::PointerButton::Primary);
+    settle(&mut harness, |h| marked(h) == 1);
+}
+
+#[test]
+fn a_viewer_command_runs_from_the_viewer_context_menu() {
+    let mut harness = harness(probe_session());
+    settle(&mut harness, |h| {
+        crate::panels::viewer::comp_to_screen(&h.ctx, [10.0, 10.0]).is_some() && h.state().session.plugin_items.iter().any(|item| item.id == "mark")
+    });
+    let pos = crate::panels::plugin_tools::tests::comp_point(&harness, [10.0, 10.0]);
+    click(&mut harness, pos, egui::PointerButton::Secondary);
+    let entry = format!("viewer.context.plugin.{PROBE}.mark");
+    settle(&mut harness, |h| h.state().auto.find(&entry).is_some());
+    let pos = center(&harness, &entry);
+    click(&mut harness, pos, egui::PointerButton::Primary);
+    settle(&mut harness, |h| marked(h) == 1);
 }

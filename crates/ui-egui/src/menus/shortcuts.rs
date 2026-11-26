@@ -348,11 +348,32 @@ fn panel_owns_enter(kind: PanelKind) -> bool {
     matches!(kind, PanelKind::Project | PanelKind::EffectsPresets | PanelKind::RenderQueue | PanelKind::Flowchart)
 }
 
-fn plugin_panel_key(app: &mut EffectcraftApp, key: egui::Key, mods: egui::Modifiers) -> bool {
-    let Some((scope, chords)) = crate::panels::plugin_view::key_target(app) else { return false };
-    let Some(chord) = chords.iter().find(|chord| parse_shortcut(chord).is_some_and(|(m, k)| k == key && mods_match(m, mods))) else { return false };
-    app.plugin_ui.panels.press_key(&scope, chord);
-    true
+const KEPT_BY_THE_APP: [&str; 5] = ["file.save", "file.saveAs", "edit.undo", "edit.redo", "app.quit"];
+
+fn plugin_panel_keys(app: &mut EffectcraftApp, ctx: &egui::Context) {
+    if ctx.text_edit_focused() || crate::widgets::any_menu_open(ctx) || app.dialog.is_some() {
+        return;
+    }
+    let Some((scope, chords)) = crate::panels::plugin_view::key_target(app) else { return };
+    let pressed: Vec<(egui::Key, egui::Modifiers)> = ctx.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|event| match event {
+                egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } => Some((*key, *modifiers)),
+                _ => None,
+            })
+            .collect()
+    });
+    let binds = bindings(&app.session);
+    for (key, mods) in pressed {
+        if binds.iter().any(|(m, k, id, _)| *k == key && mods_match(*m, mods) && KEPT_BY_THE_APP.contains(&id.as_str())) {
+            continue;
+        }
+        if let Some(chord) = chords.iter().find(|chord| parse_shortcut(chord).is_some_and(|(m, k)| k == key && mods_match(m, mods))) {
+            app.plugin_ui.panels.press_key(&scope, chord);
+            ctx.input_mut(|i| i.consume_key(mods, key));
+        }
+    }
 }
 
 fn handle_shortcuts_impl(app: &mut EffectcraftApp, ctx: &egui::Context, tab_only: bool) {
@@ -369,6 +390,9 @@ fn handle_shortcuts_impl(app: &mut EffectcraftApp, ctx: &egui::Context, tab_only
     // While a menu or popup list is open, keys go to it, not to the app (Space must not start a
     // preview behind the menu, #279).
     let on_handle = crate::panels::effect_controls::handle_has_focus(ctx);
+    if !tab_only {
+        plugin_panel_keys(app, ctx);
+    }
     if (ctx.egui_wants_keyboard_input() && !on_handle) || crate::widgets::any_menu_open(ctx) {
         return;
     }
@@ -414,10 +438,6 @@ fn handle_shortcuts_impl(app: &mut EffectcraftApp, ctx: &egui::Context, tab_only
             continue;
         }
         if app.dialog.is_some() {
-            continue;
-        }
-        if pressed && plugin_panel_key(app, key, mods) {
-            ctx.input_mut(|i| i.consume_key(mods, key));
             continue;
         }
         if !mods.any() && crate::panels::effect_controls::handle_arrow_key(app, ctx, key) {

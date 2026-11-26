@@ -72,3 +72,36 @@ fn a_plugin_frame_of_a_missing_comp_says_so_in_a_weak_label() {
     let frames = harness.query_all_by_label("Frame").filter(|node| node.accesskit_node().role() == egui::accesskit::Role::Image).count();
     assert_eq!(frames, 0, "no frame is drawn for a comp that is not there");
 }
+
+#[test]
+fn a_frame_whose_request_changes_on_every_draw_keeps_one_preview_with_one_render_and_ends_on_the_newest_request() {
+    use craft_plugin::FrameRequest;
+    use effectcraft_plugin::ui::Widget;
+    let tokens = crate::theme::Tokens::for_kind(Default::default());
+    let request = |step: u32| FrameRequest { time: f64::from(step) / 30.0, scale: 0.25, ..Default::default() };
+    let state = (super::Images::default(), probe_session(), 0_u32);
+    let mut harness = Harness::new_ui_state(
+        move |ui, (images, session, step): &mut (super::Images, effectcraft_engine::Session, u32)| {
+            let mut auto = crate::automation::Registry::default();
+            let tree = vec![Widget::Frame { id: 7, request: request(*step), size: [80.0, 45.0] }];
+            let source = super::Source { plugin: PROBE, images, session: Some(session) };
+            super::draw(ui, &tree, &tokens, &mut auto, "plugin.test.panel", source);
+        },
+        state,
+    );
+    for step in 0..30 {
+        harness.state_mut().2 = step;
+        harness.step();
+    }
+    assert_eq!(harness.state().0.frames.len(), 1, "one preview per frame widget, not one per request");
+    let newest = serde_json::to_string(&request(29)).unwrap();
+    for _ in 0..2_000 {
+        harness.step();
+        let preview = harness.state().0.frames.values().next().unwrap();
+        if preview.pending.is_none() && preview.asked.as_ref().is_some_and(|(_, asked)| *asked == newest) && matches!(preview.shown, Ok(Some(_))) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("the preview never rendered the newest request");
+}

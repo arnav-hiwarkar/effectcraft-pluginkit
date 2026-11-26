@@ -54,6 +54,7 @@ and licence texts are in [`NOTICE`](NOTICE).
 | `assets/app-icon/hicolor/64x64/apps/ai.storyteller.effectcraft.png` | EffectCraft contributors | Original work: effectCraft app icon, Linux hicolor 64x64 (owner's ArtCraft unicorn drawing, vectorised) | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
 | `assets/app-icon/hicolor/scalable/apps/ai.storyteller.effectcraft.svg` | EffectCraft contributors | Original work: effectCraft app icon, Linux hicolor scalable (owner's ArtCraft unicorn drawing, vectorised) | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
 | `crates/plugin/tests/it/legacy/legacy.wasm` | EffectCraft contributors | Original work: a one-effect plugin built from `legacy.rs` against the plugin SDK as of commit fdb1578b, before viewer controls | MIT OR Apache-2.0 |
+| `crates/plugin/tests/it/legacy/probe-before-regions.wasm` | EffectCraft contributors | Original work: the craft-libs test probe plugin as built at EffectCraft commit f66e99e9, before UI levels, copied from craft-libs `crates/plugin-host/tests/it/fixtures` | MIT OR Apache-2.0 |
 | `plugins/cookbook/tests/frames/blur-checker.png` | EffectCraft contributors | Original work: stored test frame "blur-checker" rendered by the cookbook reference plugin on a built-in test image | MIT OR Apache-2.0 |
 | `plugins/cookbook/tests/frames/edges.png` | EffectCraft contributors | Original work: stored test frame "edges" rendered by the cookbook reference plugin on a built-in test image | MIT OR Apache-2.0 |
 | `plugins/cookbook/tests/frames/glow.png` | EffectCraft contributors | Original work: stored test frame "glow" rendered by the cookbook reference plugin on a built-in test image | MIT OR Apache-2.0 |
@@ -104,7 +105,7 @@ Screenshots of EffectCraft itself, rendered headlessly, showing only procedurall
 
 ## Code-drawn assets (original work, MIT OR Apache-2.0)
 
-- UI icons drawn in code: `crates/ui-egui/src/icons.rs`, including the original filled favorite star (2026-10-11, EffectCraft contributors).
+- UI icons drawn in code: `crates/ui-egui/src/icons.rs`, including the original filled favorite star (2026-10-11, EffectCraft contributors) and the plugin kit icons from Wand to Check (2026-11-27, EffectCraft contributors).
 - Procedural demo content (solids, shapes, gradients, text animations): `crates/engine/src/demo.rs`.
 - Built-in project templates (Lower Third, Title Card, Logo Reveal, Kinetic Type, Social Square, Vertical Story,
   Slideshow, 3D Text Orbit) built from engine commands, and their thumbnails rendered by our own renderer:

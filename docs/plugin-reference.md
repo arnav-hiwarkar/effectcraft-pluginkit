@@ -671,7 +671,10 @@ pub trait Panel: Send + 'static {
 Panels, custom controls, buttons and commands of one plugin run in the same long-lived instance, so a
 `static` is shared between them. Effects, overlays and tools do not see it: effects and overlays run in
 pooled instances and a tool in a long-lived instance of its own. A native plugin is one library in the
-app's process, so there every surface shares its statics.
+app's process, so there every surface shares its statics. This also holds for a sandboxed plugin built
+before the viewer and command lanes: its tool and overlays no longer share a `static` with its panels, as
+they did when every call ran in one instance. No reference plugin relied on that; share such values through
+plugin data (`host::set_data` and `host::data`, needing `document.write` and `document.read`) or project properties.
 
 The app gives each plugin three worker threads, each started on first use: one for panels, custom
 controls, buttons and migrations, one for the viewer (overlays, handle drags, tool events) and one for
@@ -697,7 +700,8 @@ the plugin that was reloaded or turned off, is dropped.
 instance)` opens the named instance of a `panel_each` panel; `host::close_panel(id, instance)` closes one.
 They work from panels, commands, tools and tasks and are refused in a render. The app acts on its next
 frame. A `Float` panel opens floating at its `size`, centred on the window; later it opens where the user
-last left it.
+last left it, docked or floating. Both are refused, with a message, for a `Status` or `Bar` panel, which the
+app shows by itself.
 
 ### Panel places and instances
 
@@ -710,8 +714,14 @@ last left it.
 | `Bar` | One row in the tool options area of the Tools bar while the tool whose `.options(id)` names it is active; gone when another tool is picked. Not in Window ▸ Plug-ins. |
 
 A `Status` or `Bar` panel is retained like any other: it is called on its events, timers and app events,
-not on every frame. Lay it out in one `ui.row`; its root already flows left to right. `show_panel` on it
-does nothing.
+not on every frame. Lay it out in one `ui.row`; its root already flows left to right. `show_panel` and
+`close_panel` on it are refused. Status items that no longer fit in the window's width are not drawn.
+
+A tool's `.options(id)` must name a panel the plugin declares with `.place(PanelPlace::Bar)`; a missing or
+misplaced one is refused at load with a message that says what to add. The option bar runs in the panels'
+instance and the tool in its own (see the instance rule under `Panel`), so in a sandboxed plugin a `static`
+the bar sets is not seen by the tool: keep the option in plugin data (`host::set_data(Place::Project, ..)`
+from the bar, `host::data` in the tool) or pass it through a project property.
 
 A `panel_each` panel gets one value per instance, keyed by a string the plugin or the app chooses.
 Window ▸ Plug-ins lists it as "New <title>", which opens instance "1", then "2", … (the lowest number not
@@ -719,7 +729,9 @@ open). `host::show_panel_for(id, key)` opens or raises instance `key`; `host::cl
 closes it. Each tab is titled "<title> <key>", its automation scope is `plugin.<plugin>.<panel>.<key>`, and
 `ui.instance()` returns the key. `show_panel_for` on a panel declared with `.panel`, and `close_panel` without a key on a `panel_each`
 panel, do nothing and show the reason in the app's status line. The app keeps the open instances with the workspace,
-so they come back after a restart.
+so they come back after a restart. Closing an instance's tab forgets it: the app calls the panel once more
+with `UiInput.closed` set, the SDK drops that instance's value without calling `ui`, and a later instance
+with the same key starts from `make()` again. Two keys whose tab ids would be equal still get two tabs.
 
 `.icon(name)` also shows on the panel's dock tab where the dock draws icons (a column collapsed to icons).
 
@@ -727,14 +739,20 @@ In plugin tests, `TestPlugin::panel_for(id, key)` drives one instance as `panel(
 
 ### Panel keys, menu and help
 
-`.keys(&["Delete", "Cmd+D"])` after `.panel(..)` names chords, spelt as `CommandSpec.shortcut`. While the
-panel has the keyboard focus (the user last pressed in it), or the pointer is over it, and no text field has
-the focus, those chords go to the panel instead of the app's shortcuts: the panel is called and
-`ui.key("Delete")` is true for that call (case does not matter). Other chords keep their app meaning.
+`.keys(&["Delete", "Cmd+D"])` after `.panel(..)` names chords: the modifiers `Cmd`, `Ctrl`, `Shift` and
+`Alt` and one key (a letter, a digit, `F1`–`F35`, `Delete`, `Backspace`, `Enter`, `Escape`, `Tab`,
+`Space`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, an arrow `Up`/`Down`/`Left`/`Right`, or one of
+``; ' , . / \ = - ` [ ] +``), joined by `+`. A chord the app cannot read is refused at load with that
+grammar. While the panel has the keyboard focus (the user last pressed in it, or one of its widgets has the
+keyboard), or the pointer is over it, and no text field has the focus, those chords go to the panel
+instead of the app's shortcuts: the panel is called and `ui.key("Delete")` is true for that call (case does
+not matter). The chords of the app's Save, Save As, Undo, Redo and Quit always stay with the app. Other
+chords keep their app meaning. A chord pressed while the panel's tab is hidden is not delivered later.
 
 `ui.panel_menu(|menu| ..)` gives the items of the panel's ≡ menu, built like `ui.menu`; the app shows them
 after its own items and a separator, and a pick calls the panel with that item's builder returning true.
-The last call's items are shown. `.help(url)` adds a **Help** item after them that opens `url`.
+The last call's items are shown. `.help(url)` adds a **Help** item after them that opens `url`; only an
+`https://` address is accepted, any other is refused at load.
 
 Edits a panel makes while the user drags one of its widgets (from press to release, however many calls
 that takes) are one undo step, named after the plugin.
@@ -762,9 +780,11 @@ Read `ui.toggled(key)` before building the tree: it returns the `(row, open)` th
 shown last, so the rows built in this call already show the change. `picked.toggled` reports the same pair
 after the list is built.
 
-The SDK's `ui.table` gives each column `ColumnWidth::Auto`. A `Widget::List` written by hand can set
-`Column { title, width }`: `Narrow` (five font heights), `Wide` (fifteen), `Fill` (the space the others
-leave) and `Auto` (an equal share of the rest, at most eight font heights when a `Fill` column is present).
+`ui.table` gives each column `ColumnWidth::Auto`; `ListOptions.widths` sets them in order (missing ones
+are `Auto`): `Narrow` (five font heights), `Wide` (fifteen), `Fill` (the space the others leave) and `Auto`
+(an equal share of the rest, at most eight font heights when a `Fill` column is present).
+`ListOptions.rows` makes the list that many rows tall; 0, the default, gives it the height left in the
+panel.
 A click on a heading does nothing unless the list is sortable (below).
 
 | Input | Event |
@@ -775,7 +795,7 @@ A click on a heading does nothing unless the list is sortable (below).
 | Space | Adds or removes the focused row in a multi selection; selects it in a single one |
 | Right on a shut row, Left on an open row, click on the triangle | `Toggle { row, open }` |
 | Right on an open row | Moves to its first child |
-| Left on a shut or leaf row | Moves to its parent, the nearest earlier row with a smaller depth |
+| Left on a shut or leaf row | Moves to its parent, the nearest earlier row with a smaller depth. When that row is above the rows the plugin built, the list scrolls up and asks for earlier rows until it finds it |
 | Right-click on a row that is not selected | `Select([row])`, then the list's context menu |
 
 The list is one Tab stop: Tab enters it on the row last focused or the first selected row, the arrow keys
@@ -784,7 +804,8 @@ list's context menu. A list reads to a screen reader as a list of items, a table
 column headers; each row says whether it is selected, a tree row whether it is open, and the triangle is
 named "Open" or "Close" and the row's first cell.
 
-At most `MAX_LIST_ITEMS` (1024) rows are built per call; the first call builds `LIST_WINDOW` (128).
+At most `MAX_LIST_ITEMS` (1024) rows are built per call; the first call builds `LIST_WINDOW` (128). A Shift
+range holds at most `MAX_SELECTED` (1 048 576) rows, the ones nearest the row it was extended to.
 
 ### Rename, reorder and sort a list
 
@@ -799,8 +820,8 @@ asked for, and the plugin renames, moves or sorts its rows and builds them again
 
 | Option | Input | Event, and `Picked` field |
 |---|---|---|
-| `rename` | F2 on the focused row, or a click on the name of the only selected row (after the double-click time, so a double click still activates) opens a text field with the row's first cell, all selected. Enter sends; Escape or clicking elsewhere cancels; an unchanged name sends nothing | `Rename { row, text }`, `renamed: Some((row, text))` |
-| `reorder` | Dragging rows shows an insertion line and sends on release; Alt+Up and Alt+Down move them by one row. The rows moved are the selection when the dragged or focused row is selected, else that row alone. A drop that would leave them where they are sends nothing | `Move { rows, to }`, `moved: Some((rows, to))`: `rows` ascending, `to` the row index they go before as counted before the move, `count` for the end |
+| `rename` | F2 on the focused row, or a click on the name of the only selected row (after the double-click time, so a double click still activates) opens a text field with the row's first cell, all selected. Enter, Tab or a click elsewhere sends; Escape cancels; an unchanged name sends nothing | `Rename { row, text }`, `renamed: Some((row, text))` |
+| `reorder` | Dragging rows shows an insertion line and sends on release; Alt+Up and Alt+Down move them by one row, and the focus follows the focused row to where it lands. Letting go outside the list, or Escape during the drag, moves nothing. The rows moved are the selection when the dragged or focused row is selected, else that row alone. A drop that would leave them where they are sends nothing | `Move { rows, to }`, `moved: Some((rows, to))`: `rows` ascending, `to` the row index they go before as counted before the move, `count` for the end |
 | `sortable` | A click on a column heading; the same heading again flips the order | `Sort { column, descending }`, `sorted: Some((column, descending))` |
 
 `sorted: Some((column, descending))` draws an arrow on that heading and tells screen readers the order;
@@ -809,7 +830,9 @@ arrives.
 
 `picked.renamed`, `moved` and `sorted` arrive after the rows are built. To build rows that already show
 the change, read the events first: `ui.list_events(key)` yields the `ListEvent`s of the next list with
-that key in the order the user made them (`ui.toggled(key)` is the same read for `Toggle`).
+that key in the order the user made them (`ui.toggled(key)` is the same read for `Toggle`). They are the
+events as they arrived, before the checks `Picked` makes: a `Rename`, `Move` or `Sort` of a list without
+that option, and rows at or past the list's `count`, are included, so check them before acting.
 
 ```rust
 for event in ui.list_events("files") {
@@ -822,21 +845,22 @@ for event in ui.list_events("files") {
 }
 ```
 
-`ListOptions` and `ListEvent` are `craft_plugin::{ListOptions, ListEvent}`. The probe's `tree` panel
+`ListOptions`, `ListEvent` and `ColumnWidth` are `craft_plugin::{ListOptions, ListEvent, ColumnWidth}`. The probe's `tree` panel
 sorts and renames its 10 000-row take table this way.
 
 ### Controls
 
 | Call | Draws | Returns |
 |---|---|---|
-| `ui.icon_button(icon, text)` | A square button with the named icon (`craft_plugin::ICONS`); `text` is its tooltip and accessible name. An icon the app lacks shows the first letter of `text`. | `true` in the call after a click, Enter or Space |
+| `ui.icon_button(icon, text)` | A square button with the named icon (`craft_plugin::ICONS`); `text` is its tooltip and accessible name. An icon the app lacks shows the first letter of `text`; a name outside `ICONS` in a `.icon(..)` of a panel, command or tool is a warning in the plugin's log at load. | `true` in the call after a click, Enter or Space |
+| `ui.icon_button_enabled(icon, text, enabled)` | The same, greyed out and ignoring clicks while `enabled` is false. | `true` in the call after a click while enabled |
 | `ui.toggle(text, &mut bool)` | A switch with `text` beside it (role switch, with its on or off state). | `true` when it changed |
 | `ui.radio(text, &mut usize, &options)` | One choice per option; the arrow keys move the choice while one has the focus. | `true` when the choice changed |
 | `ui.text_area(key, &mut String, hint, rows)` | Multi-line text, `rows` high; Enter makes a new line, Tab leaves. `hint` is its accessible name. | `true` when the text changed |
 | `ui.text(&[(text, TextStyle)])` | One wrapped paragraph whose spans keep their style. | |
 | `ui.gap(Gap::Small \| Medium \| Large)` | Space from the app's spacing. | |
 | `ui.name(text)` | Gives the widget just before it the accessible name `text` (an icon button "Clear the notes"). | |
-| `ui.focus()` | Puts the keyboard focus on the widget just before it, once for the call it was made in. Call it only in the call that should move the focus; a later redraw with no `focus` leaves the focus where the user put it. | |
+| `ui.focus()` | Puts the keyboard focus on the widget just before it, once for the call it was made in. Call it only in the call that should move the focus; a later redraw with no `focus` leaves the focus where the user put it, and a `focus` that comes back after a tree without one (also after a reload) takes it again. | |
 | `ui.menu(text, \|menu\| …)` | A button that opens a menu. `menu.item(text)` and `menu.item_enabled(text, enabled)` return `true` in the call after a pick, `menu.check(text, &mut bool)` flips its value, `menu.separator()`, `menu.submenu(text, \|menu\| …)`. | |
 | `ui.context_menu(\|menu\| …)` | The same menu on the widget just before it, opened by a right click or the Menu key. | |
 | `ui.split(key, Axis::Horizontal \| Vertical, first, second)` | Two panes side by side or stacked with a divider the user drags, or moves with the arrow keys while it has the focus. The app keeps the share. | |
@@ -854,7 +878,10 @@ curves or gradients in a panel says so in place of the control. Each control's a
 for the same request, but the app renders it from its own caches on a worker thread and draws it, fitted
 inside `[w, h]`: no pixels pass through the plugin, and the panel makes no `host::frame` or `upload_image`
 call. The app draws it again when the project, the preferences or the active comp change, without calling
-the plugin; the last picture stays up while the next one renders, and a spinner shows before the first. A comp
+the plugin; the last picture stays up while the next one renders, and a spinner shows before the first.
+One render runs at a time for each frame widget: a request that changes while one renders (a `time` that
+follows playback) waits, only the newest waiting request is rendered next, and only the latest picture is
+kept. A comp
 or layer that is not there shows the reason in a weak label (`no composition `Shot 9``). It needs
 `document.read`, like `host::frame`. Its accessible name is "Frame" (`ui.name` after it sets another), and a
 click reaches the plugin as `Click`. An app that cannot draw frames says so in place of the frame.
@@ -909,20 +936,23 @@ Every widget takes the focus with Tab. A canvas also takes it on a click, keeps 
 has it, and shows a focus ring.
 
 **UI level.** `Contributions.ui_level` says which UI events a plugin knows; a plugin built with this SDK
-has `UI_LEVEL` (2), one built before has 0. The app sends right clicks and double clicks
+has `UI_LEVEL` (2), one built before has 0, which the host treats as 1. The app sends right clicks and double clicks
 (`UiEventKind::Context` and `Open`, `ToolEventKind::Context` and `Open`) only to plugins at level 2 or
-more, so an older plugin sees exactly the events it saw before. A host keeps a panel with
-`Retained::with_level(ui_level)`; `Retained::new()` is level 1.
+more, so an older plugin sees exactly the events it saw before. A host reads the level with
+`Contributions::event_level()` and keeps a panel with `Retained::with_level(contributions.event_level())`;
+`Retained::new()` is level 1.
 
 **Colours.** `ui.color(text, &mut [f32; 4])` draws the app's own colour button when the app has one
 (`Host::color` in `craft-plugin-ui`): EffectCraft opens its colour picker, whose eyedropper picks a pixel
-from the Composition viewer. The picker edits red, green and blue as sRGB components and keeps the
-plugin's alpha. An app without one draws egui's colour button.
+from the Composition viewer. The picker edits red, green and blue as sRGB components, and an Opacity field
+beside it (0–100 %, automation id `<scope>.<widget id>.alpha`) edits alpha. An app without one draws egui's
+colour button.
 
 A reply of an older SDK is a bare widget list. The app redraws such a panel every frame, on the worker
 thread, and does not send it key or drop events.
 
-Widgets: `label`, `heading`, `weak`, `mono`, `error`, `button`, `button_enabled`, `checkbox`, `slider`, `number`,
+Widgets: `label`, `heading`, `weak`, `mono`, `error`, `caption` (small and weak), `strong` (body text in the
+heading face), `title` (a section title smaller than `heading`), `button`, `button_enabled`, `checkbox`, `slider`, `number`,
 `number_in`, `text_edit`, `popup`, `color`, `separator`, `space`, and the containers `row`, `column` and `group`.
 Value widgets take `&mut` state and return `true` on the frame the user changed it.
 `ui.number_in(text, &mut value, speed, min..=max, decimals)` is `number` with a range the value stays in and a
@@ -934,6 +964,7 @@ only when the user edited it.
 | `ui.image(key, [w, h])` | An uploaded image. Returns `true` when clicked. |
 | `ui.frame(key, FrameRequest, [w, h])` | A comp or layer rendered by the app, see [Frames in panels](#frames-in-panels). Returns `true` when clicked. |
 | `ui.scroll(key, height, \|ui\| …)` | Its contents in a vertical scroll area at most `height` tall. |
+| `ui.scroll_rows(key, rows, \|ui\| …)` | The same, `rows` rows of controls tall in the app's spacing, so it keeps its size in every theme. |
 | `ui.collapsing(title, open_by_default, \|ui\| …)` | A section with a twirl-down. |
 | `ui.tabs(&mut selected, &["A", "B"])` | A row of tabs. Returns `true` when another is picked. |
 | `ui.progress(fraction, text)` | A progress bar, `fraction` from 0 to 1. |
@@ -946,8 +977,9 @@ only when the user edited it.
 `polygon` (filled; concave shapes fill correctly, up to 2048 points, and more points are filled as a convex
 shape; repeated points count once, and an outline that crosses itself draws nothing), `image` and `text`, in canvas-local pixels. A pointer event has a phase of
 `Hover`, `Down`, `Drag` or `Up`, the `modifiers` held (`shift`, `alt`, `command`) and the `scroll` delta. A drag keeps reporting positions after the pointer leaves the
-canvas. Colours are theme tokens (`Paint::Text`, `Paint::Accent`, `Paint::Weak`, `Paint::Surface`, …)
-or `Paint::Rgba`.
+canvas. Colours are theme tokens (`Paint::Text`, `Paint::Accent`, `Paint::Weak`, `Paint::Surface`,
+`Paint::Good`, `Paint::Warn`, `Paint::Faint`, `Paint::Selected`, `Paint::Series(n)` for the n-th of eight
+chart colours, …) or `Paint::Rgba`.
 
 Two buttons with the same label in the same container are told apart by order. Put widgets that come
 and go inside their own `row`, `column` or `group` so the others keep their identity.
@@ -1009,7 +1041,7 @@ pub trait Tool: Send + 'static {
 The tool's button follows the toolbar's tools; clicking it again, or picking another tool, puts it
 away. `event` runs on the plugin's viewer thread in a long-lived instance kept for the plugin's tools, so the
 tool keeps its state between events but shares no `static` with the plugin's panels and commands; pass
-what they share through `host::command` or plugin data. Events arrive in order; moves made while `event` was busy coalesce into the latest. The
+what they share through `host::command` or plugin data (`host::set_data`, `host::data`). Events arrive in order; moves made while `event` was busy coalesce into the latest. The
 overlay it draws starts in `Space::Comp` and stays on screen until the next reply.
 
 | `ToolEvent` field | Holds |

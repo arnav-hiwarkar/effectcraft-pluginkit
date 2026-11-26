@@ -1,0 +1,8 @@
+asset:        probe-before-regions.wasm
+title:        The test probe plugin as built before UI levels, the reference for an older plugin's panels and tools
+author:       EffectCraft contributors
+source:       original work (EffectCraft crates/plugin-host/tests/probe at commit f66e99e9, now craft-libs crates/plugin-host/tests/probe; copied unchanged from craft-libs crates/plugin-host/tests/it/fixtures/probe-before-regions.wasm)
+license:      MIT OR Apache-2.0
+license-file: LICENSE-MIT
+added:        2026-11-27 by EffectCraft contributors (Claude agent, plugin UI fix)
+notes:        Read by crates/plugin/tests/it/panels.rs. Its describe reply has no ui_level, so it stands for every plugin built before wave 2 of the plugin UI programme.

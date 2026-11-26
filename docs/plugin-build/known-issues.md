@@ -17,6 +17,17 @@ measured speed before and after.
 - **A sandboxed command waits for a running panel call of its plugin.** Commands run on their own lane, but in the sandbox they share the long-lived instance with panels, custom controls and buttons (so they share statics), and that instance runs one call at a time: a panel call that runs for a second delays a menu command of the same plugin for that second (`crates/plugin-host/src/runtime/mod.rs` in craft-libs). Native plugins and every overlay, drag and tool are not affected.
 - **Task host requests are answered by whichever session pumps first.** `effectcraft_plugin::pump` serves every task of a plugin; panel requests are routed by their project token, task requests only check that their project is still open (`crates/plugin/src/manage.rs`).
 
+## From the plugin UI reviews (ui-fix), not fixed
+
+- **List and menu events name rows and items by position.** `ListEvent::Select`, `Activate`, `Rename`, `Move`, `Toggle` and a menu pick carry the index in the tree the painter drew; a panel whose rows change between that draw and the call (a timer-refreshed log) applies the event to the neighbour. An additive `Item.key` echoed in events would close it (craft-libs `crates/plugin-ui/src/list.rs`, `controls.rs`).
+- **A sort arrow the plugin never accepted stays on its heading** until `ListEdit.sorted` changes (`crates/plugin-ui/src/list.rs`, `cursor.sent`).
+- **Text typed while a call is in flight can be lost** when the reply rebuilds the field from the tree (not reproduced; `text_edit` and `text_area` in `crates/plugin-ui`).
+- **A plugin can add a File menu entry that reads like a built-in one** (`.menu("File")` shows only its title; `crates/engine/src/menus.rs`).
+- **The neutral painter uses pixel and font literals** (12 / 10.5 / 13 pt text, 4 pt paddings in `crates/plugin-ui`; status bar 22 pt, option bar 26 pt, row widths 160/280/440 in `crates/ui-egui/src/panels/plugin_view.rs`). `Theme` has colours only; a `Metrics` beside it would give both painters the same names.
+- **`host::show_panel` / `show_panel_for` are two functions while `close_panel` takes an `Option`.** Kept: the wire and SDK shapes are fixed for the programme.
+- **A panel key over a plugin panel wins over the focused app panel** (Delete with the Timeline focused and the pointer resting over a panel that declares Delete). By decision, pointer-over routing stays; only Save, Save As, Undo, Redo and Quit are kept by the app.
+- **Not checked: a plugin tool's right click may also open the viewer's context menu, and a second viewer may get only the latest pen reading of a frame** (`crates/ui-egui/src/panels/plugin_tools.rs`).
+
 ## From the Sol review, not fixed
 
 - **A slow host call is not interrupted.** A file call on a stalled disk or a slow app command runs to its end on the calling thread; the sandboxed call fails when it returns past the limit. A panel's `frame` and `audio` are cut from the project on the app's thread and rendered on the plugin's worker; a task's still render on the app's thread when the task pump answers them. A file write cannot be cancelled, so it is not moved to another thread and abandoned: that let a write land after the plugin was told it failed, and stalled threads piled up. Stopping one needs the helper process (`docs/plugin-helper.md`), where the whole process can be killed. Instantiation has its own 5 s limit on top of the call limit.

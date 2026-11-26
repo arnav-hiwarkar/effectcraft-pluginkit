@@ -763,6 +763,20 @@ ui.list_with("shots", &options, self.shots.len(), &mut self.selected, |row| self
 F2 renames the focused row, dragging or Alt+Up and Alt+Down move the selected rows, and a heading click
 sorts. Reading the events before `list_with` builds the rows in their new order in the same call.
 
+### Size a list and its columns
+
+```rust
+let options = ListOptions { columns: &["Shot", "Length"], widths: &[ColumnWidth::Fill, ColumnWidth::Narrow], rows: 8, ..Default::default() };
+ui.list_with("shots", &options, self.shots.len(), &mut self.selected, |row| self.shots[row].item());
+ui.scroll_rows("log", 4, |ui| self.log.iter().for_each(|line| ui.mono(line)));
+if ui.icon_button_enabled("trash", "Delete Shot", self.selected.is_some()) {
+    self.delete_selected();
+}
+```
+
+The table is eight rows tall with a wide name column, the log four rows of controls, and the Delete button
+greys out while nothing is selected.
+
 ### A canvas you can zoom and pan
 
 ```rust
@@ -1150,7 +1164,9 @@ fn ui(&mut self, ui: &mut Ui) {
 ```
 
 Delete over the Rig panel reaches it and not the app; ≡ ▸ Reset Rig and Help appear in its panel menu;
-locking turns **Add Control Null** off everywhere it is shown.
+locking turns **Add Control Null** off everywhere it is shown. A misspelt chord (`"Delet"`) or a help address
+that is not `https://` stops the plugin from loading, with a message that says what to write; Save, Undo,
+Redo and Quit stay with the app even when a panel names their chords.
 
 ## Read and edit the project
 
