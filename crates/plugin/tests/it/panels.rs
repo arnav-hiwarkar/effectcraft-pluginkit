@@ -509,7 +509,7 @@ fn stamped(panels: &mut Panels, app: &mut App, said: &str) -> bool {
 
 #[test]
 fn a_held_panel_call_holds_back_neither_overlay_nor_tool_and_only_a_sandboxed_command_sandboxed_and_native() {
-    let mut app = app("test.panels-lanes", &["document.read"]);
+    let mut app = super::app_exclusive("test.panels-lanes", &["document.read"]);
     let native = crate::render::native_probe(&app).to_string();
     let mut arrivals = Vec::new();
     for (plugin, sandboxed) in [(app.id.clone(), true), (native, false)] {
