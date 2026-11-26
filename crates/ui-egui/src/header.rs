@@ -265,7 +265,7 @@ fn tool_options_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Paint
     if app.ui.tool.roto_kind(false).is_some() {
         x = roto_options(app, ui, p, x, cy);
     }
-    x
+    crate::panels::plugin_view::option_bar(app, ui, x, cy)
 }
 
 /// The Snapping checkbox, its label and options menu; returns the x where it started.

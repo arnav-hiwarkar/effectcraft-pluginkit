@@ -304,6 +304,7 @@ pub struct PluginItem {
     pub id: String,
     pub title: String,
     pub panel: bool,
+    pub multiple: bool,
     pub shortcut: Option<String>,
 }
 

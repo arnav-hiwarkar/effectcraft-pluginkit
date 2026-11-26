@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use craft_plugin_host::PluginImage;
+use craft_plugin_host::ui::PanelPlace;
 use craft_plugin_host::{Bundle, BundleError, EffectRegistry, Limits, Permission, Plugin, Refusal, Registry, RunMode, TaskState};
 use effectcraft_engine::{EngineError, PluginItem, Session};
 use serde::Serialize;
@@ -363,6 +364,7 @@ impl Plugins {
                 id: panel.clone(),
                 title: title.clone(),
                 panel: true,
+                multiple: false,
                 shortcut: None,
             })
         })
@@ -450,16 +452,18 @@ impl Plugins {
         let mut items = Vec::new();
         for (id, loaded) in &inner.loaded {
             let found = loaded.plugin.contributions();
-            let item = |panel: bool, local: &str, title: &str, shortcut: &Option<String>| PluginItem {
+            let item = |panel: bool, multiple: bool, local: &str, title: &str, shortcut: &Option<String>| PluginItem {
                 plugin: id.clone(),
                 plugin_name: loaded.bundle.manifest.name.clone(),
                 id: local.to_string(),
                 title: title.to_string(),
                 panel,
+                multiple,
                 shortcut: shortcut.clone(),
             };
-            items.extend(found.panels.iter().map(|p| item(true, &p.id, &p.title, &None)));
-            items.extend(found.commands.iter().map(|c| item(false, &c.id, &c.title, &c.shortcut)));
+            let docked = found.panels.iter().filter(|p| !matches!(p.place, PanelPlace::Status | PanelPlace::Bar));
+            items.extend(docked.map(|p| item(true, p.multiple, &p.id, &p.title, &None)));
+            items.extend(found.commands.iter().map(|c| item(false, false, &c.id, &c.title, &c.shortcut)));
         }
         items
     }
@@ -527,6 +531,14 @@ pub(crate) fn running_plugins() -> Vec<Arc<Loaded>> {
 
 pub fn panel_spec(plugin: &str, panel: &str) -> Option<craft_plugin_host::ui::PanelSpec> {
     plugins()?.get(plugin)?.plugin.contributions().panels.iter().find(|spec| spec.id == panel).cloned()
+}
+
+pub fn placed_panels(place: PanelPlace) -> Vec<(String, craft_plugin_host::ui::PanelSpec)> {
+    let at = |loaded: &Arc<Loaded>| {
+        let panels = loaded.plugin.contributions().panels.iter().filter(|spec| spec.place == place);
+        panels.map(|spec| (loaded.bundle.manifest.id.clone(), spec.clone())).collect::<Vec<_>>()
+    };
+    running_plugins().iter().flat_map(at).collect()
 }
 
 pub fn image(plugin: &str, key: &str) -> Option<Arc<PluginImage>> {

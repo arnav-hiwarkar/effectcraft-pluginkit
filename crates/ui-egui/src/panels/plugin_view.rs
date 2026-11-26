@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use craft_plugin::{PanelPlace, PanelSize, PanelSpec};
 use craft_plugin_ui::Theme;
 use effectcraft_engine::PluginItem;
 use effectcraft_plugin::Surface;
 use effectcraft_plugin::ui::{Drag, Dropped, UiEvent, Widget};
-use egui::{Rect, RichText, UiBuilder};
-use serde_json::json;
+use egui::{Rect, RichText, UiBuilder, pos2, vec2};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::EffectcraftApp;
 use crate::automation::Registry;
@@ -82,8 +84,43 @@ pub(crate) struct Source<'a> {
     pub images: &'a mut Images,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PanelInstance {
+    pub plugin: String,
+    pub panel: String,
+    pub instance: String,
+}
+
+impl PanelInstance {
+    fn kind(&self) -> PanelKind {
+        PanelKind::plugin_instance(&self.plugin, &self.panel, &self.instance)
+    }
+
+    fn of(&self, item: &PluginItem) -> bool {
+        item.multiple && item.plugin == self.plugin && item.id == self.panel
+    }
+}
+
+fn instance_of(app: &EffectcraftApp, kind: PanelKind) -> Option<&PanelInstance> {
+    app.ui.plugin_instances.iter().find(|open| open.kind() == kind)
+}
+
 fn claimants(app: &EffectcraftApp, kind: PanelKind) -> impl Iterator<Item = &PluginItem> {
-    app.session.plugin_items.iter().filter(move |item| item.panel && PanelKind::plugin(&item.plugin, &item.id) == kind)
+    let instance = instance_of(app, kind);
+    app.session.plugin_items.iter().filter(move |item| {
+        item.panel
+            && match instance {
+                Some(open) => open.of(item),
+                None => PanelKind::plugin(&item.plugin, &item.id) == kind,
+            }
+    })
+}
+
+pub(crate) fn instance_titles(app: &EffectcraftApp) -> Vec<(PanelKind, String)> {
+    let title = |open: &PanelInstance| {
+        app.session.plugin_items.iter().find(|item| open.of(item)).map(|item| (open.kind(), format!("{} {}", item.title, open.instance)))
+    };
+    app.ui.plugin_instances.iter().filter_map(title).collect()
 }
 
 pub fn running_panel(app: &EffectcraftApp, kind: PanelKind) -> Option<&PluginItem> {
@@ -95,28 +132,146 @@ pub fn running_panel(app: &EffectcraftApp, kind: PanelKind) -> Option<&PluginIte
 pub fn panel(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: PanelKind) {
     let Some(item) = running_panel(app, kind).cloned() else { return not_running(app, ui, rect, kind) };
     let PanelKind::Plugin(key) = kind else { return };
-    let scope = format!("plugin.{}.{}", item.plugin, item.id);
-    app.auto.add(&scope, rect, &item.title);
-    let tokens = app.tokens;
-    let mut body = ui.new_child(UiBuilder::new().max_rect(rect.shrink(8.0)));
-    let surface = Surface::Panel { plugin: &item.plugin, panel: &item.id };
-    app.plugin_ui.images.prune();
-    let events = match app.plugin_ui.panels.show(&mut app.session, &scope, surface, [rect.width(), rect.height()]) {
-        Ok(shown) => {
-            if let Some(error) = shown.error {
-                body.label(RichText::new(tr_args("The plug-in panel failed: {}", &[&error])).color(tokens.danger));
-            }
-            let scroll = egui::ScrollArea::both().id_salt(("plugin-panel", key)).auto_shrink([false, false]);
-            let source = Source { plugin: shown.plugin, images: &mut app.plugin_ui.images };
-            scroll.show(&mut body, |ui| draw(ui, shown.widgets, &tokens, &mut app.auto, &scope, source)).inner
-        }
-        Err(error) => {
-            body.label(RichText::new(tr_args("The plug-in panel failed: {}", &[&error])).color(tokens.danger));
-            Vec::new()
-        }
+    let instance = instance_of(app, kind).map(|open| open.instance.clone());
+    let (scope, title) = match &instance {
+        Some(instance) => (format!("plugin.{}.{}.{instance}", item.plugin, item.id), format!("{} {instance}", item.title)),
+        None => (format!("plugin.{}.{}", item.plugin, item.id), item.title.clone()),
     };
+    app.auto.add(&scope, rect, &title);
+    let mut body = ui.new_child(UiBuilder::new().max_rect(rect.shrink(8.0)));
+    let surface = Surface::Panel { plugin: &item.plugin, panel: &item.id, instance: instance.as_deref() };
+    app.plugin_ui.images.prune();
+    let events = shown(app, &mut body, &scope, surface, rect, Some(key));
     let keys = typed(ui, rect);
     submit(app, ui, &scope, events, &keys);
+}
+
+fn shown(app: &mut EffectcraftApp, body: &mut egui::Ui, scope: &str, surface: Surface, rect: Rect, scroll: Option<u32>) -> Vec<UiEvent> {
+    let tokens = app.tokens;
+    let failed = |body: &mut egui::Ui, error: &str| body.label(RichText::new(tr_args("The plug-in panel failed: {}", &[&error])).color(tokens.danger));
+    match app.plugin_ui.panels.show(&mut app.session, scope, surface, [rect.width(), rect.height()]) {
+        Ok(shown) => {
+            if let Some(error) = shown.error {
+                failed(body, error);
+            }
+            let source = Source { plugin: shown.plugin, images: &mut app.plugin_ui.images };
+            match scroll {
+                Some(key) => {
+                    let area = egui::ScrollArea::both().id_salt(("plugin-panel", key)).auto_shrink([false, false]);
+                    area.show(body, |ui| draw(ui, shown.widgets, &tokens, &mut app.auto, scope, source)).inner
+                }
+                None => draw(body, shown.widgets, &tokens, &mut app.auto, scope, source),
+            }
+        }
+        Err(error) => {
+            failed(body, &error);
+            Vec::new()
+        }
+    }
+}
+
+pub(crate) const STATUS_H: f32 = 22.0;
+const ROW_GAP: f32 = 8.0;
+
+fn row_width(size: PanelSize) -> f32 {
+    match size {
+        PanelSize::Small => 160.0,
+        PanelSize::Medium => 280.0,
+        PanelSize::Large => 440.0,
+    }
+}
+
+fn row(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, plugin: &str, spec: &PanelSpec) {
+    let scope = format!("plugin.{plugin}.{}", spec.id);
+    app.auto.add(&scope, rect, &spec.title);
+    let layout = egui::Layout::left_to_right(egui::Align::Center);
+    let mut body = ui.new_child(UiBuilder::new().max_rect(rect).layout(layout).id_salt(("plugin-row", &scope)));
+    body.set_clip_rect(rect.intersect(ui.clip_rect()));
+    let events = shown(app, &mut body, &scope, Surface::Panel { plugin, panel: &spec.id, instance: None }, rect, None);
+    submit(app, ui, &scope, events, "");
+}
+
+pub(crate) fn status_items() -> Vec<(String, PanelSpec)> {
+    effectcraft_plugin::placed_panels(PanelPlace::Status)
+}
+
+pub(crate) fn status_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, items: &[(String, PanelSpec)]) {
+    ui.painter().rect_filled(rect, 0.0, app.tokens.header_bg);
+    let mut right = rect.max.x - ROW_GAP;
+    for (plugin, spec) in items {
+        let width = row_width(spec.size).min(right - rect.min.x);
+        let item = Rect::from_min_max(pos2(right - width, rect.min.y), pos2(right, rect.max.y));
+        row(app, ui, item, plugin, spec);
+        right = item.min.x - ROW_GAP;
+    }
+}
+
+pub(crate) fn option_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui, x: f32, cy: f32) -> f32 {
+    let Some(tool) = super::plugin_tools::active(app).cloned() else { return x };
+    let tools = effectcraft_plugin::viewer::tools();
+    let options = tools.into_iter().find(|(plugin, spec)| *plugin == tool.plugin && spec.id == tool.tool).and_then(|(_, spec)| spec.options);
+    let Some(spec) = options.and_then(|panel| effectcraft_plugin::panel_spec(&tool.plugin, &panel)).filter(|spec| spec.place == PanelPlace::Bar) else {
+        return x;
+    };
+    let width = row_width(spec.size);
+    row(app, ui, Rect::from_min_size(pos2(x, cy - 13.0), vec2(width, 26.0)), &tool.plugin, &spec);
+    x + width + ROW_GAP
+}
+
+pub(crate) fn open(app: &mut EffectcraftApp, ctx: &egui::Context, plugin: &str, panel: &str, instance: Option<&str>, close: bool) -> Result<Value, String> {
+    use crate::dock::WorkspaceExt;
+    use craft_ui::docking::Action;
+    let spec = effectcraft_plugin::panel_spec(plugin, panel).ok_or_else(|| format!("no running plug-in `{plugin}` has a panel `{panel}`"))?;
+    if matches!(spec.place, PanelPlace::Status | PanelPlace::Bar) {
+        return Ok(json!({"place": spec.place, "open": true}));
+    }
+    let instance = match (spec.multiple, instance) {
+        (true, Some(key)) => Some(key.to_string()),
+        (true, None) if close => return Err(format!("say which `{panel}` to close: host::close_panel(\"{panel}\", Some(key))")),
+        (true, None) => (1..).map(|n: u32| n.to_string()).find(|key| !app.ui.dock.is_open(PanelKind::plugin_instance(plugin, panel, key))),
+        (false, None) => None,
+        (false, Some(_)) => return Err(format!("panel `{panel}` has one instance; declare it with Plugin::panel_each to open one per key")),
+    };
+    let kind = match &instance {
+        Some(key) => {
+            let open = PanelInstance { plugin: plugin.into(), panel: panel.into(), instance: key.clone() };
+            let kind = open.kind();
+            if !close && !app.ui.plugin_instances.contains(&open) {
+                app.ui.plugin_instances.push(open);
+            }
+            kind
+        }
+        None => PanelKind::plugin(plugin, panel),
+    };
+    if running_panel(app, kind).is_none() {
+        return Err(format!("no running plug-in `{plugin}` has a panel `{panel}`"));
+    }
+    let was_open = app.ui.dock.is_open(kind);
+    if close {
+        if was_open {
+            app.dock_command(ctx, Action::Close { panel: kind })?;
+        }
+        return Ok(json!({"panel": kind.id(), "open": false}));
+    }
+    let placed_before = app.ui.dock.hidden.iter().any(|(hidden, _)| *hidden == kind);
+    if spec.place == PanelPlace::Bottom && !was_open && !placed_before && app.ui.dock.is_open(PanelKind::Timeline) {
+        app.dock_command(ctx, Action::Open { panel: kind, anchor: Some(PanelKind::Timeline) })?;
+    }
+    app.show_panel(kind);
+    if spec.place == PanelPlace::Float && !was_open {
+        let rect = float_rect(ctx.content_rect(), spec.size);
+        app.dock_command(ctx, Action::Float { panel: kind, rect })?;
+    }
+    Ok(json!({"panel": kind.id(), "open": true, "instance": instance}))
+}
+
+pub(crate) fn paint_icon(app: &mut EffectcraftApp, painter: &egui::Painter, rect: Rect, kind: PanelKind, color: egui::Color32) -> bool {
+    let Some(item) = running_panel(app, kind) else { return false };
+    let Some(icon) = effectcraft_plugin::panel_spec(&item.plugin, &item.id).and_then(|spec| spec.icon) else { return false };
+    let (plugin, title) = (item.plugin.clone(), item.title.clone());
+    let mut host = AppHost { source: Source { plugin: &plugin, images: &mut app.plugin_ui.images }, auto: &mut app.auto };
+    craft_plugin_ui::paint_icon(&mut host, painter, rect, &icon, &title, color);
+    true
 }
 
 fn typed(ui: &egui::Ui, rect: Rect) -> String {
@@ -259,6 +414,8 @@ impl craft_plugin_ui::Host for AppHost<'_> {
 pub(crate) mod glide_tests;
 #[cfg(test)]
 mod panel_tests;
+#[cfg(test)]
+mod places_tests;
 
 #[cfg(test)]
 mod tests {

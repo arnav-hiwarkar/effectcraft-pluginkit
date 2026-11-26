@@ -67,12 +67,12 @@ pub(crate) fn harness(session: Session) -> Harness<'static, EffectcraftApp> {
     Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(|_| EffectcraftApp::new(session))
 }
 
-fn element(harness: &Harness<'_, EffectcraftApp>, id: &str) -> egui::Rect {
+pub(crate) fn element(harness: &Harness<'_, EffectcraftApp>, id: &str) -> egui::Rect {
     let found = harness.state().auto.find(id).unwrap_or_else(|| panic!("`{id}` is on screen"));
     egui::Rect::from_min_size(pos2(found.rect[0], found.rect[1]), egui::vec2(found.rect[2], found.rect[3]))
 }
 
-fn press_drag_release(harness: &mut Harness<'_, EffectcraftApp>, path: &[Pos2]) {
+pub(crate) fn press_drag_release(harness: &mut Harness<'_, EffectcraftApp>, path: &[Pos2]) {
     let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
     let (first, last) = (path[0], path[path.len() - 1]);
     let mut events = vec![egui::Event::PointerMoved(first), button(first, true)];
@@ -245,7 +245,7 @@ fn tool_texts(harness: &mut Harness<'_, EffectcraftApp>) -> Vec<String> {
         .collect()
 }
 
-static STAMP_TOOL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static STAMP_TOOL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub(crate) fn probe_session() -> Session {
     static PROBE: OnceLock<tempfile::TempDir> = OnceLock::new();

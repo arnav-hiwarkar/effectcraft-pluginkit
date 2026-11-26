@@ -156,6 +156,9 @@ impl PanelKind {
     pub fn plugin(plugin: &str, panel: &str) -> PanelKind {
         PanelKind::Plugin(plugin_key(plugin) << 16 | fold16(panel))
     }
+    pub fn plugin_instance(plugin: &str, panel: &str, instance: &str) -> PanelKind {
+        PanelKind::Plugin(plugin_key(plugin) << 16 | fold16(&format!("{panel}#{instance}")))
+    }
     pub fn plugin_owner(self) -> Option<u32> {
         match self {
             PanelKind::Plugin(key) => Some(key >> 16),
@@ -739,6 +742,10 @@ mod tests {
         assert_ne!(counter, PanelKind::plugin("test.probe", "graph"));
         assert_ne!(counter, PanelKind::plugin("test.other", "counter"));
         assert_eq!(counter.plugin_owner(), Some(plugin_key("test.probe")));
+        let notes = PanelKind::plugin_instance("test.probe", "notes", "1");
+        assert_ne!(notes, PanelKind::plugin_instance("test.probe", "notes", "2"));
+        assert_ne!(notes, PanelKind::plugin("test.probe", "notes"));
+        assert_eq!(notes.plugin_owner(), Some(plugin_key("test.probe")));
         assert_eq!(PanelKind::from_name(&counter.id()), Some(counter));
         let saved = serde_json::to_string(&counter).unwrap();
         assert_eq!(serde_json::from_str::<PanelKind>(&saved).unwrap(), counter);

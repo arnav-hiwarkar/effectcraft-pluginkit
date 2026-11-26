@@ -188,7 +188,10 @@ pub fn dynamic(s: &Session, name: &str, cx: &DynCtx) -> (Vec<MenuEntry>, Option<
             s.plugin_items
                 .iter()
                 .filter(|item| item.panel)
-                .map(|item| dyn_entry(item.title.clone(), "window.pluginPanel", json!({"plugin": item.plugin, "panel": item.id})))
+                .map(|item| {
+                    let label = if item.multiple { format!("New {}", item.title) } else { item.title.clone() };
+                    dyn_entry(label, "window.pluginPanel", json!({"plugin": item.plugin, "panel": item.id}))
+                })
                 .collect(),
             Some("No Plug-in Panels"),
         ),

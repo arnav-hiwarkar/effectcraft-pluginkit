@@ -1614,6 +1614,7 @@ fn a_plugin_command_gets_its_free_default_shortcut_never_a_built_in_one_and_can_
         id: id.into(),
         title: id.into(),
         panel: false,
+        multiple: false,
         shortcut: Some(shortcut.into()),
     };
     let mut s = Session::default();
