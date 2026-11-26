@@ -390,7 +390,7 @@ fn no_layer(id: u64) -> EngineError {
     EngineError::Other(format!("no layer {id} in the project; read layer ids from `layer.list` or the selection"))
 }
 
-pub(crate) type Job<T> = Box<dyn FnOnce() -> T + Send>;
+pub type Job<T> = Box<dyn FnOnce() -> T + Send>;
 
 fn frame_size(size: (u32, u32), scale: f64) -> Result<(u32, u32), String> {
     let (width, height) = ((f64::from(size.0) * scale).ceil(), (f64::from(size.1) * scale).ceil());
@@ -403,59 +403,61 @@ fn frame_size(size: (u32, u32), scale: f64) -> Result<(u32, u32), String> {
     Ok((width.max(1.0) as u32, height.max(1.0) as u32))
 }
 
+pub(crate) fn frame_job(session: &Session, request: &FrameRequest) -> Result<Job<Pixels>, String> {
+    craft_plugin_host::check_frame(request)?;
+    let comp = find_comp(session, request.comp.as_deref(), request.ids)?;
+    let layer = request.layer.as_deref().map(|layer| find_layer(&session.project, comp, layer, request.ids)).transpose()?;
+    if let (true, Some(layer)) = (request.source, layer) {
+        return source_job(session, request, comp, layer);
+    }
+    let size = session.project.comp(comp).map(|found| (found.width, found.height)).ok_or("the composition is gone")?;
+    frame_size(size, request.scale)?;
+    let (project, cache) = match layer {
+        Some(layer) => (Arc::new(only_layer(&session.project, comp, layer, true)?), None),
+        None => (session.project.clone(), Some(session.layer_cache.clone())),
+    };
+    let opts = session.render_opts(RenderOpts { scale: request.scale, ..RenderOpts::default() });
+    let (footage, expr, accel, time) = (session.footage.clone(), session.expr.clone(), session.accel.clone(), Tick::from_seconds_f64(request.time));
+    Ok(Box::new(move || {
+        let mut renderer = Renderer::new(&project, footage.as_ref(), opts);
+        renderer.expr = expr.as_deref();
+        renderer.accel = accel.as_deref();
+        renderer.cache = cache.as_deref();
+        let image = renderer.comp_frame(comp, time);
+        Pixels { width: image.width, height: image.height, data: image.data }
+    }))
+}
+
+fn source_job(session: &Session, request: &FrameRequest, comp: ItemId, layer: LayerId) -> Result<Job<Pixels>, String> {
+    let project = session.project.clone();
+    let found = project.comp(comp).ok_or("the composition is gone")?;
+    let source = found.layer(layer).ok_or("the layer is gone")?;
+    let size = match effectcraft_engine::render::source_size(&project, source) {
+        (0, _) | (_, 0) => (found.width, found.height),
+        size => size,
+    };
+    let (width, height) = frame_size(size, request.scale)?;
+    let opts = session.render_opts(RenderOpts { scale: request.scale, ..RenderOpts::default() });
+    let (footage, expr, scale, time) = (session.footage.clone(), session.expr.clone(), request.scale, Tick::from_seconds_f64(request.time));
+    Ok(Box::new(move || {
+        let mut renderer = Renderer::new(&project, footage.as_ref(), opts);
+        renderer.expr = expr.as_deref();
+        let read = renderer.eval_ctx(comp, time).and_then(|ctx| renderer.layer_source(&ctx, ctx.layer(layer)?));
+        let mut data = vec![[0.0; 4]; width as usize * height as usize];
+        if let Some(buf) = read {
+            for (i, pixel) in data.iter_mut().enumerate() {
+                let (x, y) = ((i % width as usize) as f64 + 0.5, (i / width as usize) as f64 + 0.5);
+                let [bx, by] = [x, y].map(|v| v / scale * buf.scale);
+                *pixel = buf.img.get((bx + buf.offset[0]).floor() as i64, (by + buf.offset[1]).floor() as i64);
+            }
+        }
+        Pixels { width, height, data }
+    }))
+}
+
 impl SessionHost<'_> {
     pub(crate) fn frame_job(&self, request: &FrameRequest) -> Result<Job<Pixels>, String> {
-        craft_plugin_host::check_frame(request)?;
-        let session = &*self.session;
-        let comp = find_comp(session, request.comp.as_deref(), request.ids)?;
-        let layer = request.layer.as_deref().map(|layer| find_layer(&session.project, comp, layer, request.ids)).transpose()?;
-        if let (true, Some(layer)) = (request.source, layer) {
-            return self.source_job(request, comp, layer);
-        }
-        let size = session.project.comp(comp).map(|found| (found.width, found.height)).ok_or("the composition is gone")?;
-        frame_size(size, request.scale)?;
-        let (project, cache) = match layer {
-            Some(layer) => (Arc::new(only_layer(&session.project, comp, layer, true)?), None),
-            None => (session.project.clone(), Some(session.layer_cache.clone())),
-        };
-        let opts = session.render_opts(RenderOpts { scale: request.scale, ..RenderOpts::default() });
-        let (footage, expr, accel, time) = (session.footage.clone(), session.expr.clone(), session.accel.clone(), Tick::from_seconds_f64(request.time));
-        Ok(Box::new(move || {
-            let mut renderer = Renderer::new(&project, footage.as_ref(), opts);
-            renderer.expr = expr.as_deref();
-            renderer.accel = accel.as_deref();
-            renderer.cache = cache.as_deref();
-            let image = renderer.comp_frame(comp, time);
-            Pixels { width: image.width, height: image.height, data: image.data }
-        }))
-    }
-
-    fn source_job(&self, request: &FrameRequest, comp: ItemId, layer: LayerId) -> Result<Job<Pixels>, String> {
-        let session = &*self.session;
-        let project = session.project.clone();
-        let found = project.comp(comp).ok_or("the composition is gone")?;
-        let source = found.layer(layer).ok_or("the layer is gone")?;
-        let size = match effectcraft_engine::render::source_size(&project, source) {
-            (0, _) | (_, 0) => (found.width, found.height),
-            size => size,
-        };
-        let (width, height) = frame_size(size, request.scale)?;
-        let opts = session.render_opts(RenderOpts { scale: request.scale, ..RenderOpts::default() });
-        let (footage, expr, scale, time) = (session.footage.clone(), session.expr.clone(), request.scale, Tick::from_seconds_f64(request.time));
-        Ok(Box::new(move || {
-            let mut renderer = Renderer::new(&project, footage.as_ref(), opts);
-            renderer.expr = expr.as_deref();
-            let read = renderer.eval_ctx(comp, time).and_then(|ctx| renderer.layer_source(&ctx, ctx.layer(layer)?));
-            let mut data = vec![[0.0; 4]; width as usize * height as usize];
-            if let Some(buf) = read {
-                for (i, pixel) in data.iter_mut().enumerate() {
-                    let (x, y) = ((i % width as usize) as f64 + 0.5, (i / width as usize) as f64 + 0.5);
-                    let [bx, by] = [x, y].map(|v| v / scale * buf.scale);
-                    *pixel = buf.img.get((bx + buf.offset[0]).floor() as i64, (by + buf.offset[1]).floor() as i64);
-                }
-            }
-            Pixels { width, height, data }
-        }))
+        frame_job(self.session, request)
     }
 
     pub(crate) fn audio_job(&self, request: &AudioRequest) -> Result<Job<Samples>, String> {

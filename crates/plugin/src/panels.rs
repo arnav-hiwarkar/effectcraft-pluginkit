@@ -906,6 +906,14 @@ pub fn drag_path(plugin: &str, root: craft_plugin_host::ui::Root, path: &str) ->
     full.is_file().then(|| full.to_string_lossy().into_owned())
 }
 
+pub fn panel_frame(session: &Session, plugin: &str, request: &FrameRequest) -> Result<crate::gate::Job<Pixels>, String> {
+    let loaded = plugins().and_then(|plugins| plugins.get(plugin)).ok_or_else(|| format!("the plug-in `{plugin}` is not running"))?;
+    if !loaded.plugin.granted(craft_plugin_host::Permission::DocumentRead) {
+        return Err("a frame needs the plug-in's \"document.read\" permission; add it to `permissions` in plugin.json".into());
+    }
+    crate::gate::frame_job(session, request)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;

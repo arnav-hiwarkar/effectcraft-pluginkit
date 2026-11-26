@@ -782,6 +782,17 @@ in the order they were added; the SDK turns it back into the `true` of the item.
 curves or gradients in a panel says so in place of the control. Each control's automation id is
 `<scope>.<widget id>`, a radio choice's and a menu item's `<scope>.<widget id>.<index>`.
 
+### Frames in panels
+
+`ui.frame(key, FrameRequest { comp, layer, time, scale, .. }, [w, h])` shows what `host::frame` would return
+for the same request, but the app renders it from its own caches on a worker thread and draws it, fitted
+inside `[w, h]`: no pixels pass through the plugin, and the panel makes no `host::frame` or `upload_image`
+call. The app draws it again when the project, the preferences or the active comp change, without calling
+the plugin; the last picture stays up while the next one renders, and a spinner shows before the first. A comp
+or layer that is not there shows the reason in a weak label (`no composition `Shot 9``). It needs
+`document.read`, like `host::frame`. Its accessible name is "Frame" (`ui.name` after it sets another), and a
+click reaches the plugin as `Click`. An app that cannot draw frames says so in place of the frame.
+
 ### App events
 
 | Call | Returns |
@@ -842,6 +853,7 @@ only when the user edited it.
 | Widget | Shows |
 |---|---|
 | `ui.image(key, [w, h])` | An uploaded image. Returns `true` when clicked. |
+| `ui.frame(key, FrameRequest, [w, h])` | A comp or layer rendered by the app, see [Frames in panels](#frames-in-panels). Returns `true` when clicked. |
 | `ui.scroll(key, height, \|ui\| …)` | Its contents in a vertical scroll area at most `height` tall. |
 | `ui.collapsing(title, open_by_default, \|ui\| …)` | A section with a twirl-down. |
 | `ui.tabs(&mut selected, &["A", "B"])` | A row of tabs. Returns `true` when another is picked. |
@@ -1057,7 +1069,7 @@ the app uses, with the permissions `plugin.json` asks for. Commands the plugin r
 | `plugin.render(effect)` | A `Render` builder: `.set(id, value)`, `.with(json)`, `.on(Pattern)`, `.input(Picture)`, `.size(w, h)` (320x180 by default), `.layer(param, Picture)`, `.mask(points, closed)`, `.time(s)`, `.scale(f)`, `.float()`, `.tolerance(levels)`. A `.set` value passes through `Param::fit` as in the app: clamped to the hard range, and an error when its kind is wrong. |
 | `render.run()`, `render.timed(rounds)` | The output `Picture` (padded by the layout's padding), and the best time. When the layout or a pass of its plan has a reach, the render in bands is also compared with a whole render, and a difference is an error naming the first pixel. |
 | `render.layout()`, `render.overlay()`, `render.source()` | The effect's `Layout`, its `Overlay` (in layer pixels), and the input picture. |
-| `plugin.panel(id)` | A `PanelTest`: `.click(label)`, `.send(label, UiEventKind)`, `.pick(menu, item)` (a menu by its text, `""` for a context menu), `.app_event(AppEvent)`, `.timer(name)`, `.redraw()`, `.texts()`, `.widgets()`. A control is found by its text, a text field or area by its hint. |
+| `plugin.panel(id)` | A `PanelTest`: `.click(label)`, `.send(label, UiEventKind)`, `.pick(menu, item)` (a menu by its text, `""` for a context menu), `.app_event(AppEvent)`, `.timer(name)`, `.redraw()`, `.texts()`, `.widgets()`, `.click_frame(n)` (the `n`th `ui.frame`, from 0). A control is found by its text, a text field or area by its hint. |
 | `plugin.migrate(effect, from, values)` | Calls the effect's `migrate` with saved values and returns what it made of them. |
 | `plugin.command(id)`, `plugin.task(id, args)`, `plugin.tool(id, event)` | Runs a command; runs a task to its end (60 s at most) and returns its result; sends a `ToolEvent` (`testing::pointer(kind, comp)` makes one) and returns the overlay. |
 | `plugin.commands()`, `plugin.answer(command, json)`, `plugin.notes()`, `plugin.logs()` | The commands run so far with their parameters; what a command returns (null by default); the `notify` messages; the log. |

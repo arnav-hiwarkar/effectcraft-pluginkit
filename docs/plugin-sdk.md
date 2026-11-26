@@ -878,6 +878,22 @@ ui.scroll("thumbs", 240.0, |ui| {
 A canvas draws an uploaded image with `c.image(key, min, max)`. The app drops a plugin's images when the
 plugin stops.
 
+### Show a live frame of a comp
+
+The app renders and draws the frame itself, so the plugin never touches pixels, and redraws it after each
+edit without calling the panel. It needs `document.read`.
+
+```rust
+ui.row(|ui| {
+    for (i, time) in [0.0, 1.0, 2.0].into_iter().enumerate() {
+        let request = FrameRequest { comp: Some("Shot 1".into()), time, scale: 0.25, ..Default::default() };
+        if ui.frame(&format!("shot/{i}"), request, [96.0, 54.0]) {
+            host::command("time.set", json!({"time": time}))?;
+        }
+    }
+});
+```
+
 ## Draw a control in Effect Controls
 
 A custom parameter holds text the plugin owns, usually JSON. The effect draws its control with the same
