@@ -705,6 +705,31 @@ twirled open or shut.
 `ui.table(key, &["Name", "Size"], count, &mut selection, item)` adds column headings; give each row
 `Item::cells(&[name, size])`. A tree is a list of items with `Item::new(text).depth(d).open(bool)`: the plugin
 keeps which rows are open and leaves out the children of shut ones. `.icon(name)` and `.weak()` style a row.
+Read `ui.toggled(key)` before building the tree: it returns the `(row, open)` the user asked for in the rows
+shown last, so the rows built in this call already show the change. `picked.toggled` reports the same pair
+after the list is built.
+
+The SDK's `ui.table` gives each column `ColumnWidth::Auto`. A `Widget::List` written by hand can set
+`Column { title, width }`: `Narrow` (five font heights), `Wide` (fifteen), `Fill` (the space the others
+leave) and `Auto` (an equal share of the rest, at most eight font heights when a `Fill` column is present).
+A click on a heading does nothing; there is no sorting event.
+
+| Input | Event |
+|---|---|
+| Click, Ctrl/⌘-click, Shift-click | `Select(rows)`: the row, the row added or removed, the range from the last plain pick |
+| Double click, Enter | `Activate(row)` |
+| Up, Down, Home, End, Page Up, Page Down | `Select([row])` on the row the focus moves to; with Shift in a multi selection, the range from the last plain pick. The row scrolls into view and the app asks for rows it was not given (`Show`) |
+| Space | Adds or removes the focused row in a multi selection; selects it in a single one |
+| Right on a shut row, Left on an open row, click on the triangle | `Toggle { row, open }` |
+| Right on an open row | Moves to its first child |
+| Left on a shut or leaf row | Moves to its parent, the nearest earlier row with a smaller depth |
+| Right-click on a row that is not selected | `Select([row])`, then the list's context menu |
+
+The list is one Tab stop: Tab enters it on the row last focused or the first selected row, the arrow keys
+move the focus between rows, and the next Tab leaves it. `ui.context_menu(…)` right after a list is the
+list's context menu. A list reads to a screen reader as a list of items, a table as a grid of rows under
+column headers; each row says whether it is selected, a tree row whether it is open, and the triangle is
+named "Open" or "Close" and the row's first cell.
 
 At most `MAX_LIST_ITEMS` (1024) rows are built per call; the first call builds `LIST_WINDOW` (128).
 
