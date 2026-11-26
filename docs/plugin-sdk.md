@@ -745,6 +745,23 @@ let picked = ui.list("folders", self.shown.len(), &mut self.selected, |row| {
 `set_open` updates `shown`, the folders whose parents are open. Right and Left open and close rows from the
 keyboard; the probe's `tree` panel is a full example with a table of 10 000 rows beside it.
 
+### A small settings panel
+
+```rust
+ui.toggle("Live preview", &mut self.live);
+ui.radio("Quality", &mut self.quality, &["Draft", "Full"]);
+ui.text_area("notes", &mut self.notes, "Notes", 3);
+ui.curve("Falloff", &mut self.falloff);
+ui.menu("More", |menu| {
+    if menu.item("Reset") {
+        *self = Self::default();
+    }
+});
+```
+
+Each control returns `true` in the call where the user changed it. `ui.icon_button`, `ui.split`, `ui.gap`,
+`ui.gradient` and `ui.context_menu` follow the same pattern (see the reference).
+
 ### React to the app
 
 `ui.on(topic)` subscribes the panel to an app event and returns it on the call it arrived in. Ask for it

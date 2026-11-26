@@ -759,6 +759,29 @@ named "Open" or "Close" and the row's first cell.
 
 At most `MAX_LIST_ITEMS` (1024) rows are built per call; the first call builds `LIST_WINDOW` (128).
 
+### Controls
+
+| Call | Draws | Returns |
+|---|---|---|
+| `ui.icon_button(icon, text)` | A square button with the named icon (`craft_plugin::ICONS`); `text` is its tooltip and accessible name. An icon the app lacks shows the first letter of `text`. | `true` in the call after a click, Enter or Space |
+| `ui.toggle(text, &mut bool)` | A switch with `text` beside it (role switch, with its on or off state). | `true` when it changed |
+| `ui.radio(text, &mut usize, &options)` | One choice per option; the arrow keys move the choice while one has the focus. | `true` when the choice changed |
+| `ui.text_area(key, &mut String, hint, rows)` | Multi-line text, `rows` high; Enter makes a new line, Tab leaves. `hint` is its accessible name. | `true` when the text changed |
+| `ui.text(&[(text, TextStyle)])` | One wrapped paragraph whose spans keep their style. | |
+| `ui.gap(Gap::Small \| Medium \| Large)` | Space from the app's spacing. | |
+| `ui.name(text)` | Gives the widget just before it the accessible name `text` (an icon button "Clear the notes"). | |
+| `ui.focus()` | Puts the keyboard focus on the widget just before it, once for the call it was made in. Call it only in the call that should move the focus; a later redraw with no `focus` leaves the focus where the user put it. | |
+| `ui.menu(text, \|menu\| …)` | A button that opens a menu. `menu.item(text)` and `menu.item_enabled(text, enabled)` return `true` in the call after a pick, `menu.check(text, &mut bool)` flips its value, `menu.separator()`, `menu.submenu(text, \|menu\| …)`. | |
+| `ui.context_menu(\|menu\| …)` | The same menu on the widget just before it, opened by a right click or the Menu key. | |
+| `ui.split(key, Axis::Horizontal \| Vertical, first, second)` | Two panes side by side or stacked with a divider the user drags, or moves with the arrow keys while it has the focus. The app keeps the share. | |
+| `ui.curve(text, &mut Vec<[f64; 2]>)` | The app's curve editor (a click or drag adds a point, a drag moves one). At most `MAX_CURVE_POINTS` points, x inside 0..1. | `true` when the points changed |
+| `ui.gradient(text, &mut Gradient)` | The app's gradient stops: a click above or below the bar adds a stop, a drag moves one, the selected colour stop has a colour button and a Delete stop button. | `true` when the gradient changed |
+
+Menu picks reach the plugin as the item's index, counted depth first over items, separators and submenus
+in the order they were added; the SDK turns it back into the `true` of the item. An app that cannot edit
+curves or gradients in a panel says so in place of the control. Each control's automation id is
+`<scope>.<widget id>`, a radio choice's and a menu item's `<scope>.<widget id>.<index>`.
+
 ### App events
 
 | Call | Returns |
@@ -1034,7 +1057,7 @@ the app uses, with the permissions `plugin.json` asks for. Commands the plugin r
 | `plugin.render(effect)` | A `Render` builder: `.set(id, value)`, `.with(json)`, `.on(Pattern)`, `.input(Picture)`, `.size(w, h)` (320x180 by default), `.layer(param, Picture)`, `.mask(points, closed)`, `.time(s)`, `.scale(f)`, `.float()`, `.tolerance(levels)`. A `.set` value passes through `Param::fit` as in the app: clamped to the hard range, and an error when its kind is wrong. |
 | `render.run()`, `render.timed(rounds)` | The output `Picture` (padded by the layout's padding), and the best time. When the layout or a pass of its plan has a reach, the render in bands is also compared with a whole render, and a difference is an error naming the first pixel. |
 | `render.layout()`, `render.overlay()`, `render.source()` | The effect's `Layout`, its `Overlay` (in layer pixels), and the input picture. |
-| `plugin.panel(id)` | A `PanelTest`: `.click(label)`, `.send(label, UiEventKind)`, `.app_event(AppEvent)`, `.timer(name)`, `.redraw()`, `.texts()`, `.widgets()`. |
+| `plugin.panel(id)` | A `PanelTest`: `.click(label)`, `.send(label, UiEventKind)`, `.pick(menu, item)` (a menu by its text, `""` for a context menu), `.app_event(AppEvent)`, `.timer(name)`, `.redraw()`, `.texts()`, `.widgets()`. A control is found by its text, a text field or area by its hint. |
 | `plugin.migrate(effect, from, values)` | Calls the effect's `migrate` with saved values and returns what it made of them. |
 | `plugin.command(id)`, `plugin.task(id, args)`, `plugin.tool(id, event)` | Runs a command; runs a task to its end (60 s at most) and returns its result; sends a `ToolEvent` (`testing::pointer(kind, comp)` makes one) and returns the overlay. |
 | `plugin.commands()`, `plugin.answer(command, json)`, `plugin.notes()`, `plugin.logs()` | The commands run so far with their parameters; what a command returns (null by default); the `notify` messages; the log. |

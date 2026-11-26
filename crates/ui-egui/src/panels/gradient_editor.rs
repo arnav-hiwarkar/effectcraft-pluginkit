@@ -322,6 +322,94 @@ pub(super) fn to_color32(c: [f32; 4]) -> Color32 {
     Color32::from_rgba_unmultiplied(b(c[0]), b(c[1]), b(c[2]), b(c[3]))
 }
 
+/// The preview bar over a checkerboard with its opacity stops above and colour stops below: a
+/// click in a row adds a stop, a drag moves one, a click selects it. Automation ids are
+/// `<prefix>.bar`, `<prefix>.addOpacity`, `<prefix>.addColor`, `<prefix>.opacityStop.<i>` and
+/// `<prefix>.colorStop.<i>`. Returns the response of the whole track.
+pub(crate) fn stop_track(ui: &mut egui::Ui, draft: &mut Draft, w: f32, t: &Tokens, auto: &mut crate::automation::Registry, prefix: &str) -> egui::Response {
+    let (area, track_response) = ui.allocate_exact_size(vec2(w, 72.0), Sense::hover());
+    let bar = Rect::from_min_max(pos2(area.min.x + 8.0, area.min.y + 22.0), pos2(area.max.x - 8.0, area.min.y + 48.0));
+    let opacity_row = Rect::from_min_max(pos2(bar.min.x, area.min.y), pos2(bar.max.x, bar.min.y - 2.0));
+    let color_row = Rect::from_min_max(pos2(bar.min.x, bar.max.y + 2.0), pos2(bar.max.x, area.max.y));
+    let pos_of = |x: f32| ((x - bar.min.x) / bar.width().max(1.0)) as f64;
+    let x_of = |p: f64| bar.min.x + bar.width() * p as f32;
+    let painter = ui.painter().clone();
+
+    // The bar: a checkerboard under the gradient, so opacity shows.
+    let cell = 6.0;
+    let mut y = bar.min.y;
+    let mut row = 0;
+    while y < bar.max.y {
+        let mut x = bar.min.x;
+        let mut col = row;
+        while x < bar.max.x {
+            let c = if col % 2 == 0 { Color32::from_gray(200) } else { Color32::from_gray(150) };
+            painter.rect_filled(Rect::from_min_max(pos2(x, y), pos2((x + cell).min(bar.max.x), (y + cell).min(bar.max.y))), 0.0, c);
+            x += cell;
+            col += 1;
+        }
+        y += cell;
+        row += 1;
+    }
+    let g = draft.gradient();
+    let n = 96;
+    for k in 0..n {
+        let x0 = bar.min.x + bar.width() * k as f32 / n as f32;
+        let x1 = bar.min.x + bar.width() * (k + 1) as f32 / n as f32;
+        let c = g.sample((k as f64 + 0.5) / n as f64);
+        painter.rect_filled(Rect::from_min_max(pos2(x0, bar.min.y), pos2(x1, bar.max.y)), 0.0, to_color32(c));
+    }
+    painter.rect_stroke(bar, 0.0, Stroke::new(1.0, t.field_border), StrokeKind::Outside);
+    auto.add(&format!("{prefix}.bar"), bar, "Gradient");
+
+    // Clicking a row's empty space adds a stop there.
+    for (track, rowr, id) in [(Track::Opacity, opacity_row, format!("{prefix}.addOpacity")), (Track::Color, color_row, format!("{prefix}.addColor"))] {
+        let r = ui.interact(rowr, egui::Id::unique(("gradient-add", &id)), Sense::click());
+        auto.add(&id, rowr, &id);
+        if r.clicked()
+            && let Some(p) = r.interact_pointer_pos()
+        {
+            draft.add(track, pos_of(p.x));
+        }
+    }
+
+    // The stops (drawn and hit-tested over the rows, so they take the clicks).
+    for track in [Track::Opacity, Track::Color] {
+        for i in 0..draft.len(track) {
+            let d = &*draft;
+            let Some(id) = d.id_at(track, i) else { continue };
+            let (pos, fill) = match track {
+                Track::Color => d.colors.get(i).map(|s| (s.pos, to_color32([s.value[0], s.value[1], s.value[2], 1.0]))),
+                Track::Opacity => d.opacities.get(i).map(|s| (s.pos, Color32::from_gray((s.value.clamp(0.0, 1.0) * 255.0) as u8))),
+            }
+            .unwrap_or((0.0, Color32::WHITE));
+            let selected = d.selected == Some((track, id));
+            let x = x_of(pos);
+            let r = match track {
+                Track::Opacity => Rect::from_min_max(pos2(x - 5.0, opacity_row.max.y - 15.0), pos2(x + 5.0, opacity_row.max.y)),
+                Track::Color => Rect::from_min_max(pos2(x - 5.0, color_row.min.y), pos2(x + 5.0, color_row.min.y + 15.0)),
+            };
+            painter.rect_filled(r, 1.0, fill);
+            painter.rect_stroke(r, 1.0, Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { t.accent } else { t.field_border }), StrokeKind::Outside);
+            let resp = ui.interact(r.expand(2.0), egui::Id::unique(("gradient-stop", prefix, track == Track::Color, id)), Sense::click_and_drag());
+            let name = match track {
+                Track::Opacity => format!("{prefix}.opacityStop.{i}"),
+                Track::Color => format!("{prefix}.colorStop.{i}"),
+            };
+            auto.add(&name, r, &name);
+            if resp.clicked() || resp.drag_started() {
+                draft.selected = Some((track, id));
+            }
+            if resp.dragged()
+                && let Some(p) = resp.interact_pointer_pos()
+            {
+                draft.move_to(track, id, pos_of(p.x));
+            }
+        }
+    }
+    track_response
+}
+
 /// The Gradient Editor dialog for the gradient in `app.dialog_state.gradient`: a stop track for
 /// the opacity and colour tracks over a checkerboard preview, the selected stop's location,
 /// opacity or colour and a Delete button (when its track has more than one stop), the
@@ -337,91 +425,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
     // At the lower right, undimmed: the canvas it edits stays in view (After Effects).
     super::dialogs::modal_placed(ctx, tr("Gradient Editor"), vec2(520.0, 270.0), t, super::live_preview::PLACE, |ui| {
         let w = ui.available_width().max(200.0);
-        let (area, _) = ui.allocate_exact_size(vec2(w, 72.0), Sense::hover());
-        let bar = Rect::from_min_max(pos2(area.min.x + 8.0, area.min.y + 22.0), pos2(area.max.x - 8.0, area.min.y + 48.0));
-        let opacity_row = Rect::from_min_max(pos2(bar.min.x, area.min.y), pos2(bar.max.x, bar.min.y - 2.0));
-        let color_row = Rect::from_min_max(pos2(bar.min.x, bar.max.y + 2.0), pos2(bar.max.x, area.max.y));
-        let pos_of = |x: f32| ((x - bar.min.x) / bar.width().max(1.0)) as f64;
-        let x_of = |p: f64| bar.min.x + bar.width() * p as f32;
-        let painter = ui.painter().clone();
-
-        // The bar: a checkerboard under the gradient, so opacity shows.
-        let cell = 6.0;
-        let mut y = bar.min.y;
-        let mut row = 0;
-        while y < bar.max.y {
-            let mut x = bar.min.x;
-            let mut col = row;
-            while x < bar.max.x {
-                let c = if col % 2 == 0 { Color32::from_gray(200) } else { Color32::from_gray(150) };
-                painter.rect_filled(Rect::from_min_max(pos2(x, y), pos2((x + cell).min(bar.max.x), (y + cell).min(bar.max.y))), 0.0, c);
-                x += cell;
-                col += 1;
-            }
-            y += cell;
-            row += 1;
-        }
-        let g = app.dialog_state.gradient.gradient();
-        let n = 96;
-        for k in 0..n {
-            let x0 = bar.min.x + bar.width() * k as f32 / n as f32;
-            let x1 = bar.min.x + bar.width() * (k + 1) as f32 / n as f32;
-            let c = g.sample((k as f64 + 0.5) / n as f64);
-            painter.rect_filled(Rect::from_min_max(pos2(x0, bar.min.y), pos2(x1, bar.max.y)), 0.0, to_color32(c));
-        }
-        painter.rect_stroke(bar, 0.0, Stroke::new(1.0, t.field_border), StrokeKind::Outside);
-        app.auto.add("dialog.gradient.bar", bar, "Gradient");
-
-        // Clicking a row's empty space adds a stop there.
-        for (track, rowr, id) in [(Track::Opacity, opacity_row, "dialog.gradient.addOpacity"), (Track::Color, color_row, "dialog.gradient.addColor")] {
-            let r = ui.interact(rowr, egui::Id::unique(("gradient-add", id)), Sense::click());
-            app.auto.add(id, rowr, id);
-            if r.clicked()
-                && let Some(p) = r.interact_pointer_pos()
-            {
-                app.dialog_state.gradient.add(track, pos_of(p.x));
-            }
-        }
-
-        // The stops (drawn and hit-tested over the rows, so they take the clicks).
-        for track in [Track::Opacity, Track::Color] {
-            for i in 0..app.dialog_state.gradient.len(track) {
-                let d = &app.dialog_state.gradient;
-                let Some(id) = d.id_at(track, i) else { continue };
-                let (pos, fill) = match track {
-                    Track::Color => d.colors.get(i).map(|s| (s.pos, to_color32([s.value[0], s.value[1], s.value[2], 1.0]))),
-                    Track::Opacity => d.opacities.get(i).map(|s| (s.pos, Color32::from_gray((s.value.clamp(0.0, 1.0) * 255.0) as u8))),
-                }
-                .unwrap_or((0.0, Color32::WHITE));
-                let selected = d.selected == Some((track, id));
-                let x = x_of(pos);
-                let r = match track {
-                    Track::Opacity => Rect::from_min_max(pos2(x - 5.0, opacity_row.max.y - 15.0), pos2(x + 5.0, opacity_row.max.y)),
-                    Track::Color => Rect::from_min_max(pos2(x - 5.0, color_row.min.y), pos2(x + 5.0, color_row.min.y + 15.0)),
-                };
-                painter.rect_filled(r, 1.0, fill);
-                painter.rect_stroke(
-                    r,
-                    1.0,
-                    Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { t.accent } else { t.field_border }),
-                    StrokeKind::Outside,
-                );
-                let resp = ui.interact(r.expand(2.0), egui::Id::unique(("gradient-stop", track == Track::Color, id)), Sense::click_and_drag());
-                let name = match track {
-                    Track::Opacity => format!("dialog.gradient.opacityStop.{i}"),
-                    Track::Color => format!("dialog.gradient.colorStop.{i}"),
-                };
-                app.auto.add(&name, r, &name);
-                if resp.clicked() || resp.drag_started() {
-                    app.dialog_state.gradient.selected = Some((track, id));
-                }
-                if resp.dragged()
-                    && let Some(p) = resp.interact_pointer_pos()
-                {
-                    app.dialog_state.gradient.move_to(track, id, pos_of(p.x));
-                }
-            }
-        }
+        stop_track(ui, &mut app.dialog_state.gradient, w, t, &mut app.auto, "dialog.gradient");
         ui.add_space(8.0);
 
         // The selected stop's fields.
