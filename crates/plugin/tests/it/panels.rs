@@ -85,11 +85,25 @@ fn relay_in(app: &mut App, panels: &mut Panels, frame: &mut u64, (key, plugin, b
     if held {
         hold_in(bundle);
     }
+    let before = held_notices(app);
     panels.submit(key, vec![click(relay)], "");
     *frame += 1;
     panels.frame(&mut app.session, ms(16 * *frame));
     panels.show(&mut app.session, key, surface, SIZE).expect("the relay panel shows");
+    for _ in 0..5000 {
+        if !held || held_notices(app) > before {
+            break;
+        }
+        *frame += 1;
+        panels.frame(&mut app.session, ms(16 * *frame));
+        std::thread::sleep(ms(2));
+    }
+    assert!(!held || held_notices(app) > before, "the relay call never started waiting on the hold");
     assert!(!held || panels.busy(key), "the relay call waits while the bundle holds");
+}
+
+fn held_notices(app: &App) -> usize {
+    app.session.events.iter().filter(|event| matches!(event, effectcraft_engine::Event::Toast { message, .. } if message.ends_with(": held"))).count()
 }
 
 fn relay_said(app: &mut App, panels: &mut Panels, frame: &mut u64) -> String {
