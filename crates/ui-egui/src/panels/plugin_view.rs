@@ -181,7 +181,7 @@ pub(crate) fn form(app: &mut EffectcraftApp, ctx: &egui::Context) {
     let answered = effectcraft_plugin::asked_form(&app.session, |asked| {
         let mut answer = None;
         super::dialogs::modal(ctx, &asked.form.title, egui::vec2(420.0, 160.0), &tokens, |ui| {
-            let mut host = AppHost { source: Source { plugin: &asked.plugin, images }, auto };
+            let mut host = AppHost { source: Source { plugin: &asked.plugin, images }, auto, tokens };
             answer = craft_plugin_ui::draw_form(ui, &asked.form, &mut asked.values, "plugin.form", &mut host);
         });
         answer.map(|answer| (answer == craft_plugin_ui::Answer::Ok).then(|| asked.values.clone()))
@@ -195,7 +195,7 @@ pub(crate) fn form(app: &mut EffectcraftApp, ctx: &egui::Context) {
 
 pub(crate) fn param_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, param: &craft_plugin::Param, enabled: bool, scope: &str) -> bool {
     let source = Source { plugin: "", images: &mut app.plugin_ui.images };
-    craft_plugin_ui::param_button(ui, param, enabled, scope, &mut AppHost { source, auto: &mut app.auto })
+    craft_plugin_ui::param_button(ui, param, enabled, scope, &mut AppHost { source, auto: &mut app.auto, tokens: app.tokens })
 }
 
 pub(crate) fn triangulate(outline: &[[f64; 2]]) -> Vec<[usize; 3]> {
@@ -203,12 +203,31 @@ pub(crate) fn triangulate(outline: &[[f64; 2]]) -> Vec<[usize; 3]> {
 }
 
 pub(crate) fn draw(ui: &mut egui::Ui, widgets: &[Widget], tokens: &Tokens, auto: &mut Registry, scope: &str, source: Source) -> Vec<UiEvent> {
-    craft_plugin_ui::draw(ui, widgets, &theme(tokens), scope, &mut AppHost { source, auto })
+    craft_plugin_ui::draw(ui, widgets, &theme(tokens), scope, &mut AppHost { source, auto, tokens: *tokens })
 }
 
 struct AppHost<'a> {
     source: Source<'a>,
     auto: &'a mut Registry,
+    tokens: Tokens,
+}
+
+fn round(value: f32) -> f64 {
+    (f64::from(value) * 10_000.0).round() / 10_000.0
+}
+
+fn app_gradient(gradient: &craft_plugin::Gradient) -> effectcraft_engine::keyframe::Gradient {
+    effectcraft_engine::keyframe::Gradient {
+        colors: gradient.colors.iter().map(|(at, color)| (*at, color.map(|c| c as f32))).collect(),
+        opacities: gradient.opacities.iter().map(|(at, opacity)| (*at, *opacity as f32)).collect(),
+    }
+}
+
+fn plugin_gradient(gradient: &effectcraft_engine::keyframe::Gradient) -> craft_plugin::Gradient {
+    craft_plugin::Gradient {
+        colors: gradient.colors.iter().map(|(at, color)| (*at, color.map(round))).collect(),
+        opacities: gradient.opacities.iter().map(|(at, opacity)| (*at, round(*opacity))).collect(),
+    }
 }
 
 impl craft_plugin_ui::Host for AppHost<'_> {
@@ -250,11 +269,61 @@ impl craft_plugin_ui::Host for AppHost<'_> {
         effectcraft_plugin::accept_drop(self.source.plugin, paths);
     }
 
+    fn curve(&mut self, ui: &mut egui::Ui, key: &str, points: &[[f64; 2]]) -> Option<(egui::Response, Option<Vec<[f64; 2]>>)> {
+        use super::fx_widgets::{CurveMode, CurvePoints, curves_graph};
+        let side = ui.available_width().clamp(120.0, 256.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::hover());
+        let shown = CurvePoints(points.iter().map(|point| [point[0] as f32, point[1] as f32]).collect());
+        let mode = CurveMode { pencil: false, natural: false, max_points: craft_plugin::MAX_CURVE_POINTS };
+        let (response, edit) = curves_graph(ui, rect.shrink(6.0), &shown, 0, mode, egui::Id::unique(("plugin-curve", key)), &self.tokens);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, ""));
+        Some((response, edit.changed.map(|edited| edited.0.iter().map(|point| [round(point[0]), round(point[1])]).collect())))
+    }
+
+    fn gradient(&mut self, ui: &mut egui::Ui, key: &str, value: &craft_plugin::Gradient) -> Option<(egui::Response, Option<craft_plugin::Gradient>)> {
+        use super::gradient_editor::{Draft, Track, stop_track};
+        let selected_id = egui::Id::unique(("plugin-gradient-stop", key));
+        let mut draft = Draft::new(&app_gradient(value), None, Vec::new());
+        draft.selected = ui.data(|data| data.get_temp::<(Track, u64)>(selected_id));
+        let before = draft.gradient();
+        let width = ui.available_width().clamp(160.0, 320.0);
+        let response = stop_track(ui, &mut draft, width, &self.tokens, self.auto, key);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Group, true, ""));
+        let selected = draft.selected.and_then(|(track, id)| draft.index_of(track, id).map(|index| (track, id, index)));
+        if let Some((track, id, index)) = selected {
+            ui.horizontal(|ui| {
+                if let (Track::Color, Some(stop)) = (track, draft.colors.get(index)) {
+                    let mut rgb = [stop.value[0], stop.value[1], stop.value[2]];
+                    let swatch = crate::widgets::srgb_color_button(ui, &mut rgb);
+                    self.auto.add_response(&format!("{key}.color"), &swatch, "Color");
+                    if swatch.changed() {
+                        draft.set_rgb(id, rgb);
+                    }
+                }
+                let delete = ui.add_enabled(draft.len(track) > 1, egui::Button::new(tr("Delete stop")));
+                self.auto.add_response(&format!("{key}.delete"), &delete, "Delete stop");
+                if delete.clicked() {
+                    draft.remove(track, id);
+                }
+            });
+        }
+        ui.data_mut(|data| match draft.selected {
+            Some(selected) => {
+                data.insert_temp(selected_id, selected);
+            }
+            None => data.remove::<(Track, u64)>(selected_id),
+        });
+        let after = draft.gradient();
+        Some((response, (after != before).then(|| plugin_gradient(&after))))
+    }
+
     fn combo_box(&self, ui: &mut egui::Ui, id: egui::IdSalt, label: &str, selected: String, menu: &mut dyn FnMut(&mut egui::Ui)) -> egui::Response {
         craft_ui::ComboBox::new(id, label).selected_text(selected).show_ui(ui, menu).response
     }
 }
 
+#[cfg(test)]
+mod controls_tests;
 #[cfg(test)]
 pub(crate) mod glide_tests;
 #[cfg(test)]

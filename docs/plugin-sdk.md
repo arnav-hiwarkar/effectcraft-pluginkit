@@ -712,6 +712,23 @@ if let Some(row) = picked.activated {
 Only the rows near the view are built, so the list can hold 100 000 files. Use `ui.table` for columns and
 `Item::depth` and `Item::open` for a tree.
 
+### A small settings panel
+
+```rust
+ui.toggle("Live preview", &mut self.live);
+ui.radio("Quality", &mut self.quality, &["Draft", "Full"]);
+ui.text_area("notes", &mut self.notes, "Notes", 3);
+ui.curve("Falloff", &mut self.falloff);
+ui.menu("More", |menu| {
+    if menu.item("Reset") {
+        *self = Self::default();
+    }
+});
+```
+
+Each control returns `true` in the call where the user changed it. `ui.icon_button`, `ui.split`, `ui.gap`,
+`ui.gradient` and `ui.context_menu` follow the same pattern (see the reference).
+
 ### React to the app
 
 `ui.on(topic)` subscribes the panel to an app event and returns it on the call it arrived in. Ask for it

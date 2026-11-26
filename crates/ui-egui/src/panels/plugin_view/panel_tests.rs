@@ -16,7 +16,7 @@ fn rows(harness: &Harness<'_, EffectcraftApp>) -> Vec<u32> {
         .collect()
 }
 
-fn until(harness: &mut Harness<'_, EffectcraftApp>, what: &str, mut done: impl FnMut(&mut Harness<'_, EffectcraftApp>) -> bool) {
+pub(super) fn until(harness: &mut Harness<'_, EffectcraftApp>, what: &str, mut done: impl FnMut(&mut Harness<'_, EffectcraftApp>) -> bool) {
     for _ in 0..2_000 {
         harness.step();
         if done(harness) {
@@ -30,7 +30,7 @@ fn until(harness: &mut Harness<'_, EffectcraftApp>, what: &str, mut done: impl F
     panic!("{what} never happened; {} plugin items, rows {:?}, inspected {inspected:?}, status {:?}", items.len(), rows(harness), harness.state().ui.status);
 }
 
-fn shows(harness: &Harness<'_, EffectcraftApp>, text: &str) -> bool {
+pub(super) fn shows(harness: &Harness<'_, EffectcraftApp>, text: &str) -> bool {
     harness.query_all(egui_kittest::kittest::by()).any(|node| node.accesskit_node().label().or(node.accesskit_node().value()).as_deref() == Some(text))
 }
 
