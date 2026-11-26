@@ -425,15 +425,32 @@ fn run(request: &Request, wake: &Waker, forms: bool) -> Result<Reply, String> {
     .map_err(|error| error.to_string())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Lane {
+    Ui,
+    Viewer,
+    Command,
+}
+
+impl Lane {
+    fn of(call: &Call) -> Lane {
+        match call {
+            Call::Overlay { .. } | Call::Drag { .. } | Call::Tool { .. } => Lane::Viewer,
+            Call::Command { .. } => Lane::Command,
+            _ => Lane::Ui,
+        }
+    }
+}
+
 struct Worker {
     loaded: Arc<Loaded>,
     requests: Sender<Request>,
 }
 
-fn worker(loaded: &Arc<Loaded>, done: Sender<Done>, wake: Waker) -> std::io::Result<Worker> {
+fn worker(loaded: &Arc<Loaded>, lane: Lane, done: Sender<Done>, wake: Waker) -> std::io::Result<Worker> {
     let (requests, queue) = channel::<Request>();
     let plugin = loaded.bundle.manifest.id.clone();
-    std::thread::Builder::new().name(format!("craft-plugin-{plugin}")).spawn(move || {
+    std::thread::Builder::new().name(format!("craft-plugin-{plugin}-{lane:?}")).spawn(move || {
         for request in queue {
             let reply = request.bound.check().and_then(|()| run(&request, &wake, true));
             let _ = done.send(Done { request, reply });
@@ -502,7 +519,7 @@ pub struct Panels {
     pub(crate) overlays: HashMap<(String, u64), Overlaid>,
     pub(crate) tool: Option<Tooling>,
     pub(crate) lanes: HashMap<Key, VecDeque<Request>>,
-    workers: HashMap<String, Worker>,
+    workers: HashMap<(String, Lane), Worker>,
     done: Inbox,
     wake: Option<Waker>,
     seen: Option<Seen>,
@@ -660,16 +677,16 @@ impl Panels {
         if let Err(error) = request.bound.check() {
             return fail(request, error);
         }
-        let plugin = request.bound.plugin().to_string();
-        let worker = match self.workers.entry(plugin.clone()) {
+        let lane = (request.bound.plugin().to_string(), Lane::of(&request.call));
+        let worker = match self.workers.entry(lane.clone()) {
             Entry::Occupied(found) if Arc::ptr_eq(&found.get().loaded, &request.bound.loaded) => found.into_mut(),
-            entry => match worker(&request.bound.loaded, done.clone(), wake) {
+            entry => match worker(&request.bound.loaded, lane.1, done.clone(), wake) {
                 Ok(started) => entry.insert_entry(started).into_mut(),
                 Err(error) => return fail(request, error.to_string()),
             },
         };
         if let Err(unsent) = worker.requests.send(request) {
-            self.workers.remove(&plugin);
+            self.workers.remove(&lane);
             fail(unsent.0, "the plugin's worker stopped".into());
         }
     }
@@ -939,7 +956,7 @@ mod tests {
         let new = request(&panels, &session, Key::Effect(RELOADED.into(), 2), &second, command());
         panels.post(new);
         idle(&mut panels, &mut session);
-        assert!(Arc::ptr_eq(&panels.workers[RELOADED].loaded, &second));
+        assert!(Arc::ptr_eq(&panels.workers[&(RELOADED.to_string(), Lane::Command)].loaded, &second));
     }
 
     fn tool(kind: ToolEventKind, x: f64) -> Call {

@@ -200,8 +200,10 @@ effect), and the layer's cache key then includes that rectangle. Its edges are m
 and writes the output frame where they lie; a sandboxed band copies its input rows in and its own rows
 out.
 
-Effects are stateless. The app keeps a pool of instances and may run any frame on any of them, in any
-order. A panel or a command runs on one long-lived instance, so panel state persists between frames.
+Effects are stateless. The app keeps a pool of instances and may run any frame, overlay or handle drag on
+any of them, in any order. A panel, custom control, button or command runs on one long-lived instance, so
+panel state persists between frames; a tool runs on a second long-lived instance, so it keeps its state
+between events without waiting for a panel call.
 
 ## Render cache
 
@@ -228,11 +230,14 @@ holds no EffectCraft types: another Craft app reuses it with its own event sourc
 rows are retained the same way and are called again on their own widget events, a new value or a new
 width.
 
-### One queue per plugin
+### Three lanes per plugin
 
-Every interactive call (a panel, a custom control, a viewer overlay, a custom handle drag, a tool event,
-a command chosen from the menu) goes to one worker thread per loaded plugin, in order, and only that
-thread calls the plugin's long-lived instance for them (`effectcraft_plugin::Panels`). The UI thread posts
+Every interactive call goes to one of three worker threads of its plugin, each started on first use
+(`Lane` in `effectcraft_plugin::Panels`): the UI lane (panels, custom controls, buttons, migrations), the
+viewer lane (overlays, custom handle drags, tool events) and the command lane (commands chosen from the
+menu). A lane runs its calls in order, so a slow panel call holds back no overlay, tool event or command.
+In the sandbox the UI and command lanes share the plugin's long-lived instance, tools have a long-lived
+instance of their own, and overlays and drags run in pooled instances like renders. The UI thread posts
 requests, answers the host calls that need the project, and applies replies in one place; it spends at
 most 4 ms a frame on them, checked after each host call it answers and each reply it applies, never waits
 on the instance and never on a menu command, so a slow plugin cannot stall or deadlock the app. A frame or audio a panel asks for is cut from the project on

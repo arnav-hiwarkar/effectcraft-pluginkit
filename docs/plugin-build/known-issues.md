@@ -14,7 +14,7 @@ measured speed before and after.
 
 - **Viewer tools get no pen pressure.** egui reports no pressure for a pen, so `ToolEvent::pressure` is 1 while the button is down and 0 otherwise.
 - **Built-in point crosshairs on an adjustment layer are drawn in layer space.** The effect works on the comp below, so a moved adjustment layer shows them off the point the effect uses. Plugin handles use comp space there (`crates/ui-egui/src/panels/effect_controls/viewer.rs`, `from_effect_space`).
-- **One slow interactive call delays the plugin's other surfaces.** Panels, custom controls, overlays, tools and menu commands of one plugin share its worker queue, so a panel call that runs for a second holds back that plugin's overlay for that second (`crates/plugin/src/panels.rs`).
+- **A sandboxed command waits for a running panel call of its plugin.** Commands run on their own lane, but in the sandbox they share the long-lived instance with panels, custom controls and buttons (so they share statics), and that instance runs one call at a time: a panel call that runs for a second delays a menu command of the same plugin for that second (`crates/plugin-host/src/runtime/mod.rs` in craft-libs). Native plugins and every overlay, drag and tool are not affected.
 - **Task host requests are answered by whichever session pumps first.** `effectcraft_plugin::pump` serves every task of a plugin; panel requests are routed by their project token, task requests only check that their project is still open (`crates/plugin/src/manage.rs`).
 
 ## From the Sol review, not fixed

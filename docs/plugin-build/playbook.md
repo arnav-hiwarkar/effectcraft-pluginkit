@@ -25,7 +25,11 @@ called the instance its own way. A review found 21 defects, 13 of them that one 
 replies acting on a new project, lost or repeated input (rows 72-73). The fix was one worker thread per
 plugin for every panel, control, overlay, drag, tool and menu call, one identity (load, project token,
 surface token) checked at every hand-off, and a UI thread that never waits on a plugin. A menu command
-later moved onto the same queue and the special `settle` wait was deleted (row 94).
+later moved onto the same queue and the special `settle` wait was deleted (row 94). One queue then let
+a slow panel call hold back the plugin's overlay and tool, so the queue became three lanes (UI, viewer,
+command), each one worker thread; the identity checks and the per-surface in-flight rule did not change.
+Moving a call kind to another thread is only half the fix in a sandbox: it must also leave the shared
+wasm instance (overlays and drags went to the render pool, tools to an instance of their own).
 
 **App-independent code at the lowest shared layer.** The kit started inside EffectCraft as two crates with
 no EffectCraft types (row 2), which made the later move to craft-libs a pure move (w7-libs-move). The panel

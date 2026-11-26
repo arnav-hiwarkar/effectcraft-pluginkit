@@ -1,11 +1,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use craft_plugin_host::viewer::ToolEventKind;
 use effectcraft_engine::project::{Layer, Property, Value as PropValue};
 use effectcraft_engine::render::{EvalCtx, ExprHost};
-use effectcraft_plugin::ui::{Key, Modifiers, UiEvent, UiEventKind, Widget};
+use effectcraft_plugin::ui::{Key, Modifiers, Shape, UiEvent, UiEventKind, Widget};
 use effectcraft_plugin::{Panels, Surface, Target};
 use serde_json::{Value, json};
 
@@ -60,8 +61,12 @@ fn button(widgets: &[Widget], at: usize) -> u64 {
     }
 }
 
-fn hold(app: &App) {
-    std::fs::write(app.bundle.path().join("hold"), "").expect("write the hold file");
+pub(crate) fn hold(app: &App) {
+    hold_in(app.bundle.path());
+}
+
+fn hold_in(bundle: &std::path::Path) {
+    std::fs::write(bundle.join("hold"), "").expect("write the hold file");
 }
 
 pub(crate) fn release(app: &App) {
@@ -69,18 +74,22 @@ pub(crate) fn release(app: &App) {
 }
 
 pub(crate) fn relay(app: &mut App, panels: &mut Panels, frame: &mut u64, relayed: Value, held: bool) {
-    let id = app.id.clone();
-    let surface = Surface::Panel { plugin: &id, panel: "relay" };
-    let relay = button(&settled(app, panels, RELAY, surface, frame), 0);
-    std::fs::write(app.bundle.path().join("relay.json"), relayed.to_string()).expect("write the relayed request");
+    let (id, bundle) = (app.id.clone(), app.bundle.path().to_path_buf());
+    relay_in(app, panels, frame, (RELAY, &id, &bundle), relayed, held);
+}
+
+fn relay_in(app: &mut App, panels: &mut Panels, frame: &mut u64, (key, plugin, bundle): (&str, &str, &std::path::Path), relayed: Value, held: bool) {
+    let surface = Surface::Panel { plugin, panel: "relay" };
+    let relay = button(&settled(app, panels, key, surface, frame), 0);
+    std::fs::write(bundle.join("relay.json"), relayed.to_string()).expect("write the relayed request");
     if held {
-        hold(app);
+        hold_in(bundle);
     }
-    panels.submit(RELAY, vec![click(relay)], "");
+    panels.submit(key, vec![click(relay)], "");
     *frame += 1;
     panels.frame(&mut app.session, ms(16 * *frame));
-    panels.show(&mut app.session, RELAY, surface, SIZE).expect("the relay panel shows");
-    assert!(!held || panels.busy(RELAY), "the relay call waits while the bundle holds");
+    panels.show(&mut app.session, key, surface, SIZE).expect("the relay panel shows");
+    assert!(!held || panels.busy(key), "the relay call waits while the bundle holds");
 }
 
 fn relay_said(app: &mut App, panels: &mut Panels, frame: &mut u64) -> String {
@@ -147,15 +156,15 @@ fn a_panel_call_waiting_for_the_app_and_an_overlay_posted_meanwhile_both_finish_
         crate::viewer::aim_layer(&mut app);
         let (mut panels, mut frame) = (Panels::default(), 0);
         relay(&mut app, &mut panels, &mut frame, json!({"command": "comp.info", "params": {}}), true);
-        let early = crate::viewer::try_shown(&mut app, &mut panels);
+        crate::viewer::try_shown(&mut app, &mut panels);
         release(&app);
         let said = relay_said(&mut app, &mut panels, &mut frame);
         crate::viewer::settle(&mut app, &mut panels);
         let handles = crate::viewer::try_shown(&mut app, &mut panels).map(|shown| shown.overlay.handles.len());
-        let _ = finished.send((early.is_none(), said, handles));
+        let _ = finished.send((said, handles));
     });
     let outcome = outcome.recv_timeout(Duration::from_secs(60)).expect("the panel call and the overlay finish within 60 s");
-    assert_eq!(outcome, (true, "relayed".to_string(), Some(7)));
+    assert_eq!(outcome, ("relayed".to_string(), Some(7)));
 }
 
 #[test]
@@ -394,4 +403,63 @@ fn two_clicks_on_a_control_answered_in_one_frame_each_start_from_the_value_the_o
         std::thread::sleep(ms(2));
     }
     assert_eq!(level(&mut app)["value"], json!("0.25"));
+}
+
+fn toasted(app: &App, said: &str) -> bool {
+    app.session.events.iter().any(|event| matches!(event, effectcraft_engine::Event::Toast { message, .. } if message.ends_with(said)))
+}
+
+fn stamped(panels: &mut Panels, app: &mut App, said: &str) -> bool {
+    panels
+        .tool_overlay(&mut app.session)
+        .is_some_and(|overlay| overlay.marks.iter().any(|mark| matches!(&mark.shape, Shape::Text { text, .. } if text == said)))
+}
+
+#[test]
+fn a_held_panel_call_holds_back_neither_overlay_nor_tool_and_only_a_sandboxed_command_sandboxed_and_native() {
+    let mut app = app("test.panels-lanes", &["document.read"]);
+    let native = crate::render::native_probe(&app).to_string();
+    let mut arrivals = Vec::new();
+    for (plugin, sandboxed) in [(app.id.clone(), true), (native, false)] {
+        let bundle = app.plugins.get(&plugin).expect("the probe runs").bundle.dir.clone();
+        let (mut panels, mut frame) = (Panels::default(), 0);
+        app.session.execute("comp.new", json!({"name": plugin, "width": 64, "height": 36, "frameRate": 24, "duration": 2})).unwrap();
+        app.session.execute("layer.newSolid", json!({"name": "Aim", "color": "#204060", "width": 64, "height": 36})).unwrap();
+        app.session.execute("effect.apply", json!({"layer": "Aim", "effect": format!("{plugin}.aim")})).unwrap();
+        app.session.events.clear();
+        let key = format!("plugin.{plugin}.relay");
+        relay_in(&mut app, &mut panels, &mut frame, (&key, &plugin, &bundle), json!({"command": "comp.info", "params": {}}), true);
+        let hold = bundle.join("hold");
+        let start = Instant::now();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(ms(1000));
+            std::fs::remove_file(hold).expect("remove the hold file");
+        });
+        panels.tool(&app.session, &plugin, "stamp", crate::viewer::event(ToolEventKind::Key, [1.0, 2.0])).unwrap();
+        panels.command(&app.session, &plugin, "greet").unwrap();
+        let (mut overlay, mut tool, mut command) = (None, None, None);
+        while start.elapsed() < Duration::from_secs(10) && [overlay, tool, command].contains(&None) {
+            frame += 1;
+            panels.frame(&mut app.session, ms(16 * frame));
+            if overlay.is_none() && crate::viewer::try_shown(&mut app, &mut panels).is_some() {
+                overlay = Some(start.elapsed());
+            }
+            if tool.is_none() && stamped(&mut panels, &mut app, "Key 1.0 2.0") {
+                tool = Some(start.elapsed());
+            }
+            if command.is_none() && toasted(&app, "3 layers renamed") {
+                command = Some(start.elapsed());
+            }
+            std::thread::sleep(ms(1));
+        }
+        releaser.join().unwrap();
+        crate::viewer::settle(&mut app, &mut panels);
+        eprintln!("lanes {plugin}: overlay {overlay:?} tool {tool:?} command {command:?}");
+        arrivals.push((plugin, sandboxed, [overlay, tool, command].map(|arrived| arrived.expect("every call answers within 10 s"))));
+    }
+    for (plugin, sandboxed, [overlay, tool, command]) in arrivals {
+        let quick = |arrived: Duration| arrived < ms(200);
+        assert_eq!((quick(overlay), quick(tool)), (true, true), "{plugin}: overlay {overlay:?} tool {tool:?}");
+        assert_eq!((quick(command), command >= ms(1000)), (!sandboxed, sandboxed), "{plugin}: only a sandboxed command waits for the panel; {command:?}");
+    }
 }

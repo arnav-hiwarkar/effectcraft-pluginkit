@@ -149,7 +149,7 @@ fn a_handle_drag_on_a_keyframed_parameter_moves_the_key_at_the_current_time() {
     assert_eq!(values, vec![json!([15.0, 10.0]), json!([20.0, 20.0])]);
 }
 
-fn event(kind: ToolEventKind, comp: [f64; 2]) -> ToolEvent {
+pub(crate) fn event(kind: ToolEventKind, comp: [f64; 2]) -> ToolEvent {
     ToolEvent { kind, comp, pressure: 1.0, zoom: 1.0, ..Default::default() }
 }
 
@@ -254,15 +254,17 @@ fn a_plugin_built_before_viewer_controls_loads_renders_and_keeps_the_built_in_cr
     assert!(!shown.binds("spot"), "so the viewer keeps the built-in crosshair for its point");
 }
 
-fn hold_the_worker(app: &mut App, panels: &mut Panels) {
-    crate::panels::relay(app, panels, &mut 0, json!({"command": "comp.info", "params": {}}), true);
+fn hold_the_viewer(app: &mut App, panels: &mut Panels) {
+    crate::panels::hold(app);
+    let held = ToolEvent { key: "hold".into(), ..event(ToolEventKind::Key, [0.0; 2]) };
+    panels.tool(&app.session, &app.id, "stamp", held).unwrap();
 }
 
 #[test]
 fn a_tool_event_queued_behind_a_slow_call_is_dropped_when_its_project_closes() {
     let mut app = app("test.viewer-tool-closed", &["document.read", "document.write"]);
     let mut panels = Panels::default();
-    hold_the_worker(&mut app, &mut panels);
+    hold_the_viewer(&mut app, &mut panels);
     panels.tool(&app.session, &app.id, "stamp", event(ToolEventKind::Key, [6.0, 7.0])).unwrap();
     app.session.execute("file.newProject", json!({})).unwrap();
     app.session.execute("comp.new", json!({"name": "Next", "width": 64, "height": 36, "frameRate": 24, "duration": 2})).unwrap();
@@ -275,7 +277,7 @@ fn a_tool_event_queued_behind_a_slow_call_is_dropped_when_its_project_closes() {
 fn a_tool_event_of_an_earlier_activation_is_dropped_when_the_tool_is_picked_again() {
     let mut app = app("test.viewer-tool-again", &["document.read", "document.write"]);
     let mut panels = Panels::default();
-    hold_the_worker(&mut app, &mut panels);
+    hold_the_viewer(&mut app, &mut panels);
     panels.tool(&app.session, &app.id, "stamp", event(ToolEventKind::Key, [2.0, 2.0])).unwrap();
     panels.put_tool_away();
     panels.tool(&app.session, &app.id, "stamp", event(ToolEventKind::Key, [3.0, 3.0])).unwrap();
@@ -314,7 +316,7 @@ fn drags_of_three_gestures_queued_behind_a_slow_call_keep_three_undo_steps() {
     let mut panels = Panels::default();
     aim_layer(&mut app);
     let start = shown(&mut app, &mut panels);
-    hold_the_worker(&mut app, &mut panels);
+    hold_the_viewer(&mut app, &mut panels);
     for (delta, gesture) in [([4.0, 5.0], "one"), ([6.0, 7.0], "two"), ([8.0, 9.0], "three")] {
         post_drag(&mut app, &mut panels, &start, 6, delta, gesture);
     }
