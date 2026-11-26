@@ -263,8 +263,9 @@ fn new_instance(app: &EffectcraftApp, plugin: &str, panel: &str, instance: &str)
 
 fn forget_closed_instances(app: &mut EffectcraftApp) {
     use crate::dock::WorkspaceExt;
-    let dock = &app.ui.dock;
-    let closed: Vec<PanelInstance> = app.ui.plugin_instances.extract_if(.., |open| !dock.is_open(open.kind())).collect();
+    let (dock, saved) = (&app.ui.dock, &app.ui.saved_workspaces);
+    let kept = |kind: PanelKind| dock.is_open(kind) || saved.values().any(|workspace| workspace.is_open(kind));
+    let closed: Vec<PanelInstance> = app.ui.plugin_instances.extract_if(.., |open| !kept(open.kind())).collect();
     for open in &closed {
         app.plugin_ui.panels.close(&app.session, open.surface());
     }

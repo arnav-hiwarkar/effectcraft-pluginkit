@@ -182,3 +182,26 @@ fn a_notes_instance_named_1_and_a_panel_named_notes_dot_1_keep_their_own_text_an
         .type_text("tea");
     until(&mut harness, "the dotted panel taking its own text after the instance closed", |h| shows(h, "note -: tea"));
 }
+
+#[test]
+fn a_notes_instance_in_a_saved_workspace_keeps_its_title_and_text_after_switching_away_and_back() {
+    let mut harness = harness(probe_session());
+    until(&mut harness, "the probe's notes panel registering", |h| {
+        h.state().session.plugin_items.iter().any(|item| item.plugin == PROBE && item.id == "notes")
+    });
+    open(&mut harness, json!({"plugin": PROBE, "panel": "notes", "instance": "w1"}));
+    note_shown(&mut harness, "w1");
+    type_note(&mut harness, "w1", "milk");
+    until(&mut harness, "the note holding its text", |h| shows(h, "note w1: milk"));
+    let saved = harness.state().ui.dock.clone();
+    harness.state_mut().ui.saved_workspaces.insert("Notes Desk".into(), saved);
+    harness.state_mut().set_workspace("Default");
+    harness.run_steps(4);
+    harness.state_mut().set_workspace("Notes Desk");
+    let kind = PanelKind::plugin_instance(PROBE, "notes", "w1");
+    let tab = format!("panel.tab.{}", kind.id());
+    until(&mut harness, "the note's tab back with its title", |h| h.state().auto.find(&tab).is_some_and(|tab| tab.label == "Notes w1"));
+    note_shown(&mut harness, "w1");
+    type_note(&mut harness, "w1", " and tea");
+    until(&mut harness, "the note taking more text", |h| shows(h, "note w1: milk and tea"));
+}
