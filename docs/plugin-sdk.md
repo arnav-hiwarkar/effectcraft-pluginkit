@@ -684,6 +684,34 @@ A widget is known by its label and how many times that label came before it, and
 next call. Draw each item of a list that can change inside `ui.keyed(item_id, |ui| …)`, so a click on
 one item's "Delete" still reaches that item when another item is added above it.
 
+### Open a floating window
+
+Declare where a panel opens and how big it is, then open it from a button, a command or a tool:
+
+```rust
+Plugin::new()
+    .panel("files", "Files", Files::default())
+    .icon("list")
+    .panel("inspector", "Inspector", Inspector::default())
+    .place(PanelPlace::Float)
+    .size(PanelSize::Large)
+```
+
+In `Files::ui`, `host::show_panel("inspector")?` opens the inspector as a floating window; its own Close
+button calls `host::close_panel("inspector", None)`.
+
+### Show a long list
+
+```rust
+let picked = ui.list("files", self.files.len(), &mut self.selected, |row| Item::new(&self.files[row]));
+if let Some(row) = picked.activated {
+    self.open(row);
+}
+```
+
+Only the rows near the view are built, so the list can hold 100 000 files. Use `ui.table` for columns and
+`Item::depth` and `Item::open` for a tree.
+
 ### React to the app
 
 `ui.on(topic)` subscribes the panel to an app event and returns it on the call it arrived in. Ask for it

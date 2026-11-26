@@ -525,6 +525,10 @@ pub(crate) fn running_plugins() -> Vec<Arc<Loaded>> {
     plugins().map(Plugins::running_plugins).unwrap_or_default()
 }
 
+pub fn panel_spec(plugin: &str, panel: &str) -> Option<craft_plugin_host::ui::PanelSpec> {
+    plugins()?.get(plugin)?.plugin.contributions().panels.iter().find(|spec| spec.id == panel).cloned()
+}
+
 pub fn image(plugin: &str, key: &str) -> Option<Arc<PluginImage>> {
     plugins()?.get(plugin)?.plugin.image(key)
 }

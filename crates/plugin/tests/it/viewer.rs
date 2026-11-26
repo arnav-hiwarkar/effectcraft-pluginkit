@@ -150,18 +150,7 @@ fn a_handle_drag_on_a_keyframed_parameter_moves_the_key_at_the_current_time() {
 }
 
 fn event(kind: ToolEventKind, comp: [f64; 2]) -> ToolEvent {
-    ToolEvent {
-        kind,
-        comp,
-        layer: None,
-        layer_id: None,
-        modifiers: Default::default(),
-        pressure: 1.0,
-        scroll: [0.0; 2],
-        key: String::new(),
-        zoom: 1.0,
-        time: 0.0,
-    }
+    ToolEvent { kind, comp, pressure: 1.0, zoom: 1.0, ..Default::default() }
 }
 
 fn gesture(app: &mut App, panels: &mut Panels, events: &[(ToolEventKind, [f64; 2])]) -> Vec<String> {

@@ -28,11 +28,14 @@ fn bundle(wasm: &Path, manifest: Value) -> tempfile::TempDir {
     dir
 }
 
-fn session() -> Session {
+fn config() -> &'static Path {
     static CONFIG: OnceLock<tempfile::TempDir> = OnceLock::new();
-    let config = CONFIG.get_or_init(|| tempfile::tempdir().expect("temp dir"));
+    CONFIG.get_or_init(|| tempfile::tempdir().expect("temp dir")).path()
+}
+
+fn session() -> Session {
     let mut session = effectcraft_host::session();
-    effectcraft_plugin::install(&mut session, Some(config.path()));
+    effectcraft_plugin::install(&mut session, Some(config()));
     session.execute("comp.new", json!({"name": "Viewer", "width": 320, "height": 180, "frameRate": 24, "duration": 2})).unwrap();
     session
 }
@@ -60,7 +63,7 @@ fn halo_session() -> Session {
     session
 }
 
-fn harness(session: Session) -> Harness<'static, EffectcraftApp> {
+pub(crate) fn harness(session: Session) -> Harness<'static, EffectcraftApp> {
     Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(|_| EffectcraftApp::new(session))
 }
 
@@ -89,7 +92,7 @@ fn shown_frame(harness: &mut Harness<'_, EffectcraftApp>) -> Option<Vec<u8>> {
 /// loaded machine, so the wait is a wall-clock deadline, not a count of steps.
 const SETTLE: std::time::Duration = std::time::Duration::from_secs(60);
 
-fn settle(harness: &mut Harness<'_, EffectcraftApp>, mut done: impl FnMut(&mut Harness<'_, EffectcraftApp>) -> bool) {
+pub(crate) fn settle(harness: &mut Harness<'_, EffectcraftApp>, mut done: impl FnMut(&mut Harness<'_, EffectcraftApp>) -> bool) {
     let deadline = std::time::Instant::now() + SETTLE;
     while std::time::Instant::now() < deadline {
         harness.step();
@@ -244,14 +247,15 @@ fn tool_texts(harness: &mut Harness<'_, EffectcraftApp>) -> Vec<String> {
 
 static STAMP_TOOL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn probe_session() -> Session {
+pub(crate) fn probe_session() -> Session {
     static PROBE: OnceLock<tempfile::TempDir> = OnceLock::new();
-    let session = session();
+    let mut session = session();
     load(&PROBE, || {
         let probe = craft_plugin_host::testing::probe_dir();
         let manifest = json!({"id": "test.viewer-tool-ui", "name": "Probe", "version": "1.0.0", "entry": {"wasm": "plugin.wasm"}, "permissions": ["document.read", "document.write"]});
         bundle(&wasm(probe, "probe"), manifest)
     });
+    effectcraft_plugin::install(&mut session, Some(config()));
     session
 }
 

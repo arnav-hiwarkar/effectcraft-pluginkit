@@ -293,6 +293,11 @@ impl Host for Remote {
         let _ = self.on_app(move |host| host.notify(&message));
     }
 
+    fn panel(&mut self, panel: &str, instance: Option<&str>, open: bool) -> Result<(), String> {
+        let (panel, instance) = (panel.to_string(), instance.map(str::to_string));
+        self.on_app(move |host| host.panel(&panel, instance.as_deref(), open))?
+    }
+
     fn frame(&mut self, request: &FrameRequest) -> Result<Pixels, String> {
         let request = request.clone();
         let render = self.on_app(move |host| host.frame_job(&request))??;
@@ -938,18 +943,7 @@ mod tests {
     }
 
     fn tool(kind: ToolEventKind, x: f64) -> Call {
-        let event = ToolEvent {
-            kind,
-            comp: [x, 0.0],
-            layer: None,
-            layer_id: None,
-            modifiers: Default::default(),
-            pressure: 0.0,
-            scroll: [0.0; 2],
-            key: String::new(),
-            zoom: 1.0,
-            time: 0.0,
-        };
+        let event = ToolEvent { kind, comp: [x, 0.0], zoom: 1.0, ..Default::default() };
         Call::Tool { tool: "t".into(), event }
     }
 

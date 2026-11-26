@@ -146,6 +146,17 @@ fn not_running(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pa
     }
 }
 
+pub(crate) fn float_rect(screen: Rect, size: craft_plugin::PanelSize) -> [f32; 4] {
+    let [width, height]: [f32; 2] = match size {
+        craft_plugin::PanelSize::Small => [260.0, 220.0],
+        craft_plugin::PanelSize::Medium => [360.0, 320.0],
+        craft_plugin::PanelSize::Large => [520.0, 440.0],
+    };
+    let [width, height] = [width.min(screen.width()), height.min(screen.height())];
+    let c = screen.center();
+    [c.x - width / 2.0, c.y - height / 2.0, width, height]
+}
+
 pub(crate) fn theme(t: &Tokens) -> Theme {
     Theme {
         text: t.text,
@@ -155,6 +166,11 @@ pub(crate) fn theme(t: &Tokens) -> Theme {
         surface: t.field_bg,
         border: t.field_border,
         error: t.danger,
+        good: t.cache_green,
+        warn: t.warning,
+        faint: t.text_faint,
+        selected: t.row_selected,
+        series: std::array::from_fn(|i| t.labels[i + 1]),
         heading: Tokens::semibold(0.0).family,
     }
 }
@@ -241,6 +257,8 @@ impl craft_plugin_ui::Host for AppHost<'_> {
 
 #[cfg(test)]
 pub(crate) mod glide_tests;
+#[cfg(test)]
+mod panel_tests;
 
 #[cfg(test)]
 mod tests {

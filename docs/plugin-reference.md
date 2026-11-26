@@ -48,6 +48,21 @@ returns.
 | `.shortcut(keys)` | A default keyboard shortcut for the command added just before, such as `"Alt+Shift+F11"` (`Cmd` is ⌘ on macOS and Ctrl elsewhere). |
 | `.task(id, title, function)` | A long-running task. `function` is `Fn(&Task) -> Result<serde_json::Value>`. |
 | `.tool(id, name, value)` | A viewer tool in the toolbar. `value` implements `Tool`. |
+| `.panel_each(id, title, make)` | A panel the app can show several times. `make` is `Fn() -> impl Panel`; each instance gets its own value, and `ui.instance()` names it. |
+
+Modifiers change the contribution added just before them. One that follows the wrong kind panics at load
+with a message naming the method it belongs after.
+
+| Modifier | After | Sets |
+|---|---|---|
+| `.icon(name)` | panel, command, tool | An icon from `craft_plugin::ICONS` (`"list"`, `"sliders"`, `"brush"`, …). A painter without that icon shows the title's first letter. |
+| `.place(PanelPlace)` | panel | Where the panel opens the first time: `Side` (default), `Bottom`, `Float` (a floating window, which the user may turn into a window of its own), `Status` (in the status bar), `Bar` (a tool's options bar). |
+| `.size(PanelSize)` | panel | `Small`, `Medium` (default) or `Large`: the size a floating panel opens at, scaled by the app. |
+| `.menu(path)` | command | A menu path such as `"Layer/Arrange"`. A first part that names an app menu puts the command there; any other path goes under the app's plug-in commands. |
+| `.context(Context)` | command | Also list the command in a context menu: `Layers`, `Timeline` or `Viewer`. Repeat for more than one. |
+| `.toolbar()` | command | Also show the command as a toolbar button with its icon. |
+| `.options(panel)` | tool | The `Bar` panel shown in the options bar while the tool is active. |
+| `.shortcut(keys)` | command | As above. |
 
 The app asks a sandboxed plugin for this list once per set of files and keeps the answer; later starts
 register the plugin from it and run the plugin only when something uses it. So build the list from your
@@ -632,6 +647,33 @@ a drop reaches one call, so two clicks on one button during a slow call give two
 coalesce into the latest one; presses, releases and keys stay in order. Pending `edit` events join their
 layer lists. A reply, a host call or an edit made for a project that has since closed, or by a load of
 the plugin that was reloaded or turned off, is dropped.
+
+### Opening and closing panels
+
+`host::show_panel(id)` opens the plugin's panel `id`, or brings it to the front; `host::show_panel_for(id,
+instance)` opens the named instance of a `panel_each` panel; `host::close_panel(id, instance)` closes one.
+They work from panels, commands, tools and tasks and are refused in a render. The app acts on its next
+frame. A `Float` panel opens floating at its `size`, centred on the window; later it opens where the user
+last left it.
+
+### Lists, tables and trees
+
+```rust
+let picked = ui.list("files", self.files.len(), &mut self.selected, |row| Item::new(&self.files[row]));
+```
+
+`ui.list(key, count, &mut selection, item)` shows `count` rows and calls `item(row)` only for the rows near
+the view, so a list of a million rows costs what one screen of it costs. The app calls the panel again
+when the view moves past the rows it was given. `selection` is an `Option<usize>` (one row) or a
+`Vec<usize>` (Ctrl or ⌘ adds a row, Shift a range). The reply `Picked { selected, activated, toggled }`
+says whether the selection changed, which row was opened (double click or Enter) and which row was
+twirled open or shut.
+
+`ui.table(key, &["Name", "Size"], count, &mut selection, item)` adds column headings; give each row
+`Item::cells(&[name, size])`. A tree is a list of items with `Item::new(text).depth(d).open(bool)`: the plugin
+keeps which rows are open and leaves out the children of shut ones. `.icon(name)` and `.weak()` style a row.
+
+At most `MAX_LIST_ITEMS` (1024) rows are built per call; the first call builds `LIST_WINDOW` (128).
 
 ### App events
 
