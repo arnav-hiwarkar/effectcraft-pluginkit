@@ -671,7 +671,10 @@ pub trait Panel: Send + 'static {
 Panels, custom controls, buttons and commands of one plugin run in the same long-lived instance, so a
 `static` is shared between them. Effects, overlays and tools do not see it: effects and overlays run in
 pooled instances and a tool in a long-lived instance of its own. A native plugin is one library in the
-app's process, so there every surface shares its statics.
+app's process, so there every surface shares its statics. This also holds for a sandboxed plugin built
+before the viewer and command lanes: its tool and overlays no longer share a `static` with its panels, as
+they did when every call ran in one instance. No reference plugin relied on that; share such values through
+plugin data (`host::set_data` and `host::data`, needing `document.write` and `document.read`) or project properties.
 
 The app gives each plugin three worker threads, each started on first use: one for panels, custom
 controls, buttons and migrations, one for the viewer (overlays, handle drags, tool events) and one for
@@ -909,10 +912,11 @@ Every widget takes the focus with Tab. A canvas also takes it on a click, keeps 
 has it, and shows a focus ring.
 
 **UI level.** `Contributions.ui_level` says which UI events a plugin knows; a plugin built with this SDK
-has `UI_LEVEL` (2), one built before has 0. The app sends right clicks and double clicks
+has `UI_LEVEL` (2), one built before has 0, which the host treats as 1. The app sends right clicks and double clicks
 (`UiEventKind::Context` and `Open`, `ToolEventKind::Context` and `Open`) only to plugins at level 2 or
-more, so an older plugin sees exactly the events it saw before. A host keeps a panel with
-`Retained::with_level(ui_level)`; `Retained::new()` is level 1.
+more, so an older plugin sees exactly the events it saw before. A host reads the level with
+`Contributions::event_level()` and keeps a panel with `Retained::with_level(contributions.event_level())`;
+`Retained::new()` is level 1.
 
 **Colours.** `ui.color(text, &mut [f32; 4])` draws the app's own colour button when the app has one
 (`Host::color` in `craft-plugin-ui`): EffectCraft opens its colour picker, whose eyedropper picks a pixel
@@ -1009,7 +1013,7 @@ pub trait Tool: Send + 'static {
 The tool's button follows the toolbar's tools; clicking it again, or picking another tool, puts it
 away. `event` runs on the plugin's viewer thread in a long-lived instance kept for the plugin's tools, so the
 tool keeps its state between events but shares no `static` with the plugin's panels and commands; pass
-what they share through `host::command` or plugin data. Events arrive in order; moves made while `event` was busy coalesce into the latest. The
+what they share through `host::command` or plugin data (`host::set_data`, `host::data`). Events arrive in order; moves made while `event` was busy coalesce into the latest. The
 overlay it draws starts in `Space::Comp` and stays on screen until the next reply.
 
 | `ToolEvent` field | Holds |

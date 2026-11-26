@@ -486,7 +486,7 @@ struct Slot {
 
 impl Slot {
     fn new(loaded: &Arc<Loaded>) -> Slot {
-        let retained = Retained::with_level(loaded.plugin.contributions().ui_level);
+        let retained = Retained::with_level(loaded.plugin.contributions().event_level());
         Slot { retained, loaded: loaded.clone(), open: Arc::default(), shown: false, hidden: false, value: None, held: false, gesture: None }
     }
 
