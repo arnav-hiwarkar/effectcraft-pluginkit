@@ -25,6 +25,7 @@ pub(crate) struct PluginUi {
     pub listed: Option<(std::time::Instant, Result<Vec<super::plugin_manager::Listed>, String>)>,
     pub images: Images,
     pub control_heights: HashMap<u64, f32>,
+    pub pointer: Option<PanelKind>,
 }
 
 pub(crate) fn tick(app: &mut EffectcraftApp, ctx: &egui::Context) {
@@ -205,14 +206,26 @@ pub fn running_panel(app: &EffectcraftApp, kind: PanelKind) -> Option<&PluginIte
     claimants.next().is_none().then_some(only)
 }
 
-pub fn panel(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: PanelKind) {
-    let Some(item) = running_panel(app, kind).cloned() else { return not_running(app, ui, rect, kind) };
-    let PanelKind::Plugin(key) = kind else { return };
+struct Scoped {
+    item: PluginItem,
+    instance: Option<String>,
+    scope: String,
+    title: String,
+}
+
+fn scoped(app: &EffectcraftApp, kind: PanelKind) -> Option<Scoped> {
+    let item = running_panel(app, kind)?.clone();
     let instance = instance_of(app, kind).map(|open| open.instance.clone());
     let (scope, title) = match &instance {
         Some(instance) => (format!("plugin.{}.{}.{instance}", item.plugin, item.id), format!("{} {instance}", item.title)),
         None => (format!("plugin.{}.{}", item.plugin, item.id), item.title.clone()),
     };
+    Some(Scoped { item, instance, scope, title })
+}
+
+pub fn panel(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: PanelKind) {
+    let Some(Scoped { item, instance, scope, title }) = scoped(app, kind) else { return not_running(app, ui, rect, kind) };
+    let PanelKind::Plugin(key) = kind else { return };
     app.auto.add(&scope, rect, &title);
     let mut body = ui.new_child(UiBuilder::new().max_rect(rect.shrink(8.0)));
     let surface = Surface::Panel { plugin: &item.plugin, panel: &item.id, instance: instance.as_deref() };
@@ -220,6 +233,52 @@ pub fn panel(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pane
     let events = shown(app, &mut body, &scope, surface, rect, Some(key));
     let keys = typed(ui, rect);
     submit(app, ui, &scope, events, &keys);
+    hold(app, ui, &scope, rect);
+    if ui.rect_contains_pointer(rect) {
+        app.plugin_ui.pointer = Some(kind);
+    } else if app.plugin_ui.pointer == Some(kind) {
+        app.plugin_ui.pointer = None;
+    }
+}
+
+fn hold(app: &mut EffectcraftApp, ui: &egui::Ui, scope: &str, rect: Rect) {
+    let held = ui.ctx().dragged_id().is_some() && ui.input(|i| i.pointer.press_origin()).is_some_and(|at| rect.contains(at));
+    app.plugin_ui.panels.hold(scope, held);
+}
+
+pub(crate) fn key_target(app: &EffectcraftApp) -> Option<(String, Vec<String>)> {
+    let focused = matches!(app.ui.focused, PanelKind::Plugin(_)).then_some(app.ui.focused);
+    let kind = focused.or(app.plugin_ui.pointer.filter(|kind| crate::menus::panel_shown(app, *kind)))?;
+    let Scoped { item, scope, .. } = scoped(app, kind)?;
+    let keys = effectcraft_plugin::panel_spec(&item.plugin, &item.id)?.keys;
+    Some((scope, keys))
+}
+
+pub(crate) fn panel_menu(app: &mut EffectcraftApp, ui: &mut egui::Ui, kind: PanelKind) -> bool {
+    let Some(Scoped { item, scope, .. }) = scoped(app, kind) else { return false };
+    let items = app.plugin_ui.panels.menu(&scope).to_vec();
+    let help = effectcraft_plugin::panel_spec(&item.plugin, &item.id).and_then(|spec| spec.help);
+    let tokens = app.tokens;
+    let source = Source { plugin: &item.plugin, images: &mut app.plugin_ui.images, session: None };
+    let mut host = AppHost { source, auto: &mut app.auto, tokens };
+    let events = craft_plugin_ui::draw_panel_menu(ui, &items, &theme(&tokens), &format!("{scope}.menu"), &mut host);
+    let mut picked = !events.is_empty();
+    submit(app, ui, &scope, events, "");
+    if let Some(url) = help {
+        if !items.is_empty() {
+            ui.separator();
+        }
+        let response = ui.button(tr("Help"));
+        app.auto.add_response(&format!("{scope}.help"), &response, "Help");
+        if response.clicked() {
+            app.session.events.push(effectcraft_engine::Event::OpenUrl(url));
+            picked = true;
+        }
+    }
+    if !picked && items.is_empty() {
+        ui.label(RichText::new(crate::i18n::label(app, "window.panel", kind.title())).weak());
+    }
+    picked
 }
 
 fn shown(app: &mut EffectcraftApp, body: &mut egui::Ui, scope: &str, surface: Surface, rect: Rect, scroll: Option<u32>) -> Vec<UiEvent> {
@@ -265,6 +324,7 @@ fn row(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, plugin: &str, sp
     body.set_clip_rect(rect.intersect(ui.clip_rect()));
     let events = shown(app, &mut body, &scope, Surface::Panel { plugin, panel: &spec.id, instance: None }, rect, None);
     submit(app, ui, &scope, events, "");
+    hold(app, ui, &scope, rect);
 }
 
 pub(crate) fn status_items() -> Vec<(String, PanelSpec)> {
@@ -631,6 +691,8 @@ impl craft_plugin_ui::Host for AppHost<'_> {
     }
 }
 
+#[cfg(test)]
+mod app_tests;
 #[cfg(test)]
 mod controls_tests;
 #[cfg(test)]

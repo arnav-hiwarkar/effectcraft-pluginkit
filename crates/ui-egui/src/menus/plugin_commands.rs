@@ -16,7 +16,11 @@ pub(crate) fn context_section(ui: &mut egui::Ui, items: &[PluginItem], context: 
         ui.separator();
     }
     for item in placed {
-        let response = ui.button(&item.title);
+        let mut button = egui::Button::new(&item.title);
+        if let Some(checked) = item.checked {
+            button = button.selected(checked).right_text(if checked { "✔" } else { "" });
+        }
+        let response = ui.add_enabled(!item.disabled, button);
         auto.add_response(&format!("{prefix}.plugin.{}.{}", item.plugin, item.id), &response, &item.title);
         if response.clicked() {
             chosen = Some(params(item));
@@ -31,17 +35,22 @@ pub(crate) fn toolbar(app: &mut EffectcraftApp, ui: &mut egui::Ui, mut x: f32, c
     let mut chosen = None;
     for item in app.session.plugin_items.iter().filter(|item| !item.panel && item.toolbar) {
         let rect = Rect::from_min_size(pos2(x, cy - 13.0), vec2(26.0, 26.0));
-        let response = ui.interact(rect, egui::Id::unique(("plugin-command", &item.plugin, &item.id)), Sense::click());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &item.title));
-        if response.hovered() {
+        let sense = if item.disabled { Sense::hover() } else { Sense::click() };
+        let response = ui.interact(rect, egui::Id::unique(("plugin-command", &item.plugin, &item.id)), sense);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !item.disabled, &item.title));
+        if item.checked == Some(true) {
+            ui.painter().rect_filled(rect, 4.0, t.row_selected);
+        }
+        if response.hovered() && !item.disabled {
             ui.painter().rect_filled(rect, 4.0, t.hover);
         }
+        let ink = if item.disabled { t.text_faint } else { t.text };
         let icon = Rect::from_center_size(rect.center(), vec2(16.0, 16.0));
         match item.icon.as_deref().and_then(crate::panels::plugin_view::named_icon) {
-            Some(named) => crate::icons::paint(ui.painter(), icon, named, t.text),
+            Some(named) => crate::icons::paint(ui.painter(), icon, named, ink),
             None => {
                 let letter: String = item.title.chars().take(1).flat_map(char::to_uppercase).collect();
-                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, letter, egui::FontId::proportional(13.0), t.text);
+                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, letter, egui::FontId::proportional(13.0), ink);
             }
         }
         crate::widgets::focus_outline(ui, &response, &t);

@@ -377,6 +377,9 @@ pub fn checked(s: &Session, command: &str, params: &Value) -> Option<bool> {
     if command == "help.enableLogging" {
         return Some(crate::logging::is_enabled());
     }
+    if command == "plugin.run" {
+        return s.plugin_command(params)?.checked;
+    }
     let comp = s.active_comp()?;
     let layer = s.state.selected_layers.first().and_then(|l| comp.layer(*l));
     let pstr = |k: &str| params.get(k).and_then(Value::as_str);

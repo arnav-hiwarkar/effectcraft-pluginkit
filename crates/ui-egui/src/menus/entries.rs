@@ -137,6 +137,9 @@ pub(crate) fn entry_enabled(app: &EffectcraftApp, e: &MenuEntry) -> bool {
     if e.command == "window.panel" {
         return true;
     }
+    if e.command == "plugin.run" {
+        return app.session.plugin_command(&e.params).is_none_or(|item| !item.disabled);
+    }
     app.session.is_enabled(&e.command)
 }
 

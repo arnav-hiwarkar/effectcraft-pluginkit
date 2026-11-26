@@ -61,6 +61,8 @@ with a message naming the method it belongs after.
 | `.menu(path)` | command | A menu path such as `"Layer/Arrange"`. A first part that names an app menu puts the command there; any other path goes under the app's plug-in commands. |
 | `.context(Context)` | command | Also list the command in a context menu: `Layers`, `Timeline` or `Viewer`. Repeat for more than one. |
 | `.toolbar()` | command | Also show the command as a toolbar button with its icon. |
+| `.keys(&[chord])` | panel | Chords the panel takes from the app while it has the keyboard focus or the pointer (see Panel keys, menu and help). |
+| `.help(url)` | panel | Adds **Help** to the panel's ≡ menu; it opens `url` in the browser. |
 | `.options(panel)` | tool | The `Bar` panel shown in the options bar while the tool is active. |
 | `.shortcut(keys)` | command | As above. |
 
@@ -88,6 +90,14 @@ automation stay the same.
 - **Toolbar.** `.toolbar()` adds a button after the plug-in tools, drawn with the `.icon` (or the title's
   first letter when the app has no drawing for that name), with the title as tooltip and accessible name.
   It runs by click and by Enter or Space once focused. Automation id `tools.command.<plugin>.<command>`.
+
+- **State.** `host::command_state(id, enabled, checked)` from a panel, command, tool or task turns the
+  plugin's command `id` off or on and sets its check mark (`Some(true)` checked, `Some(false)` unchecked,
+  `None` none). A command turned off shows disabled in its menu, context menus and toolbar, is left out of
+  the command palette, and `plugin.run` refuses it with "Plugin turned its command `Title` off for now, so
+  it did not run". Menu rows and context menu rows show the check mark; a checked toolbar button is drawn
+  selected. The state lasts until the plugin is reloaded or turned off; an unknown id is refused with the
+  plugin's command ids. In plugin tests `TestPlugin::command_states()` lists every state set, in order.
 
 EffectCraft draws these `ICONS` names: brush, pen, eraser, sparkles, sun, image, film, music, text, square,
 circle, star, grid, list, folder, search, settings, play, pause, plus, minus, trash, eye, lock, link,
@@ -714,6 +724,23 @@ so they come back after a restart.
 `.icon(name)` also shows on the panel's dock tab where the dock draws icons (a column collapsed to icons).
 
 In plugin tests, `TestPlugin::panel_for(id, key)` drives one instance as `panel(id)` drives a single panel.
+
+### Panel keys, menu and help
+
+`.keys(&["Delete", "Cmd+D"])` after `.panel(..)` names chords, spelt as `CommandSpec.shortcut`. While the
+panel has the keyboard focus (the user last pressed in it), or the pointer is over it, and no text field has
+the focus, those chords go to the panel instead of the app's shortcuts: the panel is called and
+`ui.key("Delete")` is true for that call (case does not matter). Other chords keep their app meaning.
+
+`ui.panel_menu(|menu| ..)` gives the items of the panel's ≡ menu, built like `ui.menu`; the app shows them
+after its own items and a separator, and a pick calls the panel with that item's builder returning true.
+The last call's items are shown. `.help(url)` adds a **Help** item after them that opens `url`.
+
+Edits a panel makes while the user drags one of its widgets (from press to release, however many calls
+that takes) are one undo step, named after the plugin.
+
+In plugin tests, `PanelTest::press(chord)` presses a declared chord (an undeclared one is an error that
+lists the panel's keys), `panel_menu()` lists the menu's item texts and `pick_panel_menu(text)` picks one.
 
 ### Lists, tables and trees
 

@@ -21,9 +21,35 @@ pub struct Loaded {
     pub data_dir: PathBuf,
     pub revision: u64,
     render_errors: Mutex<BTreeMap<String, String>>,
+    command_states: Mutex<BTreeMap<String, (bool, Option<bool>)>>,
 }
 
 impl Loaded {
+    pub(crate) fn set_command_state(&self, command: &str, enabled: bool, checked: Option<bool>) -> Result<(), String> {
+        let commands = &self.plugin.contributions().commands;
+        if !commands.iter().any(|spec| spec.id == command) {
+            let known: Vec<&str> = commands.iter().map(|spec| spec.id.as_str()).collect();
+            return Err(format!("this plugin has no command `{command}`; its commands are {known:?}"));
+        }
+        let mut states = self.command_states.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        states.insert(command.to_string(), (enabled, checked));
+        Ok(())
+    }
+
+    fn command_state(&self, command: &str) -> (bool, Option<bool>) {
+        let states = self.command_states.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        states.get(command).copied().unwrap_or((true, None))
+    }
+
+    pub(crate) fn runnable(&self, command: &str) -> Result<(), String> {
+        if self.command_state(command).0 {
+            return Ok(());
+        }
+        let commands = &self.plugin.contributions().commands;
+        let title = commands.iter().find(|spec| spec.id == command).map_or(command, |spec| spec.title.as_str());
+        Err(format!("{} turned its command `{title}` off for now, so it did not run", self.bundle.manifest.name))
+    }
+
     pub(crate) fn report(&self, effect: &str, error: Option<String>) -> bool {
         let Ok(mut errors) = self.render_errors.lock() else { return false };
         match error {
@@ -109,7 +135,14 @@ fn load(bundle: &Bundle, digest: &str, grants: BTreeSet<Permission>, data_dir: P
     digest.hash(&mut hasher);
     craft_plugin_host::validate(&bundle.manifest, plugin.contributions())?;
     effects::Engine.admit(plugin.contributions())?;
-    let loaded = Loaded { bundle: bundle.clone(), plugin, data_dir, revision: hasher.finish(), render_errors: Mutex::new(BTreeMap::new()) };
+    let loaded = Loaded {
+        bundle: bundle.clone(),
+        plugin,
+        data_dir,
+        revision: hasher.finish(),
+        render_errors: Mutex::new(BTreeMap::new()),
+        command_states: Mutex::default(),
+    };
     Ok(Arc::new(loaded))
 }
 
@@ -446,7 +479,7 @@ impl Plugins {
         self.lock().reload();
     }
 
-    fn items(&self) -> Vec<PluginItem> {
+    pub(crate) fn items(&self) -> Vec<PluginItem> {
         let inner = self.lock();
         let mut items = Vec::new();
         for (id, loaded) in &inner.loaded {
@@ -461,7 +494,10 @@ impl Plugins {
             let docked = found.panels.iter().filter(|p| !matches!(p.place, PanelPlace::Status | PanelPlace::Bar));
             items.extend(docked.map(|p| PluginItem { panel: true, multiple: p.multiple, ..item(&p.id, &p.title) }));
             items.extend(found.commands.iter().map(|c| {
+                let (enabled, checked) = loaded.command_state(&c.id);
                 PluginItem {
+                    disabled: !enabled,
+                    checked,
                     shortcut: c.shortcut.clone(),
                     menu: c.menu.clone(),
                     context: c

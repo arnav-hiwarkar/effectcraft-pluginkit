@@ -320,6 +320,12 @@ impl Session {
         }
     }
 
+    /// The running plug-in command that `plugin.run` parameters name.
+    pub fn plugin_command(&self, params: &serde_json::Value) -> Option<&crate::PluginItem> {
+        let text = |key: &str| params.get(key).and_then(serde_json::Value::as_str);
+        self.plugin_items.iter().find(|item| !item.panel && Some(item.plugin.as_str()) == text("plugin") && Some(item.id.as_str()) == text("command"))
+    }
+
     /// Remember a project in File ▸ Open Recent and in the crash-recovery sentinel.
     pub(crate) fn note_project_path(&mut self, path: &str) {
         self.prefs.push_recent(path);

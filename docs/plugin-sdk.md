@@ -1135,6 +1135,23 @@ Plugin::new()
 This puts **Add Control Null** at the end of **Layer ▸ Rigging**, in the timeline's layer context menu and
 as a toolbar button with a plus sign. All of them run the same command, with the same shortcut.
 
+### Turn a command off and give a panel keys and a menu
+
+```rust
+Plugin::new().panel("rig", "Rig", Rig::default()).keys(&["Delete"]).help("https://example.org/rig")
+
+fn ui(&mut self, ui: &mut Ui) {
+    if ui.key("Delete") { self.remove_selected(); }
+    ui.panel_menu(|menu| if menu.item("Reset Rig") { self.reset(); });
+    if ui.checkbox("Lock Rig", &mut self.locked) {
+        let _ = host::command_state("add-null", !self.locked, None);
+    }
+}
+```
+
+Delete over the Rig panel reaches it and not the app; ≡ ▸ Reset Rig and Help appear in its panel menu;
+locking turns **Add Control Null** off everywhere it is shown.
+
 ## Read and edit the project
 
 Panels and commands use the app's own commands, the same ones the menus, the CLI, and automation use.

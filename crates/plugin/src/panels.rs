@@ -56,6 +56,7 @@ fn wait_for_work(timeout: Duration) {
 }
 
 pub(crate) fn run_command(session: &mut Session, loaded: Arc<Loaded>, command: &str) -> Result<(), String> {
+    loaded.runnable(command)?;
     let asking = Arc::new(());
     let plugin = loaded.bundle.manifest.id.clone();
     let gesture = Some(command_gesture(&loaded, command));
@@ -298,6 +299,11 @@ impl Host for Remote {
         self.on_app(move |host| host.panel(&panel, instance.as_deref(), open))?
     }
 
+    fn command_state(&mut self, command: &str, enabled: bool, checked: Option<bool>) -> Result<(), String> {
+        let command = command.to_string();
+        self.on_app(move |host| host.command_state(&command, enabled, checked))?
+    }
+
     fn frame(&mut self, request: &FrameRequest) -> Result<Pixels, String> {
         let request = request.clone();
         let render = self.on_app(move |host| host.frame_job(&request))??;
@@ -474,18 +480,22 @@ struct Slot {
     shown: bool,
     hidden: bool,
     value: Option<String>,
+    held: bool,
+    gesture: Option<Gesture>,
 }
 
 impl Slot {
     fn new(loaded: &Arc<Loaded>) -> Slot {
-        Slot {
-            retained: Retained::with_level(loaded.plugin.contributions().ui_level),
-            loaded: loaded.clone(),
-            open: Arc::default(),
-            shown: false,
-            hidden: false,
-            value: None,
+        let retained = Retained::with_level(loaded.plugin.contributions().ui_level);
+        Slot { retained, loaded: loaded.clone(), open: Arc::default(), shown: false, hidden: false, value: None, held: false, gesture: None }
+    }
+
+    fn gesture(&mut self) -> Gesture {
+        let fresh = || Gesture::new(&self.loaded.bundle.manifest.name);
+        if self.held {
+            return self.gesture.get_or_insert_with(fresh).clone();
         }
+        self.gesture.clone().unwrap_or_else(fresh)
     }
 }
 
@@ -600,6 +610,22 @@ impl Panels {
         }
     }
 
+    pub fn hold(&mut self, key: &str, held: bool) {
+        if let Some(slot) = self.slots.get_mut(key) {
+            slot.held = held;
+        }
+    }
+
+    pub fn press_key(&mut self, key: &str, chord: &str) {
+        if let Some(slot) = self.slots.get_mut(key) {
+            slot.retained.press(chord);
+        }
+    }
+
+    pub fn menu(&self, key: &str) -> &[craft_plugin_host::ui::MenuItem] {
+        self.slots.get(key).map_or(&[], |slot| slot.retained.menu())
+    }
+
     pub fn busy(&self, key: &str) -> bool {
         self.slots.get(key).is_some_and(|slot| slot.retained.in_flight())
     }
@@ -618,6 +644,7 @@ impl Panels {
 
     pub fn command(&mut self, session: &Session, plugin: &str, command: &str) -> Result<(), String> {
         let loaded = running(plugin)?;
+        loaded.runnable(command)?;
         let gesture = Some(command_gesture(&loaded, command));
         let bound = Bound::of(loaded, session, Arc::downgrade(&self.open));
         self.post(Request { key: Key::Command(plugin.to_string()), bound, call: Call::Command { command: command.to_string() }, edit: None, gesture });
@@ -645,7 +672,7 @@ impl Panels {
                 slot.retained.invalidate();
             }
         }
-        let gesture = matches!(call, Call::Panel { .. }).then(|| Gesture::new(&loaded.bundle.manifest.name));
+        let gesture = matches!(call, Call::Panel { .. }).then(|| slot.gesture());
         let bound = Bound::of(loaded, session, Arc::downgrade(&slot.open));
         while let Some(input) = self.slots.get_mut(key).and_then(|slot| {
             let input = slot.retained.start(size, self.now)?;
@@ -663,7 +690,10 @@ impl Panels {
             }
         }
         self.schedule(key);
-        let slot = self.slots.get(key).ok_or("the panel closed")?;
+        let slot = self.slots.get_mut(key).ok_or("the panel closed")?;
+        if !slot.held && !slot.retained.pending() {
+            slot.gesture = None;
+        }
         Ok(Shown { plugin: &slot.loaded.bundle.manifest.id, widgets: slot.retained.widgets(), error: slot.retained.error() })
     }
 

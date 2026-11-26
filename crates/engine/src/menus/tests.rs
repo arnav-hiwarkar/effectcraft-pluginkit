@@ -278,6 +278,10 @@ fn plugin_commands_go_into_the_menu_their_path_names() {
         _ => None,
     });
     assert_eq!(layer.map(|n| shown(std::slice::from_ref(n))), Some(vec!["@pluginMenu:Layer".to_string()]));
+    let params = |id: &str| crate::shortcuts::plugin_command_params("test.probe", id);
+    assert_eq!([checked(&s, "plugin.run", &params("tidy")), checked(&s, "plugin.run", &params("panel"))], [None, None]);
+    s.set_plugin_items(vec![crate::PluginItem { disabled: true, checked: Some(true), ..item("tidy", Some("Layer")) }]);
+    assert_eq!(s.plugin_command(&params("tidy")).map(|found| (found.disabled, checked(&s, "plugin.run", &params("tidy")))), Some((true, Some(true))));
     s.set_plugin_items(vec![]);
     let (none, empty) = dynamic_nodes(&s, "pluginCommands", &cx);
     assert_eq!((shown(&none), empty), (vec![], Some("No Plug-in Commands")));

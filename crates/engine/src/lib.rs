@@ -310,6 +310,8 @@ pub struct PluginItem {
     pub context: Vec<PluginContext>,
     pub toolbar: bool,
     pub icon: Option<String>,
+    pub disabled: bool,
+    pub checked: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
