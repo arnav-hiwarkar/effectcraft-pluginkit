@@ -405,6 +405,7 @@ pub(crate) fn panel_menu_area(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
                         }
                     }
                 }
+                PanelKind::Plugin(_) => close |= plugin_view::panel_menu(app, ui, panel),
                 _ => {
                     ui.label(egui::RichText::new(crate::i18n::label(app, "window.panel", panel.title())).weak());
                 }

@@ -317,6 +317,14 @@ impl Host for SessionHost<'_> {
         Ok(())
     }
 
+    fn command_state(&mut self, command: &str, enabled: bool, checked: Option<bool>) -> Result<(), String> {
+        self.plugin.set_command_state(command, enabled, checked)?;
+        if let Some(plugins) = crate::manage::plugins() {
+            self.session.set_plugin_items(plugins.items());
+        }
+        Ok(())
+    }
+
     fn command(&mut self, id: &str, params: Value) -> Result<Value, String> {
         self.property_writes_allowed(id, &params)?;
         self.files_allowed(id, &params)?;

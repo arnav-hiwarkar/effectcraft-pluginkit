@@ -348,6 +348,13 @@ fn panel_owns_enter(kind: PanelKind) -> bool {
     matches!(kind, PanelKind::Project | PanelKind::EffectsPresets | PanelKind::RenderQueue | PanelKind::Flowchart)
 }
 
+fn plugin_panel_key(app: &mut EffectcraftApp, key: egui::Key, mods: egui::Modifiers) -> bool {
+    let Some((scope, chords)) = crate::panels::plugin_view::key_target(app) else { return false };
+    let Some(chord) = chords.iter().find(|chord| parse_shortcut(chord).is_some_and(|(m, k)| k == key && mods_match(m, mods))) else { return false };
+    app.plugin_ui.panels.press_key(&scope, chord);
+    true
+}
+
 fn handle_shortcuts_impl(app: &mut EffectcraftApp, ctx: &egui::Context, tab_only: bool) {
     let start = modifiers_at_start(ctx);
     if !tab_only && app.dialog.is_some() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -407,6 +414,10 @@ fn handle_shortcuts_impl(app: &mut EffectcraftApp, ctx: &egui::Context, tab_only
             continue;
         }
         if app.dialog.is_some() {
+            continue;
+        }
+        if pressed && plugin_panel_key(app, key, mods) {
+            ctx.input_mut(|i| i.consume_key(mods, key));
             continue;
         }
         if !mods.any() && crate::panels::effect_controls::handle_arrow_key(app, ctx, key) {

@@ -480,3 +480,63 @@ fn a_held_panel_call_holds_back_neither_overlay_nor_tool_and_only_a_sandboxed_co
         assert_eq!((quick(command), command >= ms(1000)), (!sandboxed, sandboxed), "{plugin}: only a sandboxed command waits for the panel; {command:?}");
     }
 }
+
+fn opacity(app: &mut App) -> Option<f64> {
+    app.session.execute("prop.get", json!({"layer": "#1", "path": "transform/opacity"})).unwrap()["value"].as_f64()
+}
+
+fn widget_id(widgets: &[Widget], text: &str) -> u64 {
+    widgets
+        .iter()
+        .find_map(|widget| match widget {
+            Widget::Slider { id, text: shown, .. } | Widget::Checkbox { id, text: shown, .. } if shown == text => Some(*id),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the app panel shows no `{text}`"))
+}
+
+#[test]
+fn a_slider_dragged_over_five_panel_calls_that_each_set_a_property_is_one_undo_step_and_one_undo_restores_the_start() {
+    let mut app = app("test.panels-drag", &["document.read", "document.write"]);
+    app.session.execute("layer.newSolid", json!({"name": "Dragged", "color": "#ffffff", "width": 64, "height": 36})).unwrap();
+    let (mut panels, mut frame, id) = (Panels::default(), 0, app.id.clone());
+    let (key, surface) = ("plugin.app", Surface::Panel { plugin: &id, panel: "app", instance: None });
+    let slider = widget_id(&settled(&mut app, &mut panels, key, surface, &mut frame), "Opacity");
+    let (start, steps) = (opacity(&mut app), app.session.history.undo.len());
+    let mut drag = |app: &mut App, panels: &mut Panels, value: f64| {
+        panels.submit(key, vec![UiEvent { id: slider, kind: UiEventKind::Number(value) }], "");
+        settled(app, panels, key, surface, &mut frame);
+    };
+    panels.hold(key, true);
+    for value in [10.0, 20.0, 30.0, 40.0] {
+        drag(&mut app, &mut panels, value);
+    }
+    panels.hold(key, false);
+    drag(&mut app, &mut panels, 50.0);
+    assert_eq!((app.session.history.undo.len() - steps, opacity(&mut app)), (1, Some(50.0)));
+    drag(&mut app, &mut panels, 70.0);
+    assert_eq!((app.session.history.undo.len() - steps, opacity(&mut app)), (2, Some(70.0)));
+    for _ in 0..2 {
+        app.session.execute("edit.undo", json!({})).unwrap();
+    }
+    assert_eq!((opacity(&mut app), start), (Some(100.0), Some(100.0)));
+}
+
+#[test]
+fn a_command_its_plugin_turned_off_is_marked_off_and_refused_by_name_until_turned_on_again() {
+    let mut app = app("test.panels-state", &[]);
+    let (mut panels, mut frame, id) = (Panels::default(), 0, app.id.clone());
+    let (key, surface) = ("plugin.app", Surface::Panel { plugin: &id, panel: "app", instance: None });
+    let disable = widget_id(&settled(&mut app, &mut panels, key, surface, &mut frame), "Disable Probe Action");
+    let mut set = |app: &mut App, panels: &mut Panels, off: bool| {
+        panels.submit(key, vec![UiEvent { id: disable, kind: UiEventKind::Bool(off) }], "");
+        settled(app, panels, key, surface, &mut frame);
+        let item = app.session.plugin_items.iter().find(|item| item.plugin == id && item.id == "app-act").cloned().unwrap_or_default();
+        (item.disabled, item.checked)
+    };
+    assert_eq!(set(&mut app, &mut panels, true), (true, Some(false)));
+    assert_eq!(app.run("app-act"), Err("Probe turned its command `Probe Action` off for now, so it did not run".into()));
+    assert_eq!(panels.command(&app.session, &id, "app-act"), Err("Probe turned its command `Probe Action` off for now, so it did not run".into()));
+    assert_eq!(set(&mut app, &mut panels, false), (false, Some(true)));
+    assert_eq!(app.run("app-act"), Ok(()));
+}
