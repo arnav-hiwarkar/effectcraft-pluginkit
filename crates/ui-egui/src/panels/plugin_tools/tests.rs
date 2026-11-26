@@ -247,14 +247,22 @@ fn tool_texts(harness: &mut Harness<'_, EffectcraftApp>) -> Vec<String> {
 
 pub(crate) static STAMP_TOOL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub(crate) fn probe_session() -> Session {
-    static PROBE: OnceLock<tempfile::TempDir> = OnceLock::new();
-    let mut session = session();
-    load(&PROBE, || {
+pub(crate) const PROBE: &str = "test.viewer-tool-ui";
+
+pub(crate) fn load_probe() -> &'static Path {
+    static BUNDLE: OnceLock<tempfile::TempDir> = OnceLock::new();
+    load(&BUNDLE, || {
         let probe = craft_plugin_host::testing::probe_dir();
-        let manifest = json!({"id": "test.viewer-tool-ui", "name": "Probe", "version": "1.0.0", "entry": {"wasm": "plugin.wasm"}, "permissions": ["document.read", "document.write"]});
+        let manifest =
+            json!({"id": PROBE, "name": "Probe", "version": "1.0.0", "entry": {"wasm": "plugin.wasm"}, "permissions": ["document.read", "document.write"]});
         bundle(&wasm(probe, "probe"), manifest)
     });
+    BUNDLE.get().expect("the probe is loaded").path()
+}
+
+pub(crate) fn probe_session() -> Session {
+    let mut session = session();
+    load_probe();
     effectcraft_plugin::install(&mut session, Some(config()));
     session
 }
@@ -450,7 +458,18 @@ fn a_plugin_control_row_subscribed_to_the_selection_draws_again_when_the_selecti
 #[test]
 fn a_plugin_control_row_with_a_timer_draws_again_without_any_input() {
     let (mut harness, _) = lookout_harness();
-    settle(&mut harness, |h| h.query_all_by_value("ticks 3").next().is_some());
+    let ticks = |h: &Harness<'_, EffectcraftApp>| {
+        h.query_all(egui_kittest::kittest::by()).filter_map(|node| node.value()?.strip_prefix("ticks ")?.parse::<u32>().ok()).max()
+    };
+    let mut first = None;
+    settle(&mut harness, |h| match (ticks(h), first) {
+        (Some(now), None) => {
+            first = Some(now);
+            false
+        }
+        (Some(now), Some(start)) => now >= start + 2,
+        (None, _) => false,
+    });
 }
 
 #[test]
