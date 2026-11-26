@@ -671,16 +671,17 @@ pub trait Panel: Send + 'static {
 Panels, custom controls, buttons and commands of one plugin run in the same long-lived instance, so a
 `static` is shared between them. Effects, overlays and tools do not see it: effects and overlays run in
 pooled instances and a tool in a long-lived instance of its own. A native plugin is one library in the
-app's process, so there every surface shares its statics. This also holds for a sandboxed plugin built
-before the viewer and command lanes: its tool and overlays no longer share a `static` with its panels, as
-they did when every call ran in one instance. No reference plugin relied on that; share such values through
-plugin data (`host::set_data` and `host::data`, needing `document.write` and `document.read`) or project properties.
+app's process, so there every surface shares its statics. A sandboxed plugin built before the viewer and
+command lanes (`Contributions::event_level()` below 2) keeps one long-lived instance for its panels, tools,
+overlays and drags, so a `static` its panel sets is still seen by its tool and overlay; its viewer calls
+then wait while a panel call runs. Share values between surfaces through plugin data (`host::set_data` and
+`host::data`, needing `document.write` and `document.read`) or project properties.
 
 The app gives each plugin three worker threads, each started on first use: one for panels, custom
 controls, buttons and migrations, one for the viewer (overlays, handle drags, tool events) and one for
 menu commands. A slow panel call therefore holds back neither the plugin's overlay, its tool nor, for a
 native plugin, its commands. A sandboxed command still waits for a running panel call, because both use
-the one long-lived instance.
+the one long-lived instance; so do the overlays and tool of a plugin built before the lanes.
 
 The app keeps the widget tree a panel returned and draws it every frame. It calls `ui` again, on a worker
 thread, only for: an event from one of the panel's widgets, an app event the panel subscribed to, a timer
@@ -690,16 +691,24 @@ events it carried are not delivered again. Events of a hidden tab are dropped, a
 arrives after its tab was hidden: the panel is called again when it shows. A click, a checkbox toggle or
 a drop reaches one call, so two clicks on one button during a slow call give two calls in which
 `button` returns `true`. Pointer motion, slider, number, text and colour events made during a call
-coalesce into the latest one; presses, releases and keys stay in order. Pending `edit` events join their
-layer lists. A reply, a host call or an edit made for a project that has since closed, or by a load of
-the plugin that was reloaded or turned off, is dropped.
+coalesce into the latest one, but only within one drag: values of a second drag made during the same call
+stay apart, so each drag is its own undo step. Two menu picks made during a call reach two calls. A list
+row action made before a reply that changed the list (a refresh that inserted a row) follows its item to
+its new row, and is dropped when that item is gone. Presses, releases and keys stay in order. Pending
+`edit` events join their layer lists. A reply, a host call or an edit made for a project that has since
+closed, or by a load of the plugin that was reloaded or turned off, is dropped. When another project opens,
+a panel's tree and its queued input are dropped and the panel is drawn again for the new project before it
+takes input; its subscriptions, timers and the app events for the new project are kept. A text field or
+area keeps what was typed while the plugin has not answered, so letters typed during a slow call all
+arrive; a value the plugin sets replaces it.
 
 ### Opening and closing panels
 
 `host::show_panel(id)` opens the plugin's panel `id`, or brings it to the front; `host::show_panel_for(id,
 instance)` opens the named instance of a `panel_each` panel; `host::close_panel(id, instance)` closes one.
-They work from panels, commands, tools and tasks and are refused in a render. The app acts on its next
-frame. A `Float` panel opens floating at its `size`, centred on the window; later it opens where the user
+They work from panels, commands, tools and tasks and are refused in a render. A request the app would
+refuse (a `Status` or `Bar` panel, an instance key for a `.panel`, `close_panel` without a key on a
+`panel_each`) returns `Err` with the reason to the plugin. The app acts on its next frame. A `Float` panel opens floating at its `size`, centred on the window; later it opens where the user
 last left it, docked or floating. Both are refused, with a message, for a `Status` or `Bar` panel, which the
 app shows by itself.
 
@@ -726,10 +735,13 @@ from the bar, `host::data` in the tool) or pass it through a project property.
 A `panel_each` panel gets one value per instance, keyed by a string the plugin or the app chooses.
 Window ▸ Plug-ins lists it as "New <title>", which opens instance "1", then "2", … (the lowest number not
 open). `host::show_panel_for(id, key)` opens or raises instance `key`; `host::close_panel(id, Some(key))`
-closes it. Each tab is titled "<title> <key>", its automation scope is `plugin.<plugin>.<panel>.<key>`, and
+closes it. Each tab is titled "<title> <key>", its automation scope is `plugin.<plugin>.<panel>#<key>`, and
 `ui.instance()` returns the key. `show_panel_for` on a panel declared with `.panel`, and `close_panel` without a key on a `panel_each`
 panel, do nothing and show the reason in the app's status line. The app keeps the open instances with the workspace,
-so they come back after a restart. Closing an instance's tab forgets it: the app calls the panel once more
+so they come back after a restart, and an instance that a saved workspace still holds stays while another
+workspace shows. In an automation scope `.`, `#` and `%` inside a panel id or key are written `%2E`, `%23`
+and `%25`, so `notes` with key `1` (`notes#1`) and a panel named `notes.1` (`notes%2E1`) never share a scope
+or a tree. Closing an instance's tab forgets it: the app calls the panel once more
 with `UiInput.closed` set, the SDK drops that instance's value without calling `ui`, and a later instance
 with the same key starts from `make()` again. Two keys whose tab ids would be equal still get two tabs.
 
@@ -865,7 +877,7 @@ sorts and renames its 10 000-row take table this way.
 | `ui.context_menu(\|menu\| …)` | The same menu on the widget just before it, opened by a right click or the Menu key. | |
 | `ui.split(key, Axis::Horizontal \| Vertical, first, second)` | Two panes side by side or stacked with a divider the user drags, or moves with the arrow keys while it has the focus. The app keeps the share. | |
 | `ui.curve(text, &mut Vec<[f64; 2]>)` | The app's curve editor (a click or drag adds a point, a drag moves one). At most `MAX_CURVE_POINTS` points, x inside 0..1. | `true` when the points changed |
-| `ui.gradient(text, &mut Gradient)` | The app's gradient stops: a click above or below the bar adds a stop, a drag moves one, the selected colour stop has a colour button and a Delete stop button. | `true` when the gradient changed |
+| `ui.gradient(text, &mut Gradient)` | The app's gradient stops: a click above or below the bar adds a stop (not on a track that holds `MAX_GRADIENT_STOPS`), a drag moves one, the selected colour stop has a colour button and a Delete stop button. | `true` when the gradient changed |
 
 Menu picks reach the plugin as the item's index, counted depth first over items, separators and submenus
 in the order they were added; the SDK turns it back into the `true` of the item. An app that cannot edit
@@ -879,9 +891,12 @@ for the same request, but the app renders it from its own caches on a worker thr
 inside `[w, h]`: no pixels pass through the plugin, and the panel makes no `host::frame` or `upload_image`
 call. The app draws it again when the project, the preferences or the active comp change, without calling
 the plugin; the last picture stays up while the next one renders, and a spinner shows before the first.
-One render runs at a time for each frame widget: a request that changes while one renders (a `time` that
+One render runs at a time for each frame widget, and at most two for all frame widgets together; the
+others wait their turn in the order they asked: a request that changes while one renders (a `time` that
 follows playback) waits, only the newest waiting request is rendered next, and only the latest picture is
-kept. A comp
+kept. The picture is averaged down to about the widget's size in pixels and to the graphics device's
+largest texture, keeping its aspect. A picture rendered for a project or a load of the plugin that is no
+longer current is never shown. A comp
 or layer that is not there shows the reason in a weak label (`no composition `Shot 9``). It needs
 `document.read`, like `host::frame`. Its accessible name is "Frame" (`ui.name` after it sets another), and a
 click reaches the plugin as `Click`. An app that cannot draw frames says so in place of the frame.
