@@ -2246,6 +2246,7 @@ name = "effectcraft"
 version = "0.24.1"
 dependencies = [
  "arboard",
+ "block2 0.6.2",
  "chrono",
  "cpal",
  "craft-update",

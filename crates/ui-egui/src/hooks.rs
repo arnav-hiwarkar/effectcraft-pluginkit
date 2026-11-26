@@ -69,6 +69,7 @@ pub struct Hooks {
     /// it to look at the interface while the compositor is still being prepared, or make it
     /// panic to check that a failing build never reaches the UI thread.
     pub before_gpu_build: Option<Box<dyn FnOnce() + Send>>,
+    pub pen: Option<craft_plugin_ui::PenSource>,
 }
 
 impl Hooks {

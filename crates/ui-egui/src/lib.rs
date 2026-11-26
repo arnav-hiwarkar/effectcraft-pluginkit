@@ -68,6 +68,7 @@ pub use app::{GPU_PREPARING, GpuBuild};
 #[cfg(test)]
 use app::{MAX_PENDING_SHOTS, SCREENSHOT_SETTLE_PASSES, SCREENSHOT_SETTLE_S, SCREENSHOT_TIMEOUT_S};
 pub use clock::AppClock;
+pub use craft_plugin_ui::PenSource;
 pub use hooks::{DialogDone, FileDialog, Hooks, SystemThemeFn};
 pub use state::ShotTarget;
 

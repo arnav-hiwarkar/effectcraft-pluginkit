@@ -26,6 +26,8 @@ mod crash_report;
 mod diagnostic_state;
 mod launch_guard;
 #[cfg(target_os = "macos")]
+mod mac_tablet;
+#[cfg(target_os = "macos")]
 mod native_menu;
 // Every native dialog. Built everywhere; only the macOS and Linux apps show the commands'
 // dialogs without blocking the frame.
@@ -415,6 +417,7 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
             {
                 app.hooks.app_action = Some(Box::new(native_menu::app_action));
                 app.hooks.clipboard_text = Some(Box::new(native_menu::clipboard_text));
+                app.hooks.pen = mac_tablet::start();
             }
             if let Some(port) = control_port {
                 disable_app_nap();
