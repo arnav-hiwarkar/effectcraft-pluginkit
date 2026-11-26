@@ -73,6 +73,9 @@ pub fn color_popup(ui: &mut Ui, id: egui::Id, pos: egui::Pos2, c: &mut [f32; 3])
     if drawn_before && pressed_outside(ui.ctx(), &area.response) && !on_viewer {
         out.close.get_or_insert(true);
     }
+    if !drawn_before {
+        take_automation(ui.ctx());
+    }
     note_overlay(ui.ctx(), area.response.rect);
     if let Some(keep) = out.close {
         if !keep && *c != original {

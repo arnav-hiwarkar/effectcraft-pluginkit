@@ -4,7 +4,7 @@ use egui_kittest::kittest::Queryable;
 use serde_json::json;
 
 use crate::EffectcraftApp;
-use crate::panels::plugin_tools::tests::{harness, probe_session, settle};
+use crate::panels::plugin_tools::tests::{harness, menu_row, probe_session, settle};
 
 const PROBE: &str = "test.viewer-tool-ui";
 
@@ -27,10 +27,6 @@ fn click(harness: &mut Harness<'_, EffectcraftApp>, pos: Pos2, button: egui::Poi
         harness.event(egui::Event::PointerButton { pos, button, pressed, modifiers: egui::Modifiers::NONE });
     }
     harness.run_steps(2);
-}
-
-fn menu_row(name: &str) -> egui_kittest::kittest::By<'_> {
-    egui_kittest::kittest::by().predicate(move |node| node.label().is_some_and(|label| label.trim() == name))
 }
 
 #[test]

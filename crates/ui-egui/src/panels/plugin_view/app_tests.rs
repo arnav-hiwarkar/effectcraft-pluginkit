@@ -6,7 +6,7 @@ use serde_json::json;
 use super::panel_tests::{shows, until};
 use crate::EffectcraftApp;
 use crate::dock::PanelKind;
-use crate::panels::plugin_tools::tests::{element, harness, probe_session};
+use crate::panels::plugin_tools::tests::{element, harness, menu_row, probe_session};
 
 const PROBE: &str = "test.viewer-tool-ui";
 const HELP: &str = "https://example.org/probe-app";
@@ -64,14 +64,16 @@ fn the_panel_menu_lists_the_plugins_items_and_help_and_a_pick_reaches_the_plugin
     let menu = format!("panel.menu.{}", PanelKind::plugin(PROBE, "app").id());
     let button = element(&harness, &menu).center();
     click(&mut harness, button, egui::PointerButton::Primary);
-    until(&mut harness, "the panel menu", |h| shows(h, "Zoom to Fit") && shows(h, "Reset View") && shows(h, "Help"));
+    let help = format!("plugin.{PROBE}.app.help");
+    until(&mut harness, "the panel menu", |h| shows(h, "Zoom to Fit") && shows(h, "Reset View") && h.state().auto.find(&help).is_some());
     assert!(shows(&harness, "Close Panel"), "the app's own items stay");
     harness.get_by_label("Reset View").click();
     said(&mut harness, "view reset");
     assert!(!shows(&harness, "Zoom to Fit"), "a pick closes the menu");
     click(&mut harness, button, egui::PointerButton::Primary);
-    until(&mut harness, "the panel menu again", |h| shows(h, "Help"));
-    harness.get_by_label("Help").click();
+    until(&mut harness, "the panel menu again", |h| h.state().auto.find(&help).is_some());
+    let help_row = element(&harness, &help);
+    harness.query_all_by_label("Help").find(|node| help_row.contains(node.rect().center())).expect("the panel menu's Help").click();
     until(&mut harness, "the help page opening", |h| {
         h.output().platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::OpenUrl(open) if open.url == HELP))
     });
@@ -91,9 +93,9 @@ fn a_command_the_probe_turned_off_shows_disabled_in_the_menu_toolbar_and_layer_m
     until(&mut harness, "the menu bar", |h| h.state().auto.find("menu.Layer").is_some());
     let layer_menu = element(&harness, "menu.Layer").center();
     click(&mut harness, layer_menu, egui::PointerButton::Primary);
-    harness.get_by_label("Probe Tools").hover();
+    harness.get(menu_row("Probe Tools")).hover();
     harness.run_steps(3);
-    let entries: Vec<bool> = harness.query_all_by_label("Probe Action").map(|node| node.accesskit_node().is_disabled()).collect();
+    let entries: Vec<bool> = harness.query_all(menu_row("Probe Action")).map(|node| node.accesskit_node().is_disabled()).collect();
     assert_eq!(entries, [true, true], "the menu entry and the toolbar button are both disabled");
     harness.key_press(egui::Key::Escape);
     harness.run_steps(2);
@@ -103,7 +105,13 @@ fn a_command_the_probe_turned_off_shows_disabled_in_the_menu_toolbar_and_layer_m
     click(&mut harness, at, egui::PointerButton::Secondary);
     let entry = format!("timeline.layerMenu.plugin.{PROBE}.app-act");
     until(&mut harness, "the layer context menu", |h| h.state().auto.find(&entry).is_some());
-    assert!(harness.query_all_by_label("Probe Action").any(|node| node.accesskit_node().is_disabled()), "the context menu entry is disabled");
+    let context_entry = element(&harness, &entry);
+    let in_context_menu: Vec<bool> = harness
+        .query_all(menu_row("Probe Action"))
+        .filter(|node| context_entry.contains(node.rect().center()))
+        .map(|node| node.accesskit_node().is_disabled())
+        .collect();
+    assert_eq!(in_context_menu, [true], "the context menu entry is disabled");
     let ctx = harness.ctx.clone();
     let refused = crate::menus::invoke(harness.state_mut(), &ctx, "plugin.run", params.clone());
     assert_eq!(refused.map(drop), Err("Probe turned its command `Probe Action` off for now, so it did not run".to_string()));

@@ -1,5 +1,5 @@
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::json;
 
 use super::panel_tests::{shows, until};
@@ -64,10 +64,11 @@ fn a_plugin_frame_shows_the_red_comp_rendered_by_the_app_and_redraws_on_an_edit_
 #[test]
 fn a_plugin_frame_of_a_missing_comp_says_so_in_a_weak_label() {
     let mut harness = open_preview();
-    let field = harness.get_by_label("Composition");
-    field.click();
+    let field = || egui_kittest::kittest::by().predicate(|node| node.placeholder() == Some("Composition"));
+    harness.get(field()).click();
     harness.step();
-    harness.get_by_label("Composition").type_text("Nowhere");
+    harness.get(field()).type_text("Nowhere");
     until(&mut harness, "the missing comp named", |h| shows(h, "no composition `Nowhere`"));
-    assert_eq!(frame_centre(&harness), None, "no frame is drawn for a comp that is not there");
+    let frames = harness.query_all_by_label("Frame").filter(|node| node.accesskit_node().role() == egui::accesskit::Role::Image).count();
+    assert_eq!(frames, 0, "no frame is drawn for a comp that is not there");
 }

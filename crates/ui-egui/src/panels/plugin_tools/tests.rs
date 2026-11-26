@@ -72,6 +72,10 @@ pub(crate) fn element(harness: &Harness<'_, EffectcraftApp>, id: &str) -> egui::
     egui::Rect::from_min_size(pos2(found.rect[0], found.rect[1]), egui::vec2(found.rect[2], found.rect[3]))
 }
 
+pub(crate) fn menu_row(name: &str) -> egui_kittest::kittest::By<'_> {
+    egui_kittest::kittest::by().predicate(move |node| node.label().is_some_and(|label| label.trim() == name))
+}
+
 pub(crate) fn press_drag_release(harness: &mut Harness<'_, EffectcraftApp>, path: &[Pos2]) {
     let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
     let (first, last) = (path[0], path[path.len() - 1]);
