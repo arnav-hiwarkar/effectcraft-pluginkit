@@ -96,6 +96,7 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
     let hover = ctx.input(|i| i.pointer.hover_pos()).filter(|pos| map.area.contains(*pos));
     let mut pressed = ctx.data(|d| d.get_temp::<bool>(pressed_id())).unwrap_or(false);
     let typing = ctx.egui_wants_keyboard_input();
+    let double = ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
     for (nr, event) in events.into_iter().enumerate() {
         let found = |kind: ToolEventKind, pos: Pos2, modifiers: egui::Modifiers| {
             let comp = map.to_comp(pos);
@@ -124,6 +125,9 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
                 pressed = false;
                 found(ToolEventKind::Up, pos, modifiers)
             }
+            egui::Event::PointerButton { pos, button: egui::PointerButton::Secondary, pressed: true, modifiers } if map.area.contains(pos) => {
+                found(ToolEventKind::Context, pos, modifiers)
+            }
             egui::Event::PointerMoved(pos) if pressed || map.area.contains(pos) => found(ToolEventKind::Move, pos, held),
             egui::Event::MouseWheel { delta, modifiers, .. } => hover.and_then(|pos| found(ToolEventKind::Scroll, pos, modifiers)).map(|mut event| {
                 event.scroll = [delta.x, delta.y];
@@ -140,8 +144,11 @@ pub(crate) fn viewer(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx
         let Some(mut event) = event else { continue };
         event.pen = pens.get(nr).copied().flatten();
         event.pressure = if pressed { event.pen.map_or(1.0, |pen| pen.pressure) } else { 0.0 };
-        if let Err(error) = app.plugin_ui.panels.tool(&app.session, &pick.plugin, &pick.tool, event) {
-            app.ui.status = error;
+        let opened = (double && event.kind == ToolEventKind::Up).then(|| ToolEvent { kind: ToolEventKind::Open, ..event.clone() });
+        for event in std::iter::once(event).chain(opened) {
+            if let Err(error) = app.plugin_ui.panels.tool(&app.session, &pick.plugin, &pick.tool, event) {
+                app.ui.status = error;
+            }
         }
     }
     ctx.data_mut(|d| d.insert_temp(pressed_id(), pressed));

@@ -479,6 +479,13 @@ impl craft_plugin_ui::Host for AppHost<'_> {
         Some((response, edit.changed.map(|edited| edited.0.iter().map(|point| [round(point[0]), round(point[1])]).collect())))
     }
 
+    fn color(&mut self, ui: &mut egui::Ui, _key: &str, value: [f32; 4]) -> Option<(egui::Response, Option<[f32; 4]>)> {
+        let mut rgb = [value[0], value[1], value[2]];
+        let response = crate::widgets::srgb_color_button(ui, &mut rgb);
+        let picked = response.changed().then_some([rgb[0], rgb[1], rgb[2], value[3]]);
+        Some((response, picked))
+    }
+
     fn gradient(&mut self, ui: &mut egui::Ui, key: &str, value: &craft_plugin::Gradient) -> Option<(egui::Response, Option<craft_plugin::Gradient>)> {
         use super::gradient_editor::{Draft, Track, stop_track};
         let selected_id = egui::Id::unique(("plugin-gradient-stop", key));
@@ -525,6 +532,8 @@ impl craft_plugin_ui::Host for AppHost<'_> {
 mod controls_tests;
 #[cfg(test)]
 pub(crate) mod glide_tests;
+#[cfg(test)]
+mod input_tests;
 #[cfg(test)]
 mod list_tests;
 #[cfg(test)]

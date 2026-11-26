@@ -151,6 +151,9 @@ impl Panels {
 
     pub fn tool(&mut self, session: &Session, plugin: &str, tool: &str, event: ToolEvent) -> Result<(), String> {
         let loaded = running(plugin)?;
+        if event.kind.ui_level() > loaded.plugin.contributions().ui_level {
+            return Ok(());
+        }
         let name = loaded
             .plugin
             .contributions()
