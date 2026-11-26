@@ -71,14 +71,19 @@ pub(crate) fn run_engine(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str
     for (index, ev) in events.into_iter().enumerate() {
         match ev {
             effectcraft_engine::Event::Frontend { command, params } => {
-                if let Err(e) = frontend(app, ctx, &command, params) {
-                    app.ui.status = e.clone();
-                    // A frontend-only command's own failure is the command's result (#696: a
-                    // workspace save that didn't reach disk reported success). An earlier
-                    // invocation's failure only sets the status.
-                    if index >= queued && command == id && r.is_ok() {
-                        r = Err(e);
+                let own = index >= queued && command == id;
+                match frontend(app, ctx, &command, params) {
+                    Err(e) => {
+                        app.ui.status = e.clone();
+                        // A frontend-only command's own failure is the command's result (#696: a
+                        // workspace save that didn't reach disk reported success). An earlier
+                        // invocation's failure only sets the status.
+                        if own && r.is_ok() {
+                            r = Err(e);
+                        }
                     }
+                    Ok(value) if own && !value.is_null() && r.as_ref().is_ok_and(|deferred| deferred["frontend"] == id) => r = Ok(value),
+                    Ok(_) => {}
                 }
             }
             other => app.session.events.push(other),

@@ -391,7 +391,7 @@ pub(crate) fn open(app: &mut EffectcraftApp, ctx: &egui::Context, plugin: &str, 
     }
     let placed_before = app.ui.dock.hidden.iter().any(|(hidden, _)| *hidden == kind);
     if spec.place == PanelPlace::Bottom && !was_open && !placed_before && app.ui.dock.is_open(PanelKind::Timeline) {
-        app.dock_command(ctx, Action::Open { panel: kind, anchor: Some(PanelKind::Timeline) })?;
+        app.apply_dock(Action::Open { panel: kind, anchor: Some(PanelKind::Timeline) })?;
     }
     app.show_panel(kind);
     if spec.place == PanelPlace::Float && !was_open {
@@ -732,32 +732,16 @@ mod tests {
         )
     }
 
-    fn probe_bundle(id: &str) -> tempfile::TempDir {
-        let probe = craft_plugin_host::testing::probe_dir();
-        let status = std::process::Command::new(env!("CARGO"))
-            .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
-            .arg(probe.join("Cargo.toml"))
-            .status()
-            .expect("cargo runs");
-        assert!(status.success(), "the probe builds");
-        let dir = tempfile::tempdir().expect("temp dir");
-        std::fs::copy(probe.join("target/wasm32-unknown-unknown/release/probe.wasm"), dir.path().join("probe.wasm")).expect("copy the probe");
-        let manifest = json!({"id": id, "name": "Probe", "version": "1.0.0", "entry": {"wasm": "probe.wasm"}, "permissions": []});
-        std::fs::write(dir.path().join("plugin.json"), manifest.to_string()).expect("write the manifest");
-        dir
-    }
-
     #[test]
     fn a_file_dropped_on_a_plugin_drop_target_becomes_readable_by_that_plugin_without_files_read() {
-        const PROBE: &str = "test.drop-probe";
+        use crate::panels::plugin_tools::tests::{PROBE, load_probe};
         let outside = tempfile::tempdir().unwrap();
         let dropped = outside.path().join("footage.txt");
         std::fs::write(&dropped, "dropped footage").unwrap();
         let mut session = super::glide_tests::session_with(&[]);
-        let bundle = probe_bundle(PROBE);
+        let bundle = load_probe();
         let plugins = effectcraft_plugin::plugins().unwrap();
-        plugins.load_for_session(bundle.path()).unwrap();
-        std::fs::write(bundle.path().join("user-target.txt"), dropped.to_str().unwrap()).unwrap();
+        std::fs::write(bundle.join("user-target.txt"), dropped.to_str().unwrap()).unwrap();
         let refused = effectcraft_plugin::run_command(&mut session, PROBE, "read-user").unwrap_err();
         assert!(refused.contains("files.read"), "{refused}");
 

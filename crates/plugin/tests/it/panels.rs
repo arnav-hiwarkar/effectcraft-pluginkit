@@ -344,7 +344,9 @@ fn a_control_edit_keys_the_time_it_was_made_at_even_when_the_playhead_moved_mean
     halve_held(&mut app, &mut panels, &target, &mut frame);
     app.session.execute("time.set", json!({"time": 1.0})).unwrap();
     release(&app);
-    crate::viewer::settle(&mut app, &mut panels);
+    let effect = format!("{}.scale", app.id);
+    let surface = Surface::Control { effect: &effect, param: "level", instance: target.prop, value: "1", edit: Some(&target) };
+    settled(&mut app, &mut panels, "control", surface, &mut frame);
     let keys: Vec<Value> = level(&mut app)["keys"].as_array().unwrap().iter().map(|key| key["value"].clone()).collect();
     assert_eq!(keys, vec![json!("0.5"), json!("1")]);
 }
