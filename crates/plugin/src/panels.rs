@@ -417,7 +417,7 @@ fn run(request: &Request, wake: &Waker, forms: bool) -> Result<Reply, String> {
         Call::Panel { .. } => plugin.call(call, None, &mut host).map(|reply| Reply::Panel(reply, None)),
         Call::Controls { .. } => plugin
             .call(call, None, &mut host)
-            .map(|ControlsReply { widgets, value, topics, timers }| Reply::Panel(PanelReply { widgets, topics, timers, legacy: false }, value)),
+            .map(|ControlsReply { widgets, value, topics, timers }| Reply::Panel(PanelReply { widgets, topics, timers, ..Default::default() }, value)),
         Call::Drag { .. } => plugin.call(call, None, &mut host).map(Reply::Value),
         Call::Command { .. } | Call::Button { .. } => plugin.call(call, None, &mut host).map(|()| Reply::Value(None)),
         _ => plugin.call(call, None, &mut host).map(Reply::Overlay),
