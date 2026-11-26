@@ -366,7 +366,14 @@ fn plugin_panel_keys(app: &mut EffectcraftApp, ctx: &egui::Context) {
     });
     let binds = bindings(&app.session);
     for (key, mods) in pressed {
-        if binds.iter().any(|(m, k, id, _)| *k == key && mods_match(*m, mods) && KEPT_BY_THE_APP.contains(&id.as_str())) {
+        if let Some((_, _, id, params)) = binds.iter().find(|(m, k, id, _)| *k == key && mods_match(*m, mods) && KEPT_BY_THE_APP.contains(&id.as_str())) {
+            if ctx.egui_wants_keyboard_input() {
+                ctx.input_mut(|i| i.consume_key(mods, key));
+                let params = if params.is_null() { json!({}) } else { params.clone() };
+                if let Err(error) = invoke(app, ctx, id, params) {
+                    app.ui.status = error;
+                }
+            }
             continue;
         }
         if let Some(chord) = chords.iter().find(|chord| parse_shortcut(chord).is_some_and(|(m, k)| k == key && mods_match(m, mods))) {

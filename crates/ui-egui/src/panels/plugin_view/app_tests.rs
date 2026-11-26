@@ -130,10 +130,10 @@ fn a_panel_key_reaches_the_plugin_while_one_of_its_widgets_has_the_keyboard_and_
     assert!(harness.ctx.egui_wants_keyboard_input(), "a widget of the panel holds the keyboard");
     harness.key_press(egui::Key::Delete);
     said(&mut harness, "pressed Delete");
-    harness.ctx.memory_mut(|memory| memory.focused().into_iter().for_each(|id| memory.surrender_focus(id)));
     harness.state_mut().session.execute("layer.newNull", json!({"name": "Undone"})).unwrap();
     harness.run_steps(2);
     assert_eq!(names(&harness), ["Undone", "Keep"]);
+    assert!(harness.ctx.egui_wants_keyboard_input(), "the panel's widget still holds the keyboard");
     harness.event(egui::Event::PointerMoved(body.center()));
     harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
     until(&mut harness, "Cmd+Z undoing the new layer", |h| names(h) == ["Keep"]);
