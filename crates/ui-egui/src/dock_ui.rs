@@ -329,6 +329,7 @@ impl EffectcraftApp {
         for item in self.session.plugin_items.iter().filter(|item| item.panel) {
             out.push((PanelKind::plugin(&item.plugin, &item.id), item.title.clone()));
         }
+        out.extend(panels::plugin_view::instance_titles(self));
         // Each Composition viewer is named after the comp it shows.
         for id in std::iter::once(0).chain(self.ui.viewers.keys().copied().filter(|v| *v != 0)) {
             if let Some(t) = panels::viewers::title(self, id) {
@@ -853,6 +854,10 @@ impl DockContent<PanelKind> for EffectContent<'_> {
         if self.app.ui.focused == *panel {
             ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, t.focus), StrokeKind::Inside);
         }
+    }
+
+    fn paint_icon(&mut self, painter: &egui::Painter, rect: Rect, panel: &PanelKind, color: egui::Color32) -> bool {
+        panels::plugin_view::paint_icon(self.app, painter, rect, *panel, color)
     }
 
     fn logical_label(&self, panel: &PanelKind) -> String {

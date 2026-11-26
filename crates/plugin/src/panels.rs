@@ -463,7 +463,7 @@ fn worker(loaded: &Arc<Loaded>, lane: Lane, done: Sender<Done>, wake: Waker) -> 
 
 #[derive(Clone, Copy, Debug)]
 pub enum Surface<'a> {
-    Panel { plugin: &'a str, panel: &'a str },
+    Panel { plugin: &'a str, panel: &'a str, instance: Option<&'a str> },
     Control { effect: &'a str, param: &'a str, instance: u64, value: &'a str, edit: Option<&'a Target> },
 }
 
@@ -533,9 +533,10 @@ pub struct Panels {
 fn find(surface: Surface) -> Result<(Arc<Loaded>, Call), String> {
     let plugins = plugins().ok_or("plugins are not available")?;
     match surface {
-        Surface::Panel { plugin, panel } => {
+        Surface::Panel { plugin, panel, instance } => {
             let loaded = plugins.get(plugin).ok_or_else(|| format!("plugin `{plugin}` is not running"))?;
-            Ok((loaded, Call::Panel { panel: panel.to_string(), input: UiInput::default() }))
+            let input = UiInput { instance: instance.map(str::to_string), ..UiInput::default() };
+            Ok((loaded, Call::Panel { panel: panel.to_string(), input }))
         }
         Surface::Control { effect, param, instance, value, .. } => {
             let (_, loaded, local) = crate::manage::effect_owner(effect)?;
@@ -646,7 +647,7 @@ impl Panels {
         }) {
             let mut call = call.clone();
             if let Call::Panel { input: given, .. } | Call::Controls { input: given, .. } = &mut call {
-                *given = input;
+                *given = UiInput { instance: given.instance.take(), ..input };
             }
             self.send(Request { key: Key::Slot(key.to_string()), bound: bound.clone(), call, edit: edit.clone(), gesture: gesture.clone() });
             self.wait(session, |panels| !panels.busy(key));

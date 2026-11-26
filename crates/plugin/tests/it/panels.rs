@@ -37,7 +37,7 @@ pub(crate) fn settled(app: &mut App, panels: &mut Panels, key: &str, surface: Su
 
 fn show(app: &mut App, panels: &mut Panels, frame: &mut u64) -> Vec<Widget> {
     let id = app.id.clone();
-    settled(app, panels, KEY, Surface::Panel { plugin: &id, panel: "watch" }, frame)
+    settled(app, panels, KEY, Surface::Panel { plugin: &id, panel: "watch", instance: None }, frame)
 }
 
 fn lines(widgets: &[Widget]) -> Vec<String> {
@@ -79,7 +79,7 @@ pub(crate) fn relay(app: &mut App, panels: &mut Panels, frame: &mut u64, relayed
 }
 
 fn relay_in(app: &mut App, panels: &mut Panels, frame: &mut u64, (key, plugin, bundle): (&str, &str, &std::path::Path), relayed: Value, held: bool) {
-    let surface = Surface::Panel { plugin, panel: "relay" };
+    let surface = Surface::Panel { plugin, panel: "relay", instance: None };
     let relay = button(&settled(app, panels, key, surface, frame), 0);
     std::fs::write(bundle.join("relay.json"), relayed.to_string()).expect("write the relayed request");
     if held {
@@ -94,7 +94,24 @@ fn relay_in(app: &mut App, panels: &mut Panels, frame: &mut u64, (key, plugin, b
 
 fn relay_said(app: &mut App, panels: &mut Panels, frame: &mut u64) -> String {
     let id = app.id.clone();
-    lines(&settled(app, panels, RELAY, Surface::Panel { plugin: &id, panel: "relay" }, frame)).join("")
+    lines(&settled(app, panels, RELAY, Surface::Panel { plugin: &id, panel: "relay", instance: None }, frame)).join("")
+}
+
+#[test]
+fn each_instance_of_a_panel_each_is_called_with_its_instance_and_keeps_its_own_text() {
+    let mut app = app("test.panels-notes", &[]);
+    let (mut panels, mut frame, id) = (Panels::default(), 0, app.id.clone());
+    let mut type_into = |app: &mut App, panels: &mut Panels, instance: &str, text: &str| {
+        let (key, surface) = (format!("plugin.notes.{instance}"), Surface::Panel { plugin: &id, panel: "notes", instance: Some(instance) });
+        let Widget::TextEdit { id: field, .. } = settled(app, panels, &key, surface, &mut frame)[0] else {
+            panic!("the notes panel starts with its text field")
+        };
+        panels.submit(&key, vec![UiEvent { id: field, kind: UiEventKind::Text(text.into()) }], "");
+        lines(&settled(app, panels, &key, surface, &mut frame))
+    };
+    assert_eq!(type_into(&mut app, &mut panels, "1", "milk"), ["note 1: milk"]);
+    assert_eq!(type_into(&mut app, &mut panels, "2", "eggs"), ["note 2: eggs"]);
+    assert_eq!(type_into(&mut app, &mut panels, "1", "milk and tea"), ["note 1: milk and tea"]);
 }
 
 #[test]
@@ -190,7 +207,7 @@ fn a_reload_during_a_panel_call_drops_the_old_calls_edit_and_shows_the_new_load(
     let id = app.id.clone();
     frame += 1;
     panels.frame(&mut app.session, ms(16 * frame));
-    panels.show(&mut app.session, RELAY, Surface::Panel { plugin: &id, panel: "relay" }, SIZE).unwrap();
+    panels.show(&mut app.session, RELAY, Surface::Panel { plugin: &id, panel: "relay", instance: None }, SIZE).unwrap();
     assert_eq!(panels.calls(RELAY), 1, "the reloaded plugin gets a slot of its own at once");
     release(&app);
     assert_eq!(relay_said(&mut app, &mut panels, &mut frame), "");
@@ -248,7 +265,7 @@ fn a_panel_shown_again_after_it_was_hidden_wakes_the_app_for_its_timer() {
         counted.fetch_add(1, Ordering::SeqCst);
     });
     let id = app.id.clone();
-    let surface = Surface::Panel { plugin: &id, panel: "ticker" };
+    let surface = Surface::Panel { plugin: &id, panel: "ticker", instance: None };
     let mut frame = 0;
     settled(&mut app, &mut panels, "ticker", surface, &mut frame);
     frame += 2;

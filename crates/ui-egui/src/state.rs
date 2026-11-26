@@ -640,6 +640,9 @@ pub struct UiState {
     pub tool: Tool,
     #[serde(default)]
     pub plugin_tool: Option<crate::panels::plugin_tools::PluginTool>,
+    /// The open instances of plug-in `panel_each` panels, so their dock keys map back to them.
+    #[serde(default)]
+    pub plugin_instances: Vec<crate::panels::plugin_view::PanelInstance>,
     /// Window ▸ Script Console input, output and history.
     #[serde(default)]
     pub script_console: crate::panels::script_console::ScriptConsole,
@@ -790,6 +793,7 @@ impl Default for UiState {
         UiState {
             tool: Tool::Selection,
             plugin_tool: None,
+            plugin_instances: Vec::new(),
             script_console: Default::default(),
             slot_tools: Tool::SLOTS.iter().map(|s| s[0]).collect(),
             workspace: "Default".into(),

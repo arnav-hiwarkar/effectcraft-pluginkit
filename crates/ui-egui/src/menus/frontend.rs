@@ -158,24 +158,8 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
         "window.pluginPanel" => {
             let text = |key: &str| p.get(key).and_then(Value::as_str).ok_or(format!("`window.pluginPanel` needs a `{key}` string"));
             let (plugin, panel) = (text("plugin")?, text("panel")?);
-            let kind = PanelKind::plugin(plugin, panel);
-            if crate::panels::plugin_view::running_panel(app, kind).is_none() {
-                return Err(format!("no running plug-in `{plugin}` has a panel `{panel}`"));
-            }
-            if p.get("close").and_then(Value::as_bool).unwrap_or(false) {
-                if crate::dock::WorkspaceExt::is_open(&app.ui.dock, kind) {
-                    app.dock_command(ctx, craft_ui::docking::Action::Close { panel: kind })?;
-                }
-                return Ok(json!({"panel": kind.id(), "open": false}));
-            }
-            let floats = effectcraft_plugin::panel_spec(plugin, panel)
-                .filter(|spec| spec.place == craft_plugin::PanelPlace::Float && !crate::dock::WorkspaceExt::is_open(&app.ui.dock, kind));
-            app.show_panel(kind);
-            if let Some(spec) = floats {
-                let rect = crate::panels::plugin_view::float_rect(ctx.content_rect(), spec.size);
-                app.dock_command(ctx, craft_ui::docking::Action::Float { panel: kind, rect })?;
-            }
-            json!({"panel": kind.id(), "open": true})
+            let close = p.get("close").and_then(Value::as_bool).unwrap_or(false);
+            crate::panels::plugin_view::open(app, ctx, plugin, panel, p.get("instance").and_then(Value::as_str), close)?
         }
         "layer.style.options" => {
             crate::panels::layer_styles_dialog::open(app, &p)?;

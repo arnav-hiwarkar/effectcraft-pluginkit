@@ -689,6 +689,32 @@ They work from panels, commands, tools and tasks and are refused in a render. Th
 frame. A `Float` panel opens floating at its `size`, centred on the window; later it opens where the user
 last left it.
 
+### Panel places and instances
+
+| Place | In EffectCraft |
+|---|---|
+| `Side` | A tab beside Effects & Presets the first time; later wherever the user left it. |
+| `Bottom` | A tab beside the Timeline the first time; later wherever the user left it. |
+| `Float` | A floating window at its `size`, centred; later wherever the user left it. |
+| `Status` | One row in the status bar at the bottom of the window while the plugin runs, right-aligned, `size` wide (Small 160, Medium 280, Large 440 points). Not in Window ▸ Plug-ins. |
+| `Bar` | One row in the tool options area of the Tools bar while the tool whose `.options(id)` names it is active; gone when another tool is picked. Not in Window ▸ Plug-ins. |
+
+A `Status` or `Bar` panel is retained like any other: it is called on its events, timers and app events,
+not on every frame. Lay it out in one `ui.row`; its root already flows left to right. `show_panel` on it
+does nothing.
+
+A `panel_each` panel gets one value per instance, keyed by a string the plugin or the app chooses.
+Window ▸ Plug-ins lists it as "New <title>", which opens instance "1", then "2", … (the lowest number not
+open). `host::show_panel_for(id, key)` opens or raises instance `key`; `host::close_panel(id, Some(key))`
+closes it. Each tab is titled "<title> <key>", its automation scope is `plugin.<plugin>.<panel>.<key>`, and
+`ui.instance()` returns the key. `show_panel_for` on a panel declared with `.panel`, and `close_panel` without a key on a `panel_each`
+panel, do nothing and show the reason in the app's status line. The app keeps the open instances with the workspace,
+so they come back after a restart.
+
+`.icon(name)` also shows on the panel's dock tab where the dock draws icons (a column collapsed to icons).
+
+In plugin tests, `TestPlugin::panel_for(id, key)` drives one instance as `panel(id)` drives a single panel.
+
 ### Lists, tables and trees
 
 ```rust

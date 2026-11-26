@@ -700,6 +700,24 @@ Plugin::new()
 In `Files::ui`, `host::show_panel("inspector")?` opens the inspector as a floating window; its own Close
 button calls `host::close_panel("inspector", None)`.
 
+### Add a status item, a tool's options and a panel per document
+
+```rust
+Plugin::new()
+    .tool("stamp", "Stamp", Stamp::default())
+    .options("stamp-options")
+    .panel("status", "Status", Status::default())
+    .place(PanelPlace::Status)
+    .panel("stamp-options", "Stamp Options", StampOptions::default())
+    .place(PanelPlace::Bar)
+    .panel_each("notes", "Notes", Notes::default)
+    .place(PanelPlace::Bottom)
+```
+
+The status item sits in the status bar and the options in the Tools bar while Stamp is active; build
+each in one `ui.row`. Window ▸ Plug-ins gets "New Notes"; `host::show_panel_for("notes", "2")` opens
+instance "2", and `ui.instance()` tells a `Notes` which one it is.
+
 ### Show a long list
 
 ```rust
