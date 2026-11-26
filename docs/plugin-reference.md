@@ -618,8 +618,16 @@ pub trait Panel: Send + 'static {
 }
 ```
 
-Panels and commands of one plugin run in the same long-lived instance, so a `static` is shared between
-them. Effects do not see it: they run in pooled instances.
+Panels, custom controls, buttons and commands of one plugin run in the same long-lived instance, so a
+`static` is shared between them. Effects, overlays and tools do not see it: effects and overlays run in
+pooled instances and a tool in a long-lived instance of its own. A native plugin is one library in the
+app's process, so there every surface shares its statics.
+
+The app gives each plugin three worker threads, each started on first use: one for panels, custom
+controls, buttons and migrations, one for the viewer (overlays, handle drags, tool events) and one for
+menu commands. A slow panel call therefore holds back neither the plugin's overlay, its tool nor, for a
+native plugin, its commands. A sandboxed command still waits for a running panel call, because both use
+the one long-lived instance.
 
 The app keeps the widget tree a panel returned and draws it every frame. It calls `ui` again, on a worker
 thread, only for: an event from one of the panel's widgets, an app event the panel subscribed to, a timer
@@ -717,8 +725,8 @@ and go inside their own `row`, `column` or `group` so the others keep their iden
 `Effect::overlay` runs while the effect is selected and **View ▸ Show Layer Controls** is on. Its `cx`
 is in layer pixels: `scale` 1, `offset` 0, `size` the layer size. On an adjustment layer the effect
 works on the comp below, so `size` is the comp size and the handles are drawn in comp pixels. It runs in
-the long-lived instance, on the plugin's worker thread like a panel; the last overlay stays on screen
-until the new one arrives.
+a pooled instance, like `render`, on the plugin's viewer thread, so a slow panel call does not delay it;
+keep what it needs in `cx`, not in the effect. The last overlay stays on screen until the new one arrives.
 The app keeps the overlay and calls `overlay` again only when the request changes: a value, the time,
 or the effect being selected.
 
@@ -750,7 +758,7 @@ Handles are in layer pixels. Each is bound to what a drag changes:
 
 `named(text)` names the last handle for its tooltip and screen readers; the default is the parameter's
 name. Every drag of one handle is one undo step; on a keyframed parameter it sets the key at the time the
-drag was made. A `custom` handle's `drag` runs on the worker; the value it leaves is set when it
+drag was made. A `custom` handle's `drag` runs in a pooled instance on the viewer thread; the value it leaves is set when it
 arrives, also when it is the value the drag started from, and a drag of a reloaded plugin stops. The
 release sends the pointer's last position, and drags waiting behind a slow call merge only within one
 handle and one gesture. The focused handle moves 1 pixel per arrow key, 10 with Shift, each press one undo step. A point
@@ -767,8 +775,9 @@ pub trait Tool: Send + 'static {
 ```
 
 The tool's button follows the toolbar's tools; clicking it again, or picking another tool, puts it
-away. `event` runs in the long-lived instance, on the plugin's worker thread, so the tool keeps its state
-between events. Events arrive in order; moves made while `event` was busy coalesce into the latest. The
+away. `event` runs on the plugin's viewer thread in a long-lived instance kept for the plugin's tools, so the
+tool keeps its state between events but shares no `static` with the plugin's panels and commands; pass
+what they share through `host::command` or plugin data. Events arrive in order; moves made while `event` was busy coalesce into the latest. The
 overlay it draws starts in `Space::Comp` and stays on screen until the next reply.
 
 | `ToolEvent` field | Holds |
