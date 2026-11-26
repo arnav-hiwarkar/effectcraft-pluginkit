@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use craft_plugin_host::PluginImage;
 use craft_plugin_host::{Bundle, BundleError, EffectRegistry, Limits, Permission, Plugin, Refusal, Registry, RunMode, TaskState};
-use effectcraft_engine::{EngineError, PluginItem, Session};
+use effectcraft_engine::{EngineError, PluginContext, PluginItem, Session};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -363,7 +363,7 @@ impl Plugins {
                 id: panel.clone(),
                 title: title.clone(),
                 panel: true,
-                shortcut: None,
+                ..Default::default()
             })
         })
     }
@@ -450,16 +450,32 @@ impl Plugins {
         let mut items = Vec::new();
         for (id, loaded) in &inner.loaded {
             let found = loaded.plugin.contributions();
-            let item = |panel: bool, local: &str, title: &str, shortcut: &Option<String>| PluginItem {
+            let item = |local: &str, title: &str| PluginItem {
                 plugin: id.clone(),
                 plugin_name: loaded.bundle.manifest.name.clone(),
                 id: local.to_string(),
                 title: title.to_string(),
-                panel,
-                shortcut: shortcut.clone(),
+                ..Default::default()
             };
-            items.extend(found.panels.iter().map(|p| item(true, &p.id, &p.title, &None)));
-            items.extend(found.commands.iter().map(|c| item(false, &c.id, &c.title, &c.shortcut)));
+            items.extend(found.panels.iter().map(|p| PluginItem { panel: true, ..item(&p.id, &p.title) }));
+            items.extend(found.commands.iter().map(|c| {
+                PluginItem {
+                    shortcut: c.shortcut.clone(),
+                    menu: c.menu.clone(),
+                    context: c
+                        .context
+                        .iter()
+                        .map(|context| match context {
+                            craft_plugin_host::ui::Context::Layers => PluginContext::Layers,
+                            craft_plugin_host::ui::Context::Timeline => PluginContext::Timeline,
+                            craft_plugin_host::ui::Context::Viewer => PluginContext::Viewer,
+                        })
+                        .collect(),
+                    toolbar: c.toolbar,
+                    icon: c.icon.clone(),
+                    ..item(&c.id, &c.title)
+                }
+            }));
         }
         items
     }

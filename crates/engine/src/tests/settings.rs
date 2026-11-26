@@ -1615,6 +1615,7 @@ fn a_plugin_command_gets_its_free_default_shortcut_never_a_built_in_one_and_can_
         title: id.into(),
         panel: false,
         shortcut: Some(shortcut.into()),
+        ..Default::default()
     };
     let mut s = Session::default();
     let save = s.shortcuts().shortcut_of("file.save", &json!(null)).unwrap().to_string();

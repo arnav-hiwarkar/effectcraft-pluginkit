@@ -170,20 +170,6 @@ pub fn dynamic(s: &Session, name: &str, cx: &DynCtx) -> (Vec<MenuEntry>, Option<
                 None,
             )
         }
-        "pluginCommands" => (
-            s.plugin_items
-                .iter()
-                .filter(|item| !item.panel)
-                .map(|item| {
-                    dyn_entry(
-                        format!("{}: {}", item.plugin_name, item.title),
-                        "plugin.run",
-                        crate::settings::shortcuts::plugin_command_params(&item.plugin, &item.id),
-                    )
-                })
-                .collect(),
-            Some("No Plug-in Commands"),
-        ),
         "pluginPanels" => (
             s.plugin_items
                 .iter()
@@ -200,25 +186,69 @@ pub fn dynamic(s: &Session, name: &str, cx: &DynCtx) -> (Vec<MenuEntry>, Option<
 /// (`Motion Kit/Animate.jsx`) go into a submenu named after the folder (`Motion Kit ▸
 /// Animate.jsx`), placed where the folder sorts among the other entries.
 pub fn dynamic_nodes(s: &Session, name: &str, cx: &DynCtx) -> (Vec<MenuNode>, Option<&'static str>) {
+    let top = name.strip_prefix("pluginMenu:");
+    if top.is_some() || name == "pluginCommands" {
+        let mut out = vec![];
+        for (path, e) in plugin_commands(s, top) {
+            nest(&mut out, &path, e);
+        }
+        if top.is_some() && !out.is_empty() {
+            out.insert(0, MenuNode::Separator);
+        }
+        return (out, top.is_none().then_some("No Plug-in Commands"));
+    }
     let (entries, empty) = dynamic(s, name, cx);
     let scripts = matches!(name, "scripts" | "scriptPanels");
     let mut out: Vec<MenuNode> = vec![];
     for mut e in entries {
-        let Some((folder, file)) = e.label.split_once('/').filter(|_| scripts).map(|(d, f)| (d.to_string(), f.to_string())) else {
-            out.push(MenuNode::Item(e));
-            continue;
-        };
-        e.label = file;
-        let open = out.iter_mut().find_map(|n| match n {
-            MenuNode::Submenu { label, children } if *label == folder => Some(children),
-            _ => None,
-        });
-        match open {
-            Some(children) => children.push(MenuNode::Item(e)),
-            None => out.push(MenuNode::Submenu { label: folder, children: vec![MenuNode::Item(e)] }),
+        match e.label.split_once('/').filter(|_| scripts).map(|(d, f)| (d.to_string(), f.to_string())) {
+            Some((folder, file)) => {
+                e.label = file;
+                nest(&mut out, &[folder.as_str()], e);
+            }
+            None => out.push(MenuNode::Item(e)),
         }
     }
     (out, empty)
+}
+
+fn nest(out: &mut Vec<MenuNode>, path: &[&str], e: MenuEntry) {
+    let Some((first, rest)) = path.split_first() else {
+        out.push(MenuNode::Item(e));
+        return;
+    };
+    let open = out.iter_mut().find_map(|n| match n {
+        MenuNode::Submenu { label, children } if label == first => Some(children),
+        _ => None,
+    });
+    match open {
+        Some(children) => nest(children, rest, e),
+        None => {
+            let mut children = vec![];
+            nest(&mut children, rest, e);
+            out.push(MenuNode::Submenu { label: first.to_string(), children });
+        }
+    }
+}
+
+pub fn plugin_commands<'a>(s: &'a Session, top: Option<&str>) -> Vec<(Vec<&'a str>, MenuEntry)> {
+    let tops = top_level();
+    s.plugin_items
+        .iter()
+        .filter(|item| !item.panel)
+        .filter_map(|item| {
+            let mut path: Vec<&str> = item.menu.iter().flat_map(|m| m.split('/')).map(str::trim).filter(|part| !part.is_empty()).collect();
+            let placed = path.first().copied().filter(|first| tops.contains(first));
+            if placed != top {
+                return None;
+            }
+            if placed.is_some() {
+                path.remove(0);
+            }
+            let label = if item.menu.is_some() { item.title.clone() } else { format!("{}: {}", item.plugin_name, item.title) };
+            Some((path, dyn_entry(label, "plugin.run", crate::settings::shortcuts::plugin_command_params(&item.plugin, &item.id))))
+        })
+        .collect()
 }
 
 /// Display label of a submenu (the "Assign Shortcut to …" submenus name the current view or
@@ -274,10 +304,16 @@ pub fn menu_bar() -> &'static [MenuNode] {
     static BAR: OnceLock<Vec<MenuNode>> = OnceLock::new();
     BAR.get_or_init(|| {
         // The tree is a constant (a test parses it on every platform); never panic over it.
-        parse(TREE, cfg!(target_os = "macos")).unwrap_or_else(|e| {
+        let mut bar = parse(TREE, cfg!(target_os = "macos")).unwrap_or_else(|e| {
             log::error!("menu tree: {e}");
             Vec::new()
-        })
+        });
+        for node in &mut bar {
+            if let MenuNode::Submenu { label, children } = node {
+                children.push(MenuNode::Dynamic { name: format!("pluginMenu:{label}") });
+            }
+        }
+        bar
     })
 }
 

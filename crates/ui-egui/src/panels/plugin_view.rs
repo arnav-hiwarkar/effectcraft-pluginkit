@@ -146,6 +146,46 @@ fn not_running(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pa
     }
 }
 
+pub(crate) fn named_icon(name: &str) -> Option<crate::icons::Icon> {
+    use crate::icons::Icon;
+    Some(match name {
+        "brush" => Icon::Brush,
+        "pen" => Icon::Pen,
+        "eraser" => Icon::Eraser,
+        "sparkles" => Icon::Sparkle,
+        "sun" => Icon::Sun,
+        "image" => Icon::Image,
+        "film" => Icon::Footage,
+        "music" => Icon::Audio,
+        "text" => Icon::Type,
+        "square" => Icon::Rectangle,
+        "circle" => Icon::Ellipse,
+        "star" => Icon::Star,
+        "grid" => Icon::Grid,
+        "list" => Icon::Hamburger,
+        "folder" => Icon::Folder,
+        "search" => Icon::Search,
+        "settings" => Icon::Gear,
+        "play" => Icon::Play,
+        "pause" => Icon::Pause,
+        "plus" => Icon::Plus,
+        "minus" => Icon::Minus,
+        "trash" => Icon::Trash,
+        "eye" => Icon::Eye,
+        "lock" => Icon::Lock,
+        "link" => Icon::Link,
+        "clock" => Icon::Stopwatch,
+        "chart" => Icon::Graph,
+        "camera" => Icon::Camera,
+        "rotate" => Icon::Rotate,
+        "zoom" => Icon::Zoom,
+        "code" => Icon::Code,
+        "refresh" => Icon::Loop,
+        "close" => Icon::Close,
+        _ => return None,
+    })
+}
+
 pub(crate) fn float_rect(screen: Rect, size: craft_plugin::PanelSize) -> [f32; 4] {
     let [width, height]: [f32; 2] = match size {
         craft_plugin::PanelSize::Small => [260.0, 220.0],
@@ -248,6 +288,10 @@ impl craft_plugin_ui::Host for AppHost<'_> {
 
     fn accept_files(&mut self, paths: &[String]) {
         effectcraft_plugin::accept_drop(self.source.plugin, paths);
+    }
+
+    fn icon(&mut self, painter: &egui::Painter, rect: Rect, name: &str, color: egui::Color32) -> bool {
+        named_icon(name).inspect(|icon| crate::icons::paint(painter, rect, *icon, color)).is_some()
     }
 
     fn combo_box(&self, ui: &mut egui::Ui, id: egui::IdSalt, label: &str, selected: String, menu: &mut dyn FnMut(&mut egui::Ui)) -> egui::Response {
