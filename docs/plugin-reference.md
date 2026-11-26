@@ -738,7 +738,7 @@ after the list is built.
 The SDK's `ui.table` gives each column `ColumnWidth::Auto`. A `Widget::List` written by hand can set
 `Column { title, width }`: `Narrow` (five font heights), `Wide` (fifteen), `Fill` (the space the others
 leave) and `Auto` (an equal share of the rest, at most eight font heights when a `Fill` column is present).
-A click on a heading does nothing; there is no sorting event.
+A click on a heading does nothing unless the list is sortable (below).
 
 | Input | Event |
 |---|---|
@@ -758,6 +758,45 @@ column headers; each row says whether it is selected, a tree row whether it is o
 named "Open" or "Close" and the row's first cell.
 
 At most `MAX_LIST_ITEMS` (1024) rows are built per call; the first call builds `LIST_WINDOW` (128).
+
+### Rename, reorder and sort a list
+
+```rust
+let options = ListOptions { columns: &["Name", "Size"], rename: true, reorder: true, sortable: true, sorted: self.sorted, ..Default::default() };
+let picked = ui.list_with("files", &options, self.files.len(), &mut self.selected, |row| self.files[row].item());
+```
+
+`ui.list_with(key, &ListOptions, count, &mut selection, item)` is `ui.list`, or `ui.table` when `columns` is
+not empty, with any of three edits turned on. The plugin owns the data: the list only reports what the user
+asked for, and the plugin renames, moves or sorts its rows and builds them again.
+
+| Option | Input | Event, and `Picked` field |
+|---|---|---|
+| `rename` | F2 on the focused row, or a click on the name of the only selected row (after the double-click time, so a double click still activates) opens a text field with the row's first cell, all selected. Enter sends; Escape or clicking elsewhere cancels; an unchanged name sends nothing | `Rename { row, text }`, `renamed: Some((row, text))` |
+| `reorder` | Dragging rows shows an insertion line and sends on release; Alt+Up and Alt+Down move them by one row. The rows moved are the selection when the dragged or focused row is selected, else that row alone. A drop that would leave them where they are sends nothing | `Move { rows, to }`, `moved: Some((rows, to))`: `rows` ascending, `to` the row index they go before as counted before the move, `count` for the end |
+| `sortable` | A click on a column heading; the same heading again flips the order | `Sort { column, descending }`, `sorted: Some((column, descending))` |
+
+`sorted: Some((column, descending))` draws an arrow on that heading and tells screen readers the order;
+pass back the order the plugin sorted by. A list without an option never reports its event, even if one
+arrives.
+
+`picked.renamed`, `moved` and `sorted` arrive after the rows are built. To build rows that already show
+the change, read the events first: `ui.list_events(key)` yields the `ListEvent`s of the next list with
+that key in the order the user made them (`ui.toggled(key)` is the same read for `Toggle`).
+
+```rust
+for event in ui.list_events("files") {
+    match event {
+        ListEvent::Sort { column, descending } => self.sort(*column as usize, *descending),
+        ListEvent::Rename { row, text } => self.files[*row as usize].name = text.clone(),
+        ListEvent::Move { rows, to } => self.move_rows(rows, *to as usize),
+        _ => {}
+    }
+}
+```
+
+`ListOptions` and `ListEvent` are `craft_plugin::{ListOptions, ListEvent}`. The probe's `tree` panel
+sorts and renames its 10 000-row take table this way.
 
 ### Controls
 
