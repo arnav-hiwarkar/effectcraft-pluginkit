@@ -478,7 +478,14 @@ struct Slot {
 
 impl Slot {
     fn new(loaded: &Arc<Loaded>) -> Slot {
-        Slot { retained: Retained::new(), loaded: loaded.clone(), open: Arc::default(), shown: false, hidden: false, value: None }
+        Slot {
+            retained: Retained::with_level(loaded.plugin.contributions().ui_level),
+            loaded: loaded.clone(),
+            open: Arc::default(),
+            shown: false,
+            hidden: false,
+            value: None,
+        }
     }
 }
 

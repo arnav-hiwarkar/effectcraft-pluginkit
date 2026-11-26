@@ -830,6 +830,8 @@ built with an older SDK subscribes to nothing and arms no timer.
 |---|---|
 | `c.pointers` | Every pointer event over the canvas since the last call, in order |
 | `c.pointer` | The last of `c.pointers` |
+| `c.context` | The pointer of a right click on the canvas in this call (phase `Down`), or `None` |
+| `c.opened` | The pointer of a double click in this call (phase `Up`), or `None`. It comes after the `Down` and `Up` of both clicks |
 | `c.keys` | Every key pressed while the canvas had the keyboard focus: `Key { name, modifiers }`. Names are egui key names: `Left`, `Right`, `Up`, `Down`, `Enter`, `Escape`, `Delete`, `Backspace`, `Space`, `A` to `Z`, `0` to `9`, `F1` … |
 | `ui.drop_target(key, \|ui\| …) -> Option<&Dropped>` | `Dropped::Files { paths }`, `Dropped::Items { ids }` (project items) or `Dropped::Data { plugin, data }`. A dropped file is readable through `Root::User` as if the user had picked it, with no `files.read`; its folder stays closed and it is not writable |
 | `ui.drag_source(key, drag, \|ui\| …)` | Lets the user drag its contents. `Drag::File { root, path }` drags a file from `Root::Bundle` or `Root::Data` (or `Root::User` with `files.read`); `Drag::Data { data }` drags text to a plugin drop target |
@@ -839,6 +841,17 @@ A panel's widgets have the automation ids `plugin.<plugin>.<panel>.<widget id>`,
 
 Every widget takes the focus with Tab. A canvas also takes it on a click, keeps the arrow keys while it
 has it, and shows a focus ring.
+
+**UI level.** `Contributions.ui_level` says which UI events a plugin knows; a plugin built with this SDK
+has `UI_LEVEL` (2), one built before has 0. The app sends right clicks and double clicks
+(`UiEventKind::Context` and `Open`, `ToolEventKind::Context` and `Open`) only to plugins at level 2 or
+more, so an older plugin sees exactly the events it saw before. A host keeps a panel with
+`Retained::with_level(ui_level)`; `Retained::new()` is level 1.
+
+**Colours.** `ui.color(text, &mut [f32; 4])` draws the app's own colour button when the app has one
+(`Host::color` in `craft-plugin-ui`): EffectCraft opens its colour picker, whose eyedropper picks a pixel
+from the Composition viewer. The picker edits red, green and blue as sRGB components and keeps the
+plugin's alpha. An app without one draws egui's colour button.
 
 A reply of an older SDK is a bare widget list. The app redraws such a panel every frame, on the worker
 thread, and does not send it key or drop events.
@@ -935,7 +948,7 @@ overlay it draws starts in `Space::Comp` and stays on screen until the next repl
 
 | `ToolEvent` field | Holds |
 |---|---|
-| `kind` | `Down`, `Move`, `Up` (primary button), `Scroll`, `Key` |
+| `kind` | `Down`, `Move`, `Up` (primary button), `Scroll`, `Key`; at UI level 2, `Context` (a right click) and `Open` (a double click, after its `Up`) |
 | `comp` | The pointer in comp pixels |
 | `layer`, `layer_id` | The pointer in the first selected layer's pixels, and that layer's id, or `None` |
 | `modifiers` | `shift`, `alt`, `command` |

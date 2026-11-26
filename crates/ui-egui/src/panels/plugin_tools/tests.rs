@@ -121,7 +121,7 @@ fn stable_frame(harness: &mut Harness<'_, EffectcraftApp>) -> Option<Vec<u8>> {
     panic!("the viewer frame did not settle");
 }
 
-fn comp_point(harness: &Harness<'_, EffectcraftApp>, comp: [f32; 2]) -> Pos2 {
+pub(crate) fn comp_point(harness: &Harness<'_, EffectcraftApp>, comp: [f32; 2]) -> Pos2 {
     crate::panels::viewer::comp_to_screen(&harness.ctx, comp).expect("the viewer published its mapping")
 }
 
@@ -232,7 +232,7 @@ fn the_handles_of_an_effect_on_a_moved_adjustment_layer_sit_where_the_effect_dra
     assert!((centre - light).length() < 0.5, "the centre handle sits on Light Position {at:?} in comp pixels, {light:?}, not at {centre:?}");
 }
 
-fn tool_texts(harness: &mut Harness<'_, EffectcraftApp>) -> Vec<String> {
+pub(crate) fn tool_texts(harness: &mut Harness<'_, EffectcraftApp>) -> Vec<String> {
     let app = harness.state_mut();
     let overlay = app.plugin_ui.panels.tool_overlay(&mut app.session).cloned().unwrap_or_default();
     overlay

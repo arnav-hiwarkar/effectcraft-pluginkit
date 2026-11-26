@@ -820,6 +820,21 @@ ui.canvas("graph", [200.0, 200.0], |c| {
 The canvas of a custom control in Effect Controls gets keys the same way. `plugins/curves` moves the chosen
 point with the arrow keys.
 
+A right click and a double click on a canvas arrive as `c.context` and `c.opened`:
+
+```rust
+ui.canvas("pad", [120.0, 80.0], |c| {
+    if let Some(at) = c.context {
+        self.menu_at = Some(at.pos);      // a right click: show a menu there
+    }
+    if let Some(at) = c.opened {
+        self.edit_at(at.pos);             // a double click
+    }
+});
+```
+
+A viewer tool gets them as `ToolEventKind::Context` and `ToolEventKind::Open`.
+
 ### Clipboard
 
 With the `clipboard` permission, a panel, command or task reads and replaces the text on the system
