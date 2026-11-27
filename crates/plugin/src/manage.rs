@@ -740,9 +740,6 @@ pub fn end_run() {
 }
 
 fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
-    if !from.is_dir() {
-        return Ok(());
-    }
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
@@ -758,8 +755,18 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 fn copy_data(from: &Path, to: &Path) -> std::io::Result<()> {
-    if to.exists() || !from.is_dir() {
-        return Ok(());
+    use std::io::{Error, ErrorKind};
+    match fs::symlink_metadata(from) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err(Error::new(ErrorKind::NotADirectory, from.display().to_string())),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    }
+    match fs::symlink_metadata(to) {
+        Ok(metadata) if metadata.is_dir() => return Ok(()),
+        Ok(_) => return Err(Error::new(ErrorKind::NotADirectory, to.display().to_string())),
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
     }
     let name = to.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
     let staging = to.with_file_name(format!(".{name}.migrating"));
@@ -806,9 +813,7 @@ fn merge_migration_bundle(
     if installed_digest != digest {
         return Err(format!("the shared plug-in `{id}` changed during migration").into());
     }
-    if let Err(error) = copy_data(&source.data_dir(&id), &target.data_dir(&id)) {
-        log::warn!("the data of plug-in `{id}` was not moved into the shared store: {error}");
-    }
+    copy_data(&source.data_dir(&id), &target.data_dir(&id)).map_err(|error| format!("could not migrate data for plug-in `{id}`: {error}"))?;
     if let Some(consent) = source.consent(&id) {
         consents.entry(id).or_insert_with(|| consent.clone());
     }
@@ -854,8 +859,10 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
         Err(error) => return Err(error.into()),
     };
+    let mut retry = false;
     for (id, digest) in candidates {
         if let Err(error) = merge_migration_bundle(&source, &target, id, &digest, &mut consents) {
+            retry = true;
             log::warn!("a plug-in in the old store was not moved into the shared store: {error}");
         }
     }
@@ -870,7 +877,9 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
     let mut staging = tempfile::NamedTempFile::new_in(suite)?;
     std::io::Write::write_all(&mut staging, target.generation().saturating_add(1).to_string().as_bytes())?;
     staging.persist(&generation)?;
-    fs::rename(legacy, backup)?;
+    if !retry {
+        fs::rename(legacy, backup)?;
+    }
     Ok(())
 }
 
@@ -1182,6 +1191,42 @@ mod tests {
         assert!(!moved.data_dir("test.good").join("half.json").exists());
         assert!(!interrupted.exists());
         assert!(!legacy.exists() && legacy.with_extension("migrated").join("test.broken").is_dir());
+    }
+
+    #[test]
+    fn failed_data_copy_stays_disabled_and_retries_without_undoing_other_migrations() {
+        let root = tempfile::tempdir().unwrap();
+        let (legacy, suite) = (root.path().join("Plugins"), root.path().join("suite"));
+        let mut source = Registry::open(&legacy);
+        let target = Registry::for_app(&suite, APP_ID);
+        for id in ["test.copy-good", "test.copy-failed"] {
+            let bundle = source.install(&data_bundle(root.path(), id)).unwrap();
+            source.approve(&bundle).unwrap();
+            fs::create_dir_all(source.data_dir(id)).unwrap();
+            fs::write(source.data_dir(id).join("settings.json"), id).unwrap();
+        }
+        let blocked = target.data_dir("test.copy-failed");
+        fs::create_dir_all(blocked.parent().unwrap()).unwrap();
+        fs::write(&blocked, "obstruction").unwrap();
+
+        migrate(&legacy, &suite).unwrap();
+
+        let mut target = Registry::for_app(&suite, APP_ID);
+        assert!(target.consent("test.copy-good").unwrap().enabled);
+        assert_eq!(fs::read_to_string(target.data_dir("test.copy-good").join("settings.json")).unwrap(), "test.copy-good");
+        assert!(target.consent("test.copy-failed").is_none());
+        assert!(source.data_dir("test.copy-failed").join("settings.json").is_file());
+        assert!(!legacy.with_extension("migrated").exists());
+
+        target.disable("test.copy-good").unwrap();
+        fs::remove_file(blocked).unwrap();
+        migrate(&legacy, &suite).unwrap();
+
+        let target = Registry::for_app(&suite, APP_ID);
+        assert!(!target.consent("test.copy-good").unwrap().enabled);
+        assert!(target.consent("test.copy-failed").unwrap().enabled);
+        assert_eq!(fs::read_to_string(target.data_dir("test.copy-failed").join("settings.json")).unwrap(), "test.copy-failed");
+        assert!(!legacy.exists() && legacy.with_extension("migrated").is_dir());
     }
 
     #[test]
