@@ -792,15 +792,7 @@ pub(crate) fn dialog_answered(app: &mut EffectcraftApp, answer: crate::DialogAns
 /// problems and counts the rest instead of printing raw JSON.
 pub(crate) fn show_result_errors(app: &mut EffectcraftApp, result: &Value) {
     let Some(errors) = result.get("errors").and_then(Value::as_array).filter(|e| !e.is_empty()) else { return };
-    let parts: Vec<String> = errors
-        .iter()
-        .map(|e| match (e.get("file").and_then(Value::as_str), e.get("error").and_then(Value::as_str)) {
-            (Some(file), Some(error)) => format!("{file}: {error}"),
-            (_, Some(error)) => error.to_string(),
-            // A plain message (`file.import`'s errors) reads as itself, not as quoted JSON.
-            _ => e.as_str().map_or_else(|| e.to_string(), str::to_string),
-        })
-        .collect();
+    let parts: Vec<String> = errors.iter().map(|e| e.as_str().map_or_else(|| e.to_string(), str::to_string)).collect();
     let mut msg = parts.iter().take(3).cloned().collect::<Vec<_>>().join("; ");
     if parts.len() > 3 {
         msg.push_str(&format!("; +{} more", parts.len() - 3));

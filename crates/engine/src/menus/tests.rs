@@ -286,3 +286,51 @@ fn plugin_commands_go_into_the_menu_their_path_names() {
     let (none, empty) = dynamic_nodes(&s, "pluginCommands", &cx);
     assert_eq!((shown(&none), empty), (vec![], Some("No Plug-in Commands")));
 }
+
+fn flattened(s: &Session, nodes: &[MenuNode], cx: &DynCtx) -> Vec<String> {
+    nodes
+        .iter()
+        .flat_map(|n| match n {
+            MenuNode::Dynamic { name } => flattened(s, &dynamic_nodes(s, name, cx).0, cx),
+            MenuNode::Item(e) => vec![e.label.clone()],
+            MenuNode::Separator => vec!["---".into()],
+            MenuNode::Submenu { label, .. } => vec![format!("{label} >")],
+        })
+        .collect()
+}
+
+#[test]
+fn a_plugin_entry_in_a_built_in_menu_follows_a_separator_after_the_last_built_in_entry() {
+    let mut s = Session::default();
+    let item = |id: &str, plugin: &str, menu: &str| crate::PluginItem {
+        plugin: plugin.into(),
+        plugin_name: plugin.to_uppercase(),
+        id: id.into(),
+        title: format!("Do {id}"),
+        menu: Some(menu.into()),
+        ..Default::default()
+    };
+    s.set_plugin_items(vec![item("a", "one", "File"), item("b", "two", "File"), item("c", "one", "Tidy Kit")]);
+    let cx = DynCtx::default();
+    for top in top_level() {
+        let Some(MenuNode::Submenu { children, .. }) = menu_bar().iter().find(|n| matches!(n, MenuNode::Submenu { label, .. } if label == top)) else {
+            continue;
+        };
+        let shown = flattened(&s, children, &cx);
+        let plugin_at: Vec<usize> = shown.iter().enumerate().filter(|(_, label)| label.starts_with("Do ")).map(|(i, _)| i).collect();
+        if top != "File" {
+            assert_eq!(plugin_at, Vec::<usize>::new(), "{top}");
+            continue;
+        }
+        assert_eq!(plugin_at.len(), 2, "{shown:?}");
+        assert_eq!(plugin_at[1], shown.len() - 1, "plugin entries are last: {shown:?}");
+        assert_eq!(&shown[plugin_at[0] - 1..], ["---", "Do a", "Do b"], "{shown:?}");
+        assert!(shown[..plugin_at[0] - 1].iter().all(|label| !label.starts_with("Do ")));
+    }
+    let hover = |id: &str| {
+        let params = crate::shortcuts::plugin_command_params(if id == "a" { "one" } else { "two" }, id);
+        plugin_hover(&s, &dyn_entry("x".into(), "plugin.run", params))
+    };
+    assert_eq!([hover("a"), hover("b")], [Some("From plug-in ONE".to_string()), Some("From plug-in TWO".to_string())]);
+    assert_eq!(plugin_hover(&s, &dyn_entry("x".into(), "file.save", serde_json::json!({}))), None);
+}

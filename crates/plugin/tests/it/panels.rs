@@ -662,3 +662,18 @@ fn a_command_its_plugin_turned_off_is_marked_off_and_refused_by_name_until_turne
     assert_eq!(set(&mut app, &mut panels, false), (false, Some(true)));
     assert_eq!(app.run("app-act"), Ok(()));
 }
+
+#[test]
+fn showing_a_panel_in_a_session_with_no_window_says_there_is_no_window() {
+    let mut app = app("test.panels-headless-show", &[]);
+    let (mut panels, mut frame) = (Panels::default(), 0);
+    let id = app.id.clone();
+    let surface = Surface::Panel { plugin: &id, panel: "files", instance: None };
+    let widgets = settled(&mut app, &mut panels, surface, &mut frame);
+    let Some(Widget::List { id: list, .. }) = widgets.first() else { panic!("the files panel starts with a list, not {widgets:?}") };
+    let activate = UiEvent { id: *list, kind: UiEventKind::List(effectcraft_plugin::ui::ListEvent::Activate(3)) };
+    panels.submit(&surface.owner(), vec![activate], "");
+    let said = lines(&settled(&mut app, &mut panels, surface, &mut frame));
+    assert!(said.iter().any(|line| line.contains("there is no app window to show panel `inspector` in")), "{said:?}");
+    assert!(!app.session.events.iter().any(|event| matches!(event, effectcraft_engine::Event::Frontend { command, .. } if command == "window.pluginPanel")));
+}

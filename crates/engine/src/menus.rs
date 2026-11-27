@@ -254,6 +254,11 @@ pub fn plugin_commands<'a>(s: &'a Session, top: Option<&str>) -> Vec<(Vec<&'a st
         .collect()
 }
 
+/// The hover text of a plug-in command's entry: which plug-in it comes from.
+pub fn plugin_hover(s: &Session, e: &MenuEntry) -> Option<String> {
+    (e.command == "plugin.run").then(|| s.plugin_command(&e.params)).flatten().map(|item| format!("From plug-in {}", item.plugin_name))
+}
+
 /// Display label of a submenu (the "Assign Shortcut to …" submenus name the current view or
 /// workspace, like After Effects).
 pub fn submenu_label(s: &Session, label: &str, cx: &DynCtx) -> String {

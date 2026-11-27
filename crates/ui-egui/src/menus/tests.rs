@@ -861,21 +861,15 @@ fn opening_a_project_leaves_the_home_screen_whatever_its_composition_id() {
 }
 
 /// A successful command that reports per-item problems (`errors`) shows a compact, readable
-/// report in the status line: `file: error; …`, first three and a count, never raw JSON.
+/// report in the status line: the first three and a count, never raw JSON.
 #[test]
-fn bundle_result_errors_show_compactly_in_the_status_line() {
+fn result_errors_show_compactly_in_the_status_line() {
     let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
-    let result = json!({"installed": [], "errors": [
-        {"file": "a.wasm", "error": "already installed"},
-        {"file": "b.wasm", "error": "does not load"},
-        {"file": "c.wasm", "error": "cannot read it"},
-        {"error": "cannot read the bundle folder"},
-    ]});
+    let result = json!({"errors": ["a.png: cannot read it", "b.png: does not decode", "c.png: unsupported", "d.png: empty"]});
     super::frontend::show_result_errors(&mut app, &result);
-    assert_eq!(app.ui.status, "a.wasm: already installed; b.wasm: does not load; c.wasm: cannot read it; +1 more");
-    // A clean success leaves the status line alone.
-    super::frontend::show_result_errors(&mut app, &json!({"installed": ["x.wasm"], "errors": []}));
-    assert_eq!(app.ui.status, "a.wasm: already installed; b.wasm: does not load; c.wasm: cannot read it; +1 more");
+    assert_eq!(app.ui.status, "a.png: cannot read it; b.png: does not decode; c.png: unsupported; +1 more");
+    super::frontend::show_result_errors(&mut app, &json!({"errors": []}));
+    assert_eq!(app.ui.status, "a.png: cannot read it; b.png: does not decode; c.png: unsupported; +1 more");
 }
 
 /// A picked or menu import reports its errors twice: `report_import_errors` queues the details
@@ -898,10 +892,10 @@ fn an_import_status_rewritten_by_its_result_still_acknowledges_its_details() {
         }
     }
     let import = json!({"errors": ["first failed file", "second failed file"]});
-    for other in [json!({"errors": [{"file": "a.wasm", "error": "does not load"}]}), import.clone()] {
+    for other in [json!({"errors": ["a.png: does not load"]}), import.clone()] {
         let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
         app.report_import_errors("file.import", &import);
-        super::frontend::show_command_result_errors(&mut app, "effect.installBundle", &other);
+        super::frontend::show_command_result_errors(&mut app, "script.runTasks", &other);
         assert!(!app.ui.status.contains("(and"), "{}", app.ui.status);
         assert!(!app.error_toasts.back().unwrap().reported_by(&app.ui.status), "{}", app.ui.status);
     }
@@ -1031,4 +1025,10 @@ fn a_picked_project_with_losses_asks_and_the_next_waits() {
     assert_eq!(app.dialog_state.aep_losses.queue, [intro]);
     assert!(app.session.project.items.is_empty(), "nothing imported before the answer");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_windowed_app_tells_its_session_a_window_is_attached() {
+    assert!(!effectcraft_engine::Session::default().window_attached);
+    assert!(EffectcraftApp::new(effectcraft_engine::Session::default()).session.window_attached);
 }

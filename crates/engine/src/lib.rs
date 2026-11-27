@@ -133,6 +133,9 @@ pub struct Session {
     /// The graphics adapter and backend the window draws with (`NVIDIA GeForce RTX 4070
     /// (Vulkan)`), as the host reports it: the System Compatibility Report shows it.
     pub window_adapter: Option<String>,
+    /// Set by the windowed app when it starts: only then can a plug-in's request to show a panel
+    /// open anything.
+    pub window_attached: bool,
     /// Expression syntax checker (set by the host that links the expression engine).
     pub expr_check: Option<fn(&str) -> std::result::Result<(), String>>,
     pub importer: Option<Arc<dyn Importer>>,
@@ -344,6 +347,7 @@ impl Default for Session {
             accel: None,
             accel_note: None,
             window_adapter: None,
+            window_attached: false,
             expr_check: None,
             importer: None,
             exporter: None,

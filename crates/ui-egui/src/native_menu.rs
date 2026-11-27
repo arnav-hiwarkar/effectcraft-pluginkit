@@ -642,6 +642,43 @@ mod tests {
         assert_ne!(off, state_key(&app), "checking the command resyncs the native item");
     }
 
+    #[test]
+    fn a_plugin_entry_in_the_file_menu_follows_a_separator_after_the_last_built_in_item() {
+        let mut app = app();
+        let item = |id: &str| effectcraft_engine::PluginItem {
+            plugin: "test.probe".into(),
+            plugin_name: "Probe".into(),
+            id: id.into(),
+            title: format!("Probe {id}"),
+            menu: Some("File".into()),
+            ..Default::default()
+        };
+        app.session.set_plugin_items(vec![item("one"), item("two")]);
+        let menu = build(&app);
+        let file = menu
+            .menus
+            .iter()
+            .find_map(|node| match node {
+                NativeNode::Submenu { label, children } if label == "File" => Some(children),
+                _ => None,
+            })
+            .expect("a File menu");
+        let tail: Vec<String> = file
+            .iter()
+            .rev()
+            .take(3)
+            .rev()
+            .map(|node| match node {
+                NativeNode::Separator => "---".to_string(),
+                NativeNode::Item(item) => item.label.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(tail, ["---", "Probe one", "Probe two"]);
+        let before = &file[..file.len() - 3];
+        assert!(!before.iter().any(|node| matches!(node, NativeNode::Item(item) if item.label.starts_with("Probe "))));
+    }
+
     /// Issue #191: saved workspaces are in the native Window ▸ Workspace menu, checked while current.
     #[test]
     fn saved_workspaces_are_in_the_native_workspace_menu() {
