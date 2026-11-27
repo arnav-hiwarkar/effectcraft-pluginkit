@@ -10,6 +10,9 @@ const SOURCE: usize = 0;
 const OUTPUT: usize = 1;
 
 pub(crate) fn apply(e: &mut Enc, registered: &Registered, ctx: &EffectCtx, mut b: GBuf) -> Option<GBuf> {
+    if registered.passes_through(ctx) {
+        return Some(b);
+    }
     let effect = &registered.effect;
     let (Some(wgsl), Some(plan)) = (effect.shader.as_deref(), effect.gpu.as_ref()) else { return None };
     let (id, revision) = (registered.spec.id, effect.revision);

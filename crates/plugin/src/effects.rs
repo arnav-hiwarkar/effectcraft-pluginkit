@@ -48,6 +48,7 @@ fn register(loaded: &Arc<Loaded>) {
         let (margin_plugin, margin_spec) = (loaded.clone(), spec.clone());
         let (migrate_plugin, migrate_spec) = (loaded.clone(), spec.clone());
         let state_params = spec.params.clone();
+        let identity_spec = spec.clone();
         let gpu: dynamic::GpuDyn = Box::new(move |ctx: &EffectCtx, grid: Grid, planning| gpu_program(&plugin, &gpu_spec, ctx, grid, planning));
         let id = effect_id(plugin_id, &spec.id);
         dynamic::register(DynamicEffect {
@@ -74,6 +75,7 @@ fn register(loaded: &Arc<Loaded>) {
                 state_params.iter().find(|param| param.id == id).map_or([true, true], |param| param_state(param, value))
             })),
             aux: Channel::unique(&spec.reads_aux).iter().flat_map(aux_lookups).collect(),
+            identity: (!spec.identity.is_empty()).then(|| -> dynamic::IdentityDyn { Box::new(move |ctx| passes_through(&identity_spec, ctx)) }),
         });
         if spec.shader.is_none()
             && let Some(registered) = dynamic::get(&id)
@@ -527,6 +529,12 @@ fn staged_layout(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid
     layout
 }
 
+pub(crate) fn passes_through(spec: &EffectSpec, ctx: &EffectCtx) -> bool {
+    let [width, height] = ctx.layer_size.map(|side| side.ceil().clamp(1.0, f64::from(u32::MAX)) as u32);
+    let grid = Grid { width, height, offset: [0.0; 2], scale: 1.0 };
+    spec.is_identity(&wire_params(spec, ctx.params, ctx.layer_size, grid))
+}
+
 fn margin(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, scale: f64) -> Option<f64> {
     if spec.reads_other_frames || !spec.reads_aux.is_empty() {
         return None;
@@ -706,4 +714,28 @@ fn planned(loaded: &Loaded, spec: &EffectSpec, ctx: &EffectCtx, grid: Grid, memo
         .map(|texture| Some(GpuPicture { bytes: cached(&texture.key)?, name: texture.key, size: texture.size }))
         .collect::<Option<_>>()?;
     Some(GpuProgram { padding: layout.padding, images, buffers, textures, layers: plan.layers, sources: plan.sources, passes })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx_with<'a>(params: &'a Params) -> EffectCtx<'a> {
+        EffectCtx { params, time: 0.0, layer_size: [64.0, 36.0], seed: 0, adjustment: false, env: Default::default() }
+    }
+
+    #[test]
+    fn identity_rules_read_the_layers_param_values() {
+        let spec = EffectSpec::new("glow", "Glow", "Light")
+            .param(Param::slider("amount", "Amount", 1.0, 0.0..=1.0))
+            .param(Param::checkbox("enabled", "Enabled", true))
+            .identity_when([("amount", Wire::Number(0.0))])
+            .identity_when([("enabled", Wire::Bool(false))]);
+        let with = |values: &[(&str, Value)]| Params { values: values.iter().map(|(id, value)| (id.to_string(), value.clone())).collect() };
+
+        assert!(passes_through(&spec, &ctx_with(&with(&[("amount", Value::Scalar(0.0))]))));
+        assert!(passes_through(&spec, &ctx_with(&with(&[("amount", Value::Scalar(0.4)), ("enabled", Value::Bool(false))]))));
+        assert!(!passes_through(&spec, &ctx_with(&with(&[("amount", Value::Scalar(0.4))]))));
+        assert!(!passes_through(&spec, &ctx_with(&with(&[]))));
+    }
 }

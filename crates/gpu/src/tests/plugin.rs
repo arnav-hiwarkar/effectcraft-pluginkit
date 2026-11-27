@@ -37,6 +37,7 @@ fn effect(id: &str, wgsl: &str, program: GpuProgram) -> DynamicEffect {
         migrate: None,
         param_state: None,
         aux: Vec::new(),
+        identity: None,
         id: id.into(),
         name: id.into(),
         category: "Test".into(),

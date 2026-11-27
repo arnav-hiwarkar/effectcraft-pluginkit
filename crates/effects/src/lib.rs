@@ -503,7 +503,10 @@ pub fn pixel_margin(id: &str, ctx: &EffectCtx, scale: f64) -> Option<f64> {
         "ec.3d.idmatte" if params.f("feather") <= 0.0 => Some(0.0),
         "ec.generate.fill" if params.f("horizontalFeather") <= 0.0 && params.f("verticalFeather") <= 0.0 => Some(0.0),
         "ec.blur.gaussian" => misc::gaussian_margin(params, scale),
-        _ => dynamic::get(id)?.effect.margin.as_ref()?(ctx, scale),
+        _ => match dynamic::get(id)? {
+            registered if registered.passes_through(ctx) => Some(0.0),
+            registered => registered.effect.margin.as_ref()?(ctx, scale),
+        },
     }
 }
 
@@ -1674,6 +1677,7 @@ pub fn reads_param_history(id: &str) -> bool {
 /// Run an effect on a buffer.
 pub fn apply(spec: &EffectSpec, ctx: &EffectCtx, buf: Buf) -> Buf {
     match dynamic::get(spec.id) {
+        Some(registered) if registered.passes_through(ctx) => buf,
         Some(registered) => (registered.effect.render)(ctx, buf),
         None => (spec.render)(ctx, buf),
     }
