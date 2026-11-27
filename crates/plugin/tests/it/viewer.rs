@@ -326,3 +326,17 @@ fn drags_of_three_gestures_queued_behind_a_slow_call_keep_three_undo_steps() {
     app.session.execute_checked("edit.undo", json!({})).unwrap();
     assert_eq!((last, value(&mut app, "pin")), (json!("9,11"), json!("7,9")));
 }
+
+#[test]
+fn a_custom_handle_drag_reply_that_arrives_after_an_edit_of_its_parameter_leaves_that_edit() {
+    let mut app = app("test.viewer-late-drag", &["document.read"]);
+    let mut panels = Panels::default();
+    aim_layer(&mut app);
+    let start = shown(&mut app, &mut panels);
+    hold_the_viewer(&mut app, &mut panels);
+    post_drag(&mut app, &mut panels, &start, 6, [4.0, 5.0], "late");
+    app.session.execute_checked("prop.set", json!({"layer": "Aim", "path": "effects/#1/pin", "value": "9,9"})).unwrap();
+    crate::panels::release(&app);
+    settle(&mut app, &mut panels);
+    assert_eq!(value(&mut app, "pin"), json!("9,9"));
+}

@@ -17,7 +17,7 @@ use crate::gate::SessionHost;
 
 pub struct Loaded {
     pub bundle: Bundle,
-    pub plugin: Plugin,
+    pub plugin: Arc<Plugin>,
     pub data_dir: PathBuf,
     pub revision: u64,
     render_errors: Mutex<BTreeMap<String, String>>,
@@ -141,7 +141,7 @@ fn load(bundle: &Bundle, digest: &str, grants: BTreeSet<Permission>, data_dir: P
     effects::Engine.admit(plugin.contributions())?;
     let loaded = Loaded {
         bundle: bundle.clone(),
-        plugin,
+        plugin: Arc::new(plugin),
         data_dir,
         revision: hasher.finish(),
         render_errors: Mutex::new(BTreeMap::new()),
@@ -225,7 +225,7 @@ impl Inner {
             data_only::unregister(id);
         }
         if let Some(loaded) = self.loaded.remove(id) {
-            loaded.plugin.cancel_all();
+            loaded.plugin.stop();
             effects::Engine.unregister(id);
             if loaded.bundle.mode == RunMode::Unsandboxed {
                 self.mark(None);

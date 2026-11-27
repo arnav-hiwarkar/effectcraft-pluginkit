@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 pub use craft_plugin_host::viewer::{Bind, Cursor, Handle, Mark, Overlay, Pen, Space, ToolEvent, ToolEventKind, ToolSpec};
-use craft_plugin_host::{Call, RenderCx, Value as Wire};
+use craft_plugin_host::{RenderCx, Value as Wire};
 use effectcraft_engine::Session;
 use effectcraft_engine::effects::dynamic::Grid;
 use effectcraft_engine::project::{GroupKind, Layer, PropGroup};
@@ -10,56 +10,28 @@ use serde_json::{Value, json};
 
 use crate::effects::wire_params;
 use crate::manage::{Loaded, effect_owner, running, running_plugins};
-use crate::panels::{Bound, Gesture, Key, Overlaid, Panels, Request, Target, Tooling};
+use crate::panels::{Doc, Panels, Target, held};
 
-const MAX_RETAINED: usize = 256;
+pub use craft_plugin_host::viewer::Shown;
 
-pub(crate) fn capped(overlay: Overlay, plugin: &str) -> Overlay {
-    let (overlay, note) = overlay.capped();
-    if let Some(note) = note {
-        log::warn!("plugin `{plugin}`: {note}");
+fn point(shown: &Shown, param: &str) -> Option<[f64; 2]> {
+    match shown.cx.params.get(param) {
+        Some(Wire::List(values)) if values.len() >= 2 => Some([values[0], values[1]]),
+        _ => None,
     }
-    overlay
 }
 
-pub struct Shown {
-    pub overlay: Overlay,
-    pub plugin: String,
-    pub(crate) cx: RenderCx,
-    pub(crate) bound: Bound,
-    pub(crate) effect: String,
-    pub(crate) place: [u64; 2],
-}
-
-impl Shown {
-    pub fn binds(&self, param: &str) -> bool {
-        self.overlay.handles.iter().any(|handle| handle.bind.params().contains(&param))
-    }
-
-    pub fn continues(&self, grabbed: &Shown, handle: usize) -> bool {
-        let bind = |shown: &Shown| shown.overlay.handles.get(handle).map(|handle| handle.bind.clone());
-        self.bound.same(&grabbed.bound) && self.cx.instance == grabbed.cx.instance && bind(self).is_some() && bind(self) == bind(grabbed)
-    }
-
-    fn point(&self, param: &str) -> Option<[f64; 2]> {
-        match self.cx.params.get(param) {
-            Some(Wire::List(values)) if values.len() >= 2 => Some([values[0], values[1]]),
-            _ => None,
-        }
-    }
-
-    fn number(&self, param: &str) -> f64 {
-        match self.cx.params.get(param) {
-            Some(Wire::Number(n)) => *n,
-            _ => 0.0,
-        }
+fn number(shown: &Shown, param: &str) -> f64 {
+    match shown.cx.params.get(param) {
+        Some(Wire::Number(n)) => *n,
+        _ => 0.0,
     }
 }
 
 impl Panels {
     pub fn overlay(&mut self, session: &mut Session, ctx: &EvalCtx, layer: &Layer, group: &PropGroup) -> Option<Arc<Shown>> {
         let GroupKind::Effect { effect } = &group.kind else { return None };
-        let (plugin, loaded, local) = effect_owner(effect).ok()?;
+        let (_, loaded, local) = effect_owner(effect).ok()?;
         let spec = loaded.plugin.contributions().effects.iter().find(|spec| spec.id == local)?.clone();
         let layer_size = ctx.effect_bounds(layer).0;
         let params = effectcraft_engine::effects::flatten_params(group, &mut |prop| ctx.value(layer, prop));
@@ -68,7 +40,6 @@ impl Panels {
             false => layer_size.map(|side| side.round().max(0.0) as u32),
         };
         let grid = Grid { width: size[0], height: size[1], offset: [0.0; 2], scale: 1.0 };
-        let instance = effect_instance(layer, group);
         let cx = RenderCx {
             params: wire_params(&spec, &params, layer_size, grid),
             time: layer.layer_time(ctx.time).seconds(),
@@ -78,38 +49,11 @@ impl Panels {
             layer_size,
             offset: [0.0; 2],
             size,
-            instance,
+            instance: effect_instance(layer, group),
             float: false,
             linear: false,
         };
-        let call = Call::Overlay { effect: local, cx };
-        let request = serde_json::to_vec(&call).ok()?;
-        let key = (plugin.clone(), instance);
-        if self.overlays.len() >= MAX_RETAINED && !self.overlays.contains_key(&key) {
-            self.overlays.clear();
-        }
-        let fresh = || {
-            let open = Arc::default();
-            Overlaid {
-                bound: Bound::of(loaded.clone(), session, Arc::downgrade(&open)),
-                open,
-                request: Vec::new(),
-                shown: None,
-                place: [ctx.comp_id.0, layer.id.0],
-            }
-        };
-        let slot = self.overlays.entry(key.clone()).or_insert_with(fresh);
-        if !slot.bound.from(&loaded, session) {
-            *slot = fresh();
-        }
-        let lane = Key::Effect(plugin, instance);
-        if slot.request != request {
-            slot.request = request;
-            let bound = slot.bound.clone();
-            self.post(Request { key: lane.clone(), bound, call, edit: None, gesture: None });
-        }
-        self.wait(session, |panels| !panels.lanes.contains_key(&lane));
-        self.overlays.get(&key)?.shown.clone()
+        self.surfaces.overlay(&mut Doc::new(session), &loaded.plugin, &local, cx, [ctx.comp_id.0, layer.id.0])
     }
 
     pub fn drag(&mut self, shown: &Shown, handle: usize, delta: [f64; 2], group: &PropGroup, merge: &str) -> Result<Vec<(String, Value)>, String> {
@@ -124,7 +68,7 @@ impl Panels {
             Bind::Angle { param, centre } => {
                 let angle = |p: [f64; 2]| (p[1] - centre[1]).atan2(p[0] - centre[0]).to_degrees();
                 let turn = (angle(to) - angle(handle.at) + 180.0).rem_euclid(360.0) - 180.0;
-                Ok(vec![set(param, json!(shown.number(param) + turn))?])
+                Ok(vec![set(param, json!(number(shown, param) + turn))?])
             }
             Bind::Radius { param, centre, unit } => {
                 if !(unit.is_finite() && *unit > 0.0) {
@@ -133,67 +77,23 @@ impl Panels {
                 Ok(vec![set(param, json!((to[0] - centre[0]).hypot(to[1] - centre[1]) / unit))?])
             }
             Bind::Rect { min, max } => {
-                [min, max].into_iter().filter_map(|param| shown.point(param).map(|[x, y]| set(param, json!([x + delta[0], y + delta[1]])))).collect()
+                [min, max].into_iter().filter_map(|param| point(shown, param).map(|[x, y]| set(param, json!([x + delta[0], y + delta[1]])))).collect()
             }
             Bind::Custom { param, key } => {
-                let value = match shown.cx.params.get(param) {
-                    Some(Wire::Text(text)) => text.clone(),
-                    _ => String::new(),
-                };
-                let edit = Target { comp: shown.place[0], layer: shown.place[1], prop: uid(param)?, time: shown.cx.comp_time, merge: merge.to_string() };
-                let call = Call::Drag { effect: shown.effect.clone(), cx: shown.cx.clone(), key: key.clone(), to, value };
-                let lane = Key::Effect(shown.plugin.clone(), shown.cx.instance);
-                self.post(Request { key: lane, bound: shown.bound.clone(), call, edit: Some(edit), gesture: None });
+                let prop = group.prop(param).ok_or_else(|| format!("the effect has no parameter `{param}`"))?;
+                let edit = Target { comp: shown.place[0], layer: shown.place[1], prop: prop.uid, time: shown.cx.comp_time, merge: merge.to_string() };
+                self.surfaces.drag(shown, param, key, to, edit.edit(), held(prop));
                 Ok(Vec::new())
             }
         }
     }
 
     pub fn tool(&mut self, session: &Session, plugin: &str, tool: &str, event: ToolEvent) -> Result<(), String> {
-        let loaded = running(plugin)?;
-        if event.kind.ui_level() > loaded.plugin.contributions().event_level() {
-            return Ok(());
-        }
-        let name = loaded
-            .plugin
-            .contributions()
-            .tools
-            .iter()
-            .find(|spec| spec.id == tool)
-            .map(|spec| spec.name.clone())
-            .ok_or_else(|| format!("plugin `{plugin}` has no tool `{tool}`"))?;
-        let key = Key::Tool(plugin.to_string(), tool.to_string());
-        if self.tool.as_ref().is_some_and(|state| state.key != key || !Arc::ptr_eq(&state.loaded, &loaded)) {
-            self.tool = None;
-        }
-        let state = self.tool.get_or_insert_with(|| Tooling {
-            key: key.clone(),
-            loaded: loaded.clone(),
-            open: Arc::default(),
-            overlay: Overlay::default(),
-            gesture: None,
-        });
-        if event.kind == ToolEventKind::Down {
-            state.gesture = Some(Gesture::new(&name));
-        }
-        let gesture = match event.kind {
-            ToolEventKind::Up => state.gesture.take(),
-            _ => state.gesture.clone(),
-        };
-        let bound = Bound::of(loaded, session, Arc::downgrade(&state.open));
-        let call = Call::Tool { tool: tool.to_string(), event };
-        self.post(Request { key, bound, call, edit: None, gesture });
-        Ok(())
+        self.surfaces.tool(&session.project_closed, &running(plugin)?.plugin, tool, event)
     }
 
     pub fn tool_overlay(&mut self, session: &mut Session) -> Option<&Overlay> {
-        let key = self.tool.as_ref()?.key.clone();
-        self.wait(session, |panels| !panels.lanes.contains_key(&key));
-        self.tool.as_ref().map(|state| &state.overlay)
-    }
-
-    pub fn put_tool_away(&mut self) {
-        self.tool = None;
+        self.surfaces.tool_overlay(&mut Doc::new(session))
     }
 }
 

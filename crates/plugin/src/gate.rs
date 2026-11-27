@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 
-use craft_plugin_host::{Access, AudioRequest, FrameRequest, Host, Permission, PickFile, Pixels, Place, Samples, data};
+use craft_plugin_host::{Access, AudioRequest, FrameRequest, Host, Job, Permission, PickFile, Pixels, Place, Samples, data};
 use effectcraft_automation::confine::{self, Confinement, Lookup};
 use effectcraft_engine::project::{ItemId, LayerId, Project};
 use effectcraft_engine::render::{RenderOpts, Renderer, audio};
@@ -81,6 +81,21 @@ static FILE_PICKER: OnceLock<FilePicker> = OnceLock::new();
 
 pub fn set_file_picker(picker: FilePicker) {
     let _ = FILE_PICKER.set(picker);
+}
+
+pub trait Clipboard: Send + Sync {
+    fn text(&self) -> Result<String, String>;
+    fn set_text(&self, text: &str) -> Result<(), String>;
+}
+
+static CLIPBOARD: OnceLock<Box<dyn Clipboard>> = OnceLock::new();
+
+pub fn set_clipboard(clipboard: Box<dyn Clipboard>) {
+    let _ = CLIPBOARD.set(clipboard);
+}
+
+fn clipboard() -> Result<&'static dyn Clipboard, String> {
+    CLIPBOARD.get().map(|clipboard| clipboard.as_ref()).ok_or_else(|| "this app has no clipboard".into())
 }
 
 fn find_comp(session: &Session, name: Option<&str>, ids: bool) -> Result<ItemId, String> {
@@ -343,16 +358,24 @@ impl Host for SessionHost<'_> {
         self.audio_job(request).map(|mix| mix())
     }
 
+    fn frame_job(&mut self, request: &FrameRequest) -> Result<Job<Pixels>, String> {
+        frame_job(self.session, request)
+    }
+
+    fn audio_job(&mut self, request: &AudioRequest) -> Result<Job<Samples>, String> {
+        audio_job(self.session, request)
+    }
+
     fn project_closed(&self) -> Option<Arc<AtomicBool>> {
         Some(self.session.project_closed.clone())
     }
 
     fn clipboard(&mut self) -> Result<String, String> {
-        crate::panels::clipboard()?.text()
+        clipboard()?.text()
     }
 
     fn set_clipboard(&mut self, text: &str) -> Result<(), String> {
-        crate::panels::clipboard()?.set_text(text)
+        clipboard()?.set_text(text)
     }
 
     fn pick_file(&mut self, request: &PickFile) -> Result<Option<PathBuf>, String> {
@@ -398,8 +421,6 @@ impl Host for SessionHost<'_> {
 fn no_layer(id: u64) -> EngineError {
     EngineError::Other(format!("no layer {id} in the project; read layer ids from `layer.list` or the selection"))
 }
-
-pub type Job<T> = Box<dyn FnOnce() -> T + Send>;
 
 fn frame_size(size: (u32, u32), scale: f64) -> Result<(u32, u32), String> {
     let (width, height) = ((f64::from(size.0) * scale).ceil(), (f64::from(size.1) * scale).ceil());
@@ -464,28 +485,21 @@ fn source_job(session: &Session, request: &FrameRequest, comp: ItemId, layer: La
     }))
 }
 
-impl SessionHost<'_> {
-    pub(crate) fn frame_job(&self, request: &FrameRequest) -> Result<Job<Pixels>, String> {
-        frame_job(self.session, request)
+fn audio_job(session: &Session, request: &AudioRequest) -> Result<Job<Samples>, String> {
+    let frames = request.duration * f64::from(request.rate);
+    if !AUDIO_RATES.contains(&request.rate) || !(request.duration >= 0.0 && frames <= MAX_AUDIO_FRAMES) || !request.start.is_finite() {
+        return Err(format!("audio needs a rate from {} to {} Hz and at most {MAX_AUDIO_FRAMES} sample frames", AUDIO_RATES.start(), AUDIO_RATES.end()));
     }
-
-    pub(crate) fn audio_job(&self, request: &AudioRequest) -> Result<Job<Samples>, String> {
-        let frames = request.duration * f64::from(request.rate);
-        if !AUDIO_RATES.contains(&request.rate) || !(request.duration >= 0.0 && frames <= MAX_AUDIO_FRAMES) || !request.start.is_finite() {
-            return Err(format!("audio needs a rate from {} to {} Hz and at most {MAX_AUDIO_FRAMES} sample frames", AUDIO_RATES.start(), AUDIO_RATES.end()));
-        }
-        let session = &*self.session;
-        let comp = find_comp(session, None, false)?;
-        let project = match &request.layer {
-            Some(layer) => Arc::new(only_layer(&session.project, comp, find_layer(&session.project, comp, layer, false)?, false)?),
-            None => session.project.clone(),
-        };
-        let (footage, expr, start, rate) = (session.footage.clone(), session.expr.clone(), Tick::from_seconds_f64(request.start), request.rate);
-        Ok(Box::new(move || {
-            let samples = audio::mix_comp(&project, footage.as_ref(), expr.as_deref(), comp, start, frames.round() as usize, rate);
-            Samples { channels: 2, rate, samples }
-        }))
-    }
+    let comp = find_comp(session, None, false)?;
+    let project = match &request.layer {
+        Some(layer) => Arc::new(only_layer(&session.project, comp, find_layer(&session.project, comp, layer, false)?, false)?),
+        None => session.project.clone(),
+    };
+    let (footage, expr, start, rate) = (session.footage.clone(), session.expr.clone(), Tick::from_seconds_f64(request.start), request.rate);
+    Ok(Box::new(move || {
+        let samples = audio::mix_comp(&project, footage.as_ref(), expr.as_deref(), comp, start, frames.round() as usize, rate);
+        Samples { channels: 2, rate, samples }
+    }))
 }
 
 #[cfg(test)]
