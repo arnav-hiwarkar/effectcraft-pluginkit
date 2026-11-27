@@ -835,6 +835,8 @@ pub fn open_form(app: &mut EffectcraftApp, id: &str, p: &Value) -> bool {
                 ],
             )
         }
+        // Effect Controls ▸ Save Preset… on a plug-in effect.
+        "effect.savePreset" if !has(p, &["name"]) => ("Save Preset".into(), vec![Field::text("name", "Preset name", "")]),
         // View ▸ Simulate Output ▸ My Custom RGB…
         "view.customRgb" if p.as_object().is_none_or(|m| m.is_empty()) => {
             let c = &s.prefs.custom_rgb;
@@ -1229,6 +1231,18 @@ mod tests {
         app.session.execute(&command, params).unwrap();
         let at = app.session.active_comp().unwrap().frame_rate.frame_at(app.session.time());
         assert_eq!(at, 19, "displayed 00020 with frames starting at 1");
+    }
+
+    #[test]
+    fn save_preset_without_a_name_asks_for_one_and_keeps_the_effect() {
+        let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+        let ctx = egui::Context::default();
+        let asked = crate::menus::invoke(&mut app, &ctx, "effect.savePreset", json!({"layer": 3, "effect": 7})).unwrap();
+        assert_eq!(asked, json!({"dialog": "effect.savePreset"}));
+        let mut form = app.dialog_state.form.clone();
+        assert_eq!(form.command, "effect.savePreset");
+        form.fields[0].kind = FieldKind::Text("Warm".into());
+        assert_eq!(form.params(), json!({"layer": 3, "effect": 7, "name": "Warm"}));
     }
 
     /// In a comp that starts 1 s before 0, Go to Time at frame 12 opens on the negative time the

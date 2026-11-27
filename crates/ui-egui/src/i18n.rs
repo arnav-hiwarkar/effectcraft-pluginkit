@@ -20,7 +20,12 @@ const CATALOG_CODES: [&str; 13] = ["cs", "de", "es", "fr", "pl", "pt-br", "sv", 
 /// The active interface language: the stored preference when it names a catalog, otherwise `en`
 /// (English is the source of every label and needs no lookup).
 pub(crate) fn language(app: &EffectcraftApp) -> &'static str {
-    match app.session.prefs.general.language.as_str() {
+    session_language(&app.session)
+}
+
+/// The interface language a session's settings choose, as [`language`] shows it.
+pub fn session_language(session: &effectcraft_engine::Session) -> &'static str {
+    match session.prefs.general.language.as_str() {
         "system" => system_language(),
         stored => code(stored),
     }

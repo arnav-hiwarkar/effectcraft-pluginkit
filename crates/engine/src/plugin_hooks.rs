@@ -78,6 +78,26 @@ mod tests {
         assert!(toasts.iter().any(|toast| toast == "Alpha Guard: the project keeps a temporary matte"), "{toasts:?}");
     }
 
+    fn refuse_exports(hook: PluginHook, _path: &str) -> Vec<PluginVeto> {
+        match hook {
+            PluginHook::BeforeExport => vec![PluginVeto { plugin: "Watermark Guard".into(), reason: "no watermark yet".into() }],
+            PluginHook::BeforeSave => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_frame_export_veto_writes_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = Session { plugin_hooks: Some(refuse_exports), ..Session::default() };
+        s.execute("comp.new", json!({"name": "Spot", "width": 16, "height": 16, "frameRate": 24, "duration": 1})).unwrap();
+        for (command, file) in [("comp.saveFrameAs", "f.png"), ("comp.saveFrameAsPsd", "f.psd"), ("comp.saveFrameAsExr", "f.exr")] {
+            let path = dir.path().join(file);
+            let error = s.execute(command, json!({"path": path.to_string_lossy()})).unwrap_err().to_string();
+            assert!(error.contains("Watermark Guard: no watermark yet"), "{command}: {error}");
+            assert!(!path.exists(), "{command} wrote the file");
+        }
+    }
+
     #[test]
     fn an_export_veto_names_the_plugin_and_its_reason() {
         let s = Session { plugin_hooks: Some(refuse_gif), ..Session::default() };

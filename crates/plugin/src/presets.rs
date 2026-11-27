@@ -1,6 +1,6 @@
+use std::path::Path;
 use std::sync::Arc;
 
-use craft_ext_store::location;
 use craft_plugin_host::{ContributedPreset, EffectSpec, Presets};
 use effectcraft_engine::plugin_presets::{PresetValues, UserPresets};
 
@@ -13,14 +13,8 @@ pub(crate) struct SuitePresets {
 }
 
 impl SuitePresets {
-    pub(crate) fn open() -> Option<Arc<dyn UserPresets>> {
-        match location::default_root() {
-            Ok(suite) => Some(Arc::new(SuitePresets { presets: Presets::open(&suite) })),
-            Err(error) => {
-                log::warn!("plug-in presets are not available: {error}");
-                None
-            }
-        }
+    pub(crate) fn open(root: &Path) -> Arc<dyn UserPresets> {
+        Arc::new(SuitePresets { presets: Presets::open(root) })
     }
 }
 
@@ -55,7 +49,7 @@ impl Owned {
 impl UserPresets for SuitePresets {
     fn list(&self, effect: &str) -> Vec<(String, PresetValues)> {
         let Ok(owned) = Owned::of(effect) else { return Vec::new() };
-        match self.presets.list(&owned.plugin, &owned.spec.id, &[]) {
+        match self.presets.user(&owned.plugin, &owned.spec.id) {
             Ok(found) => found.into_iter().map(|preset| (preset.name, preset_values(&owned.spec, &preset.values))).collect(),
             Err(error) => {
                 log::warn!("the presets of `{effect}` were not read: {error}");

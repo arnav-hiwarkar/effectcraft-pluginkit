@@ -30,3 +30,4 @@ cpu-time = "1"
 
 [dev-dependencies]
 craft-plugin-host = { workspace = true, features = ["testing"] }
+tempfile = { workspace = true }

@@ -114,6 +114,7 @@ pub struct DynamicParam {
 
 pub struct DynamicEffect {
     pub owner: String,
+    pub owner_name: String,
     pub version: String,
     pub id: String,
     pub name: String,
@@ -243,6 +244,10 @@ pub fn get(id: &str) -> Option<Arc<Registered>> {
 
 pub fn plugin_version(owner: &str) -> Option<String> {
     REGISTRY.read().unwrap_or_else(|poisoned| poisoned.into_inner()).iter().find(|r| r.effect.owner == owner).map(|r| r.effect.version.clone())
+}
+
+pub fn plugin_name(owner: &str) -> Option<String> {
+    REGISTRY.read().unwrap_or_else(|poisoned| poisoned.into_inner()).iter().find(|r| r.effect.owner == owner).map(|r| r.effect.owner_name.clone())
 }
 
 /// The ids of the plugins with registered effects.

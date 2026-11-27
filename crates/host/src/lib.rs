@@ -148,5 +148,11 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
     app_dirs::current().dir.clone()
 }
 
+/// The private plug-in suite folder of this process's data folder, if it has one
+/// ([`app_dirs::DataDir::private_plugin_suite`]).
+pub fn private_plugin_suite() -> Option<std::path::PathBuf> {
+    app_dirs::current().private_plugin_suite()
+}
+
 #[cfg(test)]
 mod tests;

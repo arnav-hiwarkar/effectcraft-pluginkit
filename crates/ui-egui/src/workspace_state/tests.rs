@@ -411,9 +411,9 @@ fn plugin_panels_from_the_fork_restore_and_save_by_name() {
     assert_eq!(restored.focused, notes);
     assert_eq!(restored.plugin_instances, ui.plugin_instances);
     for workspace in [&restored.dock, &restored.saved_workspaces["Plugin desk"]] {
-        assert_eq!(workspace.panels(), [PanelKind::Composition, counter, notes]);
+        assert_eq!(workspace.panels(), [PanelKind::Composition, counter, missing, notes]);
         assert_eq!(workspace.layout().floating[0].rect, rect(10.0, 20.0, 360.0, 320.0));
-        assert_eq!(workspace.hidden().iter().map(|(panel, _)| *panel).collect::<Vec<_>>(), [unknown, missing]);
+        assert_eq!(workspace.hidden().iter().map(|(panel, _)| *panel).collect::<Vec<_>>(), [unknown]);
     }
     assert!(store.save(Some(&config), &restored).unwrap());
     assert_eq!(config.read(BACKUP).as_deref(), Some(old.as_str()));
@@ -424,4 +424,8 @@ fn plugin_panels_from_the_fork_restore_and_save_by_name() {
     let mut reloaded = UiState::default();
     assert_eq!(WorkspaceStore::load(Some(&config), &mut reloaded, &items).error, None);
     assert_eq!(Snapshot::capture(&reloaded), Snapshot::capture(&restored));
+
+    let mut without_plugins = UiState::default();
+    assert_eq!(WorkspaceStore::load(Some(&config), &mut without_plugins, &[]).error, None);
+    assert_eq!(Snapshot::capture(&without_plugins), Snapshot::capture(&restored));
 }

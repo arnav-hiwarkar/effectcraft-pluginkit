@@ -66,6 +66,25 @@ fn with_the_probe_panel_focused_delete_and_cmd_d_reach_the_plugin_and_backspace_
 }
 
 #[test]
+fn a_panel_key_waits_while_a_file_dialog_is_up() {
+    use std::sync::{Arc, Mutex};
+    let mut harness = with_app_panel();
+    let body = element(&harness, &format!("plugin.{PROBE}.app"));
+    click(&mut harness, body.max - egui::vec2(12.0, 12.0), egui::PointerButton::Primary);
+    assert_eq!(harness.state().ui.focused, PanelKind::plugin(PROBE, "app"));
+    let pending: Arc<Mutex<Vec<crate::DialogDone>>> = Arc::default();
+    let queue = pending.clone();
+    harness.state_mut().hooks.file_dialog_async = Some(Box::new(move |_dialog, done| queue.lock().unwrap().push(done)));
+    let ctx = harness.ctx.clone();
+    crate::menus::invoke(harness.state_mut(), &ctx, "file.saveAs", json!({})).unwrap();
+    assert_eq!(pending.lock().unwrap().len(), 1, "Save As shows its file dialog");
+    harness.key_press(egui::Key::Delete);
+    harness.run_steps(3);
+    delivered(&harness, &[]);
+    assert!(!shows(&harness, "pressed Delete"));
+}
+
+#[test]
 fn the_panel_menu_lists_the_plugins_items_and_help_and_a_pick_reaches_the_plugin() {
     let mut harness = with_app_panel();
     let menu = format!("panel.menu.{}", PanelKind::plugin(PROBE, "app").id());

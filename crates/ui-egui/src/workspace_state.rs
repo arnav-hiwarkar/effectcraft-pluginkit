@@ -1,6 +1,6 @@
 //! Persistent workspace layouts, separate from document-bound and transient UI state.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use effectcraft_engine::config::ConfigStore;
 use serde::{Deserialize, Serialize};
@@ -69,26 +69,18 @@ impl Snapshot {
         }
     }
 
-    fn close_unavailable_plugins(&mut self, items: &[effectcraft_engine::PluginItem]) -> Result<(), String> {
-        let mut running: HashSet<PanelKind> =
-            items.iter().filter(|item| item.panel && !item.multiple).map(|item| PanelKind::plugin(&item.plugin, &item.id)).collect();
-        running.extend(self.plugin_instances.iter().filter_map(|instance| {
-            items
-                .iter()
-                .any(|item| item.panel && item.multiple && item.plugin == instance.plugin && item.id == instance.panel)
-                .then(|| PanelKind::plugin_instance(&instance.plugin, &instance.panel, &instance.instance))
-        }));
-        let unavailable = |panel: PanelKind| matches!(panel, PanelKind::Plugin(_)) && !running.contains(&panel);
+    fn close_unowned_plugin_panels(&mut self) -> Result<(), String> {
+        let unowned = |panel: PanelKind| matches!(panel, PanelKind::Plugin(id) if id.owner().is_none());
         for workspace in std::iter::once(&mut self.dock).chain(self.saved_workspaces.values_mut()) {
-            let actions: Vec<_> = workspace.panels().into_iter().filter(|panel| unavailable(*panel)).map(craft_behavior::dock::Action::close).collect();
+            let actions: Vec<_> = workspace.panels().into_iter().filter(|panel| unowned(*panel)).map(craft_behavior::dock::Action::close).collect();
             if !actions.is_empty() {
                 workspace.apply_all(actions, false, crate::dock::permissions).map_err(|error| error.to_string())?;
             }
         }
-        if unavailable(self.focused) {
+        if unowned(self.focused) {
             self.focused = self.dock.panels().into_iter().find(|panel| self.dock.is_visible(*panel)).unwrap_or(PanelKind::Composition);
         }
-        self.maximized = self.maximized.filter(|panel| !unavailable(*panel));
+        self.maximized = self.maximized.filter(|panel| !unowned(*panel));
         Ok(())
     }
 
@@ -157,7 +149,7 @@ impl WorkspaceStore {
                     snapshot
                 };
                 snapshot.validate()?;
-                snapshot.close_unavailable_plugins(items)?;
+                snapshot.close_unowned_plugin_panels()?;
                 Ok(snapshot)
             })
             .transpose()

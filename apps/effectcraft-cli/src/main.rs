@@ -490,7 +490,7 @@ fn backend(args: &Args, default_demo: bool) -> Result<Backend, Failure> {
 /// default).
 fn session(args: &Args) -> Result<effectcraft_engine::Session, Failure> {
     let mut s = effectcraft_host::headless_session();
-    effectcraft_plugin::install_shared(&mut s, effectcraft_host::config_dir().as_deref());
+    effectcraft_plugin::install_shared(&mut s, effectcraft_host::config_dir().as_deref(), effectcraft_host::private_plugin_suite().as_deref());
     if args.flag("--autosave") {
         let dir = effectcraft_host::config_dir().ok_or_else(|| Failure::Error("--autosave: no config directory; set EFFECTCRAFT_CONFIG_DIR".into()))?;
         // Read only auto-save settings. Opting in must not change headless rendering or load

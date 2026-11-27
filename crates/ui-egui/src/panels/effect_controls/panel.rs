@@ -198,7 +198,8 @@ fn drop_payload(ui: &egui::Ui, rect: Rect, p: &egui::Painter, t: &Tokens, layer_
 fn render_error_mark(app: &mut EffectcraftApp, ui: &mut egui::Ui, bp: &egui::Painter, effect: &str, g: &PropGroup, at: egui::Pos2) {
     let missing = || {
         effectcraft_engine::plugin_refs::missing_owner(&app.session.project, effect)
-            .map(|plugin| crate::i18n::tr_args("Plug-in {} is not installed: this effect is skipped until it is installed", &[&plugin]))
+            .map(|plugin| effectcraft_engine::plugin_refs::plugin_name(&app.session.project, &plugin))
+            .map(|name| crate::i18n::tr_args("Plug-in {} is not installed: this effect is skipped until it is installed", &[&name]))
     };
     let Some(err) = effectcraft_plugin::plugins().and_then(|plugins| plugins.render_error(effect)).or_else(missing) else { return };
     let wr = bp.text(at, Align2::LEFT_CENTER, "⚠", Tokens::semibold(12.0), app.tokens.warning);
@@ -222,7 +223,7 @@ fn designer_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, effect: &str, g:
 fn missing_plugin_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, bp: &egui::Painter, effect: &str, g: &PropGroup, row: Rect, actions: &mut Actions) -> f32 {
     let Some(plugin) = effectcraft_engine::plugin_refs::missing_owner(&app.session.project, effect) else { return 0.0 };
     let t = app.tokens;
-    let label = crate::i18n::tr_args("Missing plugin: {}", &[&plugin]);
+    let label = crate::i18n::tr_args("Missing plugin: {}", &[&effectcraft_engine::plugin_refs::plugin_name(&app.session.project, &plugin)]);
     let text = bp.text(row.left_center(), Align2::LEFT_CENTER, &label, Tokens::ui(11.5), t.warning);
     app.auto.add(&format!("effectControls.effect.{}.missingPlugin", g.uid), text, &label);
     let find = crate::i18n::tr("Find plugin");
@@ -437,6 +438,9 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                         item(ui, name, true, "effect.applyPreset", json!({"layer": lid, "effect": g.uid, "preset": name}));
                     }
                 });
+            }
+            if effectcraft_engine::effects::dynamic::get(effect).is_some() {
+                item(ui, "Save Preset…", true, "effect.savePreset", json!({"layer": lid, "effect": g.uid}));
             }
             item(ui, "Remove", true, "effect.remove", json!({"layer": lid, "effect": g.uid}));
             ui.separator();

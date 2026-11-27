@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use craft_ext_core::catalogue::{Revocation, Severity};
-use craft_ext_market::{Catalogue, Curl, DEFAULT_INDEX, MarketError, SNAPSHOT};
+use craft_ext_market::SNAPSHOT;
 use craft_ext_store::{APPS_DIR, Consent, location};
 
 use craft_plugin_host::PluginImage;
@@ -124,10 +124,17 @@ pub struct PluginInfo {
     pub path: PathBuf,
 }
 
+#[derive(PartialEq, Debug)]
+struct Installed {
+    consent: Option<Consent>,
+    digest: Option<String>,
+}
+
 struct Inner {
     registry: Registry,
     suite: Option<PathBuf>,
     generation: u64,
+    seen: BTreeMap<String, Installed>,
     catalogue_modified: Option<SystemTime>,
     revocations: Vec<Revocation>,
     last_poll: Instant,
@@ -246,7 +253,7 @@ impl Inner {
     fn read_revocations(&mut self) -> bool {
         let Some(suite) = &self.suite else { return false };
         self.catalogue_modified = catalogue_modified(suite);
-        let Some(revocations) = cached_revocations(suite) else { return false };
+        let revocations = craft_ext_market::cached_revocations(suite);
         if self.revocations == revocations {
             return false;
         }
@@ -271,6 +278,40 @@ impl Inner {
         self.registry.set_revocations(self.revocations.clone());
     }
 
+    fn installed_state(&self) -> BTreeMap<String, Installed> {
+        let state = |bundle: Bundle| {
+            let id = bundle.manifest.id.clone();
+            let installed = Installed { consent: self.registry.consent(&id).cloned(), digest: bundle.digest().ok() };
+            (id, installed)
+        };
+        self.installed().into_iter().map(state).collect()
+    }
+
+    fn changed_here(&mut self) {
+        self.generation = self.registry.generation();
+        self.seen = self.installed_state();
+    }
+
+    fn changed_elsewhere(&mut self) -> Vec<String> {
+        self.refresh_registry();
+        let now = self.installed_state();
+        let ids: BTreeSet<&String> = self.seen.keys().chain(now.keys()).collect();
+        let changed: Vec<String> = ids.into_iter().filter(|id| self.seen.get(*id) != now.get(*id)).cloned().collect();
+        self.seen = now;
+        changed
+    }
+
+    fn restart_changed(&mut self, changed: &[String]) {
+        let mut bundles = Vec::new();
+        let installed: Vec<&String> = changed.iter().filter(|id| !self.is_session_only(id)).collect();
+        for id in installed {
+            self.stop(id);
+            bundles.extend(self.installed().into_iter().filter(|bundle| &bundle.manifest.id == id));
+        }
+        bundles.sort_by_key(|bundle| bundle.manifest.is_data_only());
+        bundles.iter().for_each(|bundle| self.start(bundle));
+    }
+
     fn poll_store(&mut self) -> bool {
         if self.last_poll.elapsed() < STORE_POLL_INTERVAL {
             return false;
@@ -280,8 +321,9 @@ impl Inner {
             return false;
         }
         if self.registry.generation() != self.generation {
-            self.reload();
-            return true;
+            let changed = self.changed_elsewhere();
+            self.restart_changed(&changed);
+            return !changed.is_empty();
         }
         self.refresh_revocations()
     }
@@ -306,6 +348,7 @@ impl Inner {
     }
 
     fn reload_bundles(&mut self) {
+        self.seen = self.installed_state();
         let running: Vec<String> = self.loaded.keys().chain(&self.data).cloned().collect();
         running.iter().for_each(|id| self.stop(id));
         self.failed.clear();
@@ -391,7 +434,7 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const STORE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 fn catalogue_modified(suite: &Path) -> Option<SystemTime> {
-    fs::metadata(suite.join("catalogue").join(SNAPSHOT)).ok()?.modified().ok()
+    fs::metadata(suite.join(craft_ext_store::CATALOGUE_DIR).join(SNAPSHOT)).ok()?.modified().ok()
 }
 
 fn issues_url(source: &str) -> Option<String> {
@@ -412,21 +455,6 @@ fn issues_url(source: &str) -> Option<String> {
     Some(url.into())
 }
 
-fn catalogue(suite: &Path) -> Catalogue<Curl> {
-    Catalogue::new(Curl::default(), DEFAULT_INDEX, craft_ext_core::signature::trusted_keys(), suite.join("catalogue"))
-}
-
-fn cached_revocations(suite: &Path) -> Option<Vec<Revocation>> {
-    match catalogue(suite).cached() {
-        Ok(index) => Some(index.revocations),
-        Err(MarketError::NoCache) => None,
-        Err(error) => {
-            log::warn!("the cached plug-in catalogue was not read: {error}");
-            None
-        }
-    }
-}
-
 impl Plugins {
     pub fn open(root: &Path, safe_mode: bool) -> Plugins {
         let mut registry = Registry::open(root);
@@ -442,6 +470,7 @@ impl Plugins {
             registry,
             suite,
             generation: 0,
+            seen: BTreeMap::new(),
             catalogue_modified: None,
             revocations: Vec::new(),
             last_poll: Instant::now(),
@@ -454,6 +483,11 @@ impl Plugins {
         };
         inner.reload();
         Plugins { inner: Mutex::new(inner) }
+    }
+
+    fn presets_root(&self) -> PathBuf {
+        let inner = self.lock();
+        inner.suite.clone().unwrap_or_else(|| inner.registry.root().to_path_buf())
     }
 
     pub fn store_generation(&self) -> u64 {
@@ -552,9 +586,9 @@ impl Plugins {
         inner.stop(&incoming.id);
         inner.forget_session_copy(&incoming.id);
         let (snapshot, digest) = Bundle::read(&bundle.dir).map_err(|e| e.to_string())?;
-        if snapshot.manifest.is_data_only() {
-            approve_snapshot(&mut inner.registry, &snapshot, &digest)?;
-        }
+        let approved = if snapshot.manifest.is_data_only() { approve_snapshot(&mut inner.registry, &snapshot, &digest) } else { Ok(()) };
+        inner.changed_here();
+        approved?;
         inner.start(&snapshot);
         Ok(inner.info(&snapshot, false))
     }
@@ -564,6 +598,7 @@ impl Plugins {
         inner.refresh_revocations();
         let bundle = inner.find(id)?;
         inner.registry.approve(&bundle).map_err(|e| e.to_string())?;
+        inner.changed_here();
         inner.start(&bundle);
         Ok(inner.info(&bundle, false))
     }
@@ -576,6 +611,7 @@ impl Plugins {
             return Err(format!("allow plugin `{id}` before choosing how it runs"));
         }
         inner.registry.set_unsandboxed(&bundle.manifest, !sandboxed).map_err(|e| e.to_string())?;
+        inner.changed_here();
         inner.start(&bundle);
         Ok(inner.info(&bundle, false))
     }
@@ -585,7 +621,9 @@ impl Plugins {
         inner.stop(id);
         let had_session_copy = inner.forget_session_copy(id);
         inner.refused.insert(id.to_string(), Refusal::Disabled);
-        match inner.registry.disable(id) {
+        let result = inner.registry.disable(id);
+        inner.changed_here();
+        match result {
             Err(BundleError::NotInstalled(_)) if had_session_copy => Ok(()),
             other => other.map_err(|e| e.to_string()),
         }
@@ -595,7 +633,9 @@ impl Plugins {
         let mut inner = self.lock();
         inner.stop(id);
         let had_session_copy = inner.forget_session_copy(id);
-        match inner.registry.uninstall(id) {
+        let result = inner.registry.uninstall(id);
+        inner.changed_here();
+        match result {
             Err(BundleError::NotInstalled(_)) if had_session_copy => Ok(()),
             other => other.map_err(|e| e.to_string()),
         }
@@ -640,7 +680,7 @@ impl Plugins {
             .or_else(|| {
                 let suite = inner.suite.as_ref()?;
                 let id = craft_ext_core::id::ExtensionId::new(id).ok()?;
-                let index = catalogue(suite).cached().ok()?;
+                let index = craft_ext_market::suite_catalogue(suite).cached().ok()?;
                 issues_url(&index.package(&id)?.repo)
             })
             .unwrap_or_else(|| DEFAULT_ISSUES.into())
@@ -729,6 +769,42 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+fn copy_data(from: &Path, to: &Path) -> std::io::Result<()> {
+    if to.exists() || !from.is_dir() {
+        return Ok(());
+    }
+    let name = to.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let staging = to.with_file_name(format!(".{name}.migrating"));
+    if staging.exists() {
+        fs::remove_dir_all(&staging)?;
+    }
+    copy_tree(from, &staging)?;
+    fs::rename(&staging, to)
+}
+
+fn migrate_bundle(source: &Registry, target: &mut Registry, bundle: &Bundle) -> Result<Option<(String, Consent)>, Box<dyn std::error::Error>> {
+    let id = &bundle.manifest.id;
+    let dest = target.root().join(id);
+    let digest = bundle.digest()?;
+    let migrated = if dest.exists() {
+        Bundle::open(&dest)?
+    } else {
+        match target.install(&bundle.dir) {
+            Ok(installed) => installed,
+            Err(BundleError::Refused(_, Refusal::Revoked(_))) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        }
+    };
+    if migrated.digest()? != digest {
+        log::warn!("the shared store already has a different plug-in `{id}`");
+        return Ok(None);
+    }
+    if let Err(error) = copy_data(&source.data_dir(id), &target.data_dir(id)) {
+        log::warn!("the data of plug-in `{id}` was not moved into the shared store: {error}");
+    }
+    Ok(source.consent(id).map(|consent| (id.clone(), consent.clone())))
+}
+
 fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let backup = legacy.with_extension("migrated");
     if !legacy.is_dir() || backup.exists() {
@@ -752,34 +828,16 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
         Err(error) => return Err(error.into()),
     };
-    if let Some(revocations) = cached_revocations(suite) {
-        target.set_revocations(revocations);
-    }
+    target.set_revocations(craft_ext_market::cached_revocations(suite));
     let source = Registry::open(legacy);
     for bundle in source.bundles() {
-        let bundle = bundle?;
-        let id = &bundle.manifest.id;
-        let dest = target.root().join(id);
-        let digest = bundle.digest()?;
-        let migrated = if dest.exists() {
-            Bundle::open(&dest)?
-        } else {
-            match target.install(&bundle.dir) {
-                Ok(installed) => installed,
-                Err(BundleError::Refused(_, Refusal::Revoked(_))) => continue,
-                Err(error) => return Err(error.into()),
+        let moved = bundle.map_err(Into::into).and_then(|bundle| migrate_bundle(&source, &mut target, &bundle));
+        match moved {
+            Ok(Some((id, consent))) => {
+                consents.entry(id).or_insert(consent);
             }
-        };
-        if migrated.digest()? != digest {
-            log::warn!("the shared store already has a different plug-in `{id}`");
-            continue;
-        }
-        if let Some(consent) = source.consent(id) {
-            consents.entry(id.clone()).or_insert_with(|| consent.clone());
-        }
-        let data = target.data_dir(id);
-        if !data.exists() {
-            copy_tree(&source.data_dir(id), &data)?;
+            Ok(None) => {}
+            Err(error) => log::warn!("a plug-in in the old store was not moved into the shared store: {error}"),
         }
     }
     let mut staging = tempfile::NamedTempFile::new_in(&state_dir)?;
@@ -797,15 +855,28 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+fn resolve_suite_root(private: Option<&Path>, extensions_override: bool) -> Result<PathBuf, String> {
+    match private.filter(|_| !extensions_override) {
+        Some(root) => Ok(root.to_path_buf()),
+        None => location::default_root().map_err(|error| error.to_string()),
+    }
+}
+
+/// The suite folder the running plug-ins come from, when they come from a shared suite store
+/// rather than a private test store.
+pub fn suite_root() -> Option<PathBuf> {
+    plugins()?.lock().suite.clone()
+}
+
 enum Store<'a> {
-    Shared { legacy: Option<PathBuf> },
+    Shared { legacy: Option<PathBuf>, private: Option<PathBuf> },
     Isolated(&'a Path),
 }
 
 fn open_store(store: Store, safe_mode: bool) -> Plugins {
     match store {
         Store::Isolated(root) => Plugins::open(root, safe_mode),
-        Store::Shared { legacy } => match location::default_root() {
+        Store::Shared { legacy, private } => match resolve_suite_root(private.as_deref(), std::env::var_os(location::OVERRIDE_VAR).is_some()) {
             Ok(suite) => {
                 if let Some(legacy) = legacy
                     && let Err(error) = migrate(&legacy, &suite)
@@ -836,15 +907,17 @@ fn install_store(session: &mut Session, store: Store) -> &'static Plugins {
     });
     session.plugin_commands = Some(command);
     session.plugin_hooks = Some(crate::hooks::ask);
-    session.user_presets = crate::presets::SuitePresets::open();
+    session.user_presets = Some(crate::presets::SuitePresets::open(&plugins.presets_root()));
     session.set_plugin_items(plugins.items());
     plugins
 }
 
 /// Plugins from the suite store shared with the launcher and the other Craft apps, moving the old
-/// `<config_dir>/Plugins` folder into it once.
-pub fn install_shared(session: &mut Session, config_dir: Option<&Path>) -> &'static Plugins {
-    install_store(session, Store::Shared { legacy: config_dir.map(|dir| dir.join(PLUGINS_DIR)) })
+/// `<config_dir>/Plugins` folder into it once. `private_suite` replaces the shared suite for a
+/// private data folder (tests, agents, a Nightly profile), unless `CRAFT_EXT_DIR` names one.
+pub fn install_shared(session: &mut Session, config_dir: Option<&Path>, private_suite: Option<&Path>) -> &'static Plugins {
+    let legacy = config_dir.map(|dir| dir.join(PLUGINS_DIR));
+    install_store(session, Store::Shared { legacy, private: private_suite.map(Path::to_path_buf) })
 }
 
 /// Plugins from a private store under `config_dir` (or the temporary folder), for tests and
@@ -1067,6 +1140,62 @@ mod tests {
     }
 
     #[test]
+    fn one_unreadable_old_plugin_does_not_stop_the_others_from_moving() {
+        let root = tempfile::tempdir().unwrap();
+        let (legacy, suite) = (root.path().join("Plugins"), root.path().join("suite"));
+        let mut old = Registry::open(&legacy);
+        let installed = old.install(&data_bundle(root.path(), "test.good")).unwrap();
+        old.approve(&installed).unwrap();
+        std::fs::create_dir_all(old.data_dir("test.good")).unwrap();
+        std::fs::write(old.data_dir("test.good").join("prefs.json"), "{}").unwrap();
+        let broken = legacy.join("test.broken");
+        std::fs::create_dir_all(&broken).unwrap();
+        std::fs::write(broken.join("plugin.json"), "not json").unwrap();
+        let interrupted = Registry::for_app(&suite, APP_ID).data_dir("test.good").with_file_name(".test.good.migrating");
+        std::fs::create_dir_all(&interrupted).unwrap();
+        std::fs::write(interrupted.join("half.json"), "{").unwrap();
+
+        migrate(&legacy, &suite).unwrap();
+
+        let moved = Registry::for_app(&suite, APP_ID);
+        assert!(moved.consent("test.good").is_some_and(|consent| consent.enabled));
+        assert!(moved.data_dir("test.good").join("prefs.json").is_file());
+        assert!(!moved.data_dir("test.good").join("half.json").exists());
+        assert!(!interrupted.exists());
+        assert!(!legacy.exists() && legacy.with_extension("migrated").join("test.broken").is_dir());
+    }
+
+    #[test]
+    fn a_store_change_restarts_only_the_plugins_it_touched() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let mut registry = Registry::for_app(&suite, APP_ID);
+        for id in ["test.kept", "test.turned"] {
+            let installed = registry.install(&data_bundle(root.path(), id)).unwrap();
+            registry.approve(&installed).unwrap();
+        }
+        let plugins = Plugins::with_registry(registry, Some(suite.clone()), false);
+
+        plugins.disable("test.kept").unwrap();
+        plugins.approve("test.kept").unwrap();
+        {
+            let mut inner = plugins.lock();
+            assert_eq!(inner.generation, inner.registry.generation());
+            assert!(inner.changed_elsewhere().is_empty());
+        }
+
+        Registry::for_app(&suite, APP_ID).disable("test.turned").unwrap();
+        let mut inner = plugins.lock();
+        assert_ne!(inner.generation, inner.registry.generation());
+        let changed = inner.changed_elsewhere();
+        assert_eq!(changed, vec!["test.turned".to_string()]);
+        inner.restart_changed(&changed);
+        assert!(inner.data.contains("test.kept"));
+        assert!(!inner.data.contains("test.turned"));
+        assert_eq!(inner.refused.get("test.turned"), Some(&Refusal::Disabled));
+    }
+
+    #[test]
     fn a_plugin_the_catalogue_disables_is_refused_at_load_without_a_network() {
         let root = tempfile::tempdir().unwrap();
         let suite = root.path().join("suite");
@@ -1081,6 +1210,13 @@ mod tests {
         inner.reload_bundles();
         assert_eq!(inner.refused.get("test.revoked"), Some(&Refusal::Revoked(Severity::Disable)));
         assert!(!inner.data.contains("test.revoked"));
+    }
+
+    #[test]
+    fn a_private_suite_is_used_unless_the_extensions_folder_is_set() {
+        let private = Path::new("/tmp/ec-config/Extensions");
+        assert_eq!(resolve_suite_root(Some(private), false).as_deref(), Ok(private));
+        assert_eq!(resolve_suite_root(Some(private), true), resolve_suite_root(None, false));
     }
 
     #[test]

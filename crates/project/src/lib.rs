@@ -90,6 +90,9 @@ pub struct PluginUse {
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
+    /// The plug-in's display name when the project was saved, shown while it is missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use craft_ext_manager::ui::{self, Theme};
-use craft_ext_manager::{Action, Effect, Job, Model, Outcome, Scope, StoreBackend, Tab, Word};
+use craft_ext_manager::{Action, Effect, Job, Model, Outcome, Scope, StoreBackend, Word};
 use egui::RichText;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -30,26 +30,6 @@ pub(crate) enum State {
     Failed,
 }
 
-#[derive(Deserialize, Clone)]
-struct ListedTask {
-    plugin: String,
-    id: u64,
-    task: String,
-    status: TaskStatus,
-    progress: f64,
-    message: String,
-    error: Option<String>,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum TaskStatus {
-    Running,
-    Done,
-    Failed,
-    Cancelled,
-}
-
 struct Manager {
     model: Model,
     backend: Arc<Mutex<StoreBackend>>,
@@ -60,7 +40,8 @@ struct Manager {
 
 impl Manager {
     fn start() -> Result<Manager, String> {
-        let backend = StoreBackend::open_default(vec![effectcraft_plugin::APP_ID.to_string()])?;
+        let suite = effectcraft_plugin::suite_root().ok_or("plug-ins are running from a private store, so the shared plug-in store is not available")?;
+        let backend = StoreBackend::open(suite, vec![effectcraft_plugin::APP_ID.to_string()])?;
         let scope = Scope::App { id: effectcraft_plugin::APP_ID.to_string(), version: effectcraft_plugin::APP_VERSION.to_string() };
         let (jobs, done) = channel();
         Ok(Manager { model: Model::new(scope), backend: Arc::new(Mutex::new(backend)), jobs, done, generation: store_generation() })
@@ -110,9 +91,9 @@ impl PluginStore {
         self.open = true;
     }
 
-    pub(crate) fn find(&mut self, query: &str) {
+    pub(crate) fn find(&mut self, id: &str) {
         self.open = true;
-        self.queued.extend([Action::SetTab(Tab::Discover), Action::SetQuery(query.to_string())]);
+        self.queued.push(Action::Find(id.to_string()));
     }
 
     pub(crate) fn install_file(&mut self, path: PathBuf) {
@@ -222,33 +203,33 @@ fn carry_out(app: &mut EffectcraftApp, ctx: &egui::Context, effect: Effect) {
 }
 
 fn tasks(app: &mut EffectcraftApp, ui: &mut egui::Ui, commands: &mut Vec<(&'static str, Value)>) {
-    let running: Vec<ListedTask> = app.session.execute("plugin.tasks", json!({})).ok().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+    let running = effectcraft_plugin::plugins().map(effectcraft_plugin::Plugins::tasks).unwrap_or_default();
     if running.is_empty() {
         return;
     }
     let t = app.tokens;
     ui.label(RichText::new(tr("Tasks")).font(Tokens::semibold(14.0)).color(t.text));
-    for task in &running {
+    for effectcraft_plugin::PluginTask { plugin, state: task } in &running {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{} · {}", task.plugin, task.task)).color(t.text));
+            ui.label(RichText::new(format!("{plugin} · {}", task.task)).color(t.text));
             match task.status {
-                TaskStatus::Running => {
+                effectcraft_plugin::TaskStatus::Running => {
                     let bar = egui::ProgressBar::new(task.progress as f32).desired_width(180.0).text(task.message.as_str()).show_percentage();
                     let response = ui.add(bar);
-                    app.auto.add_response(&format!("plugins.{}.task.{}.progress", task.plugin, task.id), &response, "Task progress");
+                    app.auto.add_response(&format!("plugins.{}.task.{}.progress", plugin, task.id), &response, "Task progress");
                     let cancel = ui.button(tr("Cancel"));
-                    app.auto.add_response(&format!("plugins.{}.task.{}.cancel", task.plugin, task.id), &cancel, "Cancel");
+                    app.auto.add_response(&format!("plugins.{}.task.{}.cancel", plugin, task.id), &cancel, "Cancel");
                     if cancel.clicked() {
-                        commands.push(("plugin.cancelTask", json!({"plugin": task.plugin, "id": task.id})));
+                        commands.push(("plugin.cancelTask", json!({"plugin": plugin, "id": task.id})));
                     }
                 }
-                TaskStatus::Done => {
+                effectcraft_plugin::TaskStatus::Done => {
                     ui.label(RichText::new(tr("Finished")).color(t.text_dim));
                 }
-                TaskStatus::Cancelled => {
+                effectcraft_plugin::TaskStatus::Cancelled => {
                     ui.label(RichText::new(tr("Cancelled")).color(t.text_dim));
                 }
-                TaskStatus::Failed => {
+                effectcraft_plugin::TaskStatus::Failed => {
                     ui.label(RichText::new(tr_args("Failed: {}", &[&task.error.clone().unwrap_or_default()])).color(t.danger));
                 }
             }
@@ -285,7 +266,7 @@ mod tests {
         let mut app = EffectcraftApp::new(effectcraft_host::session());
         crate::menus::invoke(&mut app, &egui::Context::default(), "plugin.find", json!({"id": "acme.glow"})).unwrap();
         assert!(app.plugin_store.open);
-        assert_eq!(app.plugin_store.queued, vec![Action::SetTab(Tab::Discover), Action::SetQuery("acme.glow".into())]);
+        assert_eq!(app.plugin_store.queued, vec![Action::Find("acme.glow".into())]);
     }
 
     #[test]

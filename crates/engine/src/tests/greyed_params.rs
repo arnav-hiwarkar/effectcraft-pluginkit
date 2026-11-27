@@ -12,6 +12,7 @@ const EFFECT: &str = "test.greyed.manual";
 fn register() {
     dynamic::register(DynamicEffect {
         owner: OWNER.into(),
+        owner_name: "Test Plug-in".into(),
         version: "1.0.0".into(),
         id: EFFECT.into(),
         name: "Greyed Manual".into(),

@@ -211,6 +211,7 @@ pub fn layered_exr(s: &Session, cid: ItemId, t: Tick, scale: f64) -> Result<(Vec
 fn frame_args(s: &Session, p: &Value, cmd: &str, ext: &str) -> Result<(String, ItemId, Tick, f64)> {
     let path = str_p(p, "path").ok_or_else(|| bad(cmd, format!("missing `path` (.{ext})")))?.to_string();
     s.refuse_export(&path)?;
+    s.plugins_before_export([path.as_str()]).map_err(EngineError::Other)?;
     let cid = comp_id(s, p)?;
     let t = f_p(p, "time").map(Tick::from_seconds_f64).unwrap_or(s.time());
     let scale = f_p(p, "scale").unwrap_or(1.0).clamp(0.01, 4.0);

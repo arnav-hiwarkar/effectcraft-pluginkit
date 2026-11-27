@@ -186,6 +186,7 @@ fn export_timeline(s: &mut Session, p: &Value) -> Result<Value> {
     let stem = fp.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Timeline".into());
     let relative_to = Some(dir.to_string_lossy().to_string()).filter(|d| !d.is_empty());
     let opts = ExportOptions { format, prerender: prerender_mode, precomps, relative_to };
+    s.plugins_before_export([path.as_str()]).map_err(EngineError::Other)?;
     let project = s.project.clone();
     let cx = PrerenderCx {
         protected: crate::output_guard::Protected::of(s),

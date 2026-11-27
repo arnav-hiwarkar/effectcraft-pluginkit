@@ -3,15 +3,29 @@ use serde_json::Value;
 use super::{CommandSpec, always, frontend};
 use crate::{EngineError, Result, Session, cmd, query};
 
-const USER_ONLY: [&str; 8] =
-    ["plugin.install", "plugin.approve", "plugin.setSandbox", "plugin.disable", "plugin.uninstall", "plugin.load", "plugin.reload", "plugin.restart"];
+const USER_ONLY: [&str; 9] = [
+    "plugin.install",
+    "plugin.installFromFile",
+    "plugin.approve",
+    "plugin.setSandbox",
+    "plugin.disable",
+    "plugin.uninstall",
+    "plugin.load",
+    "plugin.reload",
+    "plugin.restart",
+];
 
-fn forward(s: &mut Session, id: &str, params: &Value) -> Result<Value> {
+fn refuse_scripts(s: &Session, id: &str) -> Result<()> {
     if s.running_for_script() && USER_ONLY.contains(&id) {
         return Err(EngineError::Other(format!(
             "Scripts can't run `{id}`: installing, approving, loading and removing plug-ins is the user's act. Do it yourself in Plugins ▸ Manage plugins."
         )));
     }
+    Ok(())
+}
+
+fn forward(s: &mut Session, id: &str, params: &Value) -> Result<Value> {
+    refuse_scripts(s, id)?;
     let run = s.plugin_commands.ok_or_else(|| EngineError::Other("plug-ins are not available in this session".into()))?;
     run(s, id, params)
 }
@@ -24,7 +38,10 @@ macro_rules! plugin {
 
 macro_rules! window {
     ($id:literal, $label:literal, $params:literal) => {
-        cmd!($id, $label, [], None, $params, always, |s, p| frontend(s, $id, p))
+        cmd!($id, $label, [], None, $params, always, |s, p| {
+            refuse_scripts(s, $id)?;
+            frontend(s, $id, p)
+        })
     };
 }
 
