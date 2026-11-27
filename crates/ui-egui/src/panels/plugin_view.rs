@@ -309,7 +309,7 @@ pub fn panel(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pane
     for widget in &mut app.auto.elements[first_widget..] {
         widget.panel = Some(kind);
     }
-    let keys = if app.ui.focused == kind { typed(ui) } else { String::new() };
+    let keys = if app.ui.focused == kind && !app.floats_blocked(ui.ctx()) { typed(ui) } else { String::new() };
     hold(app, ui, &owner, rect);
     submit(app, ui, &owner, events, &keys);
 }

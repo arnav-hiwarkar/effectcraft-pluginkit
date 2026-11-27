@@ -351,7 +351,7 @@ fn panel_owns_enter(kind: PanelKind) -> bool {
 const KEPT_BY_THE_APP: [&str; 5] = ["file.save", "file.saveAs", "edit.undo", "edit.redo", "app.quit"];
 
 pub(crate) fn plugin_panel_keys(app: &mut EffectcraftApp, ctx: &egui::Context) {
-    if ctx.text_edit_focused() || crate::widgets::any_menu_open(ctx) || app.dialog.is_some() || crate::panels::plugin_view::form_open(app) {
+    if ctx.text_edit_focused() || crate::widgets::any_menu_open(ctx) || app.floats_blocked(ctx) {
         return;
     }
     let Some((owner, chords)) = crate::panels::plugin_view::key_target(app, ctx) else { return };
