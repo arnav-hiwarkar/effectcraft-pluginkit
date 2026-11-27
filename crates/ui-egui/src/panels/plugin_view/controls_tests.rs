@@ -99,7 +99,7 @@ fn gradient_harness(gradient: craft_plugin::Gradient) -> Harness<'static, Edited
             let mut auto = crate::automation::Registry::default();
             let mut images = super::Images::default();
             let tree = vec![Widget::Gradient { id: 4, text: "Ramp".into(), value: gradient.clone() }];
-            let source = super::Source { plugin: "test", images: &mut images, session: None };
+            let source = super::Source { plugin: "test", images: &mut images, session: None, shown: None };
             for event in super::draw(ui, &tree, &tokens, &mut auto, "plugin.test.panel", source) {
                 if let UiEventKind::Gradient(edited) = event.kind {
                     *gradient = edited;

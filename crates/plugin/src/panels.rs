@@ -559,6 +559,13 @@ pub struct Shown<'a> {
     pub plugin: &'a str,
     pub widgets: &'a [Widget],
     pub error: Option<&'a str>,
+    retained: &'a Retained,
+}
+
+impl Shown<'_> {
+    pub fn unanswered(&self, id: u64) -> bool {
+        self.retained.unanswered(id)
+    }
 }
 
 struct Inbox(Sender<Done>, Receiver<Done>);
@@ -736,7 +743,7 @@ impl Panels {
         self.schedule(key);
         let slot = self.slots.get_mut(key).ok_or("the panel closed")?;
         slot.forget_ended_gestures();
-        Ok(Shown { plugin: &slot.loaded.bundle.manifest.id, widgets: slot.retained.widgets(), error: slot.retained.error() })
+        Ok(Shown { plugin: &slot.loaded.bundle.manifest.id, widgets: slot.retained.widgets(), error: slot.retained.error(), retained: &slot.retained })
     }
 
     pub fn close(&mut self, session: &Session, surface: Surface) {

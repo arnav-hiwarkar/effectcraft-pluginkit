@@ -1,5 +1,5 @@
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::{Value, json};
 
 use super::STATUS_H;
@@ -96,6 +96,43 @@ fn new_notes_opens_numbered_instances_beside_the_timeline_that_keep_their_own_te
     open(&mut harness, json!({"plugin": PROBE, "panel": "notes", "instance": "1"}));
     until(&mut harness, "note 1 raised with its own text", |h| shows(h, "note 1: milk"));
     assert!(harness.state().ui.dock.is_open(two));
+}
+
+struct Held(std::path::PathBuf);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn note_field(harness: &Harness<'_, EffectcraftApp>, instance: &str) -> Option<String> {
+    let scope = element(harness, &format!("plugin.{PROBE}.notes#{instance}"));
+    harness
+        .query_all(egui_kittest::kittest::by().role(egui::accesskit::Role::TextInput))
+        .find(|node| scope.contains(node.rect().center()))
+        .and_then(|node| node.accesskit_node().value())
+}
+
+#[test]
+fn a_note_typed_while_the_plugin_holds_its_reply_keeps_the_typed_text_until_the_plugin_answers() {
+    let _notes = NOTES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut harness = harness(probe_session());
+    until(&mut harness, "the probe's notes panel registering", |h| {
+        h.state().session.plugin_items.iter().any(|item| item.plugin == PROBE && item.id == "notes")
+    });
+    open(&mut harness, json!({"plugin": PROBE, "panel": "notes", "instance": "held"}));
+    fresh_note(&mut harness, "held");
+    let held = Held(crate::panels::plugin_tools::tests::load_probe().join("hold-notes"));
+    std::fs::write(&held.0, "").unwrap();
+    type_note(&mut harness, "held", "tea");
+    let owner = effectcraft_plugin::Owner::panel(PROBE, "notes", Some("held"));
+    until(&mut harness, "the note's call held by the plugin", |h| h.state().plugin_ui.panels.busy(&owner));
+    harness.run_steps(4);
+    let (field, label) = (note_field(&harness, "held"), shows(&harness, "note held: "));
+    drop(held);
+    assert_eq!((field.as_deref(), label), (Some("tea"), true), "while the reply is held the field keeps what was typed over the plugin's empty text");
+    until(&mut harness, "the plugin's answer", |h| shows(h, "note held: tea") && note_field(h, "held").as_deref() == Some("tea"));
 }
 
 fn note_shown(harness: &mut Harness<'_, EffectcraftApp>, instance: &str) {

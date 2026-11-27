@@ -216,6 +216,7 @@ pub(crate) struct Source<'a> {
     pub plugin: &'a str,
     pub images: &'a mut Images,
     pub session: Option<&'a Session>,
+    pub shown: Option<&'a effectcraft_plugin::Shown<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -359,7 +360,7 @@ pub(crate) fn panel_menu(app: &mut EffectcraftApp, ui: &mut egui::Ui, kind: Pane
     let items = app.plugin_ui.panels.menu(&owner).to_vec();
     let help = effectcraft_plugin::panel_spec(&item.plugin, &item.id).and_then(|spec| spec.help);
     let tokens = app.tokens;
-    let source = Source { plugin: &item.plugin, images: &mut app.plugin_ui.images, session: None };
+    let source = Source { plugin: &item.plugin, images: &mut app.plugin_ui.images, session: None, shown: None };
     let mut host = AppHost { source, auto: &mut app.auto, tokens };
     let events = craft_plugin_ui::draw_panel_menu(ui, &items, &theme(&tokens), &format!("{scope}.menu"), &mut host);
     let mut picked = !events.is_empty();
@@ -389,7 +390,7 @@ fn shown(app: &mut EffectcraftApp, body: &mut egui::Ui, scope: &str, surface: Su
             if let Some(error) = shown.error {
                 failed(body, error);
             }
-            let source = Source { plugin: shown.plugin, images: &mut app.plugin_ui.images, session: Some(&app.session) };
+            let source = Source { plugin: shown.plugin, images: &mut app.plugin_ui.images, session: Some(&app.session), shown: Some(&shown) };
             match scroll {
                 Some(key) => {
                     let area = egui::ScrollArea::both().id_salt(("plugin-panel", key)).auto_shrink([false, false]);
@@ -506,7 +507,7 @@ pub(crate) fn paint_icon(app: &mut EffectcraftApp, painter: &egui::Painter, rect
     let Some(item) = running_panel(app, kind) else { return false };
     let Some(icon) = effectcraft_plugin::panel_spec(&item.plugin, &item.id).and_then(|spec| spec.icon) else { return false };
     let (plugin, title) = (item.plugin.clone(), item.title.clone());
-    let source = Source { plugin: &plugin, images: &mut app.plugin_ui.images, session: Some(&app.session) };
+    let source = Source { plugin: &plugin, images: &mut app.plugin_ui.images, session: Some(&app.session), shown: None };
     let mut host = AppHost { source, auto: &mut app.auto, tokens: app.tokens };
     craft_plugin_ui::paint_icon(&mut host, painter, rect, &icon, &title, color);
     true
@@ -639,7 +640,7 @@ pub(crate) fn form(app: &mut EffectcraftApp, ctx: &egui::Context) {
     let answered = effectcraft_plugin::asked_form(&app.session, |asked| {
         let mut answer = None;
         super::dialogs::modal(ctx, &asked.form.title, egui::vec2(420.0, 160.0), &tokens, |ui| {
-            let mut host = AppHost { source: Source { plugin: &asked.plugin, images, session: None }, auto, tokens };
+            let mut host = AppHost { source: Source { plugin: &asked.plugin, images, session: None, shown: None }, auto, tokens };
             answer = craft_plugin_ui::draw_form(ui, &asked.form, &mut asked.values, "plugin.form", &mut host);
         });
         answer.map(|answer| (answer == craft_plugin_ui::Answer::Ok).then(|| asked.values.clone()))
@@ -652,7 +653,7 @@ pub(crate) fn form(app: &mut EffectcraftApp, ctx: &egui::Context) {
 }
 
 pub(crate) fn param_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, param: &craft_plugin::Param, enabled: bool, scope: &str) -> bool {
-    let source = Source { plugin: "", images: &mut app.plugin_ui.images, session: None };
+    let source = Source { plugin: "", images: &mut app.plugin_ui.images, session: None, shown: None };
     craft_plugin_ui::param_button(ui, param, enabled, scope, &mut AppHost { source, auto: &mut app.auto, tokens: app.tokens })
 }
 
@@ -697,6 +698,10 @@ impl craft_plugin_ui::Host for AppHost<'_> {
 
     fn register(&mut self, id: &str, response: &egui::Response, label: &str) {
         self.auto.add_response(id, response, label);
+    }
+
+    fn unanswered(&self, id: u64) -> bool {
+        self.source.shown.is_some_and(|shown| shown.unanswered(id))
     }
 
     fn texture(&mut self, ctx: &egui::Context, key: &str) -> Option<egui::TextureId> {
@@ -863,7 +868,7 @@ mod tests {
             move |ui, events: &mut Vec<UiEvent>| {
                 let mut auto = Registry::default();
                 let mut images = Images::default();
-                events.extend(draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin, images: &mut images, session: None }));
+                events.extend(draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin, images: &mut images, session: None, shown: None }));
             },
             Vec::new(),
         )
@@ -975,7 +980,7 @@ mod tests {
             move |ui, labels: &mut Vec<String>| {
                 let mut auto = Registry::default();
                 let mut images = Images::default();
-                draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin: "test", images: &mut images, session: None });
+                draw(ui, &widgets, &tokens, &mut auto, "plugin.test.panel", Source { plugin: "test", images: &mut images, session: None, shown: None });
                 *labels = (0..3)
                     .filter_map(|n| auto.find(&format!("plugin.test.panel.label.{n}")))
                     .map(|element| format!("{} {}", element.id, element.label))

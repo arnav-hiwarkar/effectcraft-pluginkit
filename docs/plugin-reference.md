@@ -693,14 +693,37 @@ a drop reaches one call, so two clicks on one button during a slow call give two
 `button` returns `true`. Pointer motion, slider, number, text and colour events made during a call
 coalesce into the latest one, but only within one drag: values of a second drag made during the same call
 stay apart, so each drag is its own undo step. Two menu picks made during a call reach two calls. A list
-row action made before a reply that changed the list (a refresh that inserted a row) follows its item to
-its new row, and is dropped when that item is gone. Presses, releases and keys stay in order. Pending
+row action made before a reply that changed the list follows its row (see row keys below). Presses,
+releases and keys stay in order. Pending
 `edit` events join their layer lists. A reply, a host call or an edit made for a project that has since
 closed, or by a load of the plugin that was reloaded or turned off, is dropped. When another project opens,
 a panel's tree and its queued input are dropped and the panel is drawn again for the new project before it
-takes input; its subscriptions, timers and the app events for the new project are kept. A text field or
-area keeps what was typed while the plugin has not answered, so letters typed during a slow call all
-arrive; a value the plugin sets replaces it.
+takes input; its subscriptions, timers and the app events for the new project are kept.
+
+### Replies, row keys and newer plugins
+
+While a widget's event waits for a call, or rides the call now running, the app shows the value the user
+gave it: the text typed, the value of a slider or number, a colour, a checkbox, toggle, radio, popup or tab
+choice, a curve, a gradient, and a list's selection and sort. Once a call that carried the widget's latest
+event has answered, the app shows the plugin's value again, whatever it is. So a reply to the first
+letters of a word never undoes the later ones, a slider dragged during a slow call does not jump back, and
+a sort or value the plugin refused goes back to the plugin's. A painter asks `Host::unanswered(id)`
+(craft-libs `craft_plugin_ui`); an app answers it from the panel's `Retained::unanswered`.
+
+`Item::new(&take.name).key(&take.id)` names a row by something that stays with it, such as a take or file
+id. A row action (`Activate`, `Rename`, `Toggle`, `Move`, `Select`) the user made before a reply that changed
+the list goes to the row that has its key now, even when that row's cells changed or another row looks
+the same, and is dropped when no row has the key. Rows without keys are matched by equal contents: the
+action is dropped when its item is gone or now appears twice. Keys are not sent back; list events keep row
+numbers. The app keeps the rows in view of every list the last reply drew, however many there are; it
+forgets the view of a list that is no longer drawn once it holds `MAX_VIEWS` (64) views.
+
+A plugin built against a newer SDK loads in this app. A widget, canvas shape or `Topic` the app does not
+know reads as `Unknown`: an unknown widget shows "This part needs a newer version of the app" in its place,
+an unknown shape draws nothing and an unknown topic is never delivered. An unknown panel place, panel
+size, column width, text style, gap or split axis reads as its default (`Side`, `Medium`, `Auto`, `Body`,
+`Medium`, `Horizontal`), and an unknown command context as `Context::Unknown`, which puts the command in
+no context menu.
 
 ### Opening and closing panels
 

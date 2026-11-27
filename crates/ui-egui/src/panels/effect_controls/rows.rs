@@ -748,7 +748,12 @@ fn custom_control(
                 );
             }
             let tokens = app.tokens;
-            let source = crate::panels::plugin_view::Source { plugin: shown.plugin, images: &mut app.plugin_ui.images, session: Some(&app.session) };
+            let source = crate::panels::plugin_view::Source {
+                plugin: shown.plugin,
+                images: &mut app.plugin_ui.images,
+                session: Some(&app.session),
+                shown: Some(&shown),
+            };
             crate::panels::plugin_view::draw(&mut body, shown.widgets, &tokens, &mut app.auto, &scope, source)
         }
         Err(error) => {

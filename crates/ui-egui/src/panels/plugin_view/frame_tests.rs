@@ -102,7 +102,7 @@ fn a_frame_whose_request_changes_on_every_draw_keeps_one_preview_with_one_render
         move |ui, (images, session, step): &mut (super::Images, effectcraft_engine::Session, u32)| {
             let mut auto = crate::automation::Registry::default();
             let tree = vec![Widget::Frame { id: 7, request: request(*step), size: [80.0, 45.0] }];
-            let source = super::Source { plugin: PROBE, images, session: Some(session) };
+            let source = super::Source { plugin: PROBE, images, session: Some(session), shown: None };
             super::draw(ui, &tree, &tokens, &mut auto, "plugin.test.panel", source);
         },
         state,
@@ -136,7 +136,7 @@ fn previews(session: effectcraft_engine::Session, widgets: u64, size: [f32; 2], 
             let tree: Vec<Widget> = (1..=widgets)
                 .map(|id| Widget::Frame { id, request: FrameRequest { time: f64::from(*step) / 30.0 + id as f64 / 100.0, scale, ..Default::default() }, size })
                 .collect();
-            let source = super::Source { plugin: PROBE, images, session: Some(session) };
+            let source = super::Source { plugin: PROBE, images, session: Some(session), shown: None };
             super::draw(ui, &tree, &tokens, &mut auto, "plugin.test.panel", source);
         },
         (super::Images::default(), session, 0),

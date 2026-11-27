@@ -20,16 +20,12 @@ measured speed before and after.
 
 ## From the plugin UI reviews (ui-fix), not fixed
 
-- **A list row action whose item appears twice after a refresh is dropped.** `Retained` follows a queued row action to its item's new row by comparing the items, so two equal items in the new window make it give up (craft-libs `crates/plugin-host/src/panel.rs`, `follow_rows`); an additive `Item.key` would make the match exact.
-- **A sort arrow the plugin never accepted stays on its heading** until `ListEdit.sorted` changes (`crates/plugin-ui/src/list.rs`, `cursor.sent`).
-- **A reply that answers an earlier keystroke shows that text for one call.** While letters typed during a slow call wait, a reply to the first of them replaces the field's local text until the next reply (`text_field` in craft-libs `crates/plugin-ui/src/controls.rs`); the plugin ends with every letter.
 - **A plugin can add a File menu entry that reads like a built-in one** (`.menu("File")` shows only its title; `crates/engine/src/menus.rs`).
 - **The neutral painter uses pixel and font literals** (12 / 10.5 / 13 pt text, 4 pt paddings in `crates/plugin-ui`; status bar 22 pt, option bar 26 pt, row widths 160/280/440 in `crates/ui-egui/src/panels/plugin_view.rs`). `Theme` has colours only; a `Metrics` beside it would give both painters the same names.
 - **`host::show_panel` / `show_panel_for` are two functions while `close_panel` takes an `Option`.** Kept: the wire and SDK shapes are fixed for the programme.
 - **A panel key over a plugin panel wins over the focused app panel** (Delete with the Timeline focused and the pointer resting over a panel that declares Delete). By decision, pointer-over routing stays; only Save, Save As, Undo, Redo and Quit are kept by the app.
 - **Not checked: a plugin tool's right click may also open the viewer's context menu** (`crates/ui-egui/src/panels/plugin_tools.rs`). Pen samples are now read once per pass for every viewer and the viewer that took the press keeps its moves and release; only a unit test covers the pairing, no two-viewer kittest.
 - **A headless session acts on no `show_panel`.** The checks run where the plugin asks, but a session with no frontend drops the `window.pluginPanel` event and the plugin still gets `Ok` (`SessionHost::panel` in `crates/plugin/src/gate.rs`); the engine has no flag that says a frontend is attached.
-- **With more than 64 lists drawn in one panel, the oldest list's rows can stay blank** until it is scrolled: `Retained` keeps 64 views and now forgets a list that is no longer drawn first (craft-libs `crates/plugin-host/src/panel.rs`).
 
 ## From the Sol review, not fixed
 

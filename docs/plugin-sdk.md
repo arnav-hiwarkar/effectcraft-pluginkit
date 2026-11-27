@@ -730,6 +730,18 @@ if let Some(row) = picked.activated {
 Only the rows near the view are built, so the list can hold 100 000 files. Use `ui.table` for columns and
 `Item::depth` and `Item::open` for a tree.
 
+### Keep row actions on the right row
+
+```rust
+ui.list("takes", self.order.len(), &mut self.selected, |row| {
+    let take = &self.takes[self.order[row]];
+    Item::new(&take.name).key(&take.id)
+});
+```
+
+A double click made while the plugin was still sorting or refreshing reaches the take it was made on, even
+if two takes share a name. See "Replies, row keys and newer plugins" in the reference.
+
 ### Show a tree
 
 ```rust
