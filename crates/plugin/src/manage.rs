@@ -278,38 +278,31 @@ impl Inner {
         self.registry.set_revocations(self.revocations.clone());
     }
 
-    fn installed_state(&self) -> BTreeMap<String, Installed> {
-        let state = |bundle: Bundle| {
+    fn installed_state(&self, bundles: &[Bundle]) -> BTreeMap<String, Installed> {
+        let state = |bundle: &Bundle| {
             let id = bundle.manifest.id.clone();
             let installed = Installed { consent: self.registry.consent(&id).cloned(), digest: bundle.digest().ok() };
             (id, installed)
         };
-        self.installed().into_iter().map(state).collect()
+        bundles.iter().map(state).collect()
     }
 
-    fn changed_here(&mut self) {
-        self.generation = self.registry.generation();
-        self.seen = self.installed_state();
-    }
-
-    fn changed_elsewhere(&mut self) -> Vec<String> {
+    fn reconcile_store(&mut self, restart: Option<&str>) -> bool {
         self.refresh_registry();
-        let now = self.installed_state();
-        let ids: BTreeSet<&String> = self.seen.keys().chain(now.keys()).collect();
-        let changed: Vec<String> = ids.into_iter().filter(|id| self.seen.get(*id) != now.get(*id)).cloned().collect();
+        let bundles = self.installed();
+        let now = self.installed_state(&bundles);
+        let mut changed: BTreeSet<&str> =
+            self.seen.keys().chain(now.keys()).filter(|id| self.seen.get(*id) != now.get(*id) && !self.is_session_only(id)).map(String::as_str).collect();
+        changed.extend(restart);
+        let mut starts: Vec<Bundle> =
+            bundles.into_iter().filter(|bundle| changed.contains(bundle.manifest.id.as_str()) && !self.is_session_only(&bundle.manifest.id)).collect();
+        starts.extend(self.session_only.iter().filter(|bundle| restart == Some(bundle.manifest.id.as_str())).cloned());
+        let changed: Vec<String> = changed.into_iter().map(String::from).collect();
+        changed.iter().for_each(|id| self.stop(id));
+        starts.sort_by_key(|bundle| bundle.manifest.is_data_only());
+        starts.iter().for_each(|bundle| self.start(bundle));
         self.seen = now;
-        changed
-    }
-
-    fn restart_changed(&mut self, changed: &[String]) {
-        let mut bundles = Vec::new();
-        let installed: Vec<&String> = changed.iter().filter(|id| !self.is_session_only(id)).collect();
-        for id in installed {
-            self.stop(id);
-            bundles.extend(self.installed().into_iter().filter(|bundle| &bundle.manifest.id == id));
-        }
-        bundles.sort_by_key(|bundle| bundle.manifest.is_data_only());
-        bundles.iter().for_each(|bundle| self.start(bundle));
+        !changed.is_empty()
     }
 
     fn poll_store(&mut self) -> bool {
@@ -321,9 +314,7 @@ impl Inner {
             return false;
         }
         if self.registry.generation() != self.generation {
-            let changed = self.changed_elsewhere();
-            self.restart_changed(&changed);
-            return !changed.is_empty();
+            return self.reconcile_store(None);
         }
         self.refresh_revocations()
     }
@@ -348,12 +339,12 @@ impl Inner {
     }
 
     fn reload_bundles(&mut self) {
-        self.seen = self.installed_state();
+        let mut bundles = self.installed();
+        self.seen = self.installed_state(&bundles);
         let running: Vec<String> = self.loaded.keys().chain(&self.data).cloned().collect();
         running.iter().for_each(|id| self.stop(id));
         self.failed.clear();
         self.refused.clear();
-        let mut bundles = self.installed();
         bundles.retain(|bundle| !self.is_session_only(&bundle.manifest.id));
         bundles.extend(self.session_only.iter().cloned());
         bundles.sort_by_key(|bundle| bundle.manifest.is_data_only());
@@ -583,23 +574,24 @@ impl Plugins {
         inner.refresh_revocations();
         let rejects = |bundle: &Bundle| if bundle.manifest.is_data_only() { data_only::check(bundle).map(drop) } else { Ok(()) };
         let bundle = inner.registry.install_checked(source, rejects).map_err(|e| e.to_string())?;
-        inner.stop(&incoming.id);
         inner.forget_session_copy(&incoming.id);
-        let (snapshot, digest) = Bundle::read(&bundle.dir).map_err(|e| e.to_string())?;
-        let approved = if snapshot.manifest.is_data_only() { approve_snapshot(&mut inner.registry, &snapshot, &digest) } else { Ok(()) };
-        inner.changed_here();
-        approved?;
-        inner.start(&snapshot);
-        Ok(inner.info(&snapshot, false))
+        let result = Bundle::read(&bundle.dir).map_err(|e| e.to_string()).and_then(|(snapshot, digest)| {
+            if snapshot.manifest.is_data_only() {
+                approve_snapshot(&mut inner.registry, &snapshot, &digest)?;
+            }
+            Ok(snapshot)
+        });
+        inner.reconcile_store(Some(&incoming.id));
+        Ok(inner.info(&result?, false))
     }
 
     pub fn approve(&self, id: &str) -> Result<PluginInfo, String> {
         let mut inner = self.lock();
         inner.refresh_revocations();
         let bundle = inner.find(id)?;
-        inner.registry.approve(&bundle).map_err(|e| e.to_string())?;
-        inner.changed_here();
-        inner.start(&bundle);
+        let result = inner.registry.approve(&bundle);
+        inner.reconcile_store(result.is_ok().then_some(id));
+        result.map_err(|e| e.to_string())?;
         Ok(inner.info(&bundle, false))
     }
 
@@ -610,19 +602,17 @@ impl Plugins {
         if !inner.registry.consent(id).is_some_and(|consent| consent.enabled) {
             return Err(format!("allow plugin `{id}` before choosing how it runs"));
         }
-        inner.registry.set_unsandboxed(&bundle.manifest, !sandboxed).map_err(|e| e.to_string())?;
-        inner.changed_here();
-        inner.start(&bundle);
+        let result = inner.registry.set_unsandboxed(&bundle.manifest, !sandboxed);
+        inner.reconcile_store(result.is_ok().then_some(id));
+        result.map_err(|e| e.to_string())?;
         Ok(inner.info(&bundle, false))
     }
 
     pub fn disable(&self, id: &str) -> Result<(), String> {
         let mut inner = self.lock();
-        inner.stop(id);
         let had_session_copy = inner.forget_session_copy(id);
-        inner.refused.insert(id.to_string(), Refusal::Disabled);
         let result = inner.registry.disable(id);
-        inner.changed_here();
+        inner.reconcile_store(had_session_copy.then_some(id));
         match result {
             Err(BundleError::NotInstalled(_)) if had_session_copy => Ok(()),
             other => other.map_err(|e| e.to_string()),
@@ -631,10 +621,9 @@ impl Plugins {
 
     pub fn uninstall(&self, id: &str) -> Result<(), String> {
         let mut inner = self.lock();
-        inner.stop(id);
         let had_session_copy = inner.forget_session_copy(id);
         let result = inner.registry.uninstall(id);
-        inner.changed_here();
+        inner.reconcile_store(had_session_copy.then_some(id));
         match result {
             Err(BundleError::NotInstalled(_)) if had_session_copy => Ok(()),
             other => other.map_err(|e| e.to_string()),
@@ -1181,18 +1170,35 @@ mod tests {
         {
             let mut inner = plugins.lock();
             assert_eq!(inner.generation, inner.registry.generation());
-            assert!(inner.changed_elsewhere().is_empty());
+            assert!(!inner.reconcile_store(None));
         }
 
         Registry::for_app(&suite, APP_ID).disable("test.turned").unwrap();
         let mut inner = plugins.lock();
         assert_ne!(inner.generation, inner.registry.generation());
-        let changed = inner.changed_elsewhere();
-        assert_eq!(changed, vec!["test.turned".to_string()]);
-        inner.restart_changed(&changed);
+        assert!(inner.reconcile_store(None));
         assert!(inner.data.contains("test.kept"));
         assert!(!inner.data.contains("test.turned"));
         assert_eq!(inner.refused.get("test.turned"), Some(&Refusal::Disabled));
+    }
+
+    #[test]
+    fn a_local_approval_also_applies_a_launcher_disable() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let mut registry = Registry::for_app(&suite, APP_ID);
+        let running = registry.install(&data_bundle(root.path(), "test.launcher-disabled")).unwrap();
+        registry.approve(&running).unwrap();
+        registry.install(&data_bundle(root.path(), "test.locally-approved")).unwrap();
+        let plugins = Plugins::with_registry(registry, Some(suite.clone()), false);
+        assert!(plugins.lock().data.contains("test.launcher-disabled"));
+
+        Registry::for_app(&suite, APP_ID).disable("test.launcher-disabled").unwrap();
+        assert_eq!(plugins.approve("test.locally-approved").unwrap().state, PluginState::Running);
+
+        let inner = plugins.lock();
+        assert!(!inner.data.contains("test.launcher-disabled"));
+        assert_eq!(inner.refused.get("test.launcher-disabled"), Some(&Refusal::Disabled));
     }
 
     #[test]
