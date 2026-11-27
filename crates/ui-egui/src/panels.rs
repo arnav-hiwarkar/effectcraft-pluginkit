@@ -38,7 +38,7 @@ pub mod object_matte_tool;
 pub mod paint_panels;
 pub mod panel_kit;
 pub mod path_vr_panels;
-pub mod plugin_manager;
+pub mod plugin_store;
 pub mod plugin_tools;
 pub mod plugin_view;
 pub mod precomp;

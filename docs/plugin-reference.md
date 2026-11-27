@@ -1167,7 +1167,7 @@ reason has still landed.
 | `window.plugins` | | Opens the plugin manager |
 | `window.pluginPanel` | `plugin`, `panel` | Opens a plugin panel |
 
-A script cannot run `plugin.install`, `plugin.approve`, `plugin.setSandbox`, `plugin.disable`, `plugin.uninstall`, `plugin.load` or `plugin.reload`, directly or inside `engine.batch`: the command fails with a message that sends the user to Window ▸ Plug-ins ▸ Manage Plug-ins. The UI, CLI and control channel still run them.
+A script cannot run `plugin.install`, `plugin.approve`, `plugin.setSandbox`, `plugin.disable`, `plugin.uninstall`, `plugin.load`, `plugin.reload`, `plugin.restart` or `plugin.installFromFile`, directly or inside `engine.batch`: the command fails with a message that sends the user to Plugins ▸ Manage plugins. The UI, CLI and control channel still run them.
 
 `keys.info {keys?}` describes the selected keyframes, and plugins with `document.read` use it. Each key has
 its zero-based `index` among its property's keys (the first key is 0) and the property's `keyCount`. For a spatial property, `segmentLength`

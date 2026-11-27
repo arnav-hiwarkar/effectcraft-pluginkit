@@ -488,7 +488,7 @@ fn run_desktop(reporter: &crash_report::Shutdown, arguments: &[std::ffi::OsStrin
             if safe_mode {
                 effectcraft_plugin::start_in_safe_mode();
             }
-            effectcraft_plugin::install(&mut session, effectcraft_host::config_dir().as_deref());
+            effectcraft_plugin::install_shared(&mut session, effectcraft_host::config_dir().as_deref());
             // Lazy open and non-blocking auto-save: footage is checked and auto-saves are
             // written on background threads (M13.14).
             session.check_footage_on_open = true;

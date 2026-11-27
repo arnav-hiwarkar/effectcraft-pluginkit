@@ -1362,14 +1362,15 @@ Window
   ---
   Create Nulls From Paths | window.panel {"panel":"createNullsFromPaths"}
   VR Comp Editor | window.panel {"panel":"vrCompEditor"}
-  Plug-ins
-    Manage Plug-ins... | window.plugins
-    Reload Plug-ins | plugin.reload
-    ---
-    @dynamic:pluginCommands
-    ---
-    @dynamic:pluginPanels
   @dynamic:scriptPanels
+Plugins
+  Find plugins… | plugin.find
+  Manage plugins… | window.plugins
+  Report a problem… | plugin.report
+  ---
+  @dynamic:pluginCommands
+  ---
+  @dynamic:pluginPanels
 Help
   EffectCraft Help... | help.docs {"page":"help"} | F1
   Scripting Help... | help.docs {"page":"scripting"}

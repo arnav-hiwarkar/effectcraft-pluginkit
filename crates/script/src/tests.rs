@@ -791,7 +791,7 @@ fn scripts_cant_install_approve_or_unsandbox_plugins() {
             format!("app.run('engine.batch', {{steps: [{{command: '{id}', params: {{}}}}]}})"),
         ] {
             let e = run_code(&mut s, &code, "grant.jsx").error.unwrap_or_else(|| panic!("`{code}` was allowed"));
-            assert!(e.message.contains(&format!("Scripts can't run `{id}`")) && e.message.contains("Manage Plug-ins"), "{code}: {e:?}");
+            assert!(e.message.contains(&format!("Scripts can't run `{id}`")) && e.message.contains("Manage plugins"), "{code}: {e:?}");
         }
         assert_eq!(s.execute(id, json!({})).unwrap(), json!(id));
     }

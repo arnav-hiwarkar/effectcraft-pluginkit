@@ -157,14 +157,28 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
             json!({"window": id})
         }
         "window.plugins" => {
-            app.plugin_ui.manager_open = true;
+            app.plugin_store.open_manager();
+            Value::Null
+        }
+        "plugin.find" => {
+            app.plugin_store.find(p.get("id").and_then(Value::as_str).unwrap_or_default());
+            Value::Null
+        }
+        "plugin.installFromFile" => {
+            let path = p.get("path").and_then(Value::as_str).ok_or("`plugin.installFromFile` needs a `path` string")?;
+            app.plugin_store.install_file(path.into());
             Value::Null
         }
         "window.pluginPanel" => {
             let text = |key: &str| p.get(key).and_then(Value::as_str).ok_or(format!("`window.pluginPanel` needs a `{key}` string"));
             let (plugin, panel) = (text("plugin")?, text("panel")?);
-            let close = p.get("close").and_then(Value::as_bool).unwrap_or(false);
-            crate::panels::plugin_view::open(app, ctx, plugin, panel, p.get("instance").and_then(Value::as_str), close)?
+            let flag = |key: &str| p.get(key).and_then(Value::as_bool).unwrap_or(false);
+            let request = match (flag("close"), flag("floating")) {
+                (true, _) => crate::panels::plugin_view::Request::Close,
+                (false, true) => crate::panels::plugin_view::Request::Float,
+                (false, false) => crate::panels::plugin_view::Request::Show,
+            };
+            crate::panels::plugin_view::open(app, ctx, plugin, panel, p.get("instance").and_then(Value::as_str), request)?
         }
         "layer.style.options" => {
             crate::panels::layer_styles_dialog::open(app, &p)?;
@@ -668,6 +682,7 @@ pub(super) fn file_dialog(app: &mut EffectcraftApp, id: &str, params: &Value) ->
         "file.installScript" | "file.installScriptUIPanel" => ("path", Ask::Open(&["jsx", "js"])),
         "file.replaceFootage" => ("path", Ask::Import(&[])),
         "file.relinkFootage" => ("folder", Ask::Folder),
+        "plugin.installFromFile" => ("path", Ask::Open(&["craftplugin"])),
         "plugin.install" if params.get("folder").is_none() => ("path", Ask::Open(&["craftplugin"])),
         "plugin.install" | "plugin.load" => ("path", Ask::Folder),
         "file.collectFiles" => ("folder", Ask::Save("Collected Files".into())),

@@ -474,6 +474,7 @@ pub struct EffectcraftApp {
     pub(crate) pointer_comp: Option<[f32; 2]>,
     pub(crate) dialog_state: panels::dialogs::DialogState,
     pub(crate) plugin_ui: panels::plugin_view::PluginUi,
+    pub(crate) plugin_store: panels::plugin_store::PluginStore,
     pub integrated_titlebar: bool,
     /// Audio preview while playing (audio clock drives playback).
     pub audio: Option<audio::AudioPlayback>,

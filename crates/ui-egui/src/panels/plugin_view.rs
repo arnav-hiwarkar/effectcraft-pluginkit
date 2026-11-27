@@ -22,8 +22,7 @@ use crate::theme::Tokens;
 #[derive(Default)]
 pub(crate) struct PluginUi {
     pub panels: effectcraft_plugin::Panels,
-    pub manager_open: bool,
-    pub listed: Option<(std::time::Instant, Result<Vec<super::plugin_manager::Listed>, String>)>,
+    pub listed: Option<(std::time::Instant, Vec<super::plugin_store::Listed>)>,
     pub images: Images,
     pub control_heights: HashMap<u64, f32>,
     #[cfg(test)]
@@ -441,9 +440,24 @@ pub(crate) fn option_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui, x: f32, cy
     x + width + ROW_GAP
 }
 
-pub(crate) fn open(app: &mut EffectcraftApp, ctx: &egui::Context, plugin: &str, panel: &str, instance: Option<&str>, close: bool) -> Result<Value, String> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Request {
+    Show,
+    Float,
+    Close,
+}
+
+pub(crate) fn open(
+    app: &mut EffectcraftApp,
+    ctx: &egui::Context,
+    plugin: &str,
+    panel: &str,
+    instance: Option<&str>,
+    request: Request,
+) -> Result<Value, String> {
     use crate::dock::WorkspaceExt;
     use craft_behavior::dock::Action;
+    let close = request == Request::Close;
     let spec = effectcraft_plugin::panel_request(plugin, panel, instance, close)?;
     let instance = match (spec.multiple, instance) {
         (true, Some(key)) => Some(key.to_string()),
@@ -468,7 +482,7 @@ pub(crate) fn open(app: &mut EffectcraftApp, ctx: &egui::Context, plugin: &str, 
         };
         let placed_before = app.ui.dock.hidden().iter().any(|(hidden, _)| *hidden == kind);
         let mut actions = vec![Action::open(kind, app.ui.dock.is_open(anchor).then_some(anchor))];
-        if spec.place == PanelPlace::Float && !placed_before {
+        if (spec.place == PanelPlace::Float || request == Request::Float) && !placed_before {
             let screen = ctx.input_for(egui::ViewportId::ROOT, |input| input.content_rect());
             let rect = Rect::from_center_size(screen.center(), float_size(spec.size).min(screen.size()));
             actions.push(Action::float(kind, rect));
@@ -506,15 +520,15 @@ fn not_running(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pa
         PanelKind::Plugin(id) => id.owner(),
         _ => None,
     };
-    let installed = owner.and_then(|id| super::plugin_manager::installed(app).into_iter().find(|plugin| plugin.id == id));
+    let installed = owner.and_then(|id| super::plugin_store::listed(app).into_iter().find(|plugin| plugin.id == id));
     let message = match installed {
-        Some(plugin) => tr_args("{} is not running. Turn it on in Window ▸ Plug-ins ▸ Manage Plug-ins.", &[&plugin.name]),
-        None => tr("The plug-in that provides this panel is not installed. Install it in Window ▸ Plug-ins ▸ Manage Plug-ins.").to_string(),
+        Some(plugin) => tr_args("{} is not running. Turn it on in Plugins ▸ Manage plugins.", &[&plugin.name]),
+        None => tr("The plug-in that provides this panel is not installed. Install it in Plugins ▸ Manage plugins.").to_string(),
     };
     let mut body = ui.new_child(UiBuilder::new().max_rect(rect.shrink(12.0)));
     body.label(RichText::new(message).color(app.tokens.text_dim));
-    let manage = body.button(tr("Manage Plug-ins..."));
-    app.auto.add_response(&format!("{}.manage", kind.id()), &manage, "Manage Plug-ins...");
+    let manage = body.button(tr("Manage plugins…"));
+    app.auto.add_response(&format!("{}.manage", kind.id()), &manage, "Manage plugins…");
     if manage.clicked() {
         let ctx = ui.ctx().clone();
         if let Err(error) = crate::menus::invoke(app, &ctx, "window.plugins", json!({})) {

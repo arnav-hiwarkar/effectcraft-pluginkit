@@ -42,7 +42,7 @@ fn the_status_item_sits_one_row_high_in_the_status_bar_and_its_button_reaches_th
     until(&mut harness, "the ping reaching the plugin", |h| shows(h, "1 pings"));
     let (entries, _) = effectcraft_engine::menus::dynamic(&harness.state().session, "pluginPanels", &Default::default());
     let listed: Vec<&str> = entries.iter().filter(|entry| entry.params["plugin"] == PROBE).map(|entry| entry.label.as_str()).collect();
-    assert!(listed.contains(&"New Notes") && !listed.contains(&"Status") && !listed.contains(&"Stamp Options"), "Window ▸ Plug-ins lists {listed:?}");
+    assert!(listed.contains(&"New Notes") && !listed.contains(&"Status") && !listed.contains(&"Stamp Options"), "the Plugins menu lists {listed:?}");
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn a_status_item_cannot_be_closed_and_says_why() {
     let mut harness = harness(probe_session());
     until(&mut harness, "the status item", |h| shows(h, "0 pings"));
     let ctx = harness.ctx.clone();
-    let refused = super::open(harness.state_mut(), &ctx, PROBE, "status", None, true).unwrap_err();
+    let refused = super::open(harness.state_mut(), &ctx, PROBE, "status", None, super::Request::Close).unwrap_err();
     assert!(refused.contains("cannot be opened or closed"), "{refused}");
 }
 

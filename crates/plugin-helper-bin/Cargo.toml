@@ -1,0 +1,17 @@
+[package]
+name = "effectcraft-plugin-helper"
+description = "Native Craft plug-in helper for EffectCraft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "craft-plugin-helper"
+path = "src/main.rs"
+
+[dependencies]
+craft-plugin-helper = { workspace = true }
