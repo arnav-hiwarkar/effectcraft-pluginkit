@@ -512,6 +512,35 @@ fn pcraft_note() -> Field {
     Field::note("pcraftNote", "Composition uses canvas-sized saved pixels. Masks, effects and profiles may differ; use Footage for the saved appearance.")
 }
 
+/// The Import dialog for a PhotoCraft, Photoshop or PDF / Illustrator file picked without its
+/// Import Kind. Dropped files start at Settings ▸ Import ▸ Default Drag Import As.
+fn import_form(default_drag_kind: &str, p: &Value) -> Option<(String, Vec<Field>)> {
+    let drag = p.get("drag").and_then(Value::as_bool).unwrap_or(false);
+    if has(p, &["importAs"]) {
+        return None;
+    }
+    if imports_ext(p, &["pcraft"]) && !is_layered(p) {
+        let sel = usize::from(drag && default_drag_kind != "footage");
+        let mut fields =
+            vec![Field::choice("importAs", "Import Kind", &[("Footage", json!("footage")), ("Composition", json!("composition"))], sel), pcraft_note()];
+        if is_pdf(p) && !has(p, &["page"]) {
+            fields.push(Field::num("page", "Page", 1.0));
+        }
+        return Some(("Import PhotoCraft File".into(), fields));
+    }
+    let kinds = [("Footage", json!("footage")), ("Composition", json!("composition")), ("Composition - Retain Layer Sizes", json!("compositionLayerSizes"))];
+    if is_layered(p) {
+        let sel = if drag { kinds.iter().position(|(_, v)| v.as_str() == Some(default_drag_kind)).unwrap_or(0) } else { 1 };
+        let mut fields = vec![Field::choice("importAs", "Import Kind", &kinds, sel)];
+        fields.extend(imports_ext(p, &["pcraft"]).then(pcraft_note));
+        return Some(("Import Photoshop File".into(), fields));
+    }
+    if is_pdf(p) && !has(p, &["page"]) {
+        return Some(("Import PDF / Illustrator File".into(), vec![Field::choice("importAs", "Import Kind", &kinds, 0), Field::num("page", "Page", 1.0)]));
+    }
+    None
+}
+
 /// If `id` is a dialog command invoked without its parameters, open its form and return true.
 pub fn open_form(app: &mut EffectcraftApp, id: &str, p: &Value) -> bool {
     let s = &app.session;
@@ -521,46 +550,10 @@ pub fn open_form(app: &mut EffectcraftApp, id: &str, p: &Value) -> bool {
     let lt = layer.map(|l| l.layer_time(t)).unwrap_or(t);
     let mut base = p.clone();
     let (title, fields): (String, Vec<Field>) = match id {
-        "file.import" if !has(p, &["importAs"]) && imports_ext(p, &["pcraft"]) && !is_layered(p) => {
-            let drag = p.get("drag").and_then(Value::as_bool).unwrap_or(false);
-            let sel = usize::from(drag && s.prefs.drag_import_as() != "footage");
-            let mut fields =
-                vec![Field::choice("importAs", "Import Kind", &[("Footage", json!("footage")), ("Composition", json!("composition"))], sel), pcraft_note()];
-            // A PDF or Illustrator file picked with it keeps its Page field.
-            if is_pdf(p) && !has(p, &["page"]) {
-                fields.push(Field::num("page", "Page", 1.0));
-            }
-            ("Import PhotoCraft File".into(), fields)
+        "file.import" => {
+            let Some(form) = import_form(s.prefs.drag_import_as(), p) else { return false };
+            form
         }
-        // Photoshop files: Import Kind (Footage / Composition / – Retain Layer Sizes). Dropped
-        // files start at Settings ▸ Import ▸ Default Drag Import As.
-        "file.import" if !has(p, &["importAs"]) && is_layered(p) => {
-            let kinds =
-                [("Footage", json!("footage")), ("Composition", json!("composition")), ("Composition - Retain Layer Sizes", json!("compositionLayerSizes"))];
-            let drag = p.get("drag").and_then(Value::as_bool).unwrap_or(false);
-            let sel = if drag { kinds.iter().position(|(_, v)| v.as_str() == Some(s.prefs.drag_import_as())).unwrap_or(0) } else { 1 };
-            let mut fields = vec![Field::choice("importAs", "Import Kind", &kinds, sel)];
-            // A PhotoCraft file picked with it keeps its compatibility note.
-            fields.extend(imports_ext(p, &["pcraft"]).then(pcraft_note));
-            ("Import Photoshop File".into(), fields)
-        }
-        // PDF / Illustrator files: Import Kind and the page.
-        "file.import" if !has(p, &["importAs", "page"]) && is_pdf(p) => (
-            "Import PDF / Illustrator File".into(),
-            vec![
-                Field::choice(
-                    "importAs",
-                    "Import Kind",
-                    &[
-                        ("Footage", json!("footage")),
-                        ("Composition", json!("composition")),
-                        ("Composition - Retain Layer Sizes", json!("compositionLayerSizes")),
-                    ],
-                    0,
-                ),
-                Field::num("page", "Page", 1.0),
-            ],
-        ),
         // Puppet tool ▸ Follow-Through.
         "puppet.follow" if !has(p, &["delay", "amount", "cascade"]) => (
             "Puppet Follow-Through".into(),
