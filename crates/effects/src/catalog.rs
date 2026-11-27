@@ -14,6 +14,14 @@ pub const PARTIAL: &[(&str, &str)] = &[];
 /// (`value(spec id)`). After Effects shows only the controls a popup selects: Levels' channel,
 /// Hue/Saturation's Channel Control, the camera system of the card effects, and so on. Every
 /// parameter stays animatable and addressable; this is presentation only.
+/// [`param_shown`] together with whether the parameter takes edits: `[shown, enabled]`. A plug-in
+/// effect adds its own conditions to both.
+pub fn param_state(effect: &str, param: &str, value: &dyn Fn(&str) -> Option<effectcraft_keyframe::Value>) -> [bool; 2] {
+    let declared = crate::dynamic::get(effect).and_then(|registered| registered.effect.param_state.as_ref().map(|state| state(param, value)));
+    let [visible, enabled] = declared.unwrap_or([true, true]);
+    [visible && param_shown(effect, param, value), enabled]
+}
+
 pub fn param_shown(effect: &str, param: &str, value: &dyn Fn(&str) -> Option<effectcraft_keyframe::Value>) -> bool {
     let e = |id: &str| value(id).map(|v| v.as_enum()).unwrap_or(0);
     let b = |id: &str| value(id).is_some_and(|v| v.as_bool());

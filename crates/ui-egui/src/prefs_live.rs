@@ -87,6 +87,8 @@ pub fn dropped_files(app: &mut EffectcraftApp, ui: &egui::Ui, bounds: Rect) {
 
     // After Effects projects import as projects (File ▸ Import ▸ Adobe After Effects Project…),
     // each into a folder named after its file, opening its first composition.
+    let (packages, rest): (Vec<String>, Vec<String>) = rest.into_iter().partition(|p| p.to_ascii_lowercase().ends_with(".craftplugin"));
+    errors.extend(crate::panels::plugin_manager::install_packages(app, &packages));
     let (aep, mut rest): (Vec<String>, Vec<String>) = rest.into_iter().partition(|p| effectcraft_engine::commands::is_aep_path(p));
     // A project in the drop changes the active composition: the other files go to the Project
     // panel only, not into a composition.

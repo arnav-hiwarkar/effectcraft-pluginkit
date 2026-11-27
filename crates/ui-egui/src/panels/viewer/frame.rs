@@ -190,6 +190,7 @@ pub(super) fn show_frame(app: &mut EffectcraftApp, ctx: &egui::Context, key: cra
             // Pixels are read back on demand (viewer_pixels).
             app.viewer_image = None;
             app.viewer_f16 = None;
+            vt::set_texture_roi(ctx, app.session.state.region_of_interest.or(app.ui.viewer.extended));
         }
     }
 }

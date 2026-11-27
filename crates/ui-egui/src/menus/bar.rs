@@ -178,7 +178,7 @@ fn menu_nodes(
                         "recentFootage" => app.session.prefs.recent_footage.get(i).cloned(),
                         "recentPresets" => app.session.prefs.recent_presets.get(i).cloned(),
                         "recentScripts" => app.session.prefs.recent_scripts.get(i).map(|r| r.text().to_string()),
-                        _ => None,
+                        _ => effectcraft_engine::menus::plugin_hover(&app.session, e),
                     };
                     let mut b = egui::Button::new((gutter(entry_checked(app, e) == Some(true)), e.label.as_str()));
                     // File ▸ Scripts entries show the key a script was given.

@@ -1,0 +1,10 @@
+{
+  "id": "com.example.{{name}}",
+  "name": "{{Title}}",
+  "version": "0.1.0",
+  "author": "",
+  "description": "{{description}}",
+  "license": "MIT OR Apache-2.0",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": [{{permissions}}]
+}

@@ -247,7 +247,7 @@ fn prop_row(
         // A text parameter (Cryptomatte's Selection, Colorama's Output Cycle, config names):
         // typed in a field, set when it loses the focus (Esc keeps the old text).
         Value::Str(_) if matches!(prop.ui, ParamUi::Text) => value_text(app, ui, &cx, &value, actions),
-        Value::Gradient(_) => value_gradient(app, &cx, &value),
+        Value::Gradient(_) => value_gradient(app, ui, &cx, &value, actions),
         _ => {}
     }
     dims
@@ -299,11 +299,11 @@ fn value_scalar(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value:
     };
     let PropCx { uid, cy, vx, prop, .. } = *cx;
     let (min, max, dec) = match &prop.ui {
-        ParamUi::Slider { min, max, decimals, .. } => (*min, *max, *decimals as usize),
+        ParamUi::Slider { min, max, decimals, .. } | ParamUi::Scaled { min, max, decimals, .. } => (*min, *max, *decimals as usize),
         _ => (-1e9, 1e9, 1),
     };
     let suffix = match prop.ui {
-        ParamUi::Percent => "%",
+        ParamUi::Percent | ParamUi::Scaled { percent: true, .. } => "%",
         _ => "",
     };
     let speed = widgets::slider_scrub_speed(&prop.ui);
@@ -321,7 +321,7 @@ fn value_scalar(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value:
         widgets::mark_step(actions.last_mut(), step);
     }
     // AE hides a slider param's slider until its twirl is opened (see `slider_row`).
-    if matches!(prop.ui, ParamUi::Slider { .. }) {
+    if matches!(prop.ui, ParamUi::Slider { .. } | ParamUi::Scaled { .. }) {
         cx.twirl_open(app, ui);
     }
 }
@@ -519,6 +519,26 @@ fn value_file(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value: &
         }
     }
     app.auto.add(&format!("effectControls.prop.{uid}.choose"), br, &prop.name);
+    let library = match &prop.ui {
+        ParamUi::File { filters } if filters.iter().any(|f| f == "cube") => effectcraft_engine::effects::contributed::luts(),
+        _ => Vec::new(),
+    };
+    let mut name_x = br.max.x + 8.0;
+    if !library.is_empty() {
+        let lr = Rect::from_min_size(pos2(br.max.x + 6.0, cy - 9.0), vec2(64.0, 18.0));
+        name_x = lr.max.x + 8.0;
+        let pop = egui::Id::unique(("ec-lut-library", uid));
+        if widgets::text_button(ui, lr, crate::i18n::tr("Library"), false, &t, egui::Id::unique(("ec-lut-lib", uid))).clicked() {
+            widgets::open_popup(ui, pop);
+        }
+        app.auto.add(&format!("effectControls.prop.{uid}.library"), lr, &prop.name);
+        let names: Vec<String> = library.iter().map(|lut| lut.name.clone()).collect();
+        let entry_ids: Vec<String> = library.iter().map(|lut| format!("effectControls.prop.{uid}.library.{}.{}", lut.owner, lut.name)).collect();
+        let current = library.iter().position(|lut| &lut.path == s);
+        if let Some(i) = widgets::popup_menu_named(ui, pop, lr.left_bottom(), &names, current, Some((&mut app.auto, &entry_ids))) {
+            actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": uid, "value": library[i].path})));
+        }
+    }
     let shown = if s.trim().is_empty() {
         crate::i18n::tr("None").to_string()
     } else if s.contains('\n') {
@@ -526,7 +546,7 @@ fn value_file(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value: &
     } else {
         effectcraft_engine::sequence::file_name(s)
     };
-    let nr = Rect::from_min_max(pos2(br.max.x + 8.0, r.min.y), pos2(r.max.x - 8.0, r.max.y));
+    let nr = Rect::from_min_max(pos2(name_x, r.min.y), pos2(r.max.x - 8.0, r.max.y));
     let np = p.with_clip_rect(nr.intersect(p.clip_rect()));
     np.text(pos2(nr.min.x, cy), Align2::LEFT_CENTER, &shown, Tokens::ui(12.0), if s.trim().is_empty() { t.text_dim } else { t.text });
     let hover = ui.interact(nr, egui::Id::unique(("ec-file-name", uid)), Sense::hover());
@@ -574,11 +594,11 @@ fn value_text(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value: &
     }
 }
 
-fn value_gradient(app: &mut EffectcraftApp, cx: &PropCx, value: &Value) {
+fn value_gradient(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value: &Value, actions: &mut Actions) {
     let Value::Gradient(g) = value else {
         return;
     };
-    let PropCx { t, uid, cy, vx, r, p, prop, .. } = *cx;
+    let PropCx { t, uid, cy, vx, r, p, prop, layer, .. } = *cx;
     let gr = Rect::from_min_size(pos2(vx, cy - 7.0), vec2((r.max.x - vx - 56.0).clamp(60.0, 180.0), 14.0));
     let n = 48;
     for k in 0..n {
@@ -589,6 +609,14 @@ fn value_gradient(app: &mut EffectcraftApp, cx: &PropCx, value: &Value) {
         p.rect_filled(Rect::from_min_max(pos2(x0, gr.min.y), pos2(x1, gr.max.y)), 0.0, c);
     }
     p.rect_stroke(gr, 2.0, Stroke::new(1.0, t.field_border), egui::StrokeKind::Inside);
+    let resp = ui
+        .interact(gr, egui::Id::unique(("ec-gradient", uid)), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(crate::i18n::tr("Edit Gradient…"));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &prop.name));
+    if resp.clicked() {
+        actions.push(("prop.editGradient".into(), json!({"layer": layer.id.0, "prop": uid})));
+    }
     app.auto.add(&format!("effectControls.prop.{uid}.value"), gr, &prop.name);
 }
 
@@ -616,6 +644,15 @@ fn gradient_at(g: &effectcraft_engine::keyframe::Gradient, f: f64) -> Color32 {
     Color32::from_rgb((c[0].clamp(0.0, 1.0) * 255.0) as u8, (c[1].clamp(0.0, 1.0) * 255.0) as u8, (c[2].clamp(0.0, 1.0) * 255.0) as u8)
 }
 
+fn slider_fraction(value: f64, min: f64, max: f64, log: bool) -> f64 {
+    let value = value.clamp(min.min(max), max.max(min));
+    if log { (value / min).ln() / (max / min).ln() } else { (value - min) / (max - min) }
+}
+
+fn slider_value(fraction: f64, min: f64, max: f64, log: bool) -> f64 {
+    if log { min * (max / min).powf(fraction) } else { min + (max - min) * fraction }
+}
+
 /// The twirled-open slider under a slider param: track, knob and the slider range's ends.
 #[allow(clippy::too_many_arguments)]
 fn slider_row(
@@ -630,7 +667,11 @@ fn slider_row(
     actions: &mut Actions,
 ) {
     let t = app.tokens;
-    let ParamUi::Slider { slider_min, slider_max, decimals, .. } = prop.ui else { return };
+    let (slider_min, slider_max, decimals, log) = match prop.ui {
+        ParamUi::Slider { slider_min, slider_max, decimals, .. } => (slider_min, slider_max, decimals, false),
+        ParamUi::Scaled { slider_min, slider_max, decimals, log, .. } => (slider_min, slider_max, decimals, log && slider_min > 0.0),
+        _ => return,
+    };
     let Value::Scalar(v) = ectx.value(layer, prop) else { return };
     let uid = prop.uid;
     let tr = Rect::from_min_max(pos2(r.min.x + x0, r.min.y + 8.0), pos2(r.max.x - 16.0, r.min.y + 12.0));
@@ -638,7 +679,7 @@ fn slider_row(
         return;
     }
     p.rect_filled(tr, 2.0, t.field_bg);
-    let f = ((v - slider_min) / (slider_max - slider_min)).clamp(0.0, 1.0) as f32;
+    let f = slider_fraction(v, slider_min, slider_max, log).clamp(0.0, 1.0) as f32;
     p.rect_filled(Rect::from_min_max(tr.min, pos2(tr.min.x + tr.width() * f, tr.max.y)), 2.0, t.accent.gamma_multiply(0.7));
     p.circle_filled(pos2(tr.min.x + tr.width() * f, tr.center().y), 5.0, t.text);
     let dec = decimals as usize;
@@ -652,7 +693,7 @@ fn slider_row(
         let f = ((pt.x - tr.min.x) / tr.width()).clamp(0.0, 1.0) as f64;
         actions.push((
             "prop.set".into(),
-            json!({"layer": layer.id.0, "prop": uid, "value": slider_min + (slider_max - slider_min) * f, "merge": format!("ec-{uid}")}),
+            json!({"layer": layer.id.0, "prop": uid, "value": slider_value(f, slider_min, slider_max, log), "merge": format!("ec-{uid}")}),
         ));
     }
 }
@@ -674,6 +715,78 @@ fn dial_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, layer: &Layer, prop: &P
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn custom_control(
+    app: &mut EffectcraftApp,
+    ui: &mut egui::Ui,
+    layer: &Layer,
+    prop: &Property,
+    param: &str,
+    effect: &str,
+    ectx: &EvalCtx,
+    clip: Rect,
+    block: Rect,
+) {
+    let uid = prop.uid;
+    let Value::Str(value) = ectx.value(layer, prop) else { return };
+    let started = ui.input(|i| i.pointer.primary_pressed()) && ui.rect_contains_pointer(clip);
+    let gesture = egui::Id::unique(("ec-custom", uid));
+    let held = held_gesture(ui, gesture, started);
+    let merge = gesture_key(ui, gesture, started || !held);
+    let edit =
+        (!prop.has_expression()).then(|| effectcraft_plugin::Target { comp: ectx.comp_id.0, layer: layer.id.0, prop: uid, time: ectx.time.seconds(), merge });
+    let budget = ui.clip_rect().height().max(ROW);
+    let mut body = ui.new_child(egui::UiBuilder::new().id_salt(("ec-custom-body", uid)).max_rect(block));
+    body.set_clip_rect(clip.intersect(ui.clip_rect()));
+    let scope = format!("effectControls.prop.{uid}.control");
+    let surface = effectcraft_plugin::Surface::Control { effect, param, instance: uid, value: &value, edit: edit.as_ref() };
+    let events = match app.plugin_ui.panels.show(&mut app.session, surface, [block.width(), budget]) {
+        Ok(shown) => {
+            if let Some(error) = shown.error {
+                body.label(
+                    egui::RichText::new(crate::i18n::tr_args("The plug-in control failed: {}", &[&error])).font(Tokens::ui(12.0)).color(app.tokens.text_dim),
+                );
+            }
+            let tokens = app.tokens;
+            let source = crate::panels::plugin_view::Source { plugin: shown.plugin, images: &mut app.plugin_ui.images, session: Some(&app.session) };
+            crate::panels::plugin_view::draw(&mut body, shown.widgets, &tokens, &mut app.auto, &scope, source)
+        }
+        Err(error) => {
+            body.label(
+                egui::RichText::new(crate::i18n::tr_args("The plug-in control failed: {}", &[&error])).font(Tokens::ui(12.0)).color(app.tokens.text_dim),
+            );
+            Vec::new()
+        }
+    };
+    crate::panels::plugin_view::submit(app, ui, &surface.owner(), events, "");
+    let height = body.min_rect().height().max(ROW);
+    if app.plugin_ui.control_heights.insert(uid, height) != Some(height) {
+        ui.ctx().request_repaint();
+    }
+}
+
+fn button_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, layer: &Layer, prop: &Property, fx: &FxScope, r: Rect) {
+    let param = format!("{}{}", fx.path, prop.match_id);
+    let Some(declared) = effectcraft_plugin::plugin_param(fx.effect, &param) else { return };
+    let mut row = ui.new_child(egui::UiBuilder::new().scope_id(ui.scope_id().with(("ec-button", prop.uid))).max_rect(r.shrink2(vec2(0.0, 1.0))));
+    let enabled = row.is_enabled();
+    let scope = format!("effectControls.prop.{}.button", prop.uid);
+    if crate::panels::plugin_view::param_button(app, &mut row, &declared, enabled, &scope)
+        && let Err(error) = app.plugin_ui.panels.press(&app.session, layer.id.0, prop.uid)
+    {
+        app.ui.status = error;
+    }
+}
+
+fn held_gesture(ui: &egui::Ui, gesture: egui::Id, started: bool) -> bool {
+    let live = gesture.with("live");
+    let down = ui.input(|i| i.pointer.primary_down());
+    let was_live = ui.data(|d| d.get_temp::<bool>(live)).unwrap_or(false);
+    let live_now = started || (was_live && down);
+    ui.data_mut(|d| d.insert_temp(live, live_now));
+    live_now || was_live
+}
+
 /// The effect instance a row belongs to, for conditional visibility
 /// ([`effectcraft_engine::effects::catalog::param_shown`]): effect id, the instance's root
 /// group and the spec-id path of the group being drawn (`""` or `cameraPosition/`).
@@ -689,19 +802,12 @@ impl<'a> FxScope<'a> {
     }
     /// Whether child `m` of the current group is shown.
     pub(super) fn shown(&self, layer: &Layer, ectx: &EvalCtx, m: &str) -> bool {
-        let root = self.root;
-        let value = |id: &str| -> Option<Value> {
-            let mut g = root;
-            let mut parts = id.split('/').peekable();
-            while let Some(part) = parts.next() {
-                if parts.peek().is_none() {
-                    return g.get(part).map(|p| ectx.value(layer, p));
-                }
-                g = g.sub(part)?;
-            }
-            None
-        };
-        effectcraft_engine::effects::catalog::param_shown(self.effect, &format!("{}{m}", self.path), &value)
+        self.state(layer, ectx, m)[0]
+    }
+
+    /// Whether child `m` is shown and whether it is enabled.
+    pub(super) fn state(&self, layer: &Layer, ectx: &EvalCtx, m: &str) -> [bool; 2] {
+        effectcraft_engine::commands::expr_tools::param_state(ectx, layer, self.root, &format!("{}{m}", self.path))
     }
 }
 
@@ -750,10 +856,23 @@ pub(super) fn group_rows(
         let r = Rect::from_min_size(pos2(rect.min.x, *y), vec2(rect.width(), ROW));
         match c {
             Node::Prop(pr) => {
-                if matches!(pr.ui, ParamUi::Hidden) || pr.three_d_only && !layer.is_3d() || !fx.shown(layer, ectx, &pr.match_id) {
+                let [shown, enabled] = fx.state(layer, ectx, &pr.match_id);
+                if matches!(pr.ui, ParamUi::Hidden) || pr.three_d_only && !layer.is_3d() || !shown {
                     continue;
                 }
+                let mut scoped = ui.new_child(egui::UiBuilder::new().id_salt(("ec-prop-scope", pr.uid)).max_rect(ui.max_rect()));
+                if !enabled {
+                    scoped.disable();
+                }
+                let ui = &mut scoped;
                 *y += ROW;
+                if matches!(pr.ui, ParamUi::Button) {
+                    if !(r.max.y < rect.min.y || r.min.y > rect.max.y) {
+                        let indent = PARAM_NAME_X + TREE_INDENT * depth as f32;
+                        button_row(app, ui, layer, pr, fx, r.with_min_x(r.min.x + indent));
+                    }
+                    continue;
+                }
                 let indent = PARAM_NAME_X - 13.0 + TREE_INDENT * depth as f32;
                 let visible = !(r.max.y < rect.min.y || r.min.y > rect.max.y);
                 if visible {
@@ -762,6 +881,22 @@ pub(super) fn group_rows(
                     // A Timeline pick whip can be dropped here (After Effects).
                     crate::panels::timeline::whip_target(ui.ctx(), r.intersect(rect), layer.id.0, pr.uid, dims);
                 }
+                if matches!(pr.ui, ParamUi::Custom) {
+                    let height = app.plugin_ui.control_heights.get(&pr.uid).copied().unwrap_or(ROW);
+                    let block = Rect::from_min_size(pos2(rect.min.x + indent, *y), vec2((rect.width() - indent - 8.0).max(40.0), height));
+                    *y += height + 4.0;
+                    if block.max.y >= rect.min.y && block.min.y <= rect.max.y {
+                        let param = format!("{}{}", fx.path, pr.match_id);
+                        custom_control(app, ui, layer, pr, &param, fx.effect, ectx, block.intersect(rect), block);
+                    }
+                }
+                if let ParamUi::Curve { channels } = pr.ui {
+                    let block = Rect::from_min_size(pos2(rect.min.x, *y), vec2(rect.width(), crate::panels::fx_editors::curve_height(rect.width())));
+                    *y += block.height();
+                    if block.max.y >= rect.min.y && block.min.y <= rect.max.y {
+                        crate::panels::fx_editors::curve_param(app, ui, p, layer, pr, channels, ectx, block, actions);
+                    }
+                }
                 if app.ui.fx_slider_open.contains(&pr.uid) {
                     if matches!(pr.ui, ParamUi::Angle) {
                         let sr = Rect::from_min_size(pos2(rect.min.x, *y), vec2(rect.width(), DIAL_ROW));
@@ -769,7 +904,7 @@ pub(super) fn group_rows(
                         if sr.max.y >= rect.min.y && sr.min.y <= rect.max.y {
                             dial_row(app, ui, layer, pr, ectx, sr, indent + 22.0, actions);
                         }
-                    } else if matches!(pr.ui, ParamUi::Slider { .. }) {
+                    } else if matches!(pr.ui, ParamUi::Slider { .. } | ParamUi::Scaled { .. }) {
                         let sr = Rect::from_min_size(pos2(rect.min.x, *y), vec2(rect.width(), 34.0));
                         *y += 34.0;
                         if sr.max.y >= rect.min.y && sr.min.y <= rect.max.y {
@@ -810,5 +945,13 @@ pub(super) fn group_rows(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_log_slider_puts_values_outside_its_track_at_the_ends_instead_of_nan() {
+        assert_eq!([-1.0, 0.0, 1.0, 10.0, 100.0].map(|value| super::slider_fraction(value, 1.0, 10.0, true)), [0.0, 0.0, 0.0, 1.0, 1.0]);
     }
 }

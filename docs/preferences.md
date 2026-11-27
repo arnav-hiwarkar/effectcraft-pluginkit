@@ -307,6 +307,13 @@ from?, newName?}`, `shortcuts.export {preset?, path?}`, `shortcuts.import {path?
 - While the app runs, `session.lock` in the config directory records the open project and its
   latest auto-save. A clean quit removes it. If it is still there at the next launch, the app
   offers to open the latest auto-save (Settings ▸ Startup & Repair can turn this off).
+- An auto-save records the open comps, the active comp and each comp's current time, as File ▸ Save
+  does. Open Auto-Save (`file.open {path, autosaveOf}`) opens it as the project it was an auto-save
+  of: the project takes that project's path when the auto-save records that same path as the project it
+  was made from, counts as changed, and File ▸ Save writes the original file, never the auto-save. With
+  `autosaveOf` null, or a path that is not the recorded one, it opens untitled. A recovered project whose
+  original file is gone enters Open Recent when a save succeeds. The recovery offer skips auto-saves
+  recorded from another project.
 - File ▸ Open Recent lists recent projects (stored in the settings), File ▸ Revert reloads the
   saved project, File ▸ Increment and Save saves `Intro.ecproj` as `Intro 2.ecproj`.
 

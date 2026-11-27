@@ -18,6 +18,8 @@ cpal or muda. Everything in L0 to L4, the egui UI and the web app also build for
 | L0 | `time` | `Tick` (254 016 000 000 per second), rational frame rates incl. NTSC, SMPTE and drop-frame timecode |
 | L0 | `geom` | Vectors, matrices, quaternions, the layer transform (anchor, position, scale, orientation, rotation) |
 | L0 | `color` | sRGB and linear, HSL/HSV, luminance, the 38 blend modes, label colors |
+| L0 | `craft-plugin` (craft-libs `crates/plugin-sdk`) | The plugin SDK and the messages a plugin and the app exchange; no EffectCraft dependency ([plugin-system.md](plugin-system.md)) |
+| L0 | `craft-plugin-host` (craft-libs `crates/plugin-host`) | The plugin runtime: Wasmtime for sandboxed plugins, a library loader for native ones, the permission check, the installed-plugin registry; no EffectCraft dependency; an empty engine on wasm32 |
 | L1 | `raster` | Premultiplied float images, sampling, affine and projective warps, blurs, compositing (parallel with rayon) |
 | L1 | `keyframe` | Animated values, keyframes with temporal ease and spatial Bezier, roving, hold, velocity |
 | L1 | `segment` | Swappable trained models for Roto Brush and face tracking: the `MaskModel` and `FaceModel` interfaces, a registry of open-licensed models (authors, licence, URL, size, SHA-256), PyTorch checkpoint and TensorFlow Lite readers (with an interpreter), SHA-256, MobileSAM (TinyViT + Segment Anything decoder) and MediaPipe Face Landmarker (BlazeFace + Face Mesh V2) on rayon and ndarray's safe GEMM |
@@ -39,13 +41,13 @@ cpal or muda. Everything in L0 to L4, the egui UI and the web app also build for
 | L3 | `interchange` | Premiere Pro interop through timeline interchange (FCP7 XML, FCPXML, OTIO, EDL, AAF, OMF via FilmCraft's `filmcraft-interchange`): sequences ↔ compositions (§6a) |
 | L3 | `aep` | After Effects projects in one crate (like `lottie`): `container` reads and writes the `.aep` container (RIFX `Egg!`) as a lossless chunk tree with a byte-identical round trip, bounded for hostile input, reads the `.aepx` XML form into the same tree, and has a typed view of items, layers, properties, effects, masks, shapes, text, markers, footage, cameras, lights and layer styles, from our own observations of generated files ([aep-format.md](aep-format.md)); `import` maps the typed view into a project (items, settings, compositions, every layer kind, Transform, keyframes, expressions, masks, text, shapes, cameras, lights, mattes, markers, time remapping, layer styles, the effects of a shared table, footage) with a report of everything not imported ([aep-import.md](aep-import.md)); `export` builds every chunk in code (prototypes in the layout After Effects writes, cloned and edited only at verified fields) for the same scope, with a report of everything not exported, verified by opening the output in After Effects ([aep-export.md](aep-export.md)) |
 | L3 | `lottie` | Lottie JSON / dotLottie import and export (layers, precomps, eased and spatial keyframes, shapes, masks, mattes) with a warnings list for what Lottie cannot express |
-| L3 | `plugin` | Effect plug-ins: loads sandboxed WebAssembly effect modules (WebAssembly ABI v1 and v2, the latter with neighbouring frames; the wasmi interpreter behind the `wasm` feature, on for native hosts) into the effect registry ([plugins.md](plugins.md)) |
-| L3 | `helper-host` | External effect helpers: finds helper programs, runs each as a child process and registers its effects (plug-in API 2) over a versioned pipe + shared-file protocol; a crashing helper is an error on the effect, never a crash ([external-helpers.md](external-helpers.md), [ADR 0001](adr/0001-external-effect-helpers.md)). Native only |
 | L4 | `engine` | `Session`: project, branching undo history, editor state, the command registry and menus, the ScriptUI window model (`scriptui`) |
 | L4 | `script` | Scripting: JavaScript (boa) with an After Effects-style object model (`app.project`, comps, layers, properties, render queue) and ScriptUI (dialogs, palettes, dockable panels; script-host threads so dialogs block `show()`), whose edits run engine commands; AE match names |
-| L4 | `host` | A fully wired `Session` (media, expressions, scripting, WebAssembly plug-ins, exporter) for the frontends |
+| L4 | `host` | A fully wired `Session` (media, expressions, scripting, exporter) for the frontends |
+| L5 | `craft-plugin-ui` (craft-libs `crates/plugin-ui`) | egui drawing of plug-in panels, controls and viewer marks; the app passes its theme, translations, textures and drag payloads; no EffectCraft dependency |
 | L5 | `ui-egui` | The desktop interface: docking, panels, viewer, timeline, graph editor, dialogs, control channel |
 | L5 | `automation` | The MCP server, headless or bridged to the running app |
+| L5 | `plugin` | EffectCraft's side of the plugin system: plugin effects in the effect registry, plugin commands and panels over engine commands under the automation confinement, plugin management |
 | L6 | apps `effectcraft`, `effectcraft-cli`, `effectcraft-web` | Desktop app; command-line tool (render, exec, get/set, MCP); the browser app (wasm32, [web.md](web.md)) |
 
 Allowed same-layer edges: `path → keyframe, raster`, `text → path`, `pdf → svg, text`, `effects → project, text, path, track`,
@@ -99,7 +101,8 @@ dropped if it saves the project. Save, Save As, Save a Copy and Increment and Sa
 file's format (`.ecprojx` stays XML). Next to `savedBy` the file records the active comp and the
 open comp tabs (`activeComp`, `openComps`), which opening restores; they are editor state, not
 part of `Project`, so older files (and ids that no longer name a comp) open on the first comp and
-older versions ignore them.
+older versions ignore them. An empty `openComps` means every tab was closed. An auto-save also
+records `autosaveOf`, the path of the project it was made from.
 
 `schema` changes when a saved value changes meaning; a project from an older schema is converted
 when it is opened (`effectcraft_engine::upgrade_effects`, which also refreshes effect instances
@@ -393,7 +396,7 @@ mattes), the GPU packs the buffers into one atlas texture and one kernel does th
 fragment sort (intersecting planes, coplanar stack order), Blinn-Phong lighting, ray-cast shadows
 against the caster planes (Shadow Diffusion, Light Transmission) and blending. Adjustment layers
 run their effect stacks on the GPU-resident comp (`Renderer::run_effects_on` with an `FxTarget`):
-runs of GPU effects stay on the device and only non-GPU effects read back and upload. Advanced 3D
+runs of GPU effects stay on the device, and each run of non-GPU effects reads back once and uploads once. Advanced 3D
 runs render on the GPU end to end (`gpu::adv3d`, `Renderer::prepare_adv_run` /
 `Accelerator::render_3d`): each motion-blur sub-sample's scene is rasterised (`advanced3d.wgsl`),
 then compute kernels (`adv3d.wgsl`) resolve the 2×2 supersampling, average the sub-samples
@@ -433,7 +436,9 @@ Wide Time, Pixel Motion Blur, Timewarp) upload the frames the host renders (`tim
 combine them on the GPU; Time Displacement's per-pixel times and Timewarp's motion vectors
 (`time_fx::timewarp_plan`) are computed on the CPU. Numbers and Timecode rasterise their glyph
 coverage on the CPU (`textfx::text_layer`) and composite it on the GPU. Other layers an effect
-reads (gradients, reveals, environments) are fitted on the CPU (`util::fit_layer`) and uploaded.
+reads (gradients, reveals, environments) are fitted on the CPU (`util::fit_layer`) and uploaded;
+a plugin effect's layer inputs bind the texture of the other layer's cached buffer (`upload_buf`) and
+are resampled on the GPU.
 Where f32 cannot follow the CPU's f64, the CPU solves the part that needs it and the GPU uses
 the result: Warp's Fisheye and Twist past 50 % or with a distortion (a Newton inverse that
 wanders chaotically near the crease) sample the CPU's inverse map (`warp_inverse_map`). Settings

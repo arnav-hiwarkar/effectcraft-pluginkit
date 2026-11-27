@@ -123,6 +123,18 @@ pub fn install_pickers(app: &mut EffectcraftApp, ctx: &egui::Context) -> Receive
     }));
     let errors = tx.clone();
     app.hooks.pick_folder = Some(Box::new(move || blocking(&errors, "Choose Folder", || rfd::FileDialog::new().pick_folder()).map(path_string)));
+    let errors = tx.clone();
+    effectcraft_plugin::set_file_picker(Box::new(move |pick: &effectcraft_plugin::PickFile| {
+        let what = if pick.title.is_empty() { "Choose File" } else { pick.title.as_str() };
+        blocking(&errors, what, || {
+            let exts: Vec<&str> = pick.extensions.iter().map(String::as_str).collect();
+            let mut dialog = rfd::FileDialog::new().set_title(what);
+            if !exts.is_empty() {
+                dialog = dialog.add_filter(exts.join(", "), &exts);
+            }
+            if pick.save { dialog.save_file() } else { dialog.pick_file() }
+        })
+    }));
     let errors = tx;
     app.hooks.pick_save_file = Some(Box::new(move |name: &str, ext: &str| {
         blocking(&errors, "Save", || {

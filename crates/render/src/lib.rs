@@ -64,7 +64,7 @@ pub use layers::{Placement, StyledLayer};
 pub(crate) use opts::Collapse3d;
 pub use opts::{LayerTiming, RenderOpts};
 use opts::{MAX_THROUGH, Through};
-pub use pipeline::{Collapsed, FootagePicture, MediaOverride, PropertyOverride};
+pub use pipeline::{Collapsed, FootagePicture, MediaOverride, PropertyOverride, effect_instance};
 
 pub struct Renderer<'a> {
     pub project: &'a Project,

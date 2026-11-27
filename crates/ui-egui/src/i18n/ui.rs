@@ -10478,6 +10478,8 @@ mod tests {
         ("panels.rs", include_str!("../panels.rs")),
         ("panels/paint_panels.rs", include_str!("../panels/paint_panels.rs")),
         ("panels/path_vr_panels.rs", include_str!("../panels/path_vr_panels.rs")),
+        ("panels/plugin_manager.rs", include_str!("../panels/plugin_manager.rs")),
+        ("panels/plugin_view.rs", include_str!("../panels/plugin_view.rs")),
         ("panels/precomp.rs", include_str!("../panels/precomp.rs")),
         ("panels/project.rs", include_str!("../panels/project.rs")),
         ("panels/properties.rs", include_str!("../panels/properties.rs")),

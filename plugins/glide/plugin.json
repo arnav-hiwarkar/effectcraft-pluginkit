@@ -1,0 +1,10 @@
+{
+  "id": "org.craftkit.glide",
+  "name": "Glide",
+  "version": "1.0.0",
+  "author": "CraftKit",
+  "license": "MIT OR Apache-2.0",
+  "description": "Shape easing with a cubic-bezier curve and apply it to the selected keyframes.",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": ["document.read", "document.write"]
+}

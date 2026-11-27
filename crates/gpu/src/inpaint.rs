@@ -53,7 +53,9 @@ const SDR_DISTANCE: f32 = 4.0;
 
 /// `u`/`f` blocks of a kernel's parameter buffer (see `inpaint.wgsl`'s header).
 fn params(u0: [u32; 4], u1: [u32; 4], u2: [u32; 4], f0: [f32; 4]) -> Params {
-    Params { u: [u0, u1, u2, [0; 4]], f: [f0, [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]] }
+    let mut p = Params { u: [u0, u1, u2, [0; 4]], ..Params::default() };
+    p.f[0] = f0;
+    p
 }
 
 /// `p` with this level's mask offset in `u[3].x` (`inpaint.wgsl`'s `data`).

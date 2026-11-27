@@ -17,6 +17,7 @@ mod commands;
 mod entries;
 mod frontend;
 mod invoke;
+mod plugin_commands;
 mod shortcuts;
 
 pub use bar::menu_bar;
@@ -29,6 +30,7 @@ pub use frontend::frontend;
 use frontend::zoom_step;
 pub(crate) use frontend::{dialog_answered, import_aep_projects, run_engine};
 pub use invoke::{invoke, panel_command_id, reveal, waits_on_dialog};
+pub(crate) use plugin_commands::{context_section as plugin_context_section, toolbar as plugin_toolbar};
 #[cfg(test)]
 use shortcuts::modifiers_at_start;
 pub use shortcuts::{Binding, bindings, chord_matches, forwardable_during_text_edit, handle_shortcuts, handle_tab_shortcut, parse_shortcut, shortcut_text};
@@ -40,5 +42,7 @@ pub struct UiCommand {
     pub shortcut: Option<&'static str>,
 }
 
+#[cfg(test)]
+mod plugin_command_tests;
 #[cfg(test)]
 mod tests;

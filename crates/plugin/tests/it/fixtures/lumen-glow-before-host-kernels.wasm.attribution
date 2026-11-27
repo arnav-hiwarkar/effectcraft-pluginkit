@@ -1,0 +1,7 @@
+asset:        lumen-glow-before-host-kernels.wasm
+title:        Lumen Glow as built before host kernels, the reference for its output and for loading plugins built against an older SDK
+author:       EffectCraft contributors
+source:       original work (plugins/lumen-glow at commit fdb1578b, built with cargo build --release --target wasm32-unknown-unknown, opt-level z, symbols stripped, target features simd128, bulk-memory and nontrapping-fptoint)
+license:      MIT OR Apache-2.0
+added:        2026-11-22 by EffectCraft contributors
+notes:        Read by crates/plugin/tests/it/lumen.rs. Rebuild it only to replace the reference on purpose.

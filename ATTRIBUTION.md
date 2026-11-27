@@ -53,10 +53,33 @@ and licence texts are in [`NOTICE`](NOTICE).
 | `assets/app-icon/hicolor/512x512/apps/ai.storyteller.effectcraft.png` | EffectCraft contributors | Original work: effectCraft app icon, Linux hicolor 512x512 (owner's ArtCraft unicorn drawing, vectorised) | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
 | `assets/app-icon/hicolor/64x64/apps/ai.storyteller.effectcraft.png` | EffectCraft contributors | Original work: effectCraft app icon, Linux hicolor 64x64 (owner's ArtCraft unicorn drawing, vectorised) | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
 | `assets/app-icon/hicolor/scalable/apps/ai.storyteller.effectcraft.svg` | EffectCraft contributors | Original work: effectCraft app icon, Linux hicolor scalable (owner's ArtCraft unicorn drawing, vectorised) | MIT OR Apache-2.0 (`assets/app-icon/LICENSE.txt`) |
+| `crates/plugin/tests/it/legacy/legacy.wasm` | EffectCraft contributors | Original work: a one-effect plugin built from `legacy.rs` against the plugin SDK as of commit fdb1578b, before viewer controls | MIT OR Apache-2.0 |
+| `crates/plugin/tests/it/legacy/probe-before-regions.wasm` | EffectCraft contributors | Original work: the craft-libs test probe plugin as built at EffectCraft commit f66e99e9, before UI levels, copied from craft-libs `crates/plugin-host/tests/it/fixtures` | MIT OR Apache-2.0 |
+| `plugins/cookbook/tests/frames/blur-checker.png` | EffectCraft contributors | Original work: stored test frame "blur-checker" rendered by the cookbook reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/cookbook/tests/frames/edges.png` | EffectCraft contributors | Original work: stored test frame "edges" rendered by the cookbook reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/cookbook/tests/frames/glow.png` | EffectCraft contributors | Original work: stored test frame "glow" rendered by the cookbook reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/cookbook/tests/frames/tint.png` | EffectCraft contributors | Original work: stored test frame "tint" rendered by the cookbook reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `xtask/templates/warm.cube` | EffectCraft contributors | Original work: a hand-written 2x2x2 warming LUT copied into new data-only plugin packs | MIT OR Apache-2.0 |
+| `plugins/generate/tests/frames/dots.png` | EffectCraft contributors | Original work: stored test frame "dots" rendered by the generate reference plugin | MIT OR Apache-2.0 |
+| `plugins/generate/tests/frames/field.png` | EffectCraft contributors | Original work: stored test frame "field" rendered by the generate reference plugin | MIT OR Apache-2.0 |
+| `plugins/generate/tests/frames/ramp-linear.png` | EffectCraft contributors | Original work: stored test frame "ramp-linear" rendered by the generate reference plugin | MIT OR Apache-2.0 |
+| `plugins/generate/tests/frames/ramp-radial.png` | EffectCraft contributors | Original work: stored test frame "ramp-radial" rendered by the generate reference plugin | MIT OR Apache-2.0 |
+| `plugins/curves/tests/frames/s-curve-red-lift.png` | EffectCraft contributors | Original work: stored test frame "s-curve-red-lift" rendered by the curves reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/ember/tests/frames/fountain.png` | EffectCraft contributors | Original work: stored test frame "fountain" rendered by the ember reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/ember/tests/frames/sparks.png` | EffectCraft contributors | Original work: stored test frame "sparks" rendered by the ember reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/forge-3d/tests/frames/layer-only.png` | EffectCraft contributors | Original work: stored test frame "layer-only" rendered by the forge-3d reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/halo/tests/frames/anamorphic.png` | EffectCraft contributors | Original work: stored test frame "anamorphic" rendered by the halo reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/halo/tests/frames/sun.png` | EffectCraft contributors | Original work: stored test frame "sun" rendered by the halo reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/plasma-beam/tests/frames/default.png` | EffectCraft contributors | Original work: stored test frame "default" rendered by the plasma-beam reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/plasma-beam/tests/frames/electric-distorted.png` | EffectCraft contributors | Original work: stored test frame "electric-distorted" rendered by the plasma-beam reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/retro/tests/frames/crt-default.png` | EffectCraft contributors | Original work: stored test frame "crt-default" rendered by the retro reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/retro/tests/frames/crt-slot-wide-glow.png` | EffectCraft contributors | Original work: stored test frame "crt-slot-wide-glow" rendered by the retro reference plugin on a built-in test image | MIT OR Apache-2.0 |
+| `plugins/retro/tests/frames/neon.png` | EffectCraft contributors | Original work: stored test frame "neon" rendered by the retro reference plugin on a built-in test image | MIT OR Apache-2.0 |
 | `crates/lottie/tests/fixtures/bouncing-ball.json` | EffectCraft contributors | Original work: hand-written Lottie test fixture (bouncing ball, eased position keys) | MIT OR Apache-2.0 |
 | `crates/lottie/tests/fixtures/shapes-gradient.json` | EffectCraft contributors | Original work: hand-written Lottie test fixture (star, rectangle, gradient fill, dashed stroke, trim paths) | MIT OR Apache-2.0 |
 | `crates/lottie/tests/fixtures/precomp-matte-text.json` | EffectCraft contributors | Original work: hand-written Lottie test fixture (precomp, track matte, parented text) | MIT OR Apache-2.0 |
 | `crates/lottie/tests/fixtures/legacy-masks.json` | EffectCraft contributors | Original work: hand-written Lottie test fixture (legacy keyframes, masks) | MIT OR Apache-2.0 |
+| `plugins/forge-3d/assets/gem.obj` | EffectCraft contributors | Original work: generated OBJ model for the Forge 3D reference plugin (an icosahedron with a raised point on each face) | MIT OR Apache-2.0 |
 | `crates/svg/tests/fixtures/basic-shapes.svg` | EffectCraft contributors | Original work: hand-written SVG test fixture (basic shapes, groups, transforms) | MIT OR Apache-2.0 |
 | `crates/svg/tests/fixtures/paths-gradients.svg` | EffectCraft contributors | Original work: hand-written SVG test fixture (path data, gradients, CSS, use) | MIT OR Apache-2.0 |
 | `crates/model/tests/fixtures/quad.gltf` | EffectCraft contributors | Original work: glTF 2.0 test fixture (textured quad, node hierarchy, translation animation; data URIs) | MIT OR Apache-2.0 |
@@ -65,6 +88,8 @@ and licence texts are in [`NOTICE`](NOTICE).
 | `crates/model/tests/fixtures/cube.mtl` | EffectCraft contributors | Original work: MTL test fixture (materials of cube.obj) | MIT OR Apache-2.0 |
 
 Three small After Effects test projects of `crates/aep` are in this repository: `crates/aep/tests/fixtures/synthetic.aep` (original work, made with After Effects 2026 from own data, working space None, the embedded colour profile removed; MIT OR Apache-2.0, with its `.attribution` sidecar), `crates/aep/tests/fixtures/ai-mask-3099.aep` (original work, made with After Effects 2026 from four hand-written one-page PDFs named `.ai`, footage paths and host name neutralised, the embedded colour profiles replaced by stubs made with `crates/aep/examples/stubicc.rs`; MIT OR Apache-2.0, with its `.attribution` sidecar) and `crates/aep/tests/fixtures/text-synthetic.aep` (original work, made with After Effects 2026 by script from own data, working space None, no colour profile embedded, nothing changed after the save; MIT OR Apache-2.0, with its `.attribution` sidecar). The other After Effects test projects of `crates/aep` are not in this repository. They are original work of an EffectCraft contributor, generated with After Effects 2026 as own test data (MIT OR Apache-2.0, each file with its `.attribution` sidecar); they are in [storytold/effectcraft-corpus](https://github.com/storytold/effectcraft-corpus) with their sidecars, fetched by `cargo xtask aep-corpus` (commit-pinned, SHA-256-verified), and the tests read them only from the folder named by `EFFECTCRAFT_AEP_FIXTURES` (opt-in). Their embedded colour profiles are replaced by stubs made with `crates/aep/examples/stubicc.rs` (a header and a description, no colour data), so no vendor profile data is in them.
+
+One compiled test plugin is in this repository: `crates/plugin/tests/it/fixtures/lumen-glow-before-host-kernels.wasm`, Lumen Glow from `plugins/lumen-glow` as built at commit fdb1578b before host kernels (original work, MIT OR Apache-2.0, with its `.attribution` sidecar). The plugin tests compare today's Lumen Glow with it and check that a plugin built against that older SDK still loads and renders. The probe built before frames had separate input and output rows moved to craft-libs with the plugin host.
 
 ## Screenshots
 
@@ -80,7 +105,7 @@ Screenshots of EffectCraft itself, rendered headlessly, showing only procedurall
 
 ## Code-drawn assets (original work, MIT OR Apache-2.0)
 
-- UI icons drawn in code: `crates/ui-egui/src/icons.rs`, including the original filled favorite star (2026-10-11, EffectCraft contributors).
+- UI icons drawn in code: `crates/ui-egui/src/icons.rs`, including the original filled favorite star (2026-10-11, EffectCraft contributors) and the plugin kit icons from Wand to Check (2026-11-27, EffectCraft contributors).
 - Procedural demo content (solids, shapes, gradients, text animations): `crates/engine/src/demo.rs`.
 - Built-in project templates (Lower Third, Title Card, Logo Reveal, Kinetic Type, Social Square, Vertical Story,
   Slideshow, 3D Text Orbit) built from engine commands, and their thumbnails rendered by our own renderer:
@@ -99,7 +124,6 @@ Screenshots of EffectCraft itself, rendered headlessly, showing only procedurall
   (sidecars `.attribution`).
 - Bundled extension (ScriptUI panel) with its twelve built-in ease presets:
   `extensions/scriptui-panels/Ease Presets.jsx` (sidecar `.attribution`).
-- Example effect plug-in: `examples/plugins/posterize-bands` (WebAssembly ABI 1).
 
 ## Trained models (optional downloads, not bundled)
 

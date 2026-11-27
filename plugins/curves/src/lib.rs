@@ -1,0 +1,57 @@
+mod control;
+mod curve;
+mod presets;
+#[cfg(test)]
+mod tests;
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use craft_plugin::prelude::*;
+
+use crate::control::ControlState;
+use crate::curve::{Curves, Luts};
+
+pub const EFFECT: &str = "curves";
+pub const PARAM: &str = "curves";
+
+params! {
+    struct Controls {
+        curves: String = custom("Curves", &Curves::default_text()),
+    }
+}
+
+#[derive(Default)]
+struct CurvesEffect {
+    controls: Mutex<HashMap<u64, ControlState>>,
+}
+
+impl Effect for CurvesEffect {
+    fn spec(&self) -> EffectSpec {
+        EffectSpec::new(EFFECT, "Curves", "Color Correction").params(Controls::params())
+    }
+
+    fn layout(&self, _cx: &Cx) -> Layout {
+        Layout::pointwise()
+    }
+
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let luts = Luts::new(&Curves::parse(&Controls::read(cx).curves));
+        frame.map(|pixel| luts.pixel(pixel));
+        Ok(())
+    }
+
+    fn controls(&self, instance: u64, param: &str, value: &mut String, ui: &mut Ui) {
+        if param != PARAM {
+            return;
+        }
+        let mut states = self.controls.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        control::draw(states.entry(instance).or_default(), value, ui);
+    }
+}
+
+fn plugin() -> Plugin {
+    Plugin::new().effect(CurvesEffect::default()).panel("presets", "Curve Presets", presets::PresetPanel::default())
+}
+
+craft_plugin::export!(plugin);

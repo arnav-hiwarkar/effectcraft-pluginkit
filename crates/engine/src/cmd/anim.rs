@@ -6,7 +6,7 @@ use effectcraft_project::{ItemId, LayerId, Property, Uid};
 use effectcraft_time::Tick;
 use serde_json::{Value, json};
 
-use super::prop::{KeyTimeBase, key_time, key_timing, prop_ref};
+use super::prop::{KeyTimeBase, key_time, key_timing, keys_turned_on, prop_ref};
 use super::{CommandSpec, bad, comp_id, f_p, has_comp, has_keys, layers_p, merge_p, str_p, time_p};
 use crate::{EngineError, KeyClip, KeyRef, Result, Session, cmd, query};
 
@@ -120,6 +120,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     if plan.is_empty() {
         return Err(bad("keys.paste", "no compatible unlocked property to paste into (unlock the target or select a property of the same type)"));
     }
+    let turned_on = keys_turned_on(s, "keys.paste");
     s.edit("Paste Keyframes", merge_p(p), |proj, st| {
         let comp = proj.comp_mut(cid).ok_or(EngineError::NoComp)?;
         let mut sel = locked_selection(comp, &st.selected_keys);
@@ -145,6 +146,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
             }
             retime_roving(&mut pr.keys, pr.spatial);
         }
+        turned_on(proj, cid, &sel[retained..])?;
         let pasted = sel.len().saturating_sub(retained);
         st.selected_keys = sel;
         Ok(json!(pasted))
@@ -214,6 +216,7 @@ pub(super) fn paste_path(s: &mut Session, p: &Value, (cid, lid, uid): (ItemId, L
             (time, value, at(path.in_tangents.get(v)), at(path.out_tangents.get(v)), i != 0 && i != last)
         })
         .collect();
+    let turned_on = keys_turned_on(s, "keys.paste");
     s.edit("Paste Keyframes", merge_p(p), |proj, st| {
         let comp = proj.comp(cid).ok_or(EngineError::NoComp)?;
         let mut selected = locked_selection(comp, &st.selected_keys);
@@ -233,6 +236,7 @@ pub(super) fn paste_path(s: &mut Session, p: &Value, (cid, lid, uid): (ItemId, L
         let pasted: Vec<usize> = pr.keys.iter().enumerate().filter(|(_, k)| sel.contains(&k.time)).map(|(i, _)| i).collect();
         retime_roving(&mut pr.keys, pr.spatial);
         selected.extend(pasted.iter().filter_map(|&i| pr.keys.get(i)).map(|k| KeyRef { layer: lid, prop: uid, time: k.time }));
+        turned_on(proj, cid, &selected[retained..])?;
         let count = selected.len().saturating_sub(retained);
         st.selected_keys = selected;
         Ok(json!(count))
@@ -320,6 +324,7 @@ fn set_key(s: &mut Session, p: &Value) -> Result<Value> {
     let t = key_time(layer, comp.frame_rate, p, "time", base, "keys.set", false)?.ok_or_else(|| bad("keys.set", "missing `time` (layer time by default)"))?;
     let new_t = key_time(layer, comp.frame_rate, p, "newTime", base, "keys.set", true)?;
     let value = p.get("value").cloned();
+    let turned_on = keys_turned_on(s, "keys.set");
     let nt = s.edit("Edit Keyframe", merge_p(p), |proj, st| {
         let l = super::layer_mut(proj, cid, lid)?;
         let pr = l.props.find_mut(uid).ok_or_else(|| bad("keys.set", "no property"))?;
@@ -343,6 +348,7 @@ fn set_key(s: &mut Session, p: &Value) -> Result<Value> {
         for k in st.selected_keys.iter_mut().filter(|k| k.layer == lid && k.prop == uid && k.time == old_t) {
             k.time = nt;
         }
+        turned_on(proj, cid, &[KeyRef { layer: lid, prop: uid, time: nt }])?;
         Ok(nt)
     })?;
     let layer = s.project.comp(cid).and_then(|c| c.layer(lid)).ok_or(EngineError::NoComp)?;
@@ -430,7 +436,7 @@ fn units(pr: &Property) -> &'static str {
     }
     match pr.ui {
         ParamUi::Angle => "degrees/sec",
-        ParamUi::Percent => "%/sec",
+        ParamUi::Percent | ParamUi::Scaled { percent: true, .. } => "%/sec",
         ParamUi::Slider { .. } if pr.match_id == "opacity" => "%/sec",
         _ if pr.match_id == "opacity" => "%/sec",
         ParamUi::Pixels => "pixels/sec",
@@ -460,6 +466,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         _ => s.state.selected_keys.clone(),
     };
     let mut out = vec![];
+    let mut paths: std::collections::BTreeMap<(LayerId, Uid), Vec<f64>> = Default::default();
     for r in refs {
         let Some(l) = comp.layer(r.layer) else { continue };
         let Some(pr) = l.props.find(r.prop) else { continue };
@@ -467,9 +474,10 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         let k = &pr.keys[i];
         let spatial = pr.spatial && matches!(k.value, effectcraft_keyframe::Value::Vec2(_) | effectcraft_keyframe::Value::Vec3(_));
         let dims = if spatial { 1 } else { k.value.dims().max(1).min(if pr.shown_dims > 0 && !l.is_3d() { pr.shown_dims as usize } else { 4 }) };
+        let ease_dims = if spatial { 1 } else { k.value.dims().max(1) };
         let side = |out: bool| -> Value {
             json!(
-                (0..dims)
+                (0..ease_dims)
                     .map(|d| side_ease(&pr.keys, i, d, pr.spatial, out)
                         .map(|e| json!({"speed": e.speed, "influence": e.influence * 100.0}))
                         .unwrap_or(Value::Null))
@@ -496,8 +504,17 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         } else {
             json!("bezier")
         };
+        let segments = spatial.then(|| {
+            paths
+                .entry((l.id, pr.uid))
+                .or_insert_with(|| (0..pr.keys.len().saturating_sub(1)).map(|j| effectcraft_keyframe::spatial_segment_length(&pr.keys, j)).collect())
+                .as_slice()
+        });
+        let segment_length = segments.and_then(|lengths| lengths.get(i).copied());
+        let path_length = segments.map(|lengths| lengths.iter().sum::<f64>());
         out.push(json!({
-            "layer": l.id.0, "prop": pr.uid, "name": pr.name, "path": l.props.match_path_of(pr.uid),
+            "layer": l.id.0, "prop": pr.uid, "name": pr.name, "index": i, "keyCount": pr.keys.len(),
+            "segmentLength": segment_length, "pathLength": path_length, "easeDims": ease_dims, "path": l.props.match_path_of(pr.uid),
             "time": k.time.seconds(), "compTime": l.comp_time(k.time).seconds(), "value": k.value.to_json(),
             "in": interp_name(k.in_interp), "out": interp_name(k.out_interp), "temporal": temporal,
             "autoBezier": k.auto_bezier, "continuous": k.continuous, "roving": k.roving, "spatial": spatial_kind,
@@ -511,6 +528,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
 fn time_reverse(s: &mut Session, _: &Value) -> Result<Value> {
     let cid = s.active_comp_id().ok_or(EngineError::NoComp)?;
     let sel = s.state.selected_keys.clone();
+    let turned_on = keys_turned_on(s, "keys.timeReverse");
     s.edit("Time-Reverse Keyframes", None, |proj, st| {
         let comp = proj.comp_mut(cid).ok_or(EngineError::NoComp)?;
         let mut groups: std::collections::BTreeMap<(LayerId, Uid), Vec<Tick>> = Default::default();
@@ -537,6 +555,7 @@ fn time_reverse(s: &mut Session, _: &Value) -> Result<Value> {
                 }
             }
         }
+        turned_on(proj, cid, &new_sel)?;
         st.selected_keys = new_sel;
         Ok(json!(st.selected_keys.len()))
     })

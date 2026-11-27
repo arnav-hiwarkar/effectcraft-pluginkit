@@ -77,6 +77,7 @@ impl EffectcraftApp {
             error_toasts: Default::default(),
             viewer_tex: None,
             passive_tex: std::collections::HashMap::new(),
+            pane_demands: Vec::new(),
             viewer_native: None,
             viewer_shown: None,
             crypto_probe_busy: Default::default(),
@@ -107,6 +108,7 @@ impl EffectcraftApp {
             command_inbox: None,
             pointer_comp: None,
             dialog_state: Default::default(),
+            plugin_ui: Default::default(),
             integrated_titlebar: false,
             audio: None,
             scrub: None,
@@ -137,6 +139,7 @@ impl EffectcraftApp {
             .map(|c| effectcraft_engine::shortcuts::UiCommand { id: c.id.into(), label: c.label.into(), shortcut: c.shortcut.map(str::to_string), scope: None })
             .collect();
         self.session.set_ui_commands(cmds);
+        self.session.window_attached = true;
         self
     }
 

@@ -195,15 +195,28 @@ fn drop_payload(ui: &egui::Ui, rect: Rect, p: &egui::Painter, t: &Tokens, layer_
     }
 }
 
-/// A plug-in effect whose last render failed (an effect helper that stopped, ...): a warning sign
-/// at `at`, after the effect's name, with the message on hover. The frame shows the input as is.
 fn render_error_mark(app: &mut EffectcraftApp, ui: &mut egui::Ui, bp: &egui::Painter, effect: &str, g: &PropGroup, at: egui::Pos2) {
-    let Some(err) = effectcraft_engine::effects::plugin::plugin_error(effect) else { return };
+    let missing = || {
+        effectcraft_engine::plugin_refs::missing_owner(&app.session.project, effect)
+            .map(|plugin| crate::i18n::tr_args("Plug-in {} is not installed: this effect is skipped until it is installed", &[&plugin]))
+    };
+    let Some(err) = effectcraft_plugin::plugins().and_then(|plugins| plugins.render_error(effect)).or_else(missing) else { return };
     let wr = bp.text(at, Align2::LEFT_CENTER, "⚠", Tokens::semibold(12.0), app.tokens.warning);
     let resp = ui.interact(wr.expand(2.0), egui::Id::unique(("ec-fx-error", g.uid)), Sense::hover());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, format!("⚠ {err}")));
     app.auto.add(&format!("effectControls.effect.{}.error", g.uid), wr, &err);
     resp.on_hover_text(err);
-    ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+}
+
+fn designer_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, effect: &str, g: &PropGroup, row: Rect, actions: &mut Actions) -> f32 {
+    let Some(designer) = effectcraft_plugin::plugins().and_then(|plugins| plugins.designer(effect)) else { return 0.0 };
+    let label = crate::i18n::tr_args("Open {}", &[&designer.title]);
+    let resp = ui.scope_builder(egui::UiBuilder::new().max_rect(row), |ui| ui.button(&label)).inner;
+    app.auto.add_response(&format!("effectControls.effect.{}.designer", g.uid), &resp, &label);
+    if resp.clicked() {
+        actions.push(("window.pluginPanel".into(), json!({"plugin": designer.plugin, "panel": designer.id})));
+    }
+    ROW + 6.0
 }
 
 fn about_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, bp: &egui::Painter, t: &Tokens, effect: &str, g: &PropGroup, r: Rect) {
@@ -248,13 +261,14 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let comp_name = app.session.project.item(cid).map(|i| i.name.clone()).unwrap_or_default();
     let snap_project = app.session.project.clone();
     let snap_expr = app.session.expr.clone();
+    let snap_footage = app.session.footage.clone();
     let ectx = EvalCtx {
         project: &snap_project,
         comp_id: cid,
         comp: &comp,
         time: app.session.time(),
         expr: snap_expr.as_deref(),
-        footage: None,
+        footage: Some(snap_footage.as_ref()),
         property_overrides: &[],
         media_overrides: &[],
         reads: None,
@@ -400,6 +414,14 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 }
             });
             item(ui, "Reset", true, "effect.reset", json!({"layer": lid, "effect": g.uid}));
+            let presets = effectcraft_engine::effects::presets(effect);
+            if !presets.is_empty() {
+                ui.menu_button(crate::i18n::tr("Presets"), |ui| {
+                    for (name, _) in &presets {
+                        item(ui, name, true, "effect.applyPreset", json!({"layer": lid, "effect": g.uid, "preset": name}));
+                    }
+                });
+            }
             item(ui, "Remove", true, "effect.remove", json!({"layer": lid, "effect": g.uid}));
             ui.separator();
             item(ui, "Move Up", fi > 0, "effect.reorder", json!({"layer": lid, "effect": g.uid, "index": fi.max(1)}));
@@ -417,6 +439,14 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
             app.auto.add(&format!("effectControls.effect.{}.warning", g.uid), wr, &w);
             y += wr.height() + 6.0;
         }
+        y += designer_button(
+            app,
+            ui,
+            effect,
+            g,
+            Rect::from_min_size(pos2(body.min.x + 10.0, y + 3.0), vec2((body.width() - 20.0).max(60.0), ROW)),
+            &mut actions,
+        );
         if open {
             let eh = editor_height(effect, g, body.width());
             if eh > 0.0 {

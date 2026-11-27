@@ -21,7 +21,7 @@
 
 use effectcraft_color::{ColorSpace, Conversion};
 use effectcraft_project::{Footage, HdrMode, ProjectSettings};
-use effectcraft_raster::{Image, quantize_px};
+use effectcraft_raster::{Image, quantize_px, quantize_slice};
 use rayon::prelude::*;
 
 /// The colour pipeline of a project (see the module docs).
@@ -263,24 +263,9 @@ fn quantize_rect(img: &mut Image, r: PxRect, levels: f32) {
     if r.x0 >= r.x1 || r.y0 >= r.y1 {
         return;
     }
-    let inv = 1.0 / levels;
     let w = img.width as usize;
     let (x0, x1) = (r.x0 as usize, r.x1 as usize);
-    img.data[r.y0 as usize * w..r.y1 as usize * w].par_chunks_mut(w).for_each(|row| {
-        // Runs of all-zero pixels (+0.0 in every channel) quantise to themselves: skip them a
-        // cache line at a time (sparse shape, precomp and glow buffers are mostly empty).
-        let (blocks, rest) = row[x0..x1].as_chunks_mut::<4>();
-        for b in blocks {
-            if b.as_flattened().iter().fold(0, |a, v| a | v.to_bits()) != 0 {
-                for p in b {
-                    quantize_px(p, levels, inv);
-                }
-            }
-        }
-        for p in rest {
-            quantize_px(p, levels, inv);
-        }
-    });
+    img.data[r.y0 as usize * w..r.y1 as usize * w].par_chunks_mut(w).for_each(|row| quantize_slice(&mut row[x0..x1], levels));
 }
 
 /// Convert premultiplied pixels (on straight colour).

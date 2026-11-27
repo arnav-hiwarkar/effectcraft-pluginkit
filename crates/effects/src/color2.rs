@@ -21,19 +21,32 @@ fn pct() -> ParamUi {
 
 /// Map straight colour + alpha of every pixel (row-parallel).
 fn map_ca(img: &mut Image, f: impl Fn([f32; 3], f32) -> ([f32; 3], f32) + Sync) {
-    img.data.par_iter_mut().for_each(|px| {
-        let (c, a) = unpremul(*px);
-        if a <= 0.0 && px[0] == 0.0 && px[1] == 0.0 && px[2] == 0.0 {
-            // Fully transparent: only alpha transforms can change it.
-            let (_, na) = f([0.0; 3], 0.0);
-            if na > 0.0 {
-                *px = [0.0, 0.0, 0.0, na.clamp(0.0, 1.0)];
-            }
-            return;
+    map_ca_out(img, None, f);
+}
+
+fn map_ca_out(img: &mut Image, levels: Option<f32>, f: impl Fn([f32; 3], f32) -> ([f32; 3], f32) + Sync) {
+    img.data.par_chunks_mut(crate::QUANTIZE_CHUNK).for_each(|chunk| {
+        for px in chunk.iter_mut() {
+            map_ca_px(px, &f);
         }
-        let (nc, na) = f(c, a);
-        *px = premul(nc, na.clamp(0.0, 1.0));
+        if let Some(l) = levels {
+            effectcraft_raster::quantize_slice(chunk, l);
+        }
     });
+}
+
+#[inline(always)]
+fn map_ca_px(px: &mut [f32; 4], f: &impl Fn([f32; 3], f32) -> ([f32; 3], f32)) {
+    let (c, a) = unpremul(*px);
+    if a <= 0.0 && px[0] == 0.0 && px[1] == 0.0 && px[2] == 0.0 {
+        let (_, na) = f([0.0; 3], 0.0);
+        if na > 0.0 {
+            *px = [0.0, 0.0, 0.0, na.clamp(0.0, 1.0)];
+        }
+        return;
+    }
+    let (nc, na) = f(c, a);
+    *px = premul(nc, na.clamp(0.0, 1.0));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -198,10 +211,10 @@ fn ev(c: &Option<Curve>, v: f32) -> f32 {
 fn curves(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let [m, r, g, bl, a] = ["rgb", "red", "green", "blue", "alpha"].map(|id| Curve::parse_natural(ctx.params.s(id)));
     if m.is_none() && r.is_none() && g.is_none() && bl.is_none() && a.is_none() {
-        return b;
+        return ctx.unchanged(b);
     }
     let chans = [r, g, bl];
-    map_ca(&mut b.img, |c, al| {
+    map_ca_out(&mut b.img, ctx.env.quantize_output, |c, al| {
         let o = [0, 1, 2].map(|i| ev(&chans[i], ev(&m, c[i])));
         (o, ev(&a, al))
     });

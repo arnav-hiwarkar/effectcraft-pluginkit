@@ -60,11 +60,13 @@ effectcraft-aep = { path = "crates/aep" }
 effectcraft-svg = { path = "crates/svg" }
 effectcraft-engine = { path = "crates/engine" }
 effectcraft-host = { path = "crates/host" }
+effectcraft-plugin = { path = "crates/plugin" }
+craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "9b93c995d795d4766d36c04022385ea8293cfca7" }
+craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "9b93c995d795d4766d36c04022385ea8293cfca7" }
+craft-plugin-ui = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "9b93c995d795d4766d36c04022385ea8293cfca7" }
 effectcraft-ui-egui = { path = "crates/ui-egui" }
 effectcraft-automation = { path = "crates/automation" }
 effectcraft-script = { path = "crates/script" }
-effectcraft-plugin = { path = "crates/plugin" }
-effectcraft-helper-host = { path = "crates/helper-host" }
 
 # foundation
 thiserror = "2"
@@ -83,8 +85,6 @@ proptest = "1"
 
 # scripting (expressions)
 boa_engine = { version = "0.22", default-features = false }
-# WebAssembly effect plug-ins (sandboxed interpreter; MIT/Apache-2.0, pure Rust)
-wasmi = { version = "2", default-features = false, features = ["std", "validate", "wat", "deterministic", "portable-dispatch"] }
 
 # geometry / fonts
 kurbo = { version = "0.13", features = ["serde"] }
@@ -95,6 +95,7 @@ exr = "1.74"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 same-file = "1.0"
 tempfile = "3.27"
+zip = { version = "9.1.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # codecs + containers shared by the Craft apps (crates/media, crates/export); keep all in sync.
 craft-media = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "587339c787682592ed46bab5a15cae52e60da2e3", default-features = false, features = ["isobmff", "matroska"] }
@@ -146,9 +147,15 @@ sys-locale = "0.3"
 # filmcraft-frame = { path = "../filmcraft/crates/frame" }
 # filmcraft-color = { path = "../filmcraft/crates/color" }
 # filmcraft-time = { path = "../filmcraft/crates/time" }
+# Local co-development against the craft-libs fork checkout next to this repo (the plugin kit): uncomment.
+# From a worktree under pluginkit/wt/, write ../../craft-libs instead of ../craft-libs.
+# [patch."https://github.com/arnav-hiwarkar/craft-libs-plugin-beta"]
+# craft-plugin = { path = "../craft-libs/crates/plugin-sdk" }
+# craft-plugin-host = { path = "../craft-libs/crates/plugin-host" }
+# craft-plugin-ui = { path = "../craft-libs/crates/plugin-ui" }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 cognitive_complexity = "deny"

@@ -1,0 +1,20 @@
+[package]
+name = "legacy"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+craft-plugin = { path = "../sdk/crates/plugin-sdk" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+strip = true
+codegen-units = 1
+
+[workspace]

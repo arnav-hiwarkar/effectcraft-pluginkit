@@ -153,6 +153,11 @@ pub fn binding_key(command: &str, params: &Value) -> String {
     }
 }
 
+/// The parameters of `plugin.run` for one plug-in command (menus, shortcuts and the palette).
+pub fn plugin_command_params(plugin: &str, command: &str) -> Value {
+    json!({"plugin": plugin, "command": command})
+}
+
 /// Scope of a frontend command from its id.
 fn ui_scope(id: &str) -> &'static str {
     if id.starts_with("timeline.") {
@@ -576,6 +581,38 @@ impl ShortcutTable {
         bindables.splice(at..at, new);
         let keys = bindables.iter().map(|b| (b.key.clone(), maps.keys_of(b))).collect();
         ShortcutTable { bindables, keys }
+    }
+
+    /// Plug-in commands, bindable like any other. A plug-in's default shortcut is kept only when
+    /// no other command holds those keys; otherwise it stays unbound and a log line says why.
+    pub fn add_plugin_commands(&mut self, maps: &Keymaps, items: &[crate::PluginItem]) {
+        for item in items.iter().filter(|item| !item.panel) {
+            let params = plugin_command_params(&item.plugin, &item.id);
+            let label = format!("{}: {}", item.plugin_name, item.title);
+            let path = vec!["Window".into(), "Plug-ins".into()];
+            let mut b = Bindable {
+                key: binding_key("plugin.run", &params),
+                command: "plugin.run".into(),
+                params,
+                label,
+                path,
+                scope: APP_SCOPE.into(),
+                defaults: vec![],
+            };
+            if self.find(&b.key).is_some() {
+                continue;
+            }
+            match item.shortcut.as_deref().map(|keys| (keys, normalize(keys))) {
+                Some((keys, None)) => log::warn!("plug-in command `{}` asks for the shortcut `{keys}`, which names no key; it is left unbound", b.label),
+                Some((_, Some(keys))) => match self.conflicts(&b, &keys).first() {
+                    Some(taken) => log::warn!("plug-in command `{}` asks for {keys}, which `{}` already uses; it is left unbound", b.label, taken.label),
+                    None => b.defaults.push(keys),
+                },
+                None => {}
+            }
+            self.keys.insert(b.key.clone(), maps.keys_of(&b));
+            self.bindables.push(b);
+        }
     }
 
     pub fn find(&self, key: &str) -> Option<&Bindable> {

@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::config::{ConfigStore, DirConfig, MemoryConfig, atomic_write, atomic_write_with};
 use crate::prefs::{PREFS_FILE, Prefs};
 use crate::shortcuts::{DEFAULT_PRESET, Keymaps, normalize};
-use crate::{Session, autosave};
+use crate::{ItemId, Session, autosave};
 
 fn tmp(name: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -962,6 +962,171 @@ fn background_autosave_session(dir: &std::path::Path) -> (Session, Arc<AutosaveT
     (s, store)
 }
 
+fn three_comp_session(dir: &std::path::Path, background: bool) -> (Session, [ItemId; 3]) {
+    let mut s = Session { config: Some(Arc::new(DirConfig::new(dir.join("config")))), ..Default::default() };
+    s.prefs.auto_save.location = "custom".into();
+    s.prefs.auto_save.folder = dir.join("saves").to_string_lossy().into_owned();
+    s.autosave.background = background;
+    let mut ids = Vec::new();
+    for name in ["A", "B", "C"] {
+        s.execute("comp.new", json!({"name": name, "width": 320, "height": 180, "duration": 10})).unwrap();
+        ids.push(s.state.active_comp.unwrap());
+    }
+    s.open_comp(ids[1]);
+    (s, [ids[0], ids[1], ids[2]])
+}
+
+fn autosave_keeps_the_open_comps_and_the_active_comp(background: bool, name: &str) {
+    let dir = tmp(name);
+    let (mut s, [a, b, c]) = three_comp_session(&dir, background);
+    assert_eq!(s.state.open_comps, [a, b, c]);
+    let path = s.autosave_now().unwrap();
+    s.autosave_wait().unwrap();
+    let mut fresh = Session::default();
+    fresh.execute("file.open", json!({"path": path})).unwrap();
+    assert_eq!(fresh.state.open_comps, [a, b, c]);
+    assert_eq!(fresh.state.active_comp, Some(b));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn foreground_autosave_keeps_the_open_comps_and_the_active_comp() {
+    autosave_keeps_the_open_comps_and_the_active_comp(false, "autosave-view-foreground");
+}
+
+#[test]
+fn background_autosave_keeps_the_open_comps_and_the_active_comp() {
+    autosave_keeps_the_open_comps_and_the_active_comp(true, "autosave-view-background");
+}
+
+#[test]
+fn a_recovered_auto_save_saves_over_the_original_project() {
+    let dir = tmp("recover-original");
+    let (mut s, _) = three_comp_session(&dir, false);
+    let original = dir.join("work.ecproj").to_string_lossy().into_owned();
+    s.execute("file.saveAs", json!({"path": original})).unwrap();
+    let saved_text = std::fs::read_to_string(&original).unwrap();
+    s.execute("layer.newNull", json!({"name": "unsaved work"})).unwrap();
+    let autosave = s.autosave_now().unwrap();
+    s.autosave_wait().unwrap();
+    let autosave_text = std::fs::read_to_string(&autosave).unwrap();
+    assert!(!saved_text.contains("unsaved work"));
+    assert!(autosave_text.contains("unsaved work"));
+
+    let mut fresh = Session::default();
+    fresh.execute("file.open", json!({"path": autosave, "autosaveOf": original})).unwrap();
+    assert_eq!(fresh.path.as_deref(), Some(original.as_str()));
+    assert!(fresh.is_dirty());
+    fresh.execute("file.save", json!({})).unwrap();
+    assert!(std::fs::read_to_string(&original).unwrap().contains("unsaved work"));
+    assert_eq!(std::fs::read_to_string(&autosave).unwrap(), autosave_text);
+    assert!(!fresh.is_dirty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_recovered_auto_save_without_an_original_is_an_untitled_project() {
+    let dir = tmp("recover-untitled");
+    let (mut s, [a, b, c]) = three_comp_session(&dir, false);
+    let autosave = s.autosave_now().unwrap();
+    let mut fresh = Session::default();
+    fresh.execute("file.open", json!({"path": autosave, "autosaveOf": null})).unwrap();
+    assert_eq!(fresh.path, None);
+    assert!(fresh.is_dirty());
+    assert_eq!(fresh.state.open_comps, [a, b, c]);
+    let error = fresh.execute("file.save", json!({})).unwrap_err().to_string();
+    assert!(error.contains("no path"), "{error}");
+    assert!(fresh.prefs.recent_projects.is_empty(), "{:?}", fresh.prefs.recent_projects);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn recovered_from(snapshot: &str, claimed_original: &str) -> Session {
+    let mut fresh = Session::default();
+    fresh.execute("file.open", json!({"path": snapshot, "autosaveOf": claimed_original})).unwrap();
+    fresh
+}
+
+#[test]
+fn recovery_does_not_offer_the_snapshot_of_another_project_with_the_same_file_name() {
+    let dir = tmp("recover-search");
+    let store: Arc<dyn ConfigStore> = Arc::new(DirConfig::new(dir.join("config")));
+    let [a, b] = ["a", "b"].map(|name| {
+        std::fs::create_dir_all(dir.join(name)).unwrap();
+        dir.join(name).join("Shot.ecproj").to_string_lossy().into_owned()
+    });
+    let mut s = session_with_comp();
+    s.config = Some(store.clone());
+    s.prefs.auto_save.location = "custom".into();
+    s.prefs.auto_save.folder = dir.join("saves").to_string_lossy().into_owned();
+    s.execute("file.saveAs", json!({"path": b})).unwrap();
+    let snapshot = s.autosave_now().unwrap();
+    let recover = |project: &str| {
+        autosave::update(store.as_ref(), &autosave::Sentinel { pid: 1, project: Some(project.into()), autosave: None, dirty: true });
+        Session { config: Some(store.clone()), prefs: s.prefs.clone(), ..Default::default() }.begin_recovery().unwrap().autosave
+    };
+    assert_eq!(recover(&a), None);
+    assert_eq!(recover(&b).as_deref(), Some(snapshot.as_str()));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_snapshot_made_from_another_project_opens_untitled_and_changed() {
+    let dir = tmp("recover-claim");
+    let (mut s, _) = three_comp_session(&dir, false);
+    let made_from = dir.join("work.ecproj").to_string_lossy().into_owned();
+    let other = dir.join("other.ecproj").to_string_lossy().into_owned();
+    s.execute("file.saveAs", json!({"path": made_from})).unwrap();
+    let snapshot = s.autosave_now().unwrap();
+
+    let fresh = recovered_from(&snapshot, &other);
+    assert_eq!(fresh.path, None);
+    assert!(fresh.is_dirty());
+    assert!(fresh.prefs.recent_projects.is_empty());
+
+    let legacy = dir.join("legacy.ecproj");
+    std::fs::write(&legacy, s.project.to_file_json().unwrap()).unwrap();
+    let fresh = recovered_from(&legacy.to_string_lossy(), &made_from);
+    assert_eq!(fresh.path, None);
+    assert!(fresh.is_dirty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_recovered_project_whose_original_is_gone_enters_open_recent_only_once_saved() {
+    let dir = tmp("recover-gone");
+    let (mut s, _) = three_comp_session(&dir, false);
+    let original = dir.join("work.ecproj").to_string_lossy().into_owned();
+    s.execute("file.saveAs", json!({"path": original})).unwrap();
+    let snapshot = s.autosave_now().unwrap();
+    std::fs::remove_file(&original).unwrap();
+
+    let mut fresh = recovered_from(&snapshot, &original);
+    assert_eq!(fresh.path.as_deref(), Some(original.as_str()));
+    assert!(fresh.prefs.recent_projects.is_empty(), "{:?}", fresh.prefs.recent_projects);
+    fresh.execute("file.save", json!({})).unwrap();
+    assert_eq!(fresh.prefs.recent_projects, std::slice::from_ref(&original));
+
+    let again = recovered_from(&snapshot, &original);
+    assert_eq!(again.prefs.recent_projects, [original], "the original exists again");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn an_auto_save_with_every_comp_tab_closed_recovers_with_no_tab_open() {
+    let dir = tmp("recover-no-tabs");
+    let (mut s, [a, b, c]) = three_comp_session(&dir, false);
+    for id in [a, b, c] {
+        s.execute("comp.close", json!({"comp": id.0})).unwrap();
+    }
+    assert!(s.state.open_comps.is_empty());
+    let snapshot = s.autosave_now().unwrap();
+    let mut fresh = Session::default();
+    fresh.execute("file.open", json!({"path": snapshot})).unwrap();
+    assert!(fresh.state.open_comps.is_empty(), "{:?}", fresh.state.open_comps);
+    assert_eq!(fresh.state.active_comp, None);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn background_autosave_failure_retries_the_same_revision_and_retains_recovery() {
     let dir = tmp("autosave-retry");
@@ -1439,4 +1604,30 @@ fn gpu_summary_names_the_adapter_or_says_why_there_is_none() {
     let on = gpu_summary(&s);
     assert!(on.starts_with("Compositing: GPU, NVIDIA GeForce RTX 4070 (Vulkan)."), "{on}");
     assert!(!on.contains("compositing is off"), "{on}");
+}
+
+#[test]
+fn a_plugin_command_gets_its_free_default_shortcut_never_a_built_in_one_and_can_be_rebound() {
+    let item = |id: &str, shortcut: &str| crate::PluginItem {
+        plugin: "test.probe".into(),
+        plugin_name: "Probe".into(),
+        id: id.into(),
+        title: id.into(),
+        panel: false,
+        multiple: false,
+        shortcut: Some(shortcut.into()),
+        ..Default::default()
+    };
+    let mut s = Session::default();
+    let save = s.shortcuts().shortcut_of("file.save", &json!(null)).unwrap().to_string();
+    s.set_plugin_items(vec![item("free", "alt+shift+f11"), item("taken", &save)]);
+    let params = |id: &str| crate::shortcuts::plugin_command_params("test.probe", id);
+    assert_eq!(s.shortcuts().shortcut_of("plugin.run", &params("free")), Some("Alt+Shift+F11"));
+    assert_eq!(s.shortcuts().shortcut_of("plugin.run", &params("taken")), None);
+    assert_eq!(s.shortcuts().shortcut_of("file.save", &json!(null)), Some(save.as_str()));
+
+    let taken = s.shortcuts().find(&crate::shortcuts::binding_key("plugin.run", &params("taken"))).unwrap().clone();
+    s.keymaps.set(&taken, &["Alt+Shift+F10".into()]).unwrap();
+    s.shortcuts_changed();
+    assert_eq!(s.shortcuts().shortcut_of("plugin.run", &params("taken")), Some("Alt+Shift+F10"));
 }

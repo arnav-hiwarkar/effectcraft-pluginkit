@@ -40,16 +40,17 @@ fn with_prop<T>(
     s: &mut Session,
     label: &str,
     merge: Option<&str>,
-    cid: ItemId,
-    lid: LayerId,
-    uid: Uid,
+    (cid, lid, uid): (ItemId, LayerId, Uid),
+    at: Option<Tick>,
     f: impl FnOnce(&mut Property, Tick) -> Result<T>,
 ) -> Result<T> {
     let t = s.time_of(cid);
+    let layer = s.project.comp(cid).and_then(|c| c.layer(lid)).ok_or(EngineError::NoComp)?;
+    let lt = at.unwrap_or_else(|| layer.layer_time(t));
+    editable(s, cid, lid, uid, lt)?;
     let linear = s.prefs.general.default_spatial_linear;
     s.edit(label, merge, |proj, state| {
         let l = layer_mut(proj, cid, lid)?;
-        let lt = l.layer_time(t);
         let pr = l.props.find_mut(uid).ok_or_else(|| bad("prop", "property vanished"))?;
         let before: Vec<Tick> = pr.keys.iter().map(|k| k.time).collect();
         let r = f(pr, lt)?;
@@ -67,6 +68,51 @@ fn with_prop<T>(
         }
         Ok(r)
     })
+}
+
+fn editable(s: &Session, cid: ItemId, lid: LayerId, uid: Uid, lt: Tick) -> Result<()> {
+    let comp = s.project.comp(cid).ok_or(EngineError::NoComp)?;
+    let layer = comp.layer(lid).ok_or(EngineError::NoComp)?;
+    let Some(pr) = layer.props.find(uid) else { return Ok(()) };
+    if matches!(pr.ui, effectcraft_project::ParamUi::Button) {
+        return Err(bad("prop", format!("`{}` is a button: it has no value to set, key or animate; press it with plugin.press", pr.name)));
+    }
+    if s.plugin_writes {
+        return Ok(());
+    }
+    turned_on(&super::expr_tools::eval_ctx(s, cid, comp, layer.comp_time(lt)), layer, uid, "prop")
+}
+
+fn turned_on(ctx: &effectcraft_render::EvalCtx, layer: &Layer, uid: Uid, cmd: &str) -> Result<()> {
+    let Some((root, param)) = super::expr_tools::effect_param(layer, uid) else { return Ok(()) };
+    match super::expr_tools::param_state(ctx, layer, root, &param) {
+        [_, false] => {
+            let name = layer.props.find(uid).map_or(param.as_str(), |pr| pr.name.as_str());
+            let at = ctx.time.seconds();
+            Err(bad(cmd, format!("`{name}` is turned off by another control of its effect at {at} s; change that control first")))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Refuses keys that a `cmd` moved or pasted onto a parameter that another control of its effect
+/// turns off at the key's time, judged in the edited project.
+pub(crate) fn keys_turned_on(s: &Session, cmd: &'static str) -> impl Fn(&effectcraft_project::Project, ItemId, &[KeyRef]) -> Result<()> + use<> {
+    let (footage, expr, plugin_writes) = (s.footage.clone(), s.expr.clone(), s.plugin_writes);
+    move |project, cid, keys| {
+        let comp = project.comp(cid).ok_or(EngineError::NoComp)?;
+        for key in keys.iter().filter(|_| !plugin_writes) {
+            let Some(layer) = comp.layer(key.layer).filter(|l| !l.switches.locked) else { continue };
+            let time = layer.comp_time(key.time);
+            let ctx = effectcraft_render::EvalCtx {
+                footage: Some(footage.as_ref()),
+                expr: expr.as_deref(),
+                ..effectcraft_render::EvalCtx::new(project, cid, comp, time)
+            };
+            turned_on(&ctx, layer, key.prop, cmd)?;
+        }
+        Ok(())
+    }
 }
 
 /// Keep Polystar controls and their selection references in the property's edit transaction.
@@ -504,7 +550,7 @@ fn toggle_key_selected(s: &mut Session, p: &Value) -> Result<Value> {
         let added = toggle_key(s, p)?;
         let want = added.as_bool().unwrap_or(true);
         for (olid, ouid) in twins {
-            let _ = with_prop(s, "Add/Remove Keyframe", None, cid, olid, ouid, |pr, lt| {
+            let _ = with_prop(s, "Add/Remove Keyframe", None, (cid, olid, ouid), None, |pr, lt| {
                 if !pr.static_only && key_at(&pr.keys, lt).is_some() != want {
                     toggle_key_at(pr, lt);
                 }
@@ -545,16 +591,16 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let v = p.get("value").ok_or_else(|| bad("prop.set", "missing `value`"))?.clone();
     let at = snapped_key_time(s, cid, lid, p, "prop.set")?;
-    let out = with_prop(s, "Change Property", merge_p(p), cid, lid, uid, |pr, lt| {
+    let out = with_prop(s, "Change Property", merge_p(p), (cid, lid, uid), at, |pr, lt| {
         let cur = pr.value_at(lt);
         let mut nv = cur.coerce_json(&v).ok_or_else(|| bad("prop.set", format!("can't use {v} for a {} property", cur.kind_name())))?;
         // Clamp to slider ranges.
-        if let effectcraft_project::ParamUi::Slider { min, max, .. } = pr.ui
+        if let effectcraft_project::ParamUi::Slider { min, max, .. } | effectcraft_project::ParamUi::Scaled { min, max, .. } = pr.ui
             && let effectcraft_keyframe::Value::Scalar(x) = nv
         {
             nv = effectcraft_keyframe::Value::Scalar(x.clamp(min, max));
         }
-        pr.set_value_at(at.unwrap_or(lt), nv.clone());
+        pr.set_value_at(lt, nv.clone());
         Ok(nv.to_json())
     })?;
     if p.get("timeBase").is_none() {
@@ -619,7 +665,7 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
 fn toggle_anim(s: &mut Session, p: &Value) -> Result<Value> {
     let (cid, lid, uid) = prop_ref(s, p, "prop.toggleAnimation")?;
     let on = b_p(p, "value");
-    with_prop(s, "Toggle Animation", merge_p(p), cid, lid, uid, |pr, lt| {
+    with_prop(s, "Toggle Animation", merge_p(p), (cid, lid, uid), None, |pr, lt| {
         if pr.static_only {
             return Err(bad("prop.toggleAnimation", "this property can't be animated"));
         }
@@ -633,11 +679,10 @@ fn add_key(s: &mut Session, p: &Value) -> Result<Value> {
     let (cid, lid, uid) = prop_ref(s, p, "prop.addKey")?;
     let at = snapped_key_time(s, cid, lid, p, "prop.addKey")?;
     let value = p.get("value").cloned();
-    let count = with_prop(s, "Add Keyframe", None, cid, lid, uid, |pr, lt| {
+    let count = with_prop(s, "Add Keyframe", None, (cid, lid, uid), at, |pr, t| {
         if pr.static_only {
             return Err(bad("prop.addKey", "this property can't be animated"));
         }
-        let t = at.unwrap_or(lt);
         let cur = pr.value_at(t);
         let v = match &value {
             Some(j) => cur.coerce_json(j).ok_or_else(|| bad("prop.addKey", "bad value"))?,
@@ -659,7 +704,7 @@ fn add_key(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn toggle_key(s: &mut Session, p: &Value) -> Result<Value> {
     let (cid, lid, uid) = prop_ref(s, p, "prop.toggleKey")?;
-    with_prop(s, "Add/Remove Keyframe", None, cid, lid, uid, |pr, lt| {
+    with_prop(s, "Add/Remove Keyframe", None, (cid, lid, uid), None, |pr, lt| {
         if pr.static_only {
             return Err(bad("prop.toggleKey", "this property can't be animated"));
         }
@@ -856,7 +901,7 @@ fn reset(s: &mut Session, p: &Value) -> Result<Value> {
     let (cid, lid, uid) = prop_ref(s, p, "prop.reset")?;
     let def = p.get("default").cloned();
     let own = default_value(s, cid, lid, uid);
-    with_prop(s, "Reset Property", None, cid, lid, uid, |pr, t| {
+    with_prop(s, "Reset Property", None, (cid, lid, uid), None, |pr, t| {
         pr.expr = None;
         // An animated property keeps its keyframes and gets the default as a key at the
         // current time, as in After Effects (#1078).
@@ -1185,6 +1230,7 @@ pub(crate) fn shift_keys(s: &mut Session, label: &str, merge: Option<&str>, d: T
     let cid = s.active_comp_id().ok_or(EngineError::NoComp)?;
     let (from, total, base) = key_gesture(s, merge, d, false);
     let next = merge.map(|m| crate::KeyMove { merge: m.to_string(), from: from.clone(), total });
+    let turned_on = keys_turned_on(s, "keys.move");
     let moved = s.edit(label, merge, |proj, st| {
         if let Some(b) = base {
             *proj = (*b).clone();
@@ -1192,6 +1238,7 @@ pub(crate) fn shift_keys(s: &mut Session, label: &str, merge: Option<&str>, d: T
         let comp = proj.comp_mut(cid).ok_or(EngineError::NoComp)?;
         let d = comp.frame_rate.snap_nearest(total);
         st.selected_keys = move_key_refs(comp, &from, |l, t| Ok(t + layer_shift(l, d)))?;
+        turned_on(proj, cid, &st.selected_keys)?;
         Ok(json!(st.selected_keys.len()))
     })?;
     // Only a step that applied counts towards the drag.
@@ -1526,7 +1573,7 @@ fn convert_one_expr(s: &mut Session, cid: ItemId, lid: LayerId, uid: Uid) -> Res
     // A time-reversed layer maps ascending comp times to descending layer times; keys must stay ordered by layer time.
     keys.sort_by_key(|k| k.time);
     let n = keys.len();
-    with_prop(s, "Convert Expression to Keyframes", None, cid, lid, uid, move |pr, _| {
+    with_prop(s, "Convert Expression to Keyframes", None, (cid, lid, uid), None, move |pr, _| {
         pr.keys = keys;
         if let Some(e) = &mut pr.expr {
             e.enabled = false;

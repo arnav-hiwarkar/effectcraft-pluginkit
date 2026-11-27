@@ -68,6 +68,7 @@ pub use app::{GPU_PREPARING, GpuBuild};
 #[cfg(test)]
 use app::{MAX_PENDING_SHOTS, SCREENSHOT_SETTLE_PASSES, SCREENSHOT_SETTLE_S, SCREENSHOT_TIMEOUT_S};
 pub use clock::AppClock;
+pub use craft_plugin_ui::PenSource;
 pub use hooks::{DialogDone, FileDialog, Hooks, SystemThemeFn};
 pub use state::ShotTarget;
 
@@ -405,6 +406,8 @@ pub struct EffectcraftApp {
     pub(crate) viewer_tex: Option<(egui::TextureHandle, FrameKey, usize)>,
     /// The frames the other (passive) Composition viewers show, by viewer id.
     pub(crate) passive_tex: std::collections::HashMap<u32, (FrameKey, panels::viewers::PassiveTexture)>,
+    /// The frames the side panes asked for this UI frame, queued behind the viewer's frame.
+    pub(crate) pane_demands: Vec<(u32, FrameKey, effectcraft_engine::project::ItemId, effectcraft_engine::time::Tick, effectcraft_engine::render::RenderOpts)>,
     /// The last GPU frame shown: its egui texture id (registered with egui-wgpu), key and texture.
     pub(crate) viewer_native: Option<(egui::TextureId, FrameKey, Arc<effectcraft_gpu::DisplayFrame>)>,
     /// The texture the viewer draws and its frame key (CPU or GPU frame).
@@ -466,6 +469,7 @@ pub struct EffectcraftApp {
     /// Pointer position in comp pixels (Info panel).
     pub(crate) pointer_comp: Option<[f32; 2]>,
     pub(crate) dialog_state: panels::dialogs::DialogState,
+    pub(crate) plugin_ui: panels::plugin_view::PluginUi,
     pub integrated_titlebar: bool,
     /// Audio preview while playing (audio clock drives playback).
     pub audio: Option<audio::AudioPlayback>,

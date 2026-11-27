@@ -20,6 +20,17 @@ pub enum ParamUi {
         slider_max: f64,
         decimals: u8,
     },
+    /// A slider that can also be logarithmic and show a percent sign. Apart from `Slider` so that
+    /// the saved text of every older slider stays the same.
+    Scaled {
+        min: f64,
+        max: f64,
+        slider_min: f64,
+        slider_max: f64,
+        decimals: u8,
+        log: bool,
+        percent: bool,
+    },
     Percent,
     /// Angle in degrees, shown as `revolutions x +degrees`.
     Angle,
@@ -43,8 +54,14 @@ pub enum ParamUi {
         filters: Vec<String>,
     },
     Gradient,
+    Custom,
+    Curve {
+        channels: bool,
+    },
     /// Not shown in Effect Controls / the timeline (internal data).
     Hidden,
+    /// A plug-in button: no value of its own; pressing it calls the effect.
+    Button,
 }
 
 /// Expression attached to a property.
@@ -252,7 +269,7 @@ impl MaskMode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct PropGroup {
     pub uid: Uid,
     #[serde(rename = "match")]
@@ -269,6 +286,29 @@ pub struct PropGroup {
     pub label: Option<effectcraft_color::Label>,
     #[serde(default)]
     pub children: Vec<Node>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub state_version: u32,
+}
+
+fn is_zero(version: &u32) -> bool {
+    *version == 0
+}
+
+impl std::fmt::Debug for PropGroup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = f.debug_struct("PropGroup");
+        out.field("uid", &self.uid)
+            .field("match_id", &self.match_id)
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("enabled", &self.enabled)
+            .field("label", &self.label)
+            .field("children", &self.children);
+        if self.state_version != 0 {
+            out.field("state_version", &self.state_version);
+        }
+        out.finish()
+    }
 }
 
 fn yes() -> bool {
@@ -356,7 +396,7 @@ impl PropGroup {
     }
 
     pub fn new(uid: Uid, match_id: &str, name: &str) -> PropGroup {
-        PropGroup { uid, match_id: match_id.into(), name: name.into(), kind: GroupKind::Plain, enabled: true, label: None, children: vec![] }
+        PropGroup { uid, match_id: match_id.into(), name: name.into(), kind: GroupKind::Plain, enabled: true, label: None, children: vec![], state_version: 0 }
     }
     pub fn with(mut self, n: impl Into<Node>) -> PropGroup {
         self.children.push(n.into());

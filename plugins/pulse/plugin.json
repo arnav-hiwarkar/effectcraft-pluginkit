@@ -1,0 +1,10 @@
+{
+  "id": "org.craftkit.pulse",
+  "name": "Pulse",
+  "version": "1.0.0",
+  "author": "CraftKit",
+  "license": "MIT OR Apache-2.0",
+  "description": "Turn the energy of a frequency band of a layer's audio into keyframes on a slider, one value per frame.",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": ["document.read", "document.write"]
+}

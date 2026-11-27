@@ -37,12 +37,6 @@ pub struct DialogState {
     pub palette_sel: usize,
     /// Settings dialog page id (`general`, `appearance`…).
     pub settings_page: String,
-    /// Settings ▸ Plug-in Library: the search field.
-    pub library_query: String,
-    /// Settings ▸ Plug-in Library: the package whose preview is open.
-    pub library_preview: Option<String>,
-    /// The preview's Before/After split (0 = all After, 1 = all Before).
-    pub library_split: f32,
     /// Settings when the dialog opened (Cancel restores them).
     pub prefs_snapshot: Option<effectcraft_engine::prefs::Prefs>,
     /// Keyboard Shortcuts editor.
@@ -732,6 +726,14 @@ fn palette(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
         for c in effectcraft_engine::command_specs().iter().filter(|c| c.menu.is_empty() && c.journal && c.params == "{}") {
             if app.session.is_enabled(c.id) {
                 v.push((c.label.to_string(), c.id.to_string(), json!({}), c.shortcut.unwrap_or("").to_string()));
+            }
+        }
+        for top in std::iter::once(None).chain(effectcraft_engine::menus::top_level().into_iter().map(Some)) {
+            for (path, e) in effectcraft_engine::menus::plugin_commands(&app.session, top).into_iter().filter(|(_, e)| crate::menus::entry_enabled(app, e)) {
+                let mut shown = top.map_or(vec!["Window", "Plug-ins"], |top| vec![top]);
+                shown.extend(path);
+                let keys = app.session.shortcuts().shortcut_of("plugin.run", &e.params).unwrap_or_default().to_string();
+                v.push((format!("{} ▸ {}", shown.join(" ▸ "), e.label), e.command, e.params, keys));
             }
         }
         v

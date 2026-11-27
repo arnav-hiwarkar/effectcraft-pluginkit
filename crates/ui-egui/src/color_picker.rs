@@ -73,6 +73,9 @@ pub fn color_popup(ui: &mut Ui, id: egui::Id, pos: egui::Pos2, c: &mut [f32; 3])
     if drawn_before && pressed_outside(ui.ctx(), &area.response) && !on_viewer {
         out.close.get_or_insert(true);
     }
+    if !drawn_before {
+        take_automation(ui.ctx());
+    }
     note_overlay(ui.ctx(), area.response.rect);
     if let Some(keep) = out.close {
         if !keep && *c != original {
@@ -874,5 +877,122 @@ mod tests {
         note_overlay(&ctx, dialog);
         assert!(overlaid(&ctx, pos2(150.0, 150.0)));
         assert!(!overlaid(&ctx, pos2(20.0, 20.0)));
+    }
+
+    struct CountingRenderer {
+        inner: egui_kittest::wgpu::WgpuTestRenderer,
+        uploads: std::sync::Arc<std::sync::Mutex<Vec<[usize; 2]>>>,
+    }
+
+    impl egui_kittest::TestRenderer for CountingRenderer {
+        fn setup_eframe(&self, cc: &mut eframe::CreationContext<'_>, frame: &mut eframe::Frame) {
+            self.inner.setup_eframe(cc, frame);
+        }
+
+        fn handle_delta(&mut self, delta: &mut egui::TexturesDelta) {
+            if let Ok(mut uploads) = self.uploads.lock() {
+                uploads.extend(delta.set.values().flatten().map(|d| d.image.size()));
+            }
+            self.inner.handle_delta(delta);
+        }
+
+        fn render(&mut self, ctx: &egui::Context, output: &egui::FullOutput) -> Result<image::RgbaImage, String> {
+            self.inner.render(ctx, output)
+        }
+    }
+
+    #[test]
+    fn gpu_composited_frames_are_shown_in_place_and_read_back_once_for_the_eyedropper() {
+        let _slots = crate::frames::gpu_slot_test();
+        let instance = eframe::wgpu::Instance::new(eframe::wgpu::InstanceDescriptor::new_without_display_handle());
+        if pollster::block_on(instance.enumerate_adapters(eframe::wgpu::Backends::all())).is_empty() {
+            return eprintln!("no wgpu adapter: skipping");
+        }
+        let mut session = effectcraft_engine::Session::default();
+        session.execute("comp.new", serde_json::json!({"width": 320, "height": 180, "duration": 2})).unwrap();
+        let cid = session.active_comp_id().unwrap();
+        let layer = session.execute("layer.newSolid", serde_json::json!({"color": "#204060"})).unwrap()["layer"].as_u64().unwrap();
+        session.execute("effect.apply", serde_json::json!({"layers": [layer], "effect": "Levels"})).unwrap();
+        let gamma = |time: f64, value: f64| serde_json::json!({"layer": layer, "path": "effects/#1/gamma", "time": time, "value": value});
+        session.execute("prop.addKey", gamma(0.0, 1.4)).unwrap();
+        session.execute("prop.addKey", gamma(1.0, 0.8)).unwrap();
+        session.execute("time.set", serde_json::json!({"frame": 15})).unwrap();
+        let uploads = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let renderer = CountingRenderer { inner: egui_kittest::wgpu::WgpuTestRenderer::new(), uploads: uploads.clone() };
+        let mut harness =
+            egui_kittest::Harness::builder().with_size(vec2(1200.0, 800.0)).renderer(renderer).build_eframe(|_| crate::EffectcraftApp::new(session));
+        let settle = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>, old: Option<u64>, favour_gpu: bool| {
+            for _ in 0..1500 {
+                if favour_gpu
+                    && let (Some(g), Some(cid)) = (h.state().gpu.clone(), h.state().session.active_comp_id())
+                    && let Some(auto) = effectcraft_engine::render::Accelerator::auto_pick(&g)
+                {
+                    let key = effectcraft_engine::render::AutoKey::new(cid, 1.0, true);
+                    for _ in 0..4 {
+                        auto.record(key, false, 1000.0);
+                        auto.record(key, true, 1.0);
+                    }
+                }
+                h.step();
+                if !h.state().gpu_initializing() && h.state().frames.inflight() == 0 && h.state().viewer_shown.is_some_and(|(_, k)| Some(k.content) != old) {
+                    return h.run_steps(3);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            panic!("no new frame reached the viewer");
+        };
+        settle(&mut harness, None, false);
+        let Some(gpu) = harness.state().gpu.clone() else {
+            return eprintln!("no GPU compositor on this adapter: skipping");
+        };
+        let key = harness.state().viewer_shown.unwrap().1;
+        assert_eq!(key.scale, 1000);
+        let before = gpu.context().transfer_stats();
+        uploads.lock().unwrap().clear();
+        harness.state_mut().session.execute("prop.addKey", gamma(1.0, 0.6)).unwrap();
+        let busy_before = crate::frames::GPU_BUSY_FALLBACKS.load(std::sync::atomic::Ordering::SeqCst);
+        settle(&mut harness, Some(key.content), true);
+        let auto = effectcraft_engine::render::Accelerator::auto_pick(&gpu).and_then(|a| a.stats(effectcraft_engine::render::AutoKey::new(cid, 1.0, true)));
+        assert!(
+            harness.state().viewer_on_gpu(),
+            "a GPU-composited frame on screen: shown {:?}, on the GPU {:?}, GPU Acceleration {}, Auto {auto:?}, GPU slots busy {}, frames sent to the CPU because the GPU slots were busy {}",
+            harness.state().viewer_shown.map(|s| s.1),
+            harness.state().viewer_native.as_ref().map(|n| n.1),
+            harness.state().session.project.settings.gpu_acceleration,
+            crate::frames::gpu_slots_busy(),
+            crate::frames::GPU_BUSY_FALLBACKS.load(std::sync::atomic::Ordering::SeqCst) - busy_before,
+        );
+        let shown = gpu.context().transfer_stats();
+        assert_eq!((shown.readbacks, shown.readback_bytes), (before.readbacks, before.readback_bytes), "nothing read back to show it");
+        let frame_uploads = uploads.lock().unwrap().iter().filter(|s| s[0] * s[1] >= 320 * 180).count();
+        assert_eq!(frame_uploads, 0, "no frame-sized texture uploaded to show it");
+        harness.state_mut().session.state.viewer.exposure = 1.0;
+        harness.state_mut().session.state.viewer.channel = effectcraft_engine::viewer::Channel::Green;
+        harness.run_steps(3);
+        assert!(harness.state().viewer_display_texture().is_some(), "Show Channel and exposure ran on the device");
+        assert_eq!(gpu.context().transfer_stats().readback_bytes, before.readback_bytes, "nor for the channel and exposure view");
+        let sample = press_sampling_viewer(&mut harness).unwrap();
+        press_sampling_viewer(&mut harness).unwrap();
+        let picked = gpu.context().transfer_stats();
+        assert_eq!(
+            (picked.readbacks - shown.readbacks, picked.readback_bytes - shown.readback_bytes),
+            (1, 320 * 180 * 4),
+            "one RGBA8 readback for the eyedropper"
+        );
+        let shown_pixels = harness.state().viewer_image.clone().unwrap();
+        let project = harness.state().session.project.clone();
+        let opts = harness.state().frame_opts(cid, 1.0);
+        let mut r = effectcraft_engine::render::Renderer::new(&project, &*harness.state().session.footage, opts);
+        r.accel = Some(&gpu as &dyn effectcraft_engine::render::Accelerator);
+        let tick = project.comp(cid).unwrap().frame_rate.tick_of(15);
+        let read_back = effectcraft_engine::render::Accelerator::comp_frame(&gpu, &r, cid, tick).unwrap();
+        let crate::frames::FrameImage::Cpu(old_path) = crate::frames::cpu_frame(&read_back, &project, &opts) else { panic!("an 8-bit frame") };
+        assert!(shown_pixels.pixels == old_path.pixels, "the frame shown equals the frame read back and converted as before");
+        let mut green = [old_path.pixels[20 * 320 + 20].to_array()];
+        let encoding = effectcraft_engine::viewer::FrameEncoding::of(&project.settings, false);
+        effectcraft_engine::viewer::DisplayPass::new(effectcraft_engine::viewer::Channel::Green, false, 1.0, encoding, None).apply_rgba8(&mut green);
+        for (actual, want) in sample.iter().zip(green[0]) {
+            assert!((*actual - want as f32 / 255.0).abs() < 0.01, "{sample:?} vs {green:?}");
+        }
     }
 }

@@ -375,7 +375,7 @@ fn node_json(c: &Comp, l: &Layer, uid: u64) -> R {
             o["enabled"] = json!(true);
             o["canSetEnabled"] = json!(false);
             o["isModified"] = json!(p.is_animated() || p.has_expression());
-            if let ParamUi::Slider { min, max, .. } = p.ui {
+            if let ParamUi::Slider { min, max, .. } | ParamUi::Scaled { min, max, .. } = p.ui {
                 o["min"] = json!(min);
                 o["max"] = json!(max);
             }
@@ -383,7 +383,7 @@ fn node_json(c: &Comp, l: &Layer, uid: u64) -> R {
                 o["options"] = json!(options);
             }
             o["ui"] = json!(match &p.ui {
-                ParamUi::Percent => "%",
+                ParamUi::Percent | ParamUi::Scaled { percent: true, .. } => "%",
                 ParamUi::Angle => "degrees",
                 ParamUi::Pixels | ParamUi::Point | ParamUi::Point3 => "pixels",
                 _ => "",

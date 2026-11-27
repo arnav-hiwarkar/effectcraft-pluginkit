@@ -60,6 +60,7 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
         fr.snap_nearest(Tick::from_seconds_f64(x.max(0.0)))
     };
     let touch_values = vs != 1.0 || voff != 0.0;
+    let turned_on = super::prop::keys_turned_on(s, "keys.transform");
     s.edit("Transform Keyframes", merge, |proj, st| {
         if let Some(b) = base {
             *proj = (*b).clone();
@@ -108,6 +109,7 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
             pr.keys = kept;
             effectcraft_keyframe::retime_roving(&mut pr.keys, pr.spatial);
         }
+        turned_on(proj, cid, &new_sel)?;
         st.selected_keys = new_sel;
         Ok(json!({"keys": st.selected_keys.len()}))
     })

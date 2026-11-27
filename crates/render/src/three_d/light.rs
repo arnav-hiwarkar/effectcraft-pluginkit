@@ -14,7 +14,7 @@ use super::camera::layer_frame;
 use crate::EvalCtx;
 
 /// An evaluated light.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub struct LightState {
     pub kind: LightKind,
     /// World position (point/spot; parallel lights use it only for the shadow source).
@@ -23,6 +23,7 @@ pub struct LightState {
     pub dir: Vec3,
     /// Linear colour × intensity (1.0 = 100%).
     pub color: [f32; 3],
+    pub intensity: f64,
     /// Spot cone half-angle (radians) and feather (0..1).
     pub cone_half: f64,
     pub feather: f64,
@@ -53,6 +54,7 @@ impl LightState {
             pos,
             dir,
             color,
+            intensity,
             cone_half: (ctx.f(layer, g, "coneAngle", 90.0).clamp(0.0, 180.0) / 2.0).to_radians(),
             feather: ctx.f(layer, g, "coneFeather", 50.0).clamp(0.0, 100.0) / 100.0,
             falloff: ctx.e(layer, g, "falloff"),

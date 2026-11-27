@@ -39,6 +39,16 @@ const EXT_ENTRIES: &[&str] = &["classic3d"];
 /// (the compositor's kernels, which declare `out` and helpers the effect files use).
 const BASE_WGSL: [&str; 2] = [include_str!("shaders/common.wgsl"), include_str!("shaders/kernels.wgsl")];
 
+const PLUGIN_PRELUDE: [&str; 2] = [include_str!("shaders/common.wgsl"), include_str!("shaders/plugin.wgsl")];
+
+const HOST_KERNELS: &str = include_str!("shaders/plugin_kernels.wgsl");
+
+const MAX_HOST_MODULES: usize = 64;
+
+const MAX_PLUGIN_KERNELS: usize = 256;
+
+const MAX_PLUGIN_REPORTS: usize = 16;
+
 /// The family whose module also gets the adapter's median implementation
 /// ([`crate::fx_noise::MedianKernel::source`]), chosen when the context is created.
 const MEDIAN_FAMILY: &str = "fx_noise";
@@ -86,12 +96,7 @@ fn kernel_module(device: &wgpu::Device, label: &str, files: &[&str]) -> Result<w
 }
 
 /// Compute pipeline `entry` of `module`; a shader compiler rejecting it (FXC, #613) is an `Err`.
-fn build_pipeline(
-    device: &wgpu::Device,
-    module: &wgpu::ShaderModule,
-    layout: &wgpu::PipelineLayout,
-    entry: &'static str,
-) -> Result<wgpu::ComputePipeline, String> {
+fn build_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, entry: &str) -> Result<wgpu::ComputePipeline, String> {
     init_resource(device, entry, || {
         device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(entry),
@@ -107,6 +112,75 @@ fn build_pipeline(
 /// Effect kernels by entry point: their family (index in `FAMILIES`) and, once asked for, the
 /// built pipeline or why it didn't build.
 type EffectPipelines = HashMap<&'static str, (usize, std::sync::OnceLock<Result<wgpu::ComputePipeline, String>>)>;
+
+struct PluginShader {
+    revision: u64,
+    module: Result<wgpu::ShaderModule, String>,
+    pipelines: HashMap<String, Result<wgpu::ComputePipeline, String>>,
+    draws: HashMap<crate::plugin_draw::DrawKey, Result<wgpu::RenderPipeline, String>>,
+    reported: BTreeSet<String>,
+    guard: Option<Arc<crate::guard::ShaderGuard>>,
+}
+
+struct HostModule {
+    module: Result<wgpu::ShaderModule, String>,
+    pipelines: HashMap<String, Result<wgpu::ComputePipeline, String>>,
+    used: u64,
+}
+
+struct PluginShaders {
+    shaders: HashMap<String, PluginShader>,
+    host: HashMap<String, HostModule>,
+    host_clock: u64,
+    generation: u64,
+}
+
+impl Default for PluginShaders {
+    fn default() -> Self {
+        PluginShaders { shaders: HashMap::new(), host: HashMap::new(), host_clock: 0, generation: u64::MAX }
+    }
+}
+
+fn plugin_prelude_lines() -> usize {
+    PLUGIN_PRELUDE.iter().map(|part| part.lines().count()).sum()
+}
+
+pub(crate) fn plugin_source_lines(message: &str, prelude: usize) -> String {
+    let relabel = |number: &str| match number.parse::<usize>() {
+        Ok(line) if line > prelude => Some((line - prelude).to_string()),
+        Ok(line) => Some(format!("prelude {line}")),
+        Err(_) => None,
+    };
+    let mut out = String::with_capacity(message.len());
+    for (n, line) in message.split('\n').enumerate() {
+        if n > 0 {
+            out.push('\n');
+        }
+        let gutter = line.trim_start();
+        let digits = gutter.chars().take_while(char::is_ascii_digit).count();
+        if digits > 0 && gutter[digits..].trim_start().starts_with('│') {
+            let indent = &line[..line.len() - gutter.len()];
+            let label = relabel(&gutter[..digits]).unwrap_or_default();
+            let rest = &gutter[digits..];
+            let width = (indent.len() + digits).max(label.len());
+            out.push_str(&format!("{label:>width$}{rest}"));
+            continue;
+        }
+        let mut rest = line;
+        while let Some(at) = rest.find("wgsl:") {
+            let (before, after) = rest.split_at(at + 5);
+            out.push_str(before);
+            let digits = after.chars().take_while(char::is_ascii_digit).count();
+            match relabel(&after[..digits]) {
+                Some(label) => out.push_str(&label),
+                None => out.push_str(&after[..digits]),
+            }
+            rest = &after[digits..];
+        }
+        out.push_str(rest);
+    }
+    out
+}
 
 /// Pixel format of every working texture: premultiplied RGBA, 32-bit float (32 bpc headroom;
 /// 8/16 bpc are emulated by clamping and quantising, as on the CPU).
@@ -275,6 +349,7 @@ pub(crate) struct Transfers {
     up_bytes: std::sync::atomic::AtomicU64,
     downs: std::sync::atomic::AtomicU64,
     down_bytes: std::sync::atomic::AtomicU64,
+    pub(crate) layers_copied: std::sync::atomic::AtomicU64,
 }
 
 /// A snapshot of [`GpuContext::transfer_stats`].
@@ -284,6 +359,7 @@ pub struct TransferStats {
     pub upload_bytes: u64,
     pub readbacks: u64,
     pub readback_bytes: u64,
+    pub plugin_layers_copied: u64,
 }
 
 /// `WGPU_ADAPTER_NAME` trimmed; empty or whitespace-only counts as unset (an empty
@@ -637,12 +713,12 @@ impl Pool {
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Params {
     pub u: [[u32; 4]; 4],
-    pub f: [[f32; 4]; 12],
+    pub f: [[f32; 4]; 24],
 }
 
 impl Params {
-    fn bytes(&self) -> Vec<u8> {
-        let mut v = Vec::with_capacity(256);
+    pub(crate) fn bytes(&self) -> Vec<u8> {
+        let mut v = Vec::with_capacity(448);
         for r in &self.u {
             for x in r {
                 v.extend_from_slice(&x.to_le_bytes());
@@ -690,12 +766,15 @@ pub struct GpuContext {
     /// Effect kernels, built on first dispatch (`GpuContext::pipeline`); one that doesn't build
     /// leaves its effects to the CPU.
     effect_pipelines: EffectPipelines,
+    plugin_shaders: Mutex<PluginShaders>,
+    pub(crate) plugin_draw: crate::plugin_draw::Store,
+    loop_guard: crate::guard::Layouts,
     display_bgl: wgpu::BindGroupLayout,
     display: wgpu::ComputePipeline,
     /// The display texture's next mip level from the one above (`display.wgsl` `mip`).
     display_mip: wgpu::ComputePipeline,
     dummy: wgpu::Texture,
-    dummy_tex: wgpu::TextureView,
+    pub(crate) dummy_tex: wgpu::TextureView,
     dummy_buf: wgpu::Buffer,
     uploads: Mutex<Uploads>,
     /// Uploaded footage pictures, shared by the layers that show them (see [`crate::upload`]).
@@ -1019,6 +1098,9 @@ impl GpuContext {
             pipelines,
             unavailable,
             effect_pipelines,
+            plugin_shaders: Default::default(),
+            plugin_draw: Default::default(),
+            loop_guard: Default::default(),
             display_bgl,
             display,
             display_mip,
@@ -1106,10 +1188,11 @@ impl GpuContext {
     /// Waits on `submission_index` up to `timeout` in [`Self::POLL_SLICE`] increments so wgpu
     /// frees resources dropped before that submission without holding `poll_lock` for seconds at a
     /// time. A timeout simply moves on without retiring the context or its readbacks; any other
-    /// poll error retires the readbacks through the failure path.
-    fn poll_wait(&self, submission_index: wgpu::SubmissionIndex, timeout: std::time::Duration) {
+    /// poll error retires the readbacks through the failure path. Returns whether the wait ended
+    /// before `timeout`.
+    pub(crate) fn poll_wait(&self, submission_index: wgpu::SubmissionIndex, timeout: std::time::Duration) -> bool {
         if self.readbacks.check().is_err() {
-            return;
+            return true;
         }
         let deadline = web_time::Instant::now() + timeout;
         loop {
@@ -1129,8 +1212,11 @@ impl GpuContext {
                     true
                 }
             };
-            if done || remaining <= slice {
-                break;
+            if done {
+                return true;
+            }
+            if remaining <= slice {
+                return false;
             }
         }
     }
@@ -1514,6 +1600,131 @@ impl GpuContext {
         built.as_ref().ok()
     }
 
+    fn plugin_shader<T>(
+        &self,
+        effect: &str,
+        revision: u64,
+        wgsl: &str,
+        with: impl FnOnce(&mut PluginShader, &wgpu::ShaderModule) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut plugins = self.plugin_shaders.lock().map_err(|_| "the plugin shader cache is poisoned".to_string())?;
+        let generation = effectcraft_effects::dynamic::generation();
+        if plugins.generation != generation {
+            plugins.generation = generation;
+            let registered = |effect: &str, revision: u64| effectcraft_effects::dynamic::get(effect).is_some_and(|r| r.effect.revision == revision);
+            plugins.shaders.retain(|effect, shader| registered(effect, shader.revision));
+            self.plugin_draw.retain(|effect| plugins.shaders.contains_key(effect));
+        }
+        let compile = || {
+            let source: String = PLUGIN_PRELUDE.iter().copied().chain([wgsl]).collect();
+            let build =
+                |source| init_resource(&self.device, effect, || self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(effect), source }));
+            let plain = || build(wgpu::ShaderSource::Wgsl(source.as_str().into()));
+            let module = match crate::guard::cap_loops(&source) {
+                Ok(capped) => build(wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(capped))).map_err(|why| plain().err().unwrap_or(why)),
+                Err(_) => plain(),
+            }
+            .map_err(|why| plugin_source_lines(&why, plugin_prelude_lines()));
+            let guard = module.is_ok().then(|| Arc::new(crate::guard::ShaderGuard::new(&self.device, &self.loop_guard().0, crate::guard::digest(wgsl))));
+            PluginShader { revision, module, pipelines: HashMap::new(), draws: HashMap::new(), reported: BTreeSet::new(), guard }
+        };
+        let shader = plugins.shaders.entry(effect.to_string()).or_insert_with(compile);
+        if shader.revision != revision {
+            *shader = compile();
+        }
+        let module = shader.module.clone()?;
+        with(shader, &module)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn plugin_shader_cached(&self, effect: &str) -> bool {
+        self.plugin_shaders.lock().is_ok_and(|plugins| plugins.shaders.contains_key(effect))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn plugin_reports(&self, effect: &str) -> Vec<String> {
+        self.plugin_shaders.lock().ok().and_then(|plugins| Some(plugins.shaders.get(effect)?.reported.iter().cloned().collect())).unwrap_or_default()
+    }
+
+    pub(crate) fn plugin_pipelines(&self, effect: &str, revision: u64, wgsl: &str, kernels: &[&str]) -> Result<Vec<wgpu::ComputePipeline>, String> {
+        self.plugin_shader(effect, revision, wgsl, |shader, module| {
+            let mut built = Vec::with_capacity(kernels.len());
+            for kernel in kernels {
+                if !shader.pipelines.contains_key(*kernel) && shader.pipelines.len() >= MAX_PLUGIN_KERNELS {
+                    return Err(format!("more than {MAX_PLUGIN_KERNELS} kernel names"));
+                }
+                let layout = &self.loop_guard().1;
+                let pipeline = shader.pipelines.entry(kernel.to_string()).or_insert_with(|| build_pipeline(&self.device, module, layout, kernel)).clone()?;
+                built.push(pipeline);
+            }
+            Ok(built)
+        })
+    }
+
+    pub(crate) fn loop_guard(&self) -> &(wgpu::BindGroupLayout, wgpu::PipelineLayout) {
+        self.loop_guard.get(&self.device, &self.bgl)
+    }
+
+    pub(crate) fn plugin_guard(&self, effect: &str, revision: u64, wgsl: &str) -> Result<Arc<crate::guard::ShaderGuard>, String> {
+        self.plugin_shader(effect, revision, wgsl, |shader, _| shader.guard.clone().ok_or_else(|| "the shader has no loop guard".to_string()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn host_module_kept(&self, wgsl: &str) -> bool {
+        self.plugin_shaders.lock().is_ok_and(|plugins| plugins.host.contains_key(wgsl))
+    }
+
+    pub(crate) fn host_pipeline(&self, wgsl: &str, entry: &str) -> Result<wgpu::ComputePipeline, String> {
+        let mut plugins = self.plugin_shaders.lock().map_err(|_| "the plugin shader cache is poisoned".to_string())?;
+        plugins.host_clock += 1;
+        let clock = plugins.host_clock;
+        if !plugins.host.contains_key(wgsl) {
+            if plugins.host.len() >= MAX_HOST_MODULES
+                && let Some(oldest) = plugins.host.iter().min_by_key(|(_, kept)| kept.used).map(|(key, _)| key.clone())
+            {
+                plugins.host.remove(&oldest);
+            }
+            let source: String = PLUGIN_PRELUDE.iter().copied().chain([HOST_KERNELS, wgsl]).collect();
+            let module = init_resource(&self.device, "host kernels", || {
+                self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("host kernels"), source: wgpu::ShaderSource::Wgsl(source.into()) })
+            });
+            plugins.host.insert(wgsl.to_string(), HostModule { module, pipelines: HashMap::new(), used: clock });
+        }
+        let host = plugins.host.get_mut(wgsl).ok_or("the host kernel module was not kept")?;
+        host.used = clock;
+        let module = host.module.clone()?;
+        if let Some(built) = host.pipelines.get(entry) {
+            return built.clone();
+        }
+        let built = build_pipeline(&self.device, &module, &self.layout, entry);
+        host.pipelines.insert(entry.to_string(), built.clone());
+        built
+    }
+
+    pub(crate) fn plugin_draw_pipeline(
+        &self,
+        effect: &str,
+        revision: u64,
+        wgsl: &str,
+        key: &crate::plugin_draw::DrawKey,
+    ) -> Result<wgpu::RenderPipeline, String> {
+        self.plugin_shader(effect, revision, wgsl, |shader, module| {
+            if !shader.draws.contains_key(key) && shader.draws.len() >= MAX_PLUGIN_KERNELS {
+                return Err(format!("more than {MAX_PLUGIN_KERNELS} kinds of draw pass"));
+            }
+            let build = || init_resource(&self.device, &key.kernel, || crate::plugin_draw::pipeline(self, module, key));
+            shader.draws.entry(key.clone()).or_insert_with(build).clone()
+        })
+    }
+
+    pub(crate) fn plugin_declined(&self, effect: &str, why: &str) {
+        let Ok(mut plugins) = self.plugin_shaders.lock() else { return };
+        let Some(shader) = plugins.shaders.get_mut(effect) else { return };
+        if shader.reported.len() < MAX_PLUGIN_REPORTS && shader.reported.insert(why.to_string()) {
+            log::warn!("gpu {}: plugin effect {effect} renders on the CPU: {why}", self.name);
+        }
+    }
+
     /// Family `family`'s module (`FAMILIES`), built the first time it is asked for.
     fn family_module(&self, family: usize) -> Result<&wgpu::ShaderModule, String> {
         let (Some((label, files, _)), Some(cell)) = (FAMILIES.get(family), self.modules.get(family)) else {
@@ -1567,6 +1778,11 @@ impl GpuContext {
         Self::drop_from(&mut self.pipelines, &mut self.unavailable, &mut self.effect_pipelines, entry);
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_max_dim(&self, max_dim: u32) -> GpuContext {
+        GpuContext { max_dim: self.max_dim.min(max_dim), ..self.without_kernel("") }
+    }
+
     /// A copy of this context sharing the same [`wgpu::Device`] and [`wgpu::Queue`] with
     /// kernel `entry` left out, as if it had failed to build (tests of the CPU fallback
     /// without opening a second device on `llvmpipe`).
@@ -1589,6 +1805,9 @@ impl GpuContext {
             pipelines,
             unavailable,
             effect_pipelines,
+            plugin_shaders: Default::default(),
+            plugin_draw: Default::default(),
+            loop_guard: Default::default(),
             display_bgl: self.display_bgl.clone(),
             display: self.display.clone(),
             display_mip: self.display_mip.clone(),
@@ -1696,6 +1915,7 @@ impl GpuContext {
             upload_bytes: t.up_bytes.load(Relaxed),
             readbacks: t.downs.load(Relaxed),
             readback_bytes: t.down_bytes.load(Relaxed),
+            plugin_layers_copied: t.layers_copied.load(Relaxed),
         }
     }
 
@@ -1927,6 +2147,20 @@ pub(crate) struct Enc<'g> {
     owner: u64,
     /// `owner` is lent ([`Enc::lent`]) and outlives this `Enc`.
     lent: bool,
+    guards: Vec<crate::guard::FlagRead>,
+    submitted_guards: Vec<crate::guard::FlagRead>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Kernel<'a> {
+    Entry(&'a str),
+    Plugin { pipeline: &'a wgpu::ComputePipeline, label: &'a str, guard: Option<&'a wgpu::BindGroup> },
+}
+
+impl<'a> From<&'a str> for Kernel<'a> {
+    fn from(entry: &'a str) -> Self {
+        Kernel::Entry(entry)
+    }
 }
 
 /// Images bound to a compute kernel's source, optional auxiliary and output slots.
@@ -1955,7 +2189,7 @@ impl Drop for Enc<'_> {
 impl<'g> Enc<'g> {
     pub fn new(g: &'g GpuContext) -> Enc<'g> {
         let owner = g.pool.lock().map(|mut p| p.register()).unwrap_or(0);
-        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: false }
+        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: false, guards: Vec::new(), submitted_guards: Vec::new() }
     }
 
     /// An `Enc` for self-contained work (an effect chain): once it is dropped, its working
@@ -1967,7 +2201,7 @@ impl<'g> Enc<'g> {
     /// effect's intermediates stayed allocated until the frame ended.
     pub(crate) fn lent(g: &'g GpuContext) -> Enc<'g> {
         let owner = g.pool.lock().map(|mut p| p.lend()).unwrap_or(0);
-        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: true }
+        Enc { g, enc: None, last_submit: None, pending: 0, missing: false, owner, lent: true, guards: Vec::new(), submitted_guards: Vec::new() }
     }
 
     /// `img` is used by this `Enc`: if another `Enc` made it, that one must not reuse it at once
@@ -1995,6 +2229,27 @@ impl<'g> Enc<'g> {
             self.uses(img);
         }
         self.encoder()
+    }
+
+    pub(crate) fn read_loop_flag(&mut self, guard: &crate::guard::ShaderGuard) {
+        let read = guard.copy(&self.g.device, self.encoder());
+        self.guards.push(read);
+    }
+
+    /// Whether a plugin loop submitted by this encoder ran past the cap, or its flag could not be
+    /// read: the frame is then truncated and must render on the CPU. Waits for this encoder's
+    /// submission when a flag is still in flight and the context can wait.
+    pub(crate) fn loop_capped(&mut self) -> bool {
+        let reads = std::mem::take(&mut self.submitted_guards);
+        if let Some(submission) = self.last_submit.clone().filter(|_| reads.iter().any(crate::guard::FlagRead::pending) && self.g.can_wait()) {
+            self.g.poll_wait(submission, crate::readback::TIMEOUT);
+        }
+        reads.into_iter().map(crate::guard::FlagRead::clean).fold(false, |capped, clean| capped | !clean)
+    }
+
+    /// The loop flags this encoder submitted, read later without waiting.
+    pub(crate) fn loop_check(&mut self) -> crate::guard::LoopCheck {
+        crate::guard::LoopCheck::new(&self.g.device, std::mem::take(&mut self.submitted_guards))
     }
 
     /// The raw encoder: within this module only, after [`Enc::uses`] on every pooled image.
@@ -2047,14 +2302,14 @@ impl<'g> Enc<'g> {
     }
 
     /// Run kernel `entry` writing `out` (dispatched over `groups` workgroups).
-    pub fn dispatch(&mut self, entry: &str, p: &Params, images: KernelImages<'_>, data: Option<&wgpu::Buffer>, groups: (u32, u32)) {
-        self.dispatch_ext(entry, p, images, data, groups, None);
+    pub fn dispatch<'k>(&mut self, kernel: impl Into<Kernel<'k>>, p: &Params, images: KernelImages<'_>, data: Option<&wgpu::Buffer>, groups: (u32, u32)) {
+        self.dispatch_ext(kernel, p, images, data, groups, None);
     }
 
     /// [`Enc::dispatch`] for the kernels in `EXT_ENTRIES`, with their group 1 storage buffers.
-    pub fn dispatch_ext(
+    pub fn dispatch_ext<'k>(
         &mut self,
-        entry: &str,
+        kernel: impl Into<Kernel<'k>>,
         p: &Params,
         images: KernelImages<'_>,
         data: Option<&wgpu::Buffer>,
@@ -2063,9 +2318,15 @@ impl<'g> Enc<'g> {
     ) {
         let KernelImages { src, aux, out } = images;
         let g = self.g;
-        let Some(pipe) = g.pipeline(entry) else {
-            self.missing = true;
-            return;
+        let (pipe, entry, guard) = match kernel.into() {
+            Kernel::Entry(entry) => match g.pipeline(entry) {
+                Some(pipe) => (pipe, entry, None),
+                None => {
+                    self.missing = true;
+                    return;
+                }
+            },
+            Kernel::Plugin { pipeline, label, guard } => (pipeline, label, guard),
         };
         let ub = g.buffer_init(None, &p.bytes(), wgpu::BufferUsages::UNIFORM);
         let sv = src.texture.create_view(&Default::default());
@@ -2100,7 +2361,7 @@ impl<'g> Enc<'g> {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(entry), timestamp_writes: None });
             pass.set_pipeline(pipe);
             pass.set_bind_group(0, &bg, &[]);
-            if let Some(b) = &bg_ext {
+            if let Some(b) = bg_ext.as_ref().or(guard) {
                 pass.set_bind_group(1, b, &[]);
             }
             pass.dispatch_workgroups(groups.0.max(1), groups.1.max(1), 1);
@@ -2146,6 +2407,11 @@ impl<'g> Enc<'g> {
         dst
     }
 
+    #[cfg(test)]
+    pub(crate) fn recorded(&self) -> usize {
+        self.pending
+    }
+
     /// The last submission of this encoder's work (what a readback after it waits for).
     pub(crate) fn last_submission(&self) -> Option<wgpu::SubmissionIndex> {
         self.last_submit.clone()
@@ -2155,6 +2421,8 @@ impl<'g> Enc<'g> {
     pub fn submit(&mut self) {
         if let Some((enc, id)) = self.enc.take() {
             self.last_submit = Some(self.g.queue.submit([enc.finish()]));
+            self.guards.iter().for_each(|guard| guard.submitted());
+            self.submitted_guards.append(&mut self.guards);
             if let Ok(mut p) = self.g.pool.lock() {
                 p.close(id);
             }
@@ -2308,8 +2576,10 @@ impl<'g> Enc<'g> {
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
         self.submit();
+        let flags = std::mem::take(&mut self.submitted_guards);
         self.g.map_readback(&buf, row as usize, padded as usize, h as usize, move |r| {
-            done(r.map_err(|e| log::error!("gpu texture readback: {e}")).ok());
+            let r = r.map_err(|e| log::error!("gpu texture readback: {e}")).ok();
+            done(r.filter(|_| flags.into_iter().map(crate::guard::FlagRead::clean).fold(true, |clean, read| clean & read)));
         });
         #[cfg(not(target_arch = "wasm32"))]
         let _ = self.g.poll_readbacks(wgpu::PollType::Poll);

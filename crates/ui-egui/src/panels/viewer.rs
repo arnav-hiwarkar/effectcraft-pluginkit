@@ -199,6 +199,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let ctx = ui.ctx().clone();
     let Some(cid) = app.session.active_comp_id() else {
+        crate::panels::viewers::release_panes(app);
         empty_state(app, ui, rect);
         return;
     };
@@ -273,7 +274,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let resp = phase_menu(app, ui, &ectx, &mut v);
     phase_hover(app, ui, &ectx, &resp, &mut v);
     phase_press(app, ui, &ectx, &resp, &mut v);
-    if !middle_pan(app, ui, &resp, &v) {
+    if !middle_pan(app, ui, &resp, &v) && !super::plugin_tools::viewer(app, ui, &ectx, &v.map, &v.painter) {
         phase_dragstart(app, ui, &ectx, &resp, &mut v);
         phase_drag(app, ui, &ectx, &resp, &mut v);
         phase_stopped(app, ui, &ectx, &resp, &mut v);
@@ -398,11 +399,16 @@ fn phase_frame(app: &mut EffectcraftApp, v: &mut Vw<'_>) {
     let frame = comp.frame_rate.frame_at(time);
     let key = app.frame_key(cid, frame, scale);
     app.request_frame_urgent(cid, frame, scale);
+    crate::panels::viewers::request_panes(app);
     // The frame on screen. While a drag or a property scrub is rendering, the exact key changes
     // with every edit and its render is still in flight; the newest completed revision of the
     // same frame keeps the picture following the pointer instead of freezing until it stops.
+    let capped = app.viewer_native.as_ref().map(|(_, _, f)| f.loop_check.capped());
+    if capped == Some(None) {
+        ctx.request_repaint();
+    }
     if let Some((k, img)) = app.frames.get_for_viewer(&key, app.viewer_shown.as_ref().map(|(_, s)| s)) {
-        let stale = app.viewer_shown.as_ref().is_none_or(|(_, s)| *s != k);
+        let stale = app.viewer_shown.as_ref().is_none_or(|(_, s)| *s != k) || capped == Some(Some(true));
         // A CPU frame goes up again when the magnification calls for another factor.
         let minify = minify_factor(app.session.prefs.viewer_zoom_smooth(), scale, (zoom * ppp) as f64);
         // (Half-float frames have no such texture: the display pass makes mips.)
@@ -885,6 +891,9 @@ fn phase_menu(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx, v: &m
 
     // Interaction.
     let resp = ui.interact(area, egui::Id::unique("viewer-interact"), Sense::click_and_drag());
+    if super::plugin_tools::active(app).is_some() {
+        return resp;
+    }
     let menu_hits_id = egui::Id::unique(("viewer-menu-hits", cid.0));
     // A right-click an overlay took (the Cryptomatte eyedropper's) opens the menu too.
     let forwarded = ui.data_mut(|d| d.remove_temp::<egui::Pos2>(egui::Id::unique(FORWARDED_SECONDARY)));
@@ -946,6 +955,11 @@ fn phase_menu(app: &mut EffectcraftApp, ui: &mut egui::Ui, ectx: &EvalCtx, v: &m
         if settings.clicked() {
             context_actions.push(("comp.settings".to_owned(), serde_json::json!({"comp": cid.0})));
             ui.close();
+        }
+        if let Some(params) =
+            crate::menus::plugin_context_section(ui, &app.session.plugin_items, effectcraft_engine::PluginContext::Viewer, &mut app.auto, "viewer.context")
+        {
+            context_actions.push(("plugin.run".to_owned(), params));
         }
     });
     for (id, params) in context_actions {

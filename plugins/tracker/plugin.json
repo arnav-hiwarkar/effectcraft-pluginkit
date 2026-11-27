@@ -1,0 +1,10 @@
+{
+  "id": "org.craftkit.tracker",
+  "name": "Tracker",
+  "version": "1.0.0",
+  "author": "CraftKit",
+  "license": "MIT OR Apache-2.0",
+  "description": "Track a point through a layer's frames, stabilise the layer on it, or move another layer along it with position keyframes.",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": ["document.read", "document.write"]
+}

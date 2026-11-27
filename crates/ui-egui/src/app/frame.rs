@@ -225,6 +225,10 @@ impl EffectcraftApp {
             self.session.poll_mask_track();
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+        if effectcraft_plugin::pump(&mut self.session) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(30));
+        }
+        crate::panels::plugin_view::tick(self, ctx);
         // Background tasks (Content-Aware Fill, Scene Edit Detection, imports).
         if !self.session.tasks.is_empty() {
             self.session.poll_jobs();
@@ -235,8 +239,6 @@ impl EffectcraftApp {
             self.session.poll_offload();
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
-        // Plug-in Library: a finished job's toast (also polled with Roto, for other frontends).
-        self.session.poll_library();
         // Warp Stabilizer: finish analyses and start queued (re-)analyses in the background.
         if self.session.warp_job.is_some() || !self.session.warp_pending.is_empty() {
             self.session.poll_warp(true);
@@ -512,12 +514,18 @@ impl EffectcraftApp {
         let header_h = 40.0;
         let header = egui::Rect::from_min_size(egui::pos2(full.min.x, top), egui::vec2(full.width(), header_h));
         header::show(self, ui, header);
-        let body = egui::Rect::from_min_max(egui::pos2(full.min.x + 4.0, header.max.y + 2.0), egui::pos2(full.max.x - 4.0, full.max.y - 4.0));
+        let status = panels::plugin_view::status_items();
+        let status_h = if status.is_empty() { 0.0 } else { panels::plugin_view::STATUS_H };
+        let body = egui::Rect::from_min_max(egui::pos2(full.min.x + 4.0, header.max.y + 2.0), egui::pos2(full.max.x - 4.0, full.max.y - 4.0 - status_h));
         crate::color_picker::note_dialog(&ctx, self.dialog);
         // After the shortcuts, menus and header, which can replace the project (New, Open).
         self.ui.timeline.scope_links(self.session.script_ui.project_epoch);
         panels::effect_controls::scope_lock(self);
         self.dock_area(ui, body);
+        if !status.is_empty() {
+            let bar = egui::Rect::from_min_max(egui::pos2(full.min.x, full.max.y - status_h), full.max);
+            panels::plugin_view::status_bar(self, ui, bar, &status);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         prefs_live::dropped_files(self, ui, full);
         if !tab_had_widget_focus {
@@ -526,12 +534,14 @@ impl EffectcraftApp {
         panels::precomp::mini_flowchart(self, &ctx);
         panels::home::capture_thumbnail(self);
         panels::dialogs::show(self, &ctx);
+        panels::plugin_view::form(self, &ctx);
         updates_ui::show(self, &ctx);
         panels::scriptui_view::sync_panels(self);
         panels::scriptui_view::show_windows(self, &ctx);
+        panels::plugin_manager::show(self, &ctx);
         panels::learn::coach(self, &ctx);
         let lift = panels::media_panels::import_card(self, ui, full);
-        self.draw_toast(ui, full, lift);
+        self.draw_toast(ui, full, lift + status_h);
     }
 
     /// Workspace-layout auto-save: a background write that also runs while hidden, once the

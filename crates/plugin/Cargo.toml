@@ -1,6 +1,6 @@
 [package]
 name = "effectcraft-plugin"
-description = "EffectCraft effect plug-ins: loads sandboxed WebAssembly effect modules (WebAssembly ABI v1 and v2) into the effect registry"
+description = "EffectCraft's side of the Craft Plugin Kit: plugin effects in the effect registry, plugin commands and panels over engine commands, installed-plugin management"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,17 +9,21 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
-[features]
-# The WebAssembly runtime (wasmi, a pure-Rust interpreter). Hosts enable it on native; without
-# it `load_wasm` reports that WebAssembly plug-ins are unavailable.
-wasm = ["dep:wasmi"]
-
 [dependencies]
-effectcraft-effects = { workspace = true }
+craft-plugin-host = { workspace = true }
+effectcraft-automation = { workspace = true }
+effectcraft-engine = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
-wasmi = { workspace = true, optional = true }
 
 [dev-dependencies]
-effectcraft-keyframe = { workspace = true }
-effectcraft-project = { workspace = true }
-effectcraft-raster = { workspace = true }
+craft-plugin-host = { workspace = true, features = ["testing"] }
+effectcraft-host = { workspace = true }
+effectcraft-gpu = { workspace = true }
+tempfile = { workspace = true }
+exr = { workspace = true }
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"

@@ -28,7 +28,7 @@ fn dims_xy(dim: u32) -> (f64, f64) {
 fn gaussian(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let s = blur_sigma(ctx.params.f("blurriness")) * b.scale;
     if s <= 0.0 {
-        return b;
+        return ctx.unchanged(b);
     }
     let (kx, ky) = dims_xy(ctx.params.e("dimensions"));
     let repeat = ctx.params.b("repeatEdge");
@@ -40,12 +40,17 @@ fn gaussian(ctx: &EffectCtx, mut b: Buf) -> Buf {
     }
     let (sx, sy) = (s * kx, s * ky);
     // Small sigmas: integer-radius box passes would step (and do nothing below ~0.6 px), so sample the kernel (#1939).
-    b.img = if effectcraft_raster::gaussian_is_exact(sx, sy) {
-        effectcraft_raster::gaussian_blur_exact(&b.img, sx, sy, repeat || ctx.adjustment)
-    } else {
-        gaussian_blur(&b.img, sx, sy, repeat || ctx.adjustment)
-    };
+    if effectcraft_raster::gaussian_is_exact(sx, sy) {
+        b.img = effectcraft_raster::gaussian_blur_exact(&b.img, sx, sy, repeat || ctx.adjustment);
+        return ctx.quantized(b);
+    }
+    b.img = effectcraft_raster::gaussian_blur_quantized(&b.img, sx, sy, repeat || ctx.adjustment, ctx.env.quantize_output);
     b
+}
+
+pub(crate) fn gaussian_margin(params: &crate::Params, scale: f64) -> Option<f64> {
+    let s = blur_sigma(params.f("blurriness")) * scale;
+    effectcraft_raster::gaussian_is_exact(s, s).then(|| (s * 3.0).ceil() / scale)
 }
 
 fn box_blur(ctx: &EffectCtx, mut b: Buf) -> Buf {
@@ -255,30 +260,28 @@ fn glow(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let s = glow_sigma(radius);
     let blurred = gaussian_blur(&bright, s * kx, s * ky, false);
     let mode = ctx.params.e("operation");
-    b.img.data.par_iter_mut().zip(blurred.data.par_iter()).for_each(|(o, g)| {
-        // Intensity scales the glow's colour; with the colour channels its coverage stays.
-        let g = [g[0] * intensity, g[1] * intensity, g[2] * intensity, if alpha_based { g[3] * intensity } else { g[3] }];
-        match mode {
-            // Behind: the glow shows only where the original is transparent.
-            1 => {
-                let k = 1.0 - o[3];
-                for c in 0..4 {
-                    o[c] += g[c] * k;
+    b.img.data.par_chunks_mut(crate::QUANTIZE_CHUNK).zip(blurred.data.par_chunks(crate::QUANTIZE_CHUNK)).for_each(|(os, gs)| {
+        for (o, g) in os.iter_mut().zip(gs) {
+            let g = [g[0] * intensity, g[1] * intensity, g[2] * intensity, if alpha_based { g[3] * intensity } else { g[3] }];
+            match mode {
+                1 => {
+                    let k = 1.0 - o[3];
+                    for c in 0..4 {
+                        o[c] += g[c] * k;
+                    }
+                }
+                2 => *o = [g[0], g[1], g[2], g[3]],
+                _ if glow_op != effectcraft_color::BlendMode::Add => *o = effectcraft_color::blend_pixel(glow_op, *o, g, 0.0),
+                _ => {
+                    for c in 0..3 {
+                        o[c] += g[c];
+                    }
+                    o[3] = (o[3] + g[3] * (1.0 - o[3])).min(1.0);
                 }
             }
-            // None: the glow alone.
-            2 => *o = [g[0], g[1], g[2], g[3]],
-            // On Top with another Glow Operation: that blend mode.
-            _ if glow_op != effectcraft_color::BlendMode::Add => *o = effectcraft_color::blend_pixel(glow_op, *o, g, 0.0),
-            // On Top: add (screen-like add on premultiplied colour; alpha grows by the glow's alpha).
-            _ => {
-                for c in 0..3 {
-                    o[c] += g[c];
-                }
-                o[3] = (o[3] + g[3] * (1.0 - o[3])).min(1.0);
-            }
+            o[3] = o[3].clamp(0.0, 1.0);
         }
-        o[3] = o[3].clamp(0.0, 1.0);
+        ctx.quantize_chunk(os);
     });
     b
 }

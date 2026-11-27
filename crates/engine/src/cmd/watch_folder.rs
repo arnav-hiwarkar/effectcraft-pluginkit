@@ -74,6 +74,7 @@ fn render_project(host: &Session, path: &Path) -> Value {
         if queued == 0 {
             return Ok(json!({"state": "done", "items": [], "note": "nothing queued"}));
         }
+        crate::plugin_refs::render_refusal(&s.project)?;
         s.start_render(true)?;
         let items: Vec<Value> = s
             .project

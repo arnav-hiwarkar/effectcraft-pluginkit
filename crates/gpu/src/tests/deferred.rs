@@ -148,3 +148,19 @@ fn placeholders_never_reach_the_layer_cache() {
     assert_eq!(diff(&fresh, &cached, tol).over, 0);
     assert_eq!(diff(&fresh, &img, tol).over, 0);
 }
+
+#[test]
+fn a_capped_plugin_frame_never_arrives_through_a_deferred_readback() {
+    let Some((g, _lock)) = deferred_gpu() else { return };
+    let id = "test.gpu.spin-deferred";
+    crate::tests::plugin::register_spin(id, "\n\n\n");
+    crate::fx_plugin::warm(&g.ctx, &effectcraft_effects::dynamic::get(id).expect("registered"));
+    let mut s = Scene::new(BitDepth::Bpc32);
+    let mut layer = s.footage(8, 8);
+    s.effect(&mut layer, id, &[]);
+    s.push(layer);
+    let cpu = Renderer::new(&s.p, &Pattern, RenderOpts { backend: Backend::Cpu, ..Default::default() }).comp_frame_cpu(s.cid, Tick::ZERO);
+    let (img, _) = render_passes(g, &s, RenderOpts { backend: Backend::Gpu, ..Default::default() }, &LayerCache::default(), Tick::ZERO);
+    let d = diff(&cpu, &img, tolerance(BitDepth::Bpc32));
+    assert!(d.over == 0, "the capped frame renders on the CPU: {d:?}");
+}

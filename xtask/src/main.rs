@@ -1,4 +1,4 @@
-//! Workspace automation: `cargo xtask <layers|assets|pdf-deps|lock-patches|aep-corpus|wasm|web|ico|ci>`.
+//! Workspace automation: `cargo xtask <layers|assets|pdf-deps|lock-patches|kit-rev <SHA|--check>|aep-corpus|wasm|web|ico|ci>`.
 //!
 //! - `layers`: enforces the dependency layering of `docs/architecture.md` §1 (downward-only edges,
 //!   listed same-layer edges, no UI/OS crates below L5).
@@ -23,8 +23,10 @@ mod aep_corpus;
 mod affected;
 mod bench;
 mod ico;
+mod kit_rev;
 mod lock_patches;
 mod pdf_deps;
+mod plugin;
 mod version;
 
 use std::process::{Command, ExitCode};
@@ -58,9 +60,8 @@ const LAYERS: &[(&str, u8)] = &[
     ("sam2", 3),
     ("lottie", 3),
     ("format", 3),
-    ("plugin", 3),
-    ("helper-host", 3),
     ("interchange", 3),
+    ("plugin", 5),
     ("engine", 4),
     ("script", 4),
     ("host", 4),
@@ -91,6 +92,8 @@ const SAME_LAYER: &[(&str, &str)] = &[
     ("host", "engine"),
     ("script", "engine"),
     ("host", "script"),
+    ("plugin", "automation"),
+    ("ui-egui", "plugin"),
     ("cli", "effectcraft"),
 ];
 
@@ -597,12 +600,14 @@ fn main() -> ExitCode {
         "assets" => assets(),
         "pdf-deps" => pdf_deps::run(&root()),
         "lock-patches" => lock_patches::run(&root()),
+        "kit-rev" => kit_rev::run(&root(), &std::env::args().skip(2).collect::<Vec<_>>()),
         "aep-corpus" => aep_corpus::run(&root(), &std::env::args().skip(2).collect::<Vec<_>>()),
         "ci" => {
             let rest: Vec<String> = std::env::args().skip(2).collect();
             if rest.iter().any(|a| a == "--affected") { affected::run(&root(), &rest) } else { ci() }
         }
         "audio-backend" => audio_backend(),
+        "plugin" => plugin::run(&root(), &std::env::args().skip(2).collect::<Vec<_>>()),
         "web" => web(&std::env::args().skip(2).collect::<Vec<_>>()),
         "bench" => bench::run(&root(), &std::env::args().skip(2).collect::<Vec<_>>()),
         "ico" => {
@@ -613,7 +618,7 @@ fn main() -> ExitCode {
             let rest: Vec<String> = std::env::args().skip(2).collect();
             version::run(&root(), &rest.iter().map(String::as_str).collect::<Vec<_>>())
         }
-        _ => Err("usage: cargo xtask <layers|assets|pdf-deps|lock-patches|aep-corpus [--dir DIR]|wasm|web [--dev] [--serve PORT]|ico OUT.ico IN.png…|version [set X.Y.Z]|ci [--affected [--base REV] [--dry-run]]|audio-backend|bench [--bin CLI] [--quick] [--project F --comp C] [--compare OLD.jsonl] (--help)>".into()),
+        _ => Err("usage: cargo xtask <layers|assets|plugin <DIR [--native] [--out DIR]|new NAME [--kind KIND]|dev DIR|render DIR|bench DIR|check DIR> (cargo xtask plugin help)|pdf-deps|lock-patches|aep-corpus [--dir DIR]|wasm|web [--dev] [--serve PORT]|ico OUT.ico IN.png…|version [set X.Y.Z]|ci [--affected [--base REV] [--dry-run]]|audio-backend|bench [--bin CLI] [--quick] [--project F --comp C] [--compare OLD.jsonl] (--help)>".into()),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,

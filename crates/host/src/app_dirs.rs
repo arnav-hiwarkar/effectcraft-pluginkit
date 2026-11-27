@@ -1,5 +1,5 @@
-//! Where EffectCraft keeps its per-user data (settings, shortcuts, crash recovery, logs, models,
-//! plug-ins): the one directory [`config_dir`](crate::config_dir) returns.
+//! Where EffectCraft keeps its per-user data (settings, shortcuts, crash recovery, logs, models):
+//! the one directory [`config_dir`](crate::config_dir) returns.
 //!
 //! In order:
 //! 1. `EFFECTCRAFT_CONFIG_DIR`, when set (tests, agents, custom setups).

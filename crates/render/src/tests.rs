@@ -14,7 +14,9 @@ mod color;
 mod drop_shadow_cover;
 mod footage_size;
 mod frame_blend;
+mod frame_cache;
 mod guides;
+mod layer_keys;
 mod mask_blur;
 mod mask_expansion;
 mod mask_feather;
@@ -22,6 +24,7 @@ mod motion_tile;
 mod nested;
 mod paint;
 mod proxy_cache;
+mod quantize_fusion;
 mod raster_clip;
 mod remap;
 mod roi;
@@ -462,7 +465,7 @@ fn particle_world_reads_a_hold_cut_at_its_exact_layer_time_under_any_stretch() {
         let l = &c.layers[0];
         let ctx = crate::eval::EvalCtx::new(&p, cid, c, Tick::ZERO);
         let renderer = Renderer::new(&p, &NoFootage, RenderOpts::default());
-        let host = FxHost { r: &renderer, ctx: &ctx, layer: l, origin: [0.0; 2], index: Default::default(), original: None };
+        let host = FxHost { r: &renderer, ctx: &ctx, layer: l, origin: [0.0; 2], index: Default::default(), original: None, shown: None };
         let rate = |t: f64| host.param_at(0, "birthRate", t).unwrap().as_f64();
         assert_eq!((rate(0.5 - 1.0 / 60.0), rate(0.5)), (3.0, 0.0), "stretch {stretch} %");
         assert!(!host.param_is_static(0, "birthRate"));
@@ -1388,7 +1391,7 @@ fn self_inputs_share_source_semantics_across_effects_and_times() {
     let c = p.comp(cid).unwrap();
     let ctx = crate::eval::EvalCtx::new(&p, cid, c, Tick::ZERO);
     let renderer = Renderer::new(&p, &NoFootage, RenderOpts::default());
-    let host = FxHost { r: &renderer, ctx: &ctx, layer: &l, origin: [0.0; 2], index: Default::default(), original: None };
+    let host = FxHost { r: &renderer, ctx: &ctx, layer: &l, origin: [0.0; 2], index: Default::default(), original: None, shown: None };
     assert_eq!(host.layer(l.id.0, false).unwrap().buf.img.get(150, 50)[3], 1.0);
     assert_eq!(host.layer_masks(l.id.0).unwrap().buf.img.get(150, 50)[3], 0.0);
     assert_eq!(host.layer_at(l.id.0, 0.5, false).unwrap().buf.img.get(150, 50)[3], 1.0);
@@ -1426,7 +1429,7 @@ fn timed_source_reads_preserve_other_layer_masks() {
     p.comp_mut(cid).unwrap().layers = vec![owner.clone(), other.clone()].into();
     let ctx = crate::EvalCtx::new(&p, cid, p.comp(cid).unwrap(), Tick::ZERO);
     let renderer = crate::Renderer::new(&p, &crate::NoFootage, crate::RenderOpts::default());
-    let host = crate::FxHost { r: &renderer, ctx: &ctx, layer: &owner, origin: [0.0; 2], index: Default::default(), original: None };
+    let host = crate::FxHost { r: &renderer, ctx: &ctx, layer: &owner, origin: [0.0; 2], index: Default::default(), original: None, shown: None };
     // Current Source and timed Source had different contracts before this fix. Keep
     // the existing timed read (used by Clone/Time effects) masked for other layers.
     assert_eq!(host.layer(other.id.0, false).unwrap().buf.img.get(150, 50)[3], 1.0);
@@ -2039,4 +2042,35 @@ fn elongated_solids_stay_within_the_pixel_cap_after_rounding() {
     assert_eq!(solid_size(4000, 4000, 1.0), (1.0, 4000, 4000));
     let (s, pw, ph) = solid_size(5000, 5000, 1.0);
     assert!((s - 0.8).abs() < 0.01 && pw * ph <= 16_000_000);
+}
+
+#[test]
+fn a_stack_prefix_from_the_cache_matches_a_fresh_one_after_an_effect_that_covers_the_layer_is_added_later() {
+    use crate::{LayerCache, NoFootage, RenderOpts, Renderer};
+    let (mut p, cid, comp) = setup();
+    let mut l = build::layer(&mut p, &comp, "Shape", LayerSource::Shape, (200, 100), None);
+    let mut next = p.next_id;
+    let mut ids = Ids(&mut next);
+    let rect = build::shape_rect(&mut ids, [16.0, 16.0], [0.0, 0.0], 0.0);
+    let fill = build::shape_fill(&mut ids, [1.0, 1.0, 1.0, 1.0]);
+    let g = build::shape_group(&mut ids, "Dot", vec![rect, fill]);
+    p.next_id = next;
+    l.props.sub_mut("contents").unwrap().children.push(g.into());
+    add_effect_200(&mut p, &mut l, "ec.blur.gaussian", &[("blurriness", Value::Scalar(4.0))]);
+    p.comp_mut(cid).unwrap().layers.push(l);
+    let cache = LayerCache::default();
+    let prefix = |p: &Project, cache: Option<&LayerCache>| {
+        let mut r = Renderer::new(p, &NoFootage, RenderOpts::default());
+        r.cache = cache;
+        let c = p.comp(cid).unwrap();
+        r.layer_input(&r.ctx(cid, c, Tick::ZERO), &c.layers[0], 1).unwrap()
+    };
+    let before = prefix(&p, Some(&cache));
+    let mut layer = p.comp(cid).unwrap().layers[0].clone();
+    add_effect_200(&mut p, &mut layer, "ec.distort.twirl", &[]);
+    p.comp_mut(cid).unwrap().layers[0] = layer;
+    let (cached, fresh) = (prefix(&p, Some(&cache)), prefix(&p, None));
+    assert!(before.img.width < 200, "the blurred dot alone is narrower than the layer: {}", before.img.width);
+    assert_eq!((cached.img.width, cached.img.height, cached.offset), (fresh.img.width, fresh.img.height, fresh.offset));
+    assert!(cached.img.data == fresh.img.data, "the cached prefix differs from a fresh render of it");
 }

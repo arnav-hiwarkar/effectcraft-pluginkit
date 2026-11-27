@@ -196,11 +196,24 @@ pub fn is_audio_effect(id: &str) -> bool {
 /// itself): the time effects (Echo, Posterize Time, Timewarp…), simulations, temporal smoothing
 /// and analysis (Remove Grain, Auto Levels, Color Stabilizer's reference frame, Warp Stabilizer,
 /// Roto Brush…) and Clone strokes with a time offset? On a precomp layer, a change at one nested
-/// time then reaches frames of the layer far from where it shows. Plug-in effects (every id
-/// outside `ec.`) count too: plug-in API 2 reads the input at other times (`PluginHost`).
+/// time then reaches frames of the layer far from where it shows.
 // ponytail: hand-kept list of the effects that call `self_at`; a new one must be added here.
 pub fn reads_other_frames(id: &str) -> bool {
-    !id.starts_with("ec.") || id.starts_with("ec.time.") || id.starts_with("ec.sim.") || READS_OTHER_FRAMES.contains(&id)
+    id.starts_with("ec.time.")
+        || id.starts_with("ec.sim.")
+        || READS_OTHER_FRAMES.contains(&id)
+        || DECLARED_FRAME_READERS.read().is_ok_and(|declared| declared.contains(id))
+}
+
+static DECLARED_FRAME_READERS: std::sync::RwLock<std::collections::BTreeSet<String>> = std::sync::RwLock::new(std::collections::BTreeSet::new());
+
+pub fn declare_reads_other_frames(id: &str, reads: bool) {
+    let Ok(mut declared) = DECLARED_FRAME_READERS.write() else { return };
+    if reads {
+        declared.insert(id.to_string());
+    } else {
+        declared.remove(id);
+    }
 }
 
 /// The effects outside `ec.time.` and `ec.sim.` that read their own layer at other times.
@@ -244,8 +257,14 @@ fn reads_own_params_elsewhen(g: &PropGroup, unit_stretch: bool) -> bool {
 /// `a` and `b` have the same header: every field but the children.
 fn same_head(a: &PropGroup, b: &PropGroup) -> bool {
     // Every field (no `..`: a new field must be considered here).
-    let PropGroup { uid, match_id, name, kind, enabled, label, children: _ } = a;
-    *uid == b.uid && *match_id == b.match_id && *name == b.name && *kind == b.kind && *enabled == b.enabled && *label == b.label
+    let PropGroup { uid, match_id, name, kind, enabled, label, children: _, state_version } = a;
+    *uid == b.uid
+        && *match_id == b.match_id
+        && *name == b.name
+        && *kind == b.kind
+        && *enabled == b.enabled
+        && *label == b.label
+        && *state_version == b.state_version
 }
 
 /// Groups nested deeper than this in a layer's property tree count as changed everywhere.
@@ -410,6 +429,7 @@ impl Layer {
             environment,
             environment_background,
             props,
+            plugin_data,
         } = self;
         *id == o.id
             && *name == o.name
@@ -430,6 +450,7 @@ impl Layer {
             && *auto_orient == o.auto_orient
             && *environment == o.environment
             && *environment_background == o.environment_background
+            && *plugin_data == o.plugin_data
             && (if heard { *props == o.props } else { same_picture_props(props, &o.props) })
     }
 
@@ -640,6 +661,8 @@ pub struct Layer {
     pub environment_background: bool,
     /// The property tree (Masks, Effects, Transform, Text, Contents, Camera/Light options…).
     pub props: PropGroup,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty", with = "crate::plugin_data")]
+    pub plugin_data: crate::plugin_data::PluginData,
 }
 
 /// The name a text layer takes from its text: the first 40 characters of the first line. A line

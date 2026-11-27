@@ -1,0 +1,8 @@
+asset:        legacy.wasm
+title:        Plugin built against the Craft Plugin Kit SDK before viewer controls
+author:       EffectCraft contributors
+source:       original work
+license:      MIT OR Apache-2.0
+license-file: LICENSE-MIT
+added:        2026-11-22 by EffectCraft contributors (Claude agent, plugin viewer controls)
+notes:        Built from legacy.rs and legacy.toml beside it, with crates/plugin-sdk as of commit fdb1578b (git archive fdb1578b crates/plugin-sdk), for wasm32-unknown-unknown in release. The viewer test loads it to prove that a plugin built before overlays and tools still loads and renders.

@@ -1,0 +1,10 @@
+{
+  "id": "org.craftkit.timewarp",
+  "name": "Time Warp",
+  "version": "1.0.0",
+  "author": "Craft Plugin Kit",
+  "description": "Reference time effect: plays the layer at another speed and makes the frames in between from motion vectors (host optical flow both ways), with frame blending and nearest frame as simpler methods.",
+  "license": "MIT OR Apache-2.0",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": []
+}

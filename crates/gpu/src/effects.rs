@@ -9,9 +9,12 @@ use crate::context::{Enc, GpuImage, Params};
 use crate::ops;
 
 /// Effects with a GPU implementation (must equal `effectcraft_effects::GPU_EFFECTS`), plus the
-/// expression controls (pass-throughs).
+/// expression controls (pass-throughs) and plugin effects that ship WGSL kernels.
 pub fn supports(id: &str) -> bool {
-    effectcraft_effects::GPU_EFFECTS.contains(&id) || id.starts_with("ec.control.")
+    effectcraft_effects::GPU_EFFECTS.contains(&id)
+        || id.starts_with("ec.control.")
+        || effectcraft_effects::dynamic::get(id)
+            .is_some_and(|r| r.effect.shader.is_some() && r.effect.gpu.is_some() && r.gpu_planned.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// A layer buffer on the GPU (see [`Buf`]).
@@ -122,6 +125,9 @@ pub(crate) fn run_chain(e: &mut Enc, chain: &[FxStep], buf: &Buf, levels: Option
         };
     }
     let img = e.download(&b.img)?;
+    if e.loop_capped() {
+        return None;
+    }
     Some(Buf { img, offset: b.offset, scale: b.scale })
 }
 
@@ -134,28 +140,114 @@ fn readback_buf(r: crate::deferred::Readback) -> Option<Buf> {
 }
 
 /// An effect stack running on a GPU-resident image (adjustment layers): GPU chains stay on
-/// the device; CPU effects read the image back, run, and upload the result.
+/// the device; a run of CPU effects reads the image back once, runs, and uploads once.
 pub(crate) struct GpuFx<'e, 'g> {
     e: &'e mut Enc<'g>,
-    b: Option<GBuf>,
+    held: Held,
     levels: Option<f32>,
+}
+
+enum Held {
+    Source(std::sync::Arc<Buf>, Option<Fit>),
+    Gpu(GBuf),
+    Cpu(Buf),
+    Lost,
+}
+
+#[derive(Clone, Copy)]
+enum Fit {
+    Cover([f64; 2]),
+    Align([f64; 2]),
+}
+
+impl Fit {
+    fn on_cpu(self, buf: &mut Buf, fits: impl Fn(u32, u32) -> bool) {
+        let (offset, scale, w, h) = (buf.offset, buf.scale, buf.img.width, buf.img.height);
+        match self {
+            Fit::Cover(size) => {
+                if effectcraft_effects::cover_plan(offset, scale, size, w, h).is_none_or(|(_, _, w, h)| fits(w, h)) {
+                    buf.cover(size);
+                }
+            }
+            Fit::Align(size) => {
+                if effectcraft_effects::align_plan(offset, scale, size, w, h)
+                    .is_none_or(|(l, t)| w.checked_add(l).zip(h.checked_add(t)).is_some_and(|(w, h)| fits(w, h)))
+                {
+                    buf.align(size);
+                }
+            }
+        }
+    }
+
+    fn on_gpu(self, e: &mut Enc, b: &mut GBuf) {
+        match self {
+            Fit::Cover(size) => {
+                let keep = (b.img.clone(), b.offset);
+                if b.cover(e, size).is_none() {
+                    (b.img, b.offset) = keep;
+                }
+            }
+            Fit::Align(size) => {
+                if let Some((l, t)) = effectcraft_effects::align_plan(b.offset, b.scale, size, b.img.width, b.img.height)
+                    && e.g.fits(b.img.width + l, b.img.height + t)
+                {
+                    let img = e.image(b.img.width + l, b.img.height + t);
+                    e.copy_into(&b.img, &img, l, t);
+                    *b = GBuf { img, offset: [b.offset[0] + l as f64, b.offset[1] + t as f64], scale: b.scale };
+                }
+            }
+        }
+    }
 }
 
 impl<'e, 'g> GpuFx<'e, 'g> {
     pub fn new(e: &'e mut Enc<'g>, img: GpuImage, offset: [f64; 2], scale: f64, levels: Option<f32>) -> Self {
-        GpuFx { e, b: Some(GBuf { img, offset, scale }), levels }
+        GpuFx { e, held: Held::Gpu(GBuf { img, offset, scale }), levels }
+    }
+
+    pub fn source(e: &'e mut Enc<'g>, buf: std::sync::Arc<Buf>, levels: Option<f32>) -> Self {
+        GpuFx { e, held: Held::Source(buf, None), levels }
+    }
+
+    fn uploaded(&mut self) -> Option<GBuf> {
+        match &self.held {
+            Held::Gpu(b) => Some(GBuf { img: b.img.clone(), offset: b.offset, scale: b.scale }),
+            Held::Cpu(buf) => Some(GBuf { img: self.e.g.upload_image(&buf.img)?, offset: buf.offset, scale: buf.scale }),
+            Held::Source(buf, fit) => {
+                let mut b = GBuf { img: self.e.g.upload_buf(buf)?, offset: buf.offset, scale: buf.scale };
+                if let Some(fit) = fit {
+                    fit.on_gpu(self.e, &mut b);
+                }
+                Some(b)
+            }
+            Held::Lost => None,
+        }
+    }
+
+    fn fit(&mut self, fit: Fit) {
+        if let Held::Source(_, pending @ None) = &mut self.held {
+            *pending = Some(fit);
+            return;
+        }
+        if matches!(self.held, Held::Source(..)) {
+            self.held = self.uploaded().map_or(Held::Lost, Held::Gpu);
+        }
+        match &mut self.held {
+            Held::Gpu(b) => fit.on_gpu(self.e, b),
+            Held::Cpu(buf) => fit.on_cpu(buf, |w, h| self.e.g.fits(w, h)),
+            Held::Source(..) | Held::Lost => {}
+        }
     }
 
     /// The result: (image, offset, scale); `None` when a step failed.
-    pub fn finish(self) -> Option<(GpuImage, [f64; 2], f64)> {
-        self.b.map(|b| (b.img, b.offset, b.scale))
+    pub fn finish(mut self) -> Option<(GpuImage, [f64; 2], f64)> {
+        self.uploaded().map(|b| (b.img, b.offset, b.scale))
     }
 }
 
 impl effectcraft_render::FxTarget for GpuFx<'_, '_> {
     fn gpu(&mut self, steps: &[FxStep]) -> bool {
-        let Some(b) = &self.b else { return false };
-        let mut cur = GBuf { img: b.img.clone(), offset: b.offset, scale: b.scale };
+        let Some(mut cur) = self.uploaded() else { return false };
         self.e.take_missing();
         for step in steps {
             let Some(next) = apply(self.e, step.spec.id, &step.ctx, cur) else { return false };
@@ -169,41 +261,39 @@ impl effectcraft_render::FxTarget for GpuFx<'_, '_> {
                 cur.img = ops::quantize(self.e, &cur.img, l);
             }
         }
-        self.b = Some(cur);
+        self.held = Held::Gpu(cur);
         true
     }
 
     fn cpu(&mut self, f: &mut dyn FnMut(Buf) -> Buf) {
-        let Some(b) = self.b.take() else { return };
-        let Some(img) = self.e.download(&b.img) else { return };
-        let out = f(Buf { img, offset: b.offset, scale: b.scale });
-        self.b = self.e.g.upload_image(&out.img).map(|img| GBuf { img, offset: out.offset, scale: out.scale });
+        let buf = match std::mem::replace(&mut self.held, Held::Lost) {
+            Held::Gpu(b) => match self.e.download(&b.img) {
+                Some(img) => Buf { img, offset: b.offset, scale: b.scale },
+                None => return,
+            },
+            Held::Cpu(buf) => buf,
+            Held::Source(buf, fit) => {
+                let mut buf = std::sync::Arc::unwrap_or_clone(buf);
+                if let Some(fit) = fit {
+                    fit.on_cpu(&mut buf, |w, h| self.e.g.fits(w, h));
+                }
+                buf
+            }
+            Held::Lost => return,
+        };
+        self.held = Held::Cpu(f(buf));
     }
 
     /// GBuf::cover, like `pad`: a bigger texture with the old one copied into place, no
     /// readback. A region the device can't allocate leaves the buffer as it is.
     fn cover(&mut self, size: [f64; 2]) {
-        let Some(mut b) = self.b.take() else { return };
-        let keep = (b.img.clone(), b.offset);
-        if b.cover(self.e, size).is_none() {
-            (b.img, b.offset) = keep;
-        }
-        self.b = Some(b);
+        self.fit(Fit::Cover(size));
     }
 
     /// [`effectcraft_effects::Buf::align`] on the device: a texture grown left/top, the old one
     /// copied in. A size the device can't allocate leaves the buffer as it is.
     fn align(&mut self, size: [f64; 2]) {
-        let Some(b) = self.b.take() else { return };
-        let out = match effectcraft_effects::align_plan(b.offset, b.scale, size, b.img.width, b.img.height) {
-            Some((l, t)) if self.e.g.fits(b.img.width + l, b.img.height + t) => {
-                let img = self.e.image(b.img.width + l, b.img.height + t);
-                self.e.copy_into(&b.img, &img, l, t);
-                GBuf { img, offset: [b.offset[0] + l as f64, b.offset[1] + t as f64], scale: b.scale }
-            }
-            _ => b,
-        };
-        self.b = Some(out);
+        self.fit(Fit::Align(size));
     }
 }
 
@@ -211,6 +301,9 @@ fn apply(e: &mut Enc, id: &str, ctx: &EffectCtx, b: GBuf) -> Option<GBuf> {
     // Controls the kernels do not implement render on the CPU.
     if !effectcraft_effects::catalog::gpu_supported(id, ctx) {
         return None;
+    }
+    if let Some(registered) = effectcraft_effects::dynamic::get(id) {
+        return crate::fx_plugin::apply(e, &registered, ctx, b);
     }
     match id {
         "ec.blur.gaussian" => gaussian(e, ctx, b),

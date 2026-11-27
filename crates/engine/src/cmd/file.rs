@@ -42,6 +42,25 @@ fn demo(s: &mut Session, _: &Value) -> Result<Value> {
 
 pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_p(p, "path").ok_or_else(|| bad("file.open", "missing `path`"))?;
+    let Some(autosave_of) = p.get("autosaveOf") else {
+        let opened = open_file(s, path, |_| Some(path.to_string()))?;
+        s.note_project_path(path);
+        return Ok(opened);
+    };
+    let claimed = autosave_of.as_str();
+    let opened = open_file(s, path, |text| {
+        let made_from = effectcraft_project::saved_view(text).autosave_of;
+        claimed.filter(|claimed| made_from.as_deref() == Some(claimed)).map(str::to_string)
+    })?;
+    s.mark_unsaved();
+    match s.path.clone() {
+        Some(original) if s.file_ops().is_file(std::path::Path::new(&original)) => s.note_project_path(&original),
+        _ => s.note_project_replaced(),
+    }
+    Ok(opened)
+}
+
+fn open_file(s: &mut Session, path: &str, home: impl FnOnce(&str) -> Option<String>) -> Result<Value> {
     let bytes = s.services.read_file(path).map_err(|e| EngineError::Other(format!("cannot read {path}: {e}")))?;
     let text = String::from_utf8(bytes).map_err(|_| EngineError::Other("not a text project file".into()))?;
     // XML copies (File ▸ Save a Copy As XML…) open like the JSON project.
@@ -51,11 +70,11 @@ pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     // Footage saved with a relative path (imported by the CLI or an agent as `clip.mp4`, or
     // written by hand) is found next to the project file, as After Effects looks for footage
     // relative to the project (#652).
-    let refused = crate::doc_path::resolve_footage(&mut proj, Some(path));
-    s.replace_project(proj, Some(path.to_string()));
-    s.stored_paths.add(&s.project, Some(path));
+    let home = home(&text);
+    let refused = crate::doc_path::resolve_footage(&mut proj, Some(home.as_deref().unwrap_or(path)));
+    s.replace_project(proj, home.clone());
+    s.stored_paths.add(&s.project, home.as_deref());
     s.restore_view(&effectcraft_project::saved_view(&text));
-    s.note_project_path(path);
     // Values past the limits (a corrupt or hostile file) were brought within them (#788).
     if !repaired.is_empty() {
         let more = repaired.len().saturating_sub(3);
@@ -77,10 +96,14 @@ pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Lazy open: footage is checked in the background (Progress panel), not before the
     // project shows.
+    let plugins = crate::plugin_refs::on_open(&s.project);
+    if let Some(notice) = crate::plugin_refs::open_notice(&plugins) {
+        s.toast(notice);
+    }
     if s.check_footage_on_open {
         crate::footage_check::start(s, None, false)?;
     }
-    Ok(json!({"path": path, "savedBy": saved_by, "repaired": repaired}))
+    Ok(json!({"path": path, "savedBy": saved_by, "repaired": repaired, "plugins": plugins}))
 }
 
 /// The project file's text for `path`: `.ecproj` JSON, or XML for `.ecprojx` / `.xml` (a
@@ -88,7 +111,13 @@ pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
 /// wouldn't read back.
 pub(crate) fn file_text(s: &Session, path: &str) -> Result<String> {
     let compact = s.prefs.project.compact_project_files && !crate::xml_project::is_xml_path(path);
-    let json = s.project.to_file_json_with_view(&s.saved_view(), compact)?;
+    let plugins = crate::plugin_refs::record(&s.project);
+    let project = if plugins == s.project.plugins {
+        std::borrow::Cow::Borrowed(&*s.project)
+    } else {
+        std::borrow::Cow::Owned(Project { plugins, ..(*s.project).clone() })
+    };
+    let json = project.to_file_json_with_view(&s.saved_view(), compact)?;
     if crate::xml_project::is_xml_path(path) { crate::xml_project::to_xml(&json).map_err(EngineError::Other) } else { Ok(json) }
 }
 

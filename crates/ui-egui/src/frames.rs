@@ -52,6 +52,7 @@ const MAX_KEEPERS: usize = 64;
 /// renders gradually restore the budget after pressure subsides.
 const GPU_BUDGET: usize = 1 << 30;
 const MIN_GPU_BUDGET: usize = 64 << 20;
+const DEMOTE_GPU_FRAMES: bool = cfg!(not(target_arch = "wasm32"));
 const GPU_PRESSURE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
 const GPU_RECOVERY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 /// GPU frames that render at once, however many frame threads there are. Each one holds its own
@@ -70,6 +71,22 @@ struct GpuRenderSlots {
 struct GpuRenderSlot<'a>(&'a GpuRenderSlots);
 
 static GPU_RENDER_SLOTS: GpuRenderSlots = GpuRenderSlots::new();
+
+#[cfg(test)]
+pub(crate) static GPU_BUSY_FALLBACKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn gpu_slots_busy() -> usize {
+    *GPU_RENDER_SLOTS.busy.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+static GPU_SLOT_TESTS: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn gpu_slot_test() -> std::sync::MutexGuard<'static, ()> {
+    GPU_SLOT_TESTS.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 impl GpuRenderSlots {
     const fn new() -> Self {
@@ -307,10 +324,14 @@ struct Cache {
     gpu_budget: usize,
     gpu_pressure: Option<web_time::Instant>,
     gpu_adjusted: Option<web_time::Instant>,
+    demoting: bool,
     /// The playing preview, if any: evictions spare the frames it shows next.
     playhead: Option<Playhead>,
     /// Scale of the frame on screen (the newest urgent request): frames of other scales go first.
     scale: Option<u32>,
+    /// The frame each side pane waits for, and that frame once finished until the pane takes it
+    /// (an eviction doesn't take it away).
+    panes: HashMap<u32, (FrameKey, Option<FrameImage>)>,
 }
 
 impl Cache {
@@ -334,6 +355,9 @@ impl Cache {
             |t| u64::try_from(t.as_micros()).unwrap_or(u64::MAX).max(1),
         );
         let used = effectcraft_engine::render::memory::tick();
+        for (_, held) in self.panes.values_mut().filter(|(want, _)| *want == k) {
+            *held = Some(img.clone());
+        }
         if let Some(old) = self.map.insert(k, Cached { img, files, since, used, cost_us }) {
             self.forget(&old.img);
         } else {
@@ -344,7 +368,9 @@ impl Cache {
             self.gpu_bytes += sz;
         }
         self.evict_to_budget();
-        self.evict_gpu();
+        if !DEMOTE_GPU_FRAMES {
+            self.evict_gpu();
+        }
     }
     /// The frame to evict next: the least recently shown, but while a preview plays, the least
     /// recently shown of the frames it doesn't reach, then the one it reaches last. Plain LRU
@@ -381,12 +407,43 @@ impl Cache {
     /// Video memory: drop the oldest GPU frames past their own budget, frames of another scale
     /// than the one on screen first (a zoom or resolution change).
     fn evict_gpu(&mut self) {
-        while self.gpu_bytes > self.gpu_budget {
-            let is_gpu = |k: &FrameKey| self.map.get(k).is_some_and(|c| c.img.is_gpu());
-            let other_scale = self.order.iter().position(|k| Some(k.scale) != self.scale && is_gpu(k));
-            let Some(i) = other_scale.or_else(|| self.order.iter().position(is_gpu)) else { break };
-            if let Some(old) = self.order.remove(i) {
-                self.remove(&old);
+        for (k, _) in self.gpu_overflow() {
+            self.remove(&k);
+        }
+        let Cache { map, order, .. } = self;
+        order.retain(|k| map.contains_key(k));
+    }
+    fn gpu_overflow(&self) -> Vec<(FrameKey, Arc<DisplayFrame>)> {
+        let gpu = |k: &FrameKey| match self.map.get(k).map(|c| &c.img) {
+            Some(FrameImage::Gpu(f)) => Some((*k, f.clone())),
+            _ => None,
+        };
+        let (other, same): (Vec<_>, Vec<_>) = self.order.iter().filter_map(gpu).partition(|(k, _)| Some(k.scale) != self.scale);
+        let mut over = self.gpu_bytes.saturating_sub(self.gpu_budget);
+        other
+            .into_iter()
+            .chain(same)
+            .take_while(|(_, f)| {
+                let past = over > 0;
+                over = over.saturating_sub(f.width as usize * f.height as usize * 4);
+                past
+            })
+            .collect()
+    }
+    fn demote(&mut self, k: FrameKey, f: &Arc<DisplayFrame>, pixels: Option<Arc<egui::ColorImage>>) {
+        let Some(c) = self.map.get_mut(&k) else { return };
+        if !matches!(&c.img, FrameImage::Gpu(g) if Arc::ptr_eq(g, f)) {
+            return;
+        }
+        match pixels {
+            Some(img) => {
+                let old = std::mem::replace(&mut c.img, FrameImage::Cpu(img));
+                self.bytes += c.img.bytes();
+                self.forget(&old);
+            }
+            None => {
+                self.remove(&k);
+                self.order.retain(|o| *o != k);
             }
         }
     }
@@ -423,6 +480,20 @@ impl Cache {
         if let Some(i) = self.map.remove(k) {
             self.forget(&i.img);
         }
+    }
+    /// The frame of `k`, shown again; a GPU frame whose plugin loop ran past the cap is dropped
+    /// instead, so it renders again on the CPU.
+    fn shown(&mut self, k: &FrameKey) -> Option<FrameImage> {
+        let img = self.map.get(k).map(|c| c.img.clone())?;
+        if let FrameImage::Gpu(f) = &img
+            && f.loop_check.capped() == Some(true)
+        {
+            self.remove(k);
+            self.order.retain(|o| o != k);
+            return None;
+        }
+        self.touch(k);
+        Some(img)
     }
     /// Shown again: last in line for eviction.
     fn touch(&mut self, k: &FrameKey) {
@@ -512,10 +583,8 @@ pub struct RenderSource {
     pub layer_cache: Arc<LayerCache>,
     /// GPU compositor on the viewer's device (Mercury GPU Acceleration), if available.
     pub gpu: Option<Gpu>,
-    /// Keep GPU frames on the GPU for the viewer (native egui-wgpu textures). Off on the
-    /// desktop: Show Channel / exposure / region-of-interest drawing read the CPU frame texture,
-    /// so GPU frames are read back (the compositing still runs on the GPU). On in the browser
-    /// while the viewer draws plainly, because there frames can't be read back synchronously
+    /// Keep GPU frames on the GPU for the viewer (native egui-wgpu textures): on the desktop
+    /// except for half-float frames (32 bpc), in the browser while the viewer draws plainly
     /// (`EffectcraftApp::gpu_display`).
     pub gpu_display: bool,
     /// The persistent disk cache, when enabled.
@@ -645,7 +714,15 @@ fn frame_disk_key(keys: &ContentKeys, project: &Project, key: &FrameKey, opts_ha
 /// (an incomplete list, #3184: the frame is shown, not stored), a full queue, a file dropped
 /// (File ▸ Reload Footage) after `since`, the drop generation its render started at; no room on
 /// the disk (checked first: the conversion and compression would be wasted).
-fn put_disk_frame(dc: &DiskCache, dk: u128, img: &FrameImage, files: &ReadFiles, virtual_id: Option<disk_cache::VirtualFileId<'_>>, since: u64) -> bool {
+fn put_disk_frame(
+    dc: &DiskCache,
+    dk: u128,
+    img: &FrameImage,
+    gpu: Option<&Gpu>,
+    files: &ReadFiles,
+    virtual_id: Option<disk_cache::VirtualFileId<'_>>,
+    since: u64,
+) -> bool {
     if !files.is_complete() || !dc.accepts_writes() {
         return false;
     }
@@ -653,7 +730,7 @@ fn put_disk_frame(dc: &DiskCache, dk: u128, img: &FrameImage, files: &ReadFiles,
         // (one copy; the disk cache's writer thread compresses it)
         FrameImage::Cpu(img) => dc.put_frame_owned(dk, img.size[0] as u32, img.size[1] as u32, img.as_raw().to_vec(), files, virtual_id, since),
         FrameImage::CpuF16(f) => dc.put_frame_f16(dk, f.width, f.height, f.bits(), files, virtual_id, since),
-        FrameImage::Gpu(_) => false,
+        FrameImage::Gpu(f) => gpu.and_then(|g| g.read_display(f)).is_some_and(|rgba| dc.put_frame_owned(dk, f.width, f.height, rgba, files, virtual_id, since)),
     }
 }
 
@@ -853,8 +930,10 @@ impl Frames {
             gpu_budget: GPU_BUDGET,
             gpu_pressure: None,
             gpu_adjusted: None,
+            demoting: false,
             playhead: None,
             scale: None,
+            panes: HashMap::new(),
         }));
         let memory: Arc<dyn effectcraft_engine::render::memory::MemoryHolder> = Arc::new(PreviewMemory(cache.clone()));
         effectcraft_engine::render::memory::Accountant::global().register(&memory);
@@ -1041,6 +1120,11 @@ impl Frames {
             for key in keys {
                 cache.remove(&key);
             }
+            for (_, held) in cache.panes.values_mut() {
+                if held.as_ref().is_some_and(FrameImage::is_gpu) {
+                    *held = None;
+                }
+            }
             let Cache { map, order, .. } = &mut *cache;
             order.retain(|key| map.contains_key(key));
         }
@@ -1071,10 +1155,7 @@ impl Frames {
 
     /// The cached frame, which becomes the most recently used.
     pub fn get(&self, k: &FrameKey) -> Option<FrameImage> {
-        let mut c = self.cache.lock().ok()?;
-        let img = c.map.get(k).map(|c| c.img.clone())?;
-        c.touch(k);
-        Some(img)
+        self.cache.lock().ok()?.shown(k)
     }
 
     /// Prefer the exact requested frame. While an edit renders, advance to the newest completed
@@ -1108,9 +1189,7 @@ impl Frames {
             })
             .max_by_key(|k| k.revision)
             .copied()?;
-        let img = c.map.get(&newest).map(|c| c.img.clone())?;
-        c.touch(&newest);
-        Some((newest, img))
+        c.shown(&newest).map(|img| (newest, img))
     }
 
     /// The [`comp_content`] identity of `comp` in `project` at `revision` (taken once per
@@ -1337,7 +1416,7 @@ impl Frames {
             for (dk, img, files, since) in missing {
                 // (accepted: the disk cache tracks it until written, and it counts as a try;
                 // refused by a full queue: retried, without counting)
-                let accepted = put_disk_frame(&dc, dk, &img, &files, virtual_id.as_deref(), since);
+                let accepted = put_disk_frame(&dc, dk, &img, None, &files, virtual_id.as_deref(), since);
                 if accepted && let Ok(mut w) = written.lock() {
                     let n = w.1.entry(dk).or_default();
                     *n = n.saturating_add(1);
@@ -1486,6 +1565,7 @@ impl Frames {
         if let Ok(mut c) = self.cache.lock() {
             c.map.clear();
             c.order.clear();
+            c.panes.values_mut().for_each(|(_, held)| *held = None);
             c.bytes = 0;
             c.gpu_bytes = 0;
             c.gpu_budget = GPU_BUDGET;
@@ -1575,6 +1655,56 @@ impl Frames {
     /// Queue a prefetch frame (no-op if cached or already queued/rendering).
     pub fn request(&self, src: &RenderSource, key: FrameKey, comp: ItemId, t: Tick, opts: RenderOpts) {
         self.request_with(src, key, comp, t, opts, Want::Prefetch);
+    }
+
+    /// Queue side pane `pane`'s frame as [`Frames::request`] does, in place of the frame it
+    /// asked for before: that one is called off if it hasn't started.
+    pub fn request_pane(&self, pane: u32, src: &RenderSource, key: FrameKey, comp: ItemId, t: Tick, opts: RenderOpts) {
+        let old = self.cache.lock().ok().and_then(|mut c| match c.panes.insert(pane, (key, None)) {
+            Some((k, held)) if k == key => {
+                c.panes.insert(pane, (k, held));
+                None
+            }
+            old => old.map(|(k, _)| k),
+        });
+        if let Some(old) = old {
+            self.withdraw(old);
+        }
+        self.request(src, key, comp, t, opts);
+    }
+
+    /// Pane `pane`'s frame `key`, once finished, even when the cache let it go.
+    pub fn take_pane(&self, pane: u32, key: &FrameKey) -> Option<FrameImage> {
+        let mut c = self.cache.lock().ok()?;
+        c.panes.get_mut(&pane).filter(|(want, _)| want == key)?.1.take()
+    }
+
+    /// Pane `pane` is gone: its queued frame is called off.
+    pub fn release_pane(&self, pane: u32) {
+        if let Some((key, _)) = self.cache.lock().ok().and_then(|mut c| c.panes.remove(&pane)) {
+            self.withdraw(key);
+        }
+    }
+
+    /// Drop the queued prefetch job of `key` unless another pane waits for it.
+    fn withdraw(&self, key: FrameKey) {
+        if self.cache.lock().is_ok_and(|c| c.panes.values().any(|(k, _)| *k == key)) {
+            return;
+        }
+        let Ok(mut q) = self.queue.lock() else { return };
+        let before = q.jobs.len();
+        q.jobs.retain(|j| j.key != key || j.urgent || j.background);
+        if q.jobs.len() < before
+            && let Ok(mut inf) = self.inflight.lock()
+        {
+            inf.remove(&key);
+        }
+    }
+
+    /// The queued jobs in the order they were asked for, and whether each is the viewer's.
+    #[cfg(test)]
+    pub(crate) fn queued(&self) -> Vec<(FrameKey, bool)> {
+        self.queue.lock().map(|q| q.jobs.iter().map(|j| (j.key, j.urgent)).collect()).unwrap_or_default()
     }
 
     /// Queue a frame nobody waits for (Cache Frames When Idle): as [`Frames::request`], but it
@@ -1953,6 +2083,9 @@ impl Worker {
         // and compression. Persistence still runs on this worker, using the same snapshot.
         let since = disk.as_ref().map(|(dc, _, since)| DiskSince::of(dc, *since));
         self.finish(&job, ci.clone(), Some(files.clone()), since, t0);
+        if let Some(g) = job.src.gpu.as_ref().filter(|_| DEMOTE_GPU_FRAMES) {
+            self.demote_gpu_frames(g);
+        }
         let took_us = u64::try_from(t0.elapsed().as_micros()).unwrap_or(u64::MAX);
         // The GPU's part is done; storing it on disk is the CPU's.
         drop(slot);
@@ -1960,7 +2093,7 @@ impl Worker {
             && let Some((dc, k, since)) = &disk
             // (only a frame that costs more to render again than to read back, #3301)
             && dc.pays_off(ci.bytes(), took_us)
-            && put_disk_frame(dc, *k, &ci, &files, self.virtual_id.as_deref(), *since)
+            && put_disk_frame(dc, *k, &ci, job.src.gpu.as_ref().filter(|_| DEMOTE_GPU_FRAMES), &files, self.virtual_id.as_deref(), *since)
             && let Some(ctx) = &self.ctx
         {
             ctx.request_repaint();
@@ -2005,6 +2138,27 @@ impl Worker {
         // (with the lock released: the accountant asks every cache for its bytes)
         effectcraft_engine::render::memory::Accountant::global().note_growth(ram);
         self.release(key, urgent);
+    }
+
+    fn demote_gpu_frames(&self, g: &Gpu) {
+        let over = match self.cache.lock() {
+            Ok(mut c) if !c.demoting => {
+                c.demoting = true;
+                c.gpu_overflow()
+            }
+            _ => return,
+        };
+        for (k, f) in over {
+            let pixels = g.read_display(&f).map(|rgba| Arc::new(egui::ColorImage::from_rgba_premultiplied([f.width as usize, f.height as usize], &rgba)));
+            let grown = pixels.as_ref().map_or(0, |p| p.as_raw().len());
+            if let Ok(mut c) = self.cache.lock() {
+                c.demote(k, &f, pixels);
+            }
+            effectcraft_engine::render::memory::Accountant::global().note_growth(grown);
+        }
+        if let Ok(mut c) = self.cache.lock() {
+            c.demoting = false;
+        }
     }
 
     /// The job of `key` is no longer queued or running (rendered or dropped).
@@ -2195,6 +2349,10 @@ impl Worker {
     }
     /// Busy shared-pool workers retry on the CPU without treating contention as a GPU fault.
     fn gpu_attempt_rejected(&self, gpu: &Gpu, error: &GpuAttemptError) {
+        #[cfg(test)]
+        if matches!(error, GpuAttemptError::Busy) {
+            GPU_BUSY_FALLBACKS.fetch_add(1, Ordering::SeqCst);
+        }
         if let GpuAttemptError::Failed(error) = error {
             self.gpu_attempt_failed(gpu, error);
         }

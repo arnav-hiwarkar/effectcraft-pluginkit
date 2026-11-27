@@ -33,9 +33,13 @@ pub struct SavedView {
     /// The comp shown in the viewer and the Timeline.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_comp: Option<ItemId>,
-    /// The open comps (Timeline tabs), in tab order.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub open_comps: Vec<ItemId>,
+    /// The open comps (Timeline tabs), in tab order. `Some` of an empty list is a project saved with every tab
+    /// closed; `None` is a file from before the list was saved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_comps: Option<Vec<ItemId>>,
+    /// The path of the project an auto-save was made from, so recovery pairs a snapshot only with its own project.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub autosave_of: Option<String>,
     /// Each comp's current time, so a project reopens on the frame it was saved at rather than
     /// at 0, where its layers may not have started yet (#1714).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -53,15 +57,14 @@ pub fn saved_view(text: &str) -> SavedView {
         open_comps: Option<serde_json::Value>,
         #[serde(rename = "compTimes", default)]
         comp_times: Option<serde_json::Value>,
+        #[serde(rename = "autosaveOf", default)]
+        autosave_of: Option<serde_json::Value>,
     }
     let Ok(m) = serde_json::from_str::<Meta>(text) else { return SavedView::default() };
     SavedView {
         active_comp: m.active_comp.as_ref().and_then(serde_json::Value::as_u64).map(ItemId),
-        open_comps: m
-            .open_comps
-            .as_ref()
-            .and_then(serde_json::Value::as_array)
-            .map_or_else(Vec::new, |a| a.iter().filter_map(serde_json::Value::as_u64).map(ItemId).collect()),
+        open_comps: m.open_comps.as_ref().and_then(serde_json::Value::as_array).map(|a| a.iter().filter_map(serde_json::Value::as_u64).map(ItemId).collect()),
+        autosave_of: m.autosave_of.as_ref().and_then(serde_json::Value::as_str).map(str::to_string),
         comp_times: m
             .comp_times
             .as_ref()

@@ -19,6 +19,7 @@ mod home;
 mod interchange;
 pub mod menus;
 mod output_guard;
+pub mod plugin_refs;
 pub mod preview;
 pub mod render_queue;
 pub mod replay;
@@ -80,7 +81,6 @@ pub use settings::config;
 pub use settings::prefs;
 pub use settings::shortcuts;
 pub use system::guard;
-pub use system::library;
 pub use system::logging;
 pub use system::perf;
 pub use system::storage;
@@ -99,7 +99,7 @@ pub use error::{EngineError, Result};
 pub use event::Event;
 pub use fonts::{FontRow, font_features, font_menu, font_preview, font_styles, text_families};
 pub use services::{FsServices, Importer, Services};
-pub use session::upgrade_effects;
+pub use session::{Upgraded, upgrade_effects};
 
 pub struct Session {
     pub project: Arc<Project>,
@@ -133,6 +133,9 @@ pub struct Session {
     /// The graphics adapter and backend the window draws with (`NVIDIA GeForce RTX 4070
     /// (Vulkan)`), as the host reports it: the System Compatibility Report shows it.
     pub window_adapter: Option<String>,
+    /// Set by the windowed app when it starts: only then can a plug-in's request to show a panel
+    /// open anything.
+    pub window_attached: bool,
     /// Expression syntax checker (set by the host that links the expression engine).
     pub expr_check: Option<fn(&str) -> std::result::Result<(), String>>,
     pub importer: Option<Arc<dyn Importer>>,
@@ -209,19 +212,8 @@ pub struct Session {
     /// The JavaScript scripting engine (set by the host that links `effectcraft-script`):
     /// `script.run`, File ▸ Scripts ▸ Run Script File… (`.jsx`/`.js`) and the Script Console.
     pub script: Option<ScriptRunner>,
-    /// Loads WebAssembly effect plug-ins (set by the host that links `effectcraft-plugin` with
-    /// its runtime): `effect.plugins.load`.
-    pub plugin_loader: Option<PluginLoader>,
-    /// External effect helpers (native hosts link `effectcraft-helper-host`):
-    /// `effect.helpers.list`, `effect.helpers.scan`, `effect.helpers.load`.
-    pub helpers: Option<HelperHooks>,
-    /// Renders a module without registering it (`library.preview`; set with `plugin_loader`).
-    pub plugin_previewer: Option<PluginPreviewer>,
-    /// Where effect plug-ins live (hosts set it; else `Plug-ins` next to the settings): the
-    /// Plug-in Library installs into its `Library` folder ([`library`]).
-    pub plugins_dir: Option<std::path::PathBuf>,
-    /// The Plug-in Library's catalog, worker status and the packages this session loaded.
-    pub library: library::Library,
+    pub plugin_commands: Option<PluginCommands>,
+    pub plugin_items: Vec<PluginItem>,
     /// ScriptUI windows and panels opened by scripts (see [`scriptui`]).
     pub script_ui: scriptui::ScriptUi,
     /// The last physical-memory reading (Settings ▸ Memory & CPU budgets); `None` = unknown
@@ -282,6 +274,7 @@ pub struct Session {
     /// is, settings that guard what scripts may do can't change (see
     /// [`prefs::Scripting::same_permissions`]).
     pub script_calls: ScriptCalls,
+    pub plugin_writes: bool,
 }
 
 /// The count behind [`Session::running_for_script`]; only the engine changes it.
@@ -305,26 +298,31 @@ pub struct ScriptRequest<'a> {
 /// column, file} | null}`.
 pub type ScriptRunner = fn(&mut Session, &ScriptRequest) -> Value;
 
-/// Loads one WebAssembly effect plug-in (`bytes`, `source` path) into the effect registry and
-/// describes it (`{id, name, category, version, api, params}`).
-pub type PluginLoader = fn(&[u8], &str) -> std::result::Result<Value, String>;
+pub type PluginCommands = fn(&mut Session, &str, &Value) -> Result<Value>;
 
-/// What a host that runs external effect helpers provides (`docs/external-helpers.md`).
-#[derive(Clone, Copy)]
-pub struct HelperHooks {
-    /// Start the helpers installed in the host's search paths and register their effects
-    /// (`retry` forgets the block list first) → `{paths, helpers, loaded, errors}`.
-    pub scan: fn(bool) -> Value,
-    /// Load a file or folder through the helpers that accept it → `{loaded, errors}`.
-    pub load: fn(&str) -> std::result::Result<Value, String>,
-    /// The helpers and their state → `{helpers, blocked}`.
-    pub list: fn() -> Value,
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct PluginItem {
+    pub plugin: String,
+    pub plugin_name: String,
+    pub id: String,
+    pub title: String,
+    pub panel: bool,
+    pub multiple: bool,
+    pub shortcut: Option<String>,
+    pub menu: Option<String>,
+    pub context: Vec<PluginContext>,
+    pub toolbar: bool,
+    pub icon: Option<String>,
+    pub disabled: bool,
+    pub checked: Option<bool>,
 }
 
-/// Renders one WebAssembly effect module without registering it (the Plug-in Library preview):
-/// `(bytes, width, height, premultiplied RGBA pixels, times in seconds)` → (manifest JSON, one frame
-/// per time).
-pub type PluginPreviewer = fn(&[u8], u32, u32, &[[f32; 4]], &[f64]) -> std::result::Result<(Value, Vec<Vec<[f32; 4]>>), String>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PluginContext {
+    Layers,
+    Timeline,
+    Viewer,
+}
 
 impl Default for Session {
     /// A new unsaved session: a default project that is both current and saved, no path, no
@@ -349,6 +347,7 @@ impl Default for Session {
             accel: None,
             accel_note: None,
             window_adapter: None,
+            window_attached: false,
             expr_check: None,
             importer: None,
             exporter: None,
@@ -382,12 +381,9 @@ impl Default for Session {
             autosave_folder_override: None,
             snapshot: None,
             script: None,
-            plugin_loader: None,
-            helpers: None,
-            plugin_previewer: None,
-            plugins_dir: None,
-            library: Default::default(),
             script_ui: scriptui::ScriptUi::default(),
+            plugin_commands: None,
+            plugin_items: vec![],
             sys_memory: None,
             memory_low: false,
             key_move: None,
@@ -411,6 +407,7 @@ impl Default for Session {
             aux_footage: None,
             aux_needs: None,
             script_calls: ScriptCalls::default(),
+            plugin_writes: false,
         }
     }
 }

@@ -1,0 +1,22 @@
+[package]
+name = "cookbook"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "9b93c995d795d4766d36c04022385ea8293cfca7" }
+
+[dev-dependencies]
+craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta", rev = "9b93c995d795d4766d36c04022385ea8293cfca7", features = ["testing"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+
+[workspace]

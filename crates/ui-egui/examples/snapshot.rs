@@ -95,6 +95,7 @@ fn main() {
         }
     };
     let mut session = effectcraft_host::session();
+    effectcraft_plugin::install(&mut session, effectcraft_host::config_dir().as_deref());
     if args.demo {
         let _ = session.execute("file.openDemoProject", json!({}));
     }

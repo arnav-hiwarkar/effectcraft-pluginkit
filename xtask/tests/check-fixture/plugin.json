@@ -1,0 +1,9 @@
+{
+  "id": "com.example.check-fixture",
+  "name": "Check Fixture",
+  "version": "0.1.0",
+  "description": "A plugin with one good effect, one effect id the app refuses and one effect whose render always fails.",
+  "license": "MIT OR Apache-2.0",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": []
+}

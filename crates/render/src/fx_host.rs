@@ -1,3 +1,5 @@
+use effectcraft_geom::{Mat4, vec3};
+
 use super::frames::frame_blend_mode;
 use super::{Arc, Buf, EffectHost, EvalCtx, FrameBlend, ItemKind, Layer, LayerPixels, LayerSource, Params, Renderer, Tick, three_d};
 
@@ -14,6 +16,7 @@ pub(crate) struct FxHost<'r, 'a, 'c> {
     /// Index of the effect being rendered (bounds `self_at` to effects before it).
     pub(crate) index: usize,
     pub(crate) original: Option<&'c Buf>,
+    pub(crate) shown: Option<effectcraft_effects::Shown>,
 }
 
 impl FxHost<'_, '_, '_> {
@@ -53,15 +56,62 @@ pub(crate) fn comp_scene(ctx: &EvalCtx, layer: &Layer) -> Option<effectcraft_eff
         Some(effectcraft_effects::CompLight { pos: [pos.x, pos.y, pos.z], dir: [dir.x / len, dir.y / len, dir.z / len], color: l.color, kind })
     });
     let camera_layer = ctx.comp.active_camera(ctx.time).is_some();
-    Some(effectcraft_effects::CompScene { camera: Some(camera), camera_layer, light })
+    let active = three_d::active_camera(ctx);
+    let view = inv.as_ref().map(|inv| {
+        let eye = inv.apply(active.eye);
+        let focus = active.dof.map(|dof| [dof.focus, dof.aperture, dof.blur_level]);
+        effectcraft_effects::CompCamera { layer_to_camera_rows: (active.view * world).0, eye: [eye.x, eye.y, eye.z], zoom: active.zoom, focus }
+    });
+    let lights = three_d::light::lights_at(ctx)
+        .iter()
+        .filter_map(|l| {
+            let inv = inv.as_ref()?;
+            let pos = inv.apply(l.pos);
+            let dir = inv.apply_vec(l.dir);
+            let len = (dir.x * dir.x + dir.y * dir.y + dir.z * dir.z).sqrt().max(1e-12);
+            let kind = match l.kind {
+                effectcraft_project::LightKind::Parallel => effectcraft_effects::SceneLightKind::Parallel,
+                effectcraft_project::LightKind::Ambient => effectcraft_effects::SceneLightKind::Ambient,
+                effectcraft_project::LightKind::Spot => effectcraft_effects::SceneLightKind::Spot,
+                _ => effectcraft_effects::SceneLightKind::Point,
+            };
+            let unlit = l.intensity.abs() < 1e-9;
+            Some(effectcraft_effects::SceneLight {
+                kind,
+                pos: [pos.x, pos.y, pos.z],
+                travel_direction: [dir.x / len, dir.y / len, dir.z / len],
+                color: if unlit { l.color } else { l.color.map(|c| (f64::from(c) / l.intensity) as f32) },
+                intensity: l.intensity as f32,
+                cone_degrees: (l.cone_half * 2.0).to_degrees() as f32,
+                feather: l.feather as f32,
+            })
+        })
+        .collect();
+    Some(effectcraft_effects::CompScene { camera: Some(camera), camera_layer, light, view, lights })
+}
+
+fn finite_time(seconds: f64) -> Option<Tick> {
+    seconds.is_finite().then(|| Tick::from_seconds_f64(seconds))
 }
 
 /// Nesting limit for effects that render layers (other layers, other times).
 pub(crate) const MAX_FX_DEPTH: usize = 8;
 
 impl EffectHost for FxHost<'_, '_, '_> {
+    fn cancel(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        self.r.footage.cancel()
+    }
+
+    fn layer_data(&self, plugin: &str, key: &str) -> Option<Vec<u8>> {
+        self.layer.plugin_data.get(plugin)?.get(key).cloned()
+    }
+
     fn original(&self) -> Option<&Buf> {
         self.original
+    }
+
+    fn shown(&self) -> Option<effectcraft_effects::Shown> {
+        self.shown
     }
 
     fn particles(&self) -> Option<&dyn effectcraft_effects::psim::ParticleSim> {
@@ -84,6 +134,17 @@ impl EffectHost for FxHost<'_, '_, '_> {
         // The cached layer buffer is shared; effects get their own copy.
         let buf = if masks_and_effects { (*sub.content_buf(self.ctx, other)?).clone() } else { sub.source(self.ctx, other)? };
         Some(self.pixels(other, buf, true))
+    }
+
+    fn layer_shared(&self, id: u64) -> Option<effectcraft_effects::SharedLayer> {
+        let other = self.ctx.layer(effectcraft_project::LayerId(id))?;
+        if other.id == self.layer.id || self.r.depth > MAX_FX_DEPTH || other.source.is_model() {
+            return None;
+        }
+        let buf = self.r.nested().content_buf(self.ctx, other)?;
+        let (size, origin) = self.ctx.effect_bounds(other);
+        let offset = [buf.offset[0] + origin[0] * buf.scale, buf.offset[1] + origin[1] * buf.scale];
+        Some(effectcraft_effects::SharedLayer { buf, offset, size })
     }
 
     fn layer_masks(&self, id: u64) -> Option<LayerPixels> {
@@ -129,6 +190,23 @@ impl EffectHost for FxHost<'_, '_, '_> {
         Some(effectcraft_effects::flatten_params(g, &mut |pr| ctx.value(self.layer, pr)))
     }
 
+    fn param_history(&self) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        fn has_expression(g: &effectcraft_project::PropGroup) -> bool {
+            g.children.iter().any(|c| match c {
+                effectcraft_project::Node::Prop(p) => p.has_expression(),
+                effectcraft_project::Node::Group(sub) => has_expression(sub),
+            })
+        }
+        let g = self.layer.effects()?.groups().nth(self.index)?;
+        if has_expression(g) {
+            return None;
+        }
+        let mut h = std::hash::DefaultHasher::new();
+        format!("{g:?}").hash(&mut h);
+        Some(h.finish())
+    }
+
     fn param_at(&self, effect_index: usize, id: &str, layer_time: f64) -> Option<effectcraft_keyframe::Value> {
         // Only the one property: a simulation samples it at every step. Its keyframes are read
         // at the requested layer time exactly (mapping it to comp time and back rounds under a
@@ -144,6 +222,20 @@ impl EffectHost for FxHost<'_, '_, '_> {
 
     fn comp_scene(&self) -> Option<effectcraft_effects::CompScene> {
         Some(comp_scene(self.ctx, self.layer)?.rebased(self.origin))
+    }
+
+    fn comp_scene_at(&self, comp_time: f64) -> Option<effectcraft_effects::CompScene> {
+        let ctx = self.ctx.at(finite_time(comp_time)?);
+        Some(comp_scene(&ctx, self.layer)?.rebased(self.origin))
+    }
+
+    fn placement(&self, id: u64, comp_time: Option<f64>) -> Option<effectcraft_effects::LayerPlacement> {
+        let ctx = self.ctx.at(comp_time.map_or(Some(self.ctx.time), finite_time)?);
+        let other = ctx.layer(effectcraft_project::LayerId(id))?;
+        let (size, other_origin) = ctx.effect_bounds(other);
+        let shift = |origin: [f64; 2]| Mat4::translate(vec3(origin[0], origin[1], 0.0));
+        let matrix = shift(self.origin.map(|o| -o)) * ctx.world_matrix(self.layer).inverse()? * ctx.world_matrix(other) * shift(other_origin);
+        Some(effectcraft_effects::LayerPlacement { matrix: matrix.0, opacity: ctx.opacity(other), size })
     }
 
     fn layer_at(&self, id: u64, comp_time: f64, masks_and_effects: bool) -> Option<LayerPixels> {

@@ -21,6 +21,7 @@ mod channel3d;
 mod color2;
 mod color3;
 mod color_fx;
+pub mod contributed;
 pub mod controls;
 pub mod crypto_select;
 #[cfg(test)]
@@ -29,6 +30,7 @@ mod distort;
 mod distort2;
 mod distort3;
 pub mod distort4;
+pub mod dynamic;
 pub mod face_track;
 pub mod fidelity;
 mod generate;
@@ -53,7 +55,6 @@ pub mod ocio_config;
 pub mod paint;
 mod perspective;
 mod perspective2;
-pub mod plugin;
 pub mod psim;
 pub mod puppet;
 pub mod roto;
@@ -75,7 +76,9 @@ pub mod warp_stab;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-pub use card3d::{CompLight, CompScene};
+use rayon::prelude::*;
+
+pub use card3d::{CompCamera, CompLight, CompScene, LayerPlacement, SceneLight, SceneLightKind};
 pub use color_fx::{
     BW_TINT_LUMA, EXPOSURE_LINEAR_GAMMA, HUESAT_CHANNELS, HUESAT_RANGES, LEVELS_CHANNELS, LUMA_601, PHOTO_FILTER_CUSTOM, PHOTO_FILTERS, exposure_settings,
     fill_uses_masks, huesat_ranges_identity, levels_channel_ids, levels_channel_settings, levels_channels_identity, levels_clip,
@@ -122,7 +125,7 @@ pub use ocio::color_stabilizer_maps;
 pub use channel3d::{
     CRYPTO_LAYERS, CryptoOutput, CryptoPlane, EXTRACTOR_COPY, MATTE_ONLY_IN_ALPHA, aux_need, aux_needs, aux_point, crypto_aux_image, crypto_box_scale,
     crypto_layer_choices, crypto_layer_menu, crypto_layer_name, crypto_layer_named, crypto_plane, extractor_aux_channel, extractor_own_channel, id_color,
-    is_extractor_copy, matte_only_px, pixel_margin, reads_aux, selection_hashes,
+    is_extractor_copy, matte_only_px, reads_aux, selection_hashes,
 };
 pub use file_cache::{check_lut_files, lut_generation};
 pub use ocio::{ColorOp, Straight, Tf, color_program};
@@ -131,7 +134,7 @@ pub use sim2::{
     CausticsSetup, FoamDisc, FoamEnv, FoamPlan, Piece, PiecePlan, PieceTex, PixelPlan, WavePlan, Waves, caustics_setup, foam_full_plan, piece_plan, pixel_plan,
     wave_world_plan,
 };
-pub use utility::{Lut, cineon_gamma, cineon_gamma_scale, load_lut, lut_file, lut_files, lut_params};
+pub use utility::{Lut, cineon_gamma, cineon_gamma_scale, load_lut, lut_file, lut_files, lut_params, parse_cube};
 pub use vr::{equi_dir as vr_equi_dir, rotation as vr_rotation};
 
 /// Effect categories in Effects & Presets order.
@@ -457,6 +460,55 @@ pub fn adjustment_crop(offset: [f64; 2], canvas_offset: [f64; 2], size: (u32, u3
 /// layer rectangle first only inflates working images on highly scaled text and shapes (#3357).
 pub const SKIPS_COVER: &[&str] = &["ec.blur.gaussian", "ec.blur.fastbox", "ec.stylize.glow", "ec.distort.turbulentdisplace", "ec.perspective.dropshadow"];
 
+/// Effects whose pixel depends on that pixel alone (and on its position, masks and parameters).
+pub const POINTWISE: &[&str] = &[
+    "ec.color.tint",
+    "ec.color.tritone",
+    "ec.color.brightnesscontrast",
+    "ec.color.huesaturation",
+    "ec.color.levels",
+    "ec.color.exposure",
+    "ec.color.blackwhite",
+    "ec.color.changetocolor",
+    "ec.color.leavecolor",
+    "ec.color.photofilter",
+    "ec.color.vibrance",
+    "ec.color.colorbalance",
+    "ec.color.channelmixer",
+    "ec.color.gammapedestalgain",
+    "ec.color.curves",
+    "ec.color.levelsic",
+    "ec.color.selectivecolor",
+    "ec.color.colorbalancehls",
+    "ec.color.broadcast",
+    "ec.color.cctoner",
+    "ec.color.cccoloroffset",
+    "ec.3d.channelextract",
+    "ec.3d.depthmatte",
+    "ec.3d.identifier",
+    "ec.3d.cryptomatte",
+    "ec.3d.extractor",
+];
+
+/// How far effect `id` reaches around a pixel of its layer (layer pixels) when it renders on a
+/// grid of `scale` grid pixels per layer pixel, for rendering only the part of a layer that is
+/// shown: `Some(0)` for effects whose pixel depends on that pixel alone, `None` for every effect
+/// that may read anywhere (#3271).
+pub fn pixel_margin(id: &str, ctx: &EffectCtx, scale: f64) -> Option<f64> {
+    let params = ctx.params;
+    match id {
+        _ if POINTWISE.contains(&id) => Some(0.0),
+        "ec.color.colorama" if ["inputPhase/addPhase", "masking/maskLayer"].iter().all(|p| params.get(p).and_then(Value::as_layer).is_none()) => Some(0.0),
+        "ec.3d.fog3d" if params.f("layerContribution") <= 0.0 => Some(0.0),
+        "ec.3d.idmatte" if params.f("feather") <= 0.0 => Some(0.0),
+        "ec.generate.fill" if params.f("horizontalFeather") <= 0.0 && params.f("verticalFeather") <= 0.0 => Some(0.0),
+        "ec.blur.gaussian" => misc::gaussian_margin(params, scale),
+        _ => dynamic::get(id)?.effect.margin.as_ref()?(ctx, scale),
+    }
+}
+
+pub const QUANTIZES_OUTPUT: &[&str] = &["ec.blur.gaussian", "ec.color.levels", "ec.color.curves", "ec.color.huesaturation", "ec.stylize.glow"];
+
 /// The grid phase [`Buf::align`] keeps and the step [`cover_pad`] grows in: covers the levels
 /// of the resampling pyramid used for downscaled layers.
 pub const GRID_ALIGN: u32 = 64;
@@ -517,8 +569,29 @@ pub struct LayerPixels {
     pub size: [f64; 2],
 }
 
+#[derive(Clone, Debug)]
+pub struct SharedLayer {
+    pub buf: std::sync::Arc<Buf>,
+    pub offset: [f64; 2],
+    pub size: [f64; 2],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shown {
+    pub part: [f64; 4],
+    pub grid: u32,
+}
+
 /// Services the renderer offers effects that look beyond their own pixels.
 pub trait EffectHost: Sync {
+    fn cancel(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        None
+    }
+
+    fn layer_data(&self, _plugin: &str, _key: &str) -> Option<Vec<u8>> {
+        None
+    }
+
     /// Pixels entering the effect stack, in effect space, before any effects. For an
     /// adjustment layer this is the composition below it, in the effect working space.
     fn original(&self) -> Option<&Buf> {
@@ -528,6 +601,9 @@ pub trait EffectHost: Sync {
     /// Layer `id` of the same composition at the current comp time. `masks_and_effects`
     /// selects "Effects & Masks" over "Source". `None` for missing/recursive references; own Source reads are supported.
     fn layer(&self, id: u64, masks_and_effects: bool) -> Option<LayerPixels>;
+    fn layer_shared(&self, _id: u64) -> Option<SharedLayer> {
+        None
+    }
     /// `frames` stereo sample frames (interleaved L R …) of layer `id`'s audio starting at comp
     /// time `start` seconds, at `rate` Hz. `None` when the layer has no audio.
     fn audio(&self, id: u64, start: f64, frames: usize, rate: u32) -> Option<Vec<f32>>;
@@ -560,9 +636,21 @@ pub trait EffectHost: Sync {
     fn comp_scene(&self) -> Option<CompScene> {
         None
     }
+    fn comp_scene_at(&self, _comp_time: f64) -> Option<CompScene> {
+        None
+    }
+    fn placement(&self, _id: u64, _comp_time: Option<f64>) -> Option<LayerPlacement> {
+        None
+    }
     /// The running effect's own parameters evaluated at another **layer time** (Radio Waves'
     /// Parameters Are Set At: Birth). `None` when unavailable.
     fn params_at(&self, _layer_time: f64) -> Option<Params> {
+        None
+    }
+    fn param_history(&self) -> Option<u64> {
+        None
+    }
+    fn shown(&self) -> Option<Shown> {
         None
     }
     /// Parameter `id` (a [`flatten_params`] id such as `birthRate`) of effect `effect_index` in
@@ -612,6 +700,9 @@ pub struct EffectEnv<'a> {
     /// source has no duration (stills, solids, text, shapes) or the renderer does not know it.
     /// Retimers clamp their source requests to it.
     pub layer_span: Option<(f64, f64)>,
+    pub instance: u64,
+    pub quantize_output: Option<f32>,
+    pub input_quantized: bool,
 }
 
 /// What an effect gets to render with.
@@ -643,11 +734,34 @@ impl EffectCtx<'_> {
             None => host.layer(lid, masks_and_effects),
         }
     }
+    pub fn shared_layer_param(&self, id: &str) -> Option<SharedLayer> {
+        let lid = self.params.get(id)?.as_layer()?;
+        match self.params.get(&layer_source_id(id)).map(Value::as_enum) {
+            Some(0 | 1) => None,
+            _ => self.env.host?.layer_shared(lid),
+        }
+    }
     /// Frame rate for frame-based maths (comp rate, else 30).
     pub fn fps(&self) -> f64 {
         if self.env.frame_rate > 0.0 { self.env.frame_rate } else { 30.0 }
     }
+    pub fn quantize_chunk(&self, px: &mut [effectcraft_raster::Px]) {
+        if let Some(l) = self.env.quantize_output {
+            effectcraft_raster::quantize_slice(px, l);
+        }
+    }
+    pub fn quantized(&self, mut b: Buf) -> Buf {
+        if self.env.quantize_output.is_some() {
+            b.img.data.par_chunks_mut(QUANTIZE_CHUNK).for_each(|c| self.quantize_chunk(c));
+        }
+        b
+    }
+    pub fn unchanged(&self, b: Buf) -> Buf {
+        if self.env.input_quantized { b } else { self.quantized(b) }
+    }
 }
+
+pub use effectcraft_raster::QUANTIZE_CHUNK;
 
 pub type RenderFn = fn(&EffectCtx, Buf) -> Buf;
 
@@ -669,6 +783,9 @@ impl EffectSpec {
     /// renderer's full-layer cover and keep the pyramid grid phase (#1205).
     pub fn skips_cover(&self) -> bool {
         SKIPS_COVER.contains(&self.id)
+    }
+    pub fn quantizes_output(&self) -> bool {
+        dynamic::get(self.id).is_some() || QUANTIZES_OUTPUT.contains(&self.id)
     }
 }
 
@@ -756,31 +873,25 @@ pub fn registry() -> &'static [EffectSpec] {
     })
 }
 
-/// A built-in effect or a registered plug-in by id.
+/// A built-in effect by id.
 pub fn find(id: &str) -> Option<&'static EffectSpec> {
-    registry().iter().find(|s| s.id == id).or_else(|| plugin::plugins().into_iter().find(|s| s.id == id))
+    registry().iter().find(|s| s.id == id).or_else(|| dynamic::get(id).map(|r| r.spec))
 }
 
-/// Every effect: the built-ins ([`registry`]) and the registered plug-ins
-/// ([`plugin::register_plugin`]), sorted by category then name.
+/// Every effect ([`registry`]).
 pub fn all() -> Vec<&'static EffectSpec> {
-    let plugins = plugin::plugins();
-    let mut v: Vec<&'static EffectSpec> = registry().iter().collect();
-    if !plugins.is_empty() {
-        v.extend(plugins);
-        v.sort_by(|a, b| a.category.cmp(b.category).then(a.name.cmp(b.name)));
-    }
-    v
+    registry().iter().chain(dynamic::specs()).collect()
 }
 
-/// Effects & Presets categories: [`CATEGORIES`] then the plug-ins' own, alphabetically.
+/// Effects & Presets categories ([`CATEGORIES`]).
 pub fn categories() -> Vec<&'static str> {
-    let mut v: Vec<&'static str> = CATEGORIES.to_vec();
-    let mut extra: Vec<&'static str> = plugin::plugins().iter().map(|s| s.category).filter(|c| !CATEGORIES.contains(c)).collect();
-    extra.sort_unstable();
-    extra.dedup();
-    v.extend(extra);
-    v
+    let mut categories = CATEGORIES.to_vec();
+    for spec in dynamic::specs() {
+        if !categories.contains(&spec.category) {
+            categories.push(spec.category);
+        }
+    }
+    categories
 }
 
 /// Legacy display names accepted for saved scripts and searches. Never display these as
@@ -887,6 +998,7 @@ pub fn lookup(name_or_id: &str) -> Option<&'static EffectSpec> {
 pub fn default_value(ps: &ParamSpec, layer_size: [f64; 2]) -> Value {
     match (&ps.ui, &ps.default) {
         (ParamUi::Point, Value::Vec2(f)) => Value::Vec2([f[0] * layer_size[0], f[1] * layer_size[1]]),
+        (ParamUi::Point3, Value::Vec3(f)) => Value::Vec3([f[0] * layer_size[0], f[1] * layer_size[1], f[2]]),
         _ => ps.default.clone(),
     }
 }
@@ -905,6 +1017,7 @@ pub fn layer_source_id(id: &str) -> String {
 pub fn instantiate(spec: &EffectSpec, ids: &mut Ids, instance_name: &str, layer_size: [f64; 2]) -> PropGroup {
     let mut g = ids.group(spec.id, instance_name);
     g.kind = GroupKind::Effect { effect: spec.id.to_string() };
+    g.state_version = dynamic::get(spec.id).map_or(0, |registered| registered.effect.state_version);
     for ps in &spec.params {
         let default = default_value(ps, layer_size);
         // `group/sub/param` ids nest the parameter in twirl-down groups (Warp Stabilizer's
@@ -918,7 +1031,7 @@ pub fn instantiate(spec: &EffectSpec, ids: &mut Ids, instance_name: &str, layer_
             pr.hold_only = true;
         }
         // (the channels an effect reads: not animatable, as in After Effects)
-        pr.static_only = channel3d::selects_channels(spec.id, ps.id);
+        pr.static_only = channel3d::selects_channels(spec.id, ps.id) || matches!(ps.ui, ParamUi::Button);
         match path.and_then(|path| nested_group(&mut g, ids, path)) {
             Some(sub) => sub.children.push(pr.into()),
             None => g.children.push(pr.into()),
@@ -1142,7 +1255,7 @@ fn group_name(m: &str) -> &str {
 }
 
 /// The nested group at `path` (`borders/autoScale`) under `g`, created on first use.
-fn nested_group<'a>(g: &'a mut PropGroup, ids: &mut Ids, path: &str) -> Option<&'a mut PropGroup> {
+pub(crate) fn nested_group<'a>(g: &'a mut PropGroup, ids: &mut Ids, path: &str) -> Option<&'a mut PropGroup> {
     let (first, rest) = match path.split_once('/') {
         Some((a, b)) => (a, Some(b)),
         None => (path, None),
@@ -1464,6 +1577,10 @@ pub const READS_COMP_SCENE: &[&str] = &["ec.sim.carddance", "ec.sim.shatter", "e
 pub const TIME_DEPENDENT: &[&str] = &[
     "ec.distort.wavewarp",
     "ec.distort.ripple",
+    "ec.distort.ccripplepulse",
+    "ec.generate.scribble",
+    "ec.generate.writeon",
+    "ec.key.ccsimplewireremoval",
     "ec.generate.radiowaves",
     "ec.stylize.scatter",
     "ec.stylize.strobe",
@@ -1520,7 +1637,30 @@ pub const TIME_DEPENDENT: &[&str] = &[
 pub fn is_time_dependent(id: &str) -> bool {
     // Simulations replay from layer time 0, so every frame differs even when the defaults
     // happen to look static at the test's two sample times.
-    id.starts_with("ec.sim.") || TIME_DEPENDENT.contains(&id) || (!id.starts_with("ec.") && plugin::reads_other_times(id))
+    id.starts_with("ec.sim.")
+        || TIME_DEPENDENT.contains(&id)
+        || dynamic::get(id).is_some_and(|r| r.effect.time_dependent || r.effect.reads_other_frames || r.effect.reads_param_history)
+}
+
+pub fn reads_comp_scene(id: &str) -> bool {
+    READS_COMP_SCENE.contains(&id) || dynamic::get(id).is_some_and(|r| r.effect.reads_comp_scene)
+}
+
+pub fn reads_other_frames(id: &str) -> bool {
+    dynamic::get(id).is_some_and(|r| r.effect.reads_other_frames)
+}
+
+pub fn presets(id: &str) -> Vec<(String, Vec<(String, Value)>)> {
+    let mut presets = dynamic::get(id).map(|r| r.effect.presets.clone()).unwrap_or_default();
+    presets.extend(contributed::presets(id));
+    presets
+}
+
+pub fn revision(id: &str) -> u64 {
+    dynamic::get(id).map_or(0, |r| match &r.effect.files {
+        Some(stamp) => r.effect.revision ^ stamp().rotate_left(1),
+        None => r.effect.revision,
+    })
 }
 
 /// Does effect `id` read its own parameters at earlier times (the stepped particle systems sample
@@ -1528,11 +1668,15 @@ pub fn is_time_dependent(id: &str) -> bool {
 /// expression returned then.
 pub fn reads_param_history(id: &str) -> bool {
     matches!(id, "ec.sim.ccparticleworld" | "ec.sim.ccparticlesystems2" | "ec.sim.ccmrmercury")
+        || dynamic::get(id).is_some_and(|r| r.effect.reads_param_history)
 }
 
 /// Run an effect on a buffer.
 pub fn apply(spec: &EffectSpec, ctx: &EffectCtx, buf: Buf) -> Buf {
-    (spec.render)(ctx, buf)
+    match dynamic::get(spec.id) {
+        Some(registered) => (registered.effect.render)(ctx, buf),
+        None => (spec.render)(ctx, buf),
+    }
 }
 
 /// Test helper: run effect `id` on `img` (scale 1, layer size = image size) with its defaults
@@ -1549,6 +1693,9 @@ pub(crate) fn run_fx(id: &str, vals: &[(&str, Value)], img: Image, time: f64, en
     let ctx = EffectCtx { params: &params, time, layer_size: [img.width as f64, img.height as f64], seed: 1, adjustment: false, env };
     apply(s, &ctx, Buf { img, offset: [0.0, 0.0], scale: 1.0 })
 }
+
+#[cfg(test)]
+mod quantize_output_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1758,6 +1905,61 @@ mod tests {
         assert!(missing.is_empty(), "these depend on time but are not in TIME_DEPENDENT: {missing:?}");
     }
 
+    struct Clock(Params);
+    impl EffectHost for Clock {
+        fn layer(&self, _: u64, _: bool) -> Option<LayerPixels> {
+            None
+        }
+        fn audio(&self, _: u64, _: f64, _: usize, _: u32) -> Option<Vec<f32>> {
+            None
+        }
+        fn self_at(&self, t: f64, _: usize) -> Option<Buf> {
+            Some(Buf { img: Image::filled(40, 30, [t as f32 / 4.0, 0.2, 0.3, 1.0]), offset: [0.0; 2], scale: 1.0 })
+        }
+        fn params_at(&self, t: f64) -> Option<Params> {
+            let mut p = self.0.clone();
+            p.values.insert("brushPosition".into(), Value::Vec2([5.0 + 10.0 * t, 15.0]));
+            Some(p)
+        }
+    }
+
+    #[test]
+    fn effects_that_read_time_only_with_a_host_masks_or_settings_are_declared() {
+        let img = Image::filled(40, 30, [0.2, 0.5, 0.8, 1.0]);
+        let masks = [MaskShape { name: "Mask 1".into(), points: vec![[6.0, 5.0], [34.0, 5.0], [34.0, 25.0], [6.0, 25.0]], closed: true, inverted: false }];
+        let cases: [(&str, &[(&str, Value)]); 4] = [
+            ("ec.distort.ccripplepulse", &[("pulseLevel", Value::Scalar(100.0)), ("renderBump", Value::Bool(true))]),
+            ("ec.generate.scribble", &[]),
+            ("ec.generate.writeon", &[]),
+            ("ec.key.ccsimplewireremoval", &[("removalStyle", Value::Enum(1)), ("frameOffset", Value::Scalar(2.0))]),
+        ];
+        let (mut changes, mut undeclared) = (vec![], vec![]);
+        for (id, set) in cases {
+            let s = find(id).unwrap();
+            let mut params = Params { values: s.params.iter().map(|p| (p.id.to_string(), p.default.clone())).collect() };
+            for p in &s.params {
+                if let (ParamUi::Point, Value::Vec2(v)) = (&p.ui, &p.default) {
+                    params.values.insert(p.id.to_string(), Value::Vec2([v[0] * 40.0, v[1] * 30.0]));
+                }
+            }
+            for (k, v) in set {
+                params.values.insert(k.to_string(), v.clone());
+            }
+            let host = Clock(params.clone());
+            let run = |t: f64| {
+                let env = EffectEnv { host: Some(&host), masks: &masks, frame_rate: 10.0, ..Default::default() };
+                let ctx = EffectCtx { params: &params, time: t, layer_size: [40.0, 30.0], seed: 7, adjustment: false, env };
+                apply(s, &ctx, Buf { img: img.clone(), offset: [0.0, 0.0], scale: 1.0 }).img
+            };
+            changes.push(run(0.0) != run(1.37));
+            if !is_time_dependent(id) {
+                undeclared.push(id);
+            }
+        }
+        assert_eq!(changes, [true; 4]);
+        assert_eq!(undeclared, Vec::<&str>::new());
+    }
+
     /// A host that tags the returned pixels with the requested mode (R = 0 source, 0.5 masks,
     /// 1 effects & masks).
     struct ModeHost;
@@ -1772,6 +1974,18 @@ mod tests {
         fn audio(&self, _: u64, _: f64, _: usize, _: u32) -> Option<Vec<f32>> {
             None
         }
+    }
+
+    #[test]
+    fn colorama_reaches_only_its_own_pixel_until_it_reads_another_layer() {
+        let margin = |layer: Option<u64>| {
+            let mut params = Params::default();
+            params.values.insert("masking/maskLayer".into(), Value::Layer(layer));
+            let ctx = EffectCtx { params: &params, time: 0.0, layer_size: [8.0, 8.0], seed: 0, adjustment: false, env: Default::default() };
+            pixel_margin("ec.color.colorama", &ctx, 1.0)
+        };
+        assert_eq!(margin(None), Some(0.0));
+        assert_eq!(margin(Some(3)), None);
     }
 
     #[test]

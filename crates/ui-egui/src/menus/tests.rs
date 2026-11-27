@@ -861,21 +861,15 @@ fn opening_a_project_leaves_the_home_screen_whatever_its_composition_id() {
 }
 
 /// A successful command that reports per-item problems (`errors`) shows a compact, readable
-/// report in the status line: `file: error; …`, first three and a count, never raw JSON.
+/// report in the status line: the first three and a count, never raw JSON.
 #[test]
-fn bundle_result_errors_show_compactly_in_the_status_line() {
+fn result_errors_show_compactly_in_the_status_line() {
     let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
-    let result = json!({"installed": [], "errors": [
-        {"file": "a.wasm", "error": "already installed"},
-        {"file": "b.wasm", "error": "does not load"},
-        {"file": "c.wasm", "error": "cannot read it"},
-        {"error": "cannot read the bundle folder"},
-    ]});
+    let result = json!({"errors": ["a.png: cannot read it", "b.png: does not decode", "c.png: unsupported", "d.png: empty"]});
     super::frontend::show_result_errors(&mut app, &result);
-    assert_eq!(app.ui.status, "a.wasm: already installed; b.wasm: does not load; c.wasm: cannot read it; +1 more");
-    // A clean success leaves the status line alone.
-    super::frontend::show_result_errors(&mut app, &json!({"installed": ["x.wasm"], "errors": []}));
-    assert_eq!(app.ui.status, "a.wasm: already installed; b.wasm: does not load; c.wasm: cannot read it; +1 more");
+    assert_eq!(app.ui.status, "a.png: cannot read it; b.png: does not decode; c.png: unsupported; +1 more");
+    super::frontend::show_result_errors(&mut app, &json!({"errors": []}));
+    assert_eq!(app.ui.status, "a.png: cannot read it; b.png: does not decode; c.png: unsupported; +1 more");
 }
 
 /// A picked or menu import reports its errors twice: `report_import_errors` queues the details
@@ -898,43 +892,13 @@ fn an_import_status_rewritten_by_its_result_still_acknowledges_its_details() {
         }
     }
     let import = json!({"errors": ["first failed file", "second failed file"]});
-    for other in [json!({"errors": [{"file": "a.wasm", "error": "does not load"}]}), import.clone()] {
+    for other in [json!({"errors": ["a.png: does not load"]}), import.clone()] {
         let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
         app.report_import_errors("file.import", &import);
-        super::frontend::show_command_result_errors(&mut app, "effect.installBundle", &other);
+        super::frontend::show_command_result_errors(&mut app, "script.runTasks", &other);
         assert!(!app.ui.status.contains("(and"), "{}", app.ui.status);
         assert!(!app.error_toasts.back().unwrap().reported_by(&app.ui.status), "{}", app.ui.status);
     }
-}
-
-/// Effect ▸ Install Effect Plug-in… picks its dialog by params: a bundle asks for a folder,
-/// a plain install asks for a `.wasm`, and with both given inline nothing asks at all.
-#[test]
-fn effect_plugin_install_dialog_router() {
-    use std::sync::{Arc, Mutex};
-    let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
-    let ctx = egui::Context::default();
-    let pending = Arc::new(Mutex::new(Vec::new()));
-    let queue = pending.clone();
-    app.hooks.file_dialog_async = Some(Box::new(move |dialog, _done| queue.lock().unwrap().push(dialog)));
-    // The bundle menu entry: a folder picker.
-    assert_eq!(invoke(&mut app, &ctx, "effect.plugins.install", json!({"bundle": true})).unwrap(), json!({"dialog": "effect.plugins.install"}));
-    assert_eq!(pending.lock().unwrap().pop().unwrap(), crate::FileDialog::Folder, "the bundle asks for a folder");
-    // The plain command: a `.wasm` file picker.
-    assert_eq!(invoke(&mut app, &ctx, "effect.plugins.install", json!({})).unwrap(), json!({"dialog": "effect.plugins.install"}));
-    let crate::FileDialog::Open { exts, many } = pending.lock().unwrap().pop().unwrap() else { panic!("not an open dialog") };
-    assert_eq!(exts, vec!["wasm".to_string()], "{exts:?}");
-    assert!(!many);
-    // `path` given inline overrides the bundle ask: the command runs directly, opening no dialog
-    // (this session has no plug-in loader, so it errors — but nothing was asked).
-    let r = invoke(&mut app, &ctx, "effect.plugins.install", json!({"bundle": true, "path": "x.wasm"}));
-    assert!(r.is_err(), "{r:?}");
-    assert!(pending.lock().unwrap().is_empty(), "no dialog for an inline path");
-    // A supplied `folder` is a bundle source too: asking for a file would let the install take
-    // the picked file and ignore the folder, so nothing is asked.
-    let r = invoke(&mut app, &ctx, "effect.plugins.install", json!({"folder": "some/where"}));
-    assert!(r.is_err(), "{r:?}");
-    assert!(pending.lock().unwrap().is_empty(), "no dialog for an inline folder");
 }
 
 /// File ▸ Import ▸ File… in the non-blocking dialog (macOS, Linux) offers After Effects projects
@@ -1061,4 +1025,10 @@ fn a_picked_project_with_losses_asks_and_the_next_waits() {
     assert_eq!(app.dialog_state.aep_losses.queue, [intro]);
     assert!(app.session.project.items.is_empty(), "nothing imported before the answer");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_windowed_app_tells_its_session_a_window_is_attached() {
+    assert!(!effectcraft_engine::Session::default().window_attached);
+    assert!(EffectcraftApp::new(effectcraft_engine::Session::default()).session.window_attached);
 }

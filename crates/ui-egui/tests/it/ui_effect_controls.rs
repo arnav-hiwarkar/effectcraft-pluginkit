@@ -1582,3 +1582,233 @@ fn effect_controls_lock_over_the_control_channel() {
     assert_eq!(send(&mut h, json!({"effectControlsLocked": true}))["ok"], false);
     assert_eq!(h.state().ui.effect_controls_lock, None);
 }
+
+fn register_gain_effect() {
+    use effectcraft_engine::effects::dynamic::{self, DynamicEffect, DynamicParam};
+    use effectcraft_engine::project::ParamUi;
+    let log = ParamUi::Scaled { min: 0.0, max: 1000.0, slider_min: 1.0, slider_max: 1000.0, decimals: 1, log: true, percent: false };
+    let mix = ParamUi::Scaled { min: -100.0, max: 300.0, slider_min: -100.0, slider_max: 300.0, decimals: 1, log: false, percent: true };
+    dynamic::register(DynamicEffect {
+        owner: "test.ui.gain".into(),
+        version: "1.0.0".into(),
+        id: "test.ui.gain.gain".into(),
+        name: "Gain Test".into(),
+        category: "Test".into(),
+        params: vec![
+            DynamicParam { id: "gain".into(), name: "Gain".into(), default: KV::Scalar(1.0), ui: log },
+            DynamicParam { id: "mix".into(), name: "Mix".into(), default: KV::Scalar(50.0), ui: mix },
+        ],
+        render: Box::new(|ctx, buf| ctx.unchanged(buf)),
+        shader: None,
+        gpu: None,
+        time_dependent: false,
+        reads_other_frames: false,
+        reads_comp_scene: false,
+        reads_param_history: false,
+        presets: Vec::new(),
+        revision: 1,
+        files: None,
+        margin: None,
+        state_version: 0,
+        migrate: None,
+        param_state: None,
+        aux: Vec::new(),
+    });
+}
+
+#[test]
+fn a_log_slider_row_maps_the_track_by_ratio() {
+    register_gain_effect();
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Main", "width": 640, "height": 360, "frameRate": 30, "duration": 10})).unwrap();
+    let layer_id = s.execute("layer.newSolid", json!({"name": "Small", "color": "#ff0000", "width": 200, "height": 100})).unwrap()["layer"].as_u64().unwrap();
+    let fx = s.execute("effect.apply", json!({"layers": [layer_id], "effect": "test.ui.gain.gain"})).unwrap()["effects"][0].as_u64().unwrap();
+    let l = layer(&s, layer_id);
+    let param = |id: &str| l.effects().unwrap().groups().find(|g| g.uid == fx).and_then(|g| g.get(id)).map(|p| p.uid).unwrap();
+    let gain = param("gain");
+    s.state.selected_layers = vec![LayerId(layer_id)];
+    let mut app = EffectcraftApp::new(s);
+    app.show_panel(PanelKind::EffectControls);
+    let mut h = Harness::builder().with_size(egui::vec2(1700.0, 1100.0)).build_eframe(|_| app);
+    settle(&mut h);
+    h.state_mut().ui.fx_slider_open.insert(gain);
+    h.run_steps(3);
+    let track = rect_of(&h, &format!("effectControls.prop.{gain}.slider"));
+    click(&mut h, track.center());
+    let value = layer(&h.state().session, layer_id).effects().unwrap().find(gain).unwrap().value.as_f64();
+    let geometric_mean = (1000.0_f64).sqrt();
+    assert!((value - geometric_mean).abs() < 1.5, "the middle of a log slider from 1 to 1000 is {geometric_mean}, got {value}");
+}
+
+#[test]
+fn a_plugin_group_row_shows_the_name_its_author_gave_and_twirls_closed() {
+    use effectcraft_engine::effects::dynamic::{self, DynamicEffect, DynamicParam};
+    use effectcraft_engine::project::ParamUi;
+    dynamic::register(DynamicEffect {
+        owner: "test.ui.tuned".into(),
+        version: "1.0.0".into(),
+        id: "test.ui.tuned.tuned".into(),
+        name: "Tuned Test".into(),
+        category: "Test".into(),
+        params: vec![DynamicParam { id: "Fine Tuning/on".into(), name: "On".into(), default: KV::Bool(true), ui: ParamUi::Checkbox }],
+        render: Box::new(|ctx, buf| ctx.unchanged(buf)),
+        shader: None,
+        gpu: None,
+        time_dependent: false,
+        reads_other_frames: false,
+        reads_comp_scene: false,
+        reads_param_history: false,
+        presets: Vec::new(),
+        revision: 1,
+        files: None,
+        margin: None,
+        state_version: 0,
+        migrate: None,
+        param_state: None,
+        aux: Vec::new(),
+    });
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Main", "width": 640, "height": 360, "frameRate": 30, "duration": 10})).unwrap();
+    let layer_id = s.execute("layer.newSolid", json!({"name": "Small", "color": "#ff0000", "width": 200, "height": 100})).unwrap()["layer"].as_u64().unwrap();
+    let fx = s.execute("effect.apply", json!({"layers": [layer_id], "effect": "test.ui.tuned.tuned"})).unwrap()["effects"][0].as_u64().unwrap();
+    let group = layer(&s, layer_id).effects().unwrap().groups().find(|g| g.uid == fx).and_then(|g| g.sub("Fine Tuning")).map(|g| g.uid).unwrap();
+    s.state.selected_layers = vec![LayerId(layer_id)];
+    let mut app = EffectcraftApp::new(s);
+    app.show_panel(PanelKind::EffectControls);
+    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| app);
+    settle(&mut h);
+    let twirl = format!("effectControls.group.{group}.twirl");
+    let label = h.state().auto.elements.iter().find(|e| e.id == twirl).map(|e| e.label.clone());
+    assert_eq!(label.as_deref(), Some("Fine Tuning"));
+    let at = rect_of(&h, &twirl).center();
+    click(&mut h, at);
+    h.run_steps(2);
+    assert!(h.state().ui.fx_closed.contains(&group), "clicking the named group's twirl closes it");
+}
+
+#[test]
+fn an_effect_whose_plugin_is_missing_is_marked_in_effect_controls() {
+    use effectcraft_engine::effects::dynamic::{self, DynamicEffect};
+    dynamic::register(DynamicEffect {
+        owner: "test.ui.refs".into(),
+        version: "1.0.0".into(),
+        id: "test.ui.refs.tint".into(),
+        name: "Refs Tint".into(),
+        category: "Test".into(),
+        params: Vec::new(),
+        render: Box::new(|ctx, buf| ctx.unchanged(buf)),
+        shader: None,
+        gpu: None,
+        time_dependent: false,
+        reads_other_frames: false,
+        reads_comp_scene: false,
+        reads_param_history: false,
+        presets: Vec::new(),
+        revision: 1,
+        files: None,
+        margin: None,
+        state_version: 0,
+        migrate: None,
+        param_state: None,
+        aux: Vec::new(),
+    });
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Refs", "width": 32, "height": 18, "frameRate": 30, "duration": 2})).unwrap();
+    let lid = s.execute("layer.newSolid", json!({"name": "Tinted"})).unwrap()["layer"].as_u64().unwrap();
+    let fx = s.execute("effect.apply", json!({"layers": [lid], "effect": "test.ui.refs.tint"})).unwrap()["effects"][0].as_u64().unwrap();
+    std::sync::Arc::make_mut(&mut s.project).plugins =
+        vec![effectcraft_engine::project::PluginUse { id: "test.ui.refs".into(), version: "1.0.0".into(), digest: None }];
+    dynamic::unregister("test.ui.refs");
+    s.state.selected_layers = vec![LayerId(lid)];
+    let mut app = EffectcraftApp::new(s);
+    app.show_panel(PanelKind::EffectControls);
+    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).with_step_dt(1.0 / 60.0).build_eframe(|_| app);
+    h.run_steps(4);
+    let mark = format!("effectControls.effect.{fx}.error");
+    let label = h.state().auto.previous.iter().chain(h.state().auto.elements.iter()).find(|e| e.id == mark).map(|e| e.label.clone());
+    assert!(label.as_deref().is_some_and(|l| l.contains("test.ui.refs") && l.contains("not installed")), "{label:?} in {:?}", ids(&h));
+    use egui_kittest::kittest::NodeT;
+    let name = h.get_by_label_contains("test.ui.refs").accesskit_node().label().unwrap_or_default();
+    assert!(name.starts_with("⚠ ") && name.contains("not installed"), "{name:?}");
+}
+
+#[test]
+fn lut_library_opens_by_keyboard_and_entries_are_chosen_by_id() {
+    use effectcraft_engine::effects::contributed;
+    let owner = "lut-library-ids-test";
+    contributed::replace(owner, Vec::new(), vec![("warm".into(), "/packs/warm.cube".into()), ("cool".into(), "/packs/cool.cube".into())]);
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Main", "width": 64, "height": 36, "frameRate": 30, "duration": 2})).unwrap();
+    let lid = s.execute("layer.newSolid", json!({"name": "Grey", "color": "#808080"})).unwrap()["layer"].as_u64().unwrap();
+    let fx = s.execute("effect.apply", json!({"layers": [lid], "effect": "Apply Color LUT"})).unwrap()["effects"][0].as_u64().unwrap();
+    let prop = layer(&s, lid).props.find_group(fx).unwrap().get("lut").unwrap().uid;
+    s.state.selected_layers = vec![LayerId(lid)];
+    let mut app = EffectcraftApp::new(s);
+    app.show_panel(PanelKind::EffectControls);
+    app.toggle_maximize(PanelKind::EffectControls);
+    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).with_step_dt(1.0 / 60.0).build_eframe(|_| app);
+    h.run_steps(4);
+    let value = |h: &Harness<'_, EffectcraftApp>| match layer(&h.state().session, lid).props.find_group(fx).unwrap().get("lut").unwrap().value.clone() {
+        KV::Str(s) => s,
+        other => panic!("{other:?}"),
+    };
+    assert!(ids(&h).contains(&format!("effectControls.prop.{prop}.library")));
+    h.get_by_label("Library").focus();
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    let entry = format!("effectControls.prop.{prop}.library.{owner}.cool");
+    assert!(ids(&h).contains(&entry), "{:?}", ids(&h));
+    use egui_kittest::kittest::NodeT;
+    assert_eq!(h.get_by_label("cool").accesskit_node().role(), egui::accesskit::Role::MenuItem);
+    let at = rect_of(&h, &entry).center();
+    click(&mut h, at);
+    h.run_steps(3);
+    assert_eq!(value(&h), "/packs/cool.cube");
+    h.get_by_label("Library").focus();
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    h.key_press(egui::Key::ArrowUp);
+    h.run_steps(2);
+    h.key_press(egui::Key::Enter);
+    h.run_steps(3);
+    assert_eq!(value(&h), "/packs/warm.cube");
+    contributed::remove(owner);
+}
+
+#[test]
+fn a_point_on_a_moved_adjustment_layer_is_drawn_and_dragged_in_comp_space() {
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"width": 800, "height": 450, "frameRate": 30, "duration": 1})).unwrap();
+    s.execute("layer.newSolid", json!({"name": "Back", "color": "#406080"})).unwrap();
+    let lid = s.execute("layer.newAdjustment", json!({"name": "Adjust"})).unwrap()["layer"].as_u64().unwrap();
+    s.execute("prop.set", json!({"layer": lid, "path": "transform/position", "value": [500.0, 275.0]})).unwrap();
+    let fx = s.execute("effect.apply", json!({"layer": lid, "effect": "ec.blur.ccradialfast"})).unwrap()["effects"][0].as_u64().unwrap();
+    let point = layer(&s, lid).effects().unwrap().find_group(fx).unwrap().get("center").unwrap().uid;
+    s.execute("prop.set", json!({"layer": lid, "prop": point, "value": [400.0, 300.0]})).unwrap();
+    s.state.selected_layers = vec![LayerId(lid)];
+    s.state.selected_props = vec![(LayerId(lid), point)];
+    let mut app = EffectcraftApp::new(s);
+    app.show_panel(PanelKind::EffectControls);
+    let mut h = Harness::builder().with_size(egui::vec2(1700.0, 1100.0)).build_eframe(|_| app);
+    settle(&mut h);
+    let id = format!("viewer.effectPoint.{point}");
+    let at = |h: &Harness<'_, EffectcraftApp>, comp: [f32; 2]| effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, comp).unwrap();
+    let from = rect_of(&h, &id).center();
+    assert!(from.distance(at(&h, [400.0, 300.0])) < 0.5, "the crosshair sits on comp (400, 300), not offset with the layer: {from:?}");
+    let to = at(&h, [430.0, 315.0]);
+    h.event(egui::Event::PointerMoved(from));
+    h.step();
+    h.event(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+    h.step();
+    for i in 1..=5 {
+        h.event(egui::Event::PointerMoved(from + (to - from) * (i as f32 / 5.0)));
+        h.step();
+    }
+    h.event(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    h.step();
+    let after = layer(&h.state().session, lid).props.find(point).unwrap().value.as_vec2();
+    let tol = 1.0 / effectcraft_ui_egui::panels::viewer::last_fit(&h.ctx) as f64;
+    assert!((after[0] - 430.0).abs() <= tol && (after[1] - 315.0).abs() <= tol, "the drag writes comp (430, 315): {after:?}");
+}

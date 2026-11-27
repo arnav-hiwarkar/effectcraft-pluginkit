@@ -439,6 +439,52 @@ fn a_newer_viewer_frame_calls_off_the_one_rendering() {
     assert_eq!(f.inflight(), 0, "released");
 }
 
+#[test]
+fn a_newer_viewer_frame_calls_off_a_plugin_effect_rendering_and_renders_first() {
+    use effectcraft_engine::time::FrameRate;
+    use serde_json::json;
+    static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let mut s = effectcraft_host::session();
+    let plugins = effectcraft_plugin::install(&mut s, Some(CONFIG.get_or_init(|| tempfile::tempdir().unwrap()).path()));
+    crate::panels::plugin_tools::tests::load_probe();
+    let cid =
+        ItemId(s.execute("comp.new", json!({"name": "A", "width": 64, "height": 36, "frameRate": 30, "duration": 10})).unwrap()["comp"].as_u64().unwrap());
+    let layer = s.execute("layer.newSolid", json!({"comp": cid.0, "name": "Spin", "color": "#808080"})).unwrap()["layer"].clone();
+    s.execute("layer.timing", json!({"layers": [layer], "out": 1.0})).unwrap();
+    s.execute("effect.apply", json!({"layer": "Spin", "effect": "test.viewer-tool-ui.spin"})).unwrap();
+    let src = RenderSource {
+        project: s.project.clone(),
+        footage: Arc::new(effectcraft_engine::render::NoFootage),
+        expr: None,
+        layer_cache: Arc::default(),
+        gpu: None,
+        gpu_display: false,
+        disk: None,
+    };
+    let f = Frames::default();
+    let content = f.content_of(&s.project, s.revision, cid);
+    let key = |frame| FrameKey { revision: s.revision, content, comp: cid.0, frame, scale: 1000, view: 0, opts: 0 };
+    let wait = |done: &dyn Fn() -> bool| {
+        for _ in 0..2000 {
+            if done() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    f.request_urgent(&src, key(0), cid, Tick::ZERO, RenderOpts::default());
+    wait(&|| f.queue.lock().unwrap().running.contains(&key(0)));
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let asked = std::time::Instant::now();
+    f.request_urgent(&src, key(150), cid, FrameRate::FPS_30.tick_of(150), RenderOpts::default());
+    wait(&|| f.inflight() == 0);
+    assert_eq!(f.inflight(), 0, "the spinning frame stopped long before its 60 s time limit");
+    assert!(asked.elapsed() < std::time::Duration::from_secs(10), "{:?}", asked.elapsed());
+    assert!(f.is_cached(&key(150)), "the newest frame rendered");
+    assert!(!f.is_cached(&key(0)), "a called-off frame is not cached");
+    assert_eq!(plugins.render_error("test.viewer-tool-ui.spin"), None, "a call-off is not a plugin error");
+}
+
 /// #284: scrubbing asks for a viewer frame at every step; a newer one drops the comp's viewer
 /// frames still waiting (they would all render first), but not prefetch frames or another
 /// comp's viewer frame.
@@ -1914,7 +1960,7 @@ fn no_frame_is_encoded_while_the_disk_has_no_room() {
     disk.set_disk_space(Some((4096 * GB, GB)));
     assert!(!disk.accepts_writes());
     // The frame worker's write: refused up front.
-    assert!(!put_disk_frame(&disk, 1, &img(), &ReadFiles::default(), None, disk.drop_generation()));
+    assert!(!put_disk_frame(&disk, 1, &img(), None, &ReadFiles::default(), None, disk.drop_generation()));
     let mut s = Session::default();
     let cid = ItemId(s.execute("comp.new", json!({"name": "A", "width": 8, "height": 8, "duration": 1})).unwrap()["comp"].as_u64().unwrap());
     s.execute("layer.newSolid", json!({})).unwrap();
@@ -3194,7 +3240,7 @@ fn the_accountant_trims_only_frames_in_ram() {
         usage: eframe::wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
-    let gpu_frame = || FrameImage::Gpu(Arc::new(DisplayFrame { texture: texture.clone(), width: 2, height: 2 }));
+    let gpu_frame = || FrameImage::Gpu(Arc::new(DisplayFrame { texture: texture.clone(), width: 2, height: 2, loop_check: Default::default() }));
     let frames = Frames::default();
     {
         let mut c = frames.cache.lock().unwrap();
@@ -3216,6 +3262,56 @@ fn the_accountant_trims_only_frames_in_ram() {
     assert!(!c.map.contains_key(&key(1, 2, 0)) && c.map.contains_key(&key(1, 3, 0)), "the oldest frame in RAM went");
     drop(c);
     assert_eq!(memory.bytes(), 16);
+}
+
+#[test]
+fn gpu_frames_past_their_budget_stay_as_cpu_frames() {
+    let Some(gpu) = Gpu::headless() else {
+        eprintln!("no GPU adapter: skipped");
+        return;
+    };
+    let gpu_frame = |v: u8| {
+        let texture = gpu.device().create_texture(&eframe::wgpu::TextureDescriptor {
+            label: None,
+            size: eframe::wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: eframe::wgpu::TextureDimension::D2,
+            format: eframe::wgpu::TextureFormat::Rgba8Unorm,
+            usage: eframe::wgpu::TextureUsages::TEXTURE_BINDING | eframe::wgpu::TextureUsages::COPY_SRC | eframe::wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        gpu.context().queue.write_texture(
+            eframe::wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: eframe::wgpu::Origin3d::ZERO,
+                aspect: eframe::wgpu::TextureAspect::All,
+            },
+            &[v, 0, 0, 255].repeat(4),
+            eframe::wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(8), rows_per_image: Some(2) },
+            eframe::wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
+        );
+        FrameImage::Gpu(Arc::new(DisplayFrame { texture, width: 2, height: 2, loop_check: Default::default() }))
+    };
+    let frames = Frames::default();
+    {
+        let mut c = frames.cache.lock().unwrap();
+        c.gpu_budget = 16;
+        for frame in 0..3 {
+            c.insert(key(1, frame, 0), gpu_frame(10 * frame as u8 + 10));
+        }
+        assert_eq!((c.bytes, c.gpu_bytes), (48, 48));
+    }
+    frames.worker().demote_gpu_frames(&gpu);
+    let c = frames.cache.lock().unwrap();
+    assert_eq!((c.bytes, c.gpu_bytes), (48, 16));
+    assert_eq!(c.order.iter().map(|k| k.frame).collect::<Vec<_>>(), [0, 1, 2], "still in line");
+    let red = |frame| match &c.map[&key(1, frame, 0)].img {
+        FrameImage::Cpu(i) => Some(i.pixels[3].r()),
+        _ => None,
+    };
+    assert_eq!([red(0), red(1), red(2)], [Some(10), Some(20), None], "the oldest two in RAM, the newest on the GPU");
 }
 
 /// #3301 review: a frame someone still holds (the viewer showing it, from `Frames::get`) is not
@@ -3323,6 +3419,7 @@ fn gpu_renders_in_flight_stay_within_the_cap() {
 #[test]
 fn gpu_worker_routes_admit_display_readback_and_auto_effects() {
     use effectcraft_engine::render::{Accelerator, Backend};
+    let _slots = gpu_slot_test();
     let Some(gpu) = Gpu::headless() else {
         eprintln!("GPU worker route test skipped: no adapter");
         return;
@@ -3591,4 +3688,71 @@ fn an_effect_found_by_a_short_route_is_not_hidden_by_a_deep_one() {
     nest(&mut s, root, chain);
     nest(&mut s, root, fx);
     assert!(comp_has_effects(&s.project, root));
+}
+
+/// A side pane's new frame takes the place of the one it queued before, and a pane that goes
+/// away calls its frame off.
+#[test]
+fn a_pane_s_new_frame_replaces_its_queued_one() {
+    let mut f = Frames::default();
+    f.set_remote(Some(Arc::new(Idle)));
+    let src = idle_source();
+    for frame in 0..3 {
+        f.request_pane(7, &src, key(1, frame, 0), ItemId(1), Tick::ZERO, RenderOpts::default());
+    }
+    let frames: Vec<i64> = f.queued().iter().map(|(k, _)| k.frame).collect();
+    assert_eq!(frames, [2]);
+    assert_eq!(f.inflight(), 1);
+    f.release_pane(7);
+    assert!(f.queued().is_empty());
+    assert_eq!(f.inflight(), 0);
+}
+
+/// A full cache evicts a pane's frame of another scale as it comes in: the pane still gets it.
+#[test]
+fn a_pane_gets_its_frame_when_the_cache_evicts_it() {
+    let mut f = Frames::default();
+    f.set_remote(Some(Arc::new(Idle)));
+    f.set_budget(2 * 16);
+    for frame in 0..2 {
+        insert(&f, key(1, frame, 0));
+    }
+    f.cache.lock().unwrap().scale = Some(1000);
+    let pane = FrameKey { scale: 500, ..key(1, 5, 0) };
+    f.request_pane(3, &idle_source(), pane, ItemId(1), Tick::ZERO, RenderOpts::default());
+    f.worker().finish_key(pane, false, img(), None, None, web_time::Instant::now());
+    assert!(!f.is_cached(&pane));
+    assert!(f.take_pane(3, &pane).is_some());
+}
+
+#[test]
+fn a_gpu_frame_whose_plugin_loop_ran_past_the_cap_leaves_the_cache_when_next_shown() {
+    let Some(gpu) = Gpu::headless() else {
+        eprintln!("no GPU adapter: skipped");
+        return;
+    };
+    let texture = gpu.device().create_texture(&eframe::wgpu::TextureDescriptor {
+        label: None,
+        size: eframe::wgpu::Extent3d { width: 2, height: 2, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: eframe::wgpu::TextureDimension::D2,
+        format: eframe::wgpu::TextureFormat::Rgba8Unorm,
+        usage: eframe::wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let frame = |capped| {
+        FrameImage::Gpu(Arc::new(DisplayFrame { texture: texture.clone(), width: 2, height: 2, loop_check: effectcraft_gpu::LoopCheck::resolved(capped) }))
+    };
+    let frames = Frames::default();
+    {
+        let mut c = frames.cache.lock().unwrap();
+        c.insert(key(1, 0, 0), frame(false));
+        c.insert(key(1, 1, 0), frame(true));
+    }
+    assert!(frames.get(&key(1, 0, 0)).is_some(), "a clean GPU frame is shown");
+    assert!(frames.get_for_viewer(&key(1, 1, 0), None).is_none(), "the capped frame is not shown again");
+    let c = frames.cache.lock().unwrap();
+    assert!(!c.map.contains_key(&key(1, 1, 0)) && !c.order.contains(&key(1, 1, 0)), "and it left the cache, so it renders again");
+    assert_eq!(c.gpu_bytes, 16);
 }

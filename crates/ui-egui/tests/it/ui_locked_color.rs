@@ -37,11 +37,18 @@ fn invoke(h: &mut Harness<'_, EffectcraftApp>, command: &str, params: Value) {
     h.run_steps(3);
 }
 
-fn locked_center(h: &Harness<'_, EffectcraftApp>, images: &Images) -> [u8; 4] {
-    let (_, texture) = h.ctx.data(|d| d.get_temp::<(u64, egui::TextureHandle)>(egui::Id::unique("viewer-locked"))).unwrap();
-    let images = images.borrow();
-    let image = images.get(&texture.id()).unwrap();
-    image.pixels[(image.size[1] / 2) * image.size[0] + image.size[0] / 2].to_array()
+fn locked_center(h: &mut Harness<'_, EffectcraftApp>, images: &Images, want: [u8; 4]) -> [u8; 4] {
+    let mut center = None;
+    for _ in 0..400 {
+        h.step();
+        let texture = effectcraft_ui_egui::panels::viewers::texture(h.state(), effectcraft_ui_egui::panels::viewers::LOCKED_PANE);
+        center = texture.and_then(|t| images.borrow().get(&t).map(|i| i.pixels[(i.size[1] / 2) * i.size[0] + i.size[0] / 2].to_array()));
+        if center == Some(want) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    center.unwrap()
 }
 
 fn expected_center(h: &mut Harness<'_, EffectcraftApp>) -> [u8; 4] {
@@ -54,28 +61,92 @@ fn expected_center(h: &mut Harness<'_, EffectcraftApp>) -> [u8; 4] {
     pixels[0]
 }
 
-#[test]
-fn locked_viewer_follows_display_profile_and_simulation() {
+fn locked_harness(images: &Images) -> Harness<'static, EffectcraftApp> {
     let mut s = Session::default();
     s.execute("comp.new", json!({"name": "Color", "width": 64, "height": 64, "duration": 1})).unwrap();
     s.execute("layer.newSolid", json!({"name": "Plate", "color": "#406080", "width": 64, "height": 64})).unwrap();
     s.execute("file.projectSettings", json!({"workingSpace": "srgb", "outputSpace": "rec2020", "renderer": "software"})).unwrap();
     s.execute("prefs.set", json!({"key": "previews.displayProfile", "value": "srgb"})).unwrap();
     s.execute("view.displayColorManagement", json!({"value": true})).unwrap();
-    let images = Images::default();
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).renderer(Capture(images.clone())).build_eframe(|_| EffectcraftApp::new(s));
     h.run_steps(3);
     invoke(&mut h, "view.splitLockedViewer", json!({}));
+    h
+}
+
+#[test]
+fn locked_viewer_follows_display_profile_and_simulation() {
+    let images = Images::default();
+    let mut h = locked_harness(&images);
     let first = expected_center(&mut h);
-    assert_eq!(locked_center(&h, &images), first);
+    assert_eq!(locked_center(&mut h, &images, first), first);
 
     invoke(&mut h, "prefs.set", json!({"key": "previews.displayProfile", "value": "p3"}));
     let after_display = expected_center(&mut h);
     assert_ne!(after_display, first);
-    assert_eq!(locked_center(&h, &images), after_display);
+    assert_eq!(locked_center(&mut h, &images, after_display), after_display);
 
     invoke(&mut h, "view.simulateOutput", json!({"profile": "rec709", "preserveRgb": true}));
     let after_sim = expected_center(&mut h);
     assert_ne!(after_sim, after_display);
-    assert_eq!(locked_center(&h, &images), after_sim);
+    assert_eq!(locked_center(&mut h, &images, after_sim), after_sim);
+}
+
+/// The locked frame left the RAM cache while its texture stayed on screen: a new display
+/// profile still converts it again.
+#[test]
+fn locked_viewer_converts_again_after_its_frame_left_the_cache() {
+    let images = Images::default();
+    let mut h = locked_harness(&images);
+    let first = expected_center(&mut h);
+    assert_eq!(locked_center(&mut h, &images, first), first);
+    h.state().frames.clear();
+    invoke(&mut h, "prefs.set", json!({"key": "previews.displayProfile", "value": "p3"}));
+    let after_display = expected_center(&mut h);
+    assert_ne!(after_display, first);
+    assert_eq!(locked_center(&mut h, &images, after_display), after_display);
+}
+
+fn side_and_locked_centers(h: &mut Harness<'_, EffectcraftApp>, images: &Images) -> [Option<[u8; 4]>; 2] {
+    let panes = [effectcraft_ui_egui::panels::viewers::LOCKED_PANE, u32::MAX - 1];
+    let mut centers = [None, None];
+    for _ in 0..400 {
+        h.step();
+        let next = panes.map(|p| pane_center(h, images, p));
+        if next.iter().all(Option::is_some) && next == centers {
+            break;
+        }
+        centers = next;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    centers
+}
+
+fn pane_center(h: &mut Harness<'_, EffectcraftApp>, images: &Images, pane: u32) -> Option<[u8; 4]> {
+    let texture = effectcraft_ui_egui::panels::viewers::texture(h.state(), pane)?;
+    images.borrow().get(&texture).map(|i| i.pixels[(i.size[1] / 2) * i.size[0] + i.size[0] / 2].to_array())
+}
+
+/// The side panes of a multi-view layout show the colours the locked viewer shows, with Display
+/// Color Management off (working-space numbers) and on (converted to the display).
+#[test]
+fn side_panes_show_the_locked_viewer_s_display_colour() {
+    let images = Images::default();
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Color", "width": 64, "height": 64, "duration": 1})).unwrap();
+    s.execute("layer.newSolid", json!({"name": "Plate", "color": "#0082df", "width": 64, "height": 64})).unwrap();
+    s.execute("file.projectSettings", json!({"workingSpace": "rec2020", "renderer": "software"})).unwrap();
+    s.execute("prefs.set", json!({"key": "previews.displayProfile", "value": "p3"})).unwrap();
+    s.execute("view.displayColorManagement", json!({"value": false})).unwrap();
+    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).renderer(Capture(images.clone())).build_eframe(|_| EffectcraftApp::new(s));
+    h.run_steps(3);
+    invoke(&mut h, "view.splitLockedViewer", json!({}));
+    invoke(&mut h, "view.layout", json!({"views": 4}));
+    let off = side_and_locked_centers(&mut h, &images);
+    assert!(off[0].is_some());
+    assert_eq!(off[1], off[0]);
+    invoke(&mut h, "view.displayColorManagement", json!({"value": true}));
+    let on = side_and_locked_centers(&mut h, &images);
+    assert_ne!(on[0], off[0]);
+    assert_eq!(on[1], on[0]);
 }

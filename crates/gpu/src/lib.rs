@@ -72,6 +72,7 @@ mod fx_lut;
 mod fx_noise;
 mod fx_particles;
 mod fx_pixel2;
+mod fx_plugin;
 mod fx_sim;
 mod fx_stylize;
 mod fx_text;
@@ -80,10 +81,12 @@ mod fx_tone;
 mod fx_transition;
 mod fx_vr;
 mod fx_warp;
+mod guard;
 mod inpaint;
 mod memcap;
 mod ops;
 mod particles;
+mod plugin_draw;
 mod readback;
 mod upload;
 mod walk;
@@ -98,6 +101,7 @@ use effectcraft_project::ItemId;
 use effectcraft_raster::Image;
 use effectcraft_render::{Accelerator, FxStep, Renderer};
 use effectcraft_time::Tick;
+pub use guard::LoopCheck;
 pub use wgpu;
 
 use crate::context::Enc;
@@ -134,6 +138,7 @@ pub struct Gpu {
     auto: Arc<effectcraft_render::AutoPick>,
     /// (comp, reason) pairs already warned about when the GPU declined a frame.
     declined: Arc<std::sync::Mutex<std::collections::HashSet<(u64, String)>>>,
+    warmed: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// A viewer frame left on the GPU: premultiplied RGBA8 (`wgpu::TextureFormat::Rgba8Unorm`) with
@@ -144,6 +149,8 @@ pub struct DisplayFrame {
     pub texture: wgpu::Texture,
     pub width: u32,
     pub height: u32,
+    /// Whether a plugin loop in this frame ran past the cap: read once its GPU work finishes.
+    pub loop_check: LoopCheck,
 }
 
 impl Gpu {
@@ -165,7 +172,37 @@ impl Gpu {
     }
 
     pub fn from_context(ctx: GpuContext) -> Gpu {
-        Gpu { ctx: Arc::new(ctx), auto: Default::default(), declined: Default::default(), scoped_observations: Default::default() }
+        let warmed = Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX));
+        Gpu { ctx: Arc::new(ctx), auto: Default::default(), declined: Default::default(), scoped_observations: Default::default(), warmed }
+    }
+
+    /// Builds the pipelines of the plugin GPU effects `project` uses on a thread of its own once
+    /// that set changes (a project opened, an effect applied), so the first frame that shows one
+    /// does not compile them. Plugins whose effects the project does not use are not started.
+    pub fn warm_plugins(&self, project: &effectcraft_project::Project) -> Option<std::thread::JoinHandle<()>> {
+        if cfg!(target_arch = "wasm32") {
+            return None;
+        }
+        let used: std::collections::BTreeSet<&str> = project
+            .comps()
+            .flat_map(|(_, comp)| comp.layers.iter())
+            .filter_map(|layer| layer.effects())
+            .flat_map(|fx| fx.groups())
+            .filter_map(|group| match &group.kind {
+                effectcraft_project::GroupKind::Effect { effect } => Some(effect.as_str()),
+                _ => None,
+            })
+            .collect();
+        let registered: Vec<_> = used.iter().filter_map(|id| effectcraft_effects::dynamic::get(id)).collect();
+        let mut hasher = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&(effectcraft_effects::dynamic::generation(), &used), &mut hasher);
+        let key = std::hash::Hasher::finish(&hasher);
+        if self.warmed.swap(key, std::sync::atomic::Ordering::AcqRel) == key || registered.is_empty() {
+            return None;
+        }
+        let ctx = self.ctx.clone();
+        let warm = move || registered.iter().for_each(|registered| fx_plugin::warm(&ctx, registered));
+        std::thread::Builder::new().name("gpu plugin warm-up".into()).spawn(warm).ok()
     }
 
     /// A device of its own without blocking, with deferred readbacks (a browser worker, see
@@ -225,19 +262,21 @@ impl Gpu {
     /// readback unless a CPU fallback step needs one). `None` = render on the CPU.
     pub fn render_display(&self, r: &Renderer, comp: ItemId, t: Tick) -> Option<DisplayFrame> {
         self.ctx.check_health().map_err(|e| log::error!("gpu display: {e}")).ok()?;
+        self.warm_plugins(r.project);
         let mut e = Enc::new(&self.ctx);
         let img = walk::render(&mut e, r, comp, t)?;
         let texture = e.display(&img);
         e.submit();
+        let loop_check = e.loop_check();
         // Reject failures observed during rendering/submission before publishing the frame.
         // A later device fault still requires the presentation host's lifecycle handling.
         self.ctx.check_health().map_err(|e| log::error!("gpu display: {e}")).ok()?;
-        Some(DisplayFrame { texture, width: img.width, height: img.height })
+        Some(DisplayFrame { texture, width: img.width, height: img.height, loop_check })
     }
 
     /// Read a display frame back as premultiplied RGBA8 (Info panel sampling, eyedroppers).
     pub fn read_display(&self, f: &DisplayFrame) -> Option<Vec<u8>> {
-        Enc::new(&self.ctx).read_texture(&f.texture, f.width, f.height, 4)
+        Enc::new(&self.ctx).read_texture(&f.texture, f.width, f.height, 4).filter(|_| f.loop_check.capped() == Some(false))
     }
 
     /// [`Gpu::read_display`] without blocking (the browser's main thread): `done` gets the bytes
@@ -248,12 +287,14 @@ impl Gpu {
             crate::readback::reject(done, e);
             return;
         }
-        Enc::new(&self.ctx).read_texture_async(&f.texture, f.width, f.height, 4, done);
+        let check = f.loop_check.clone();
+        Enc::new(&self.ctx).read_texture_async(&f.texture, f.width, f.height, 4, move |bytes| done(bytes.filter(|_| check.capped() == Some(false))));
     }
 
     /// Render a frame on the GPU and read it back (`None` = not handled).
     pub fn render(&self, r: &Renderer, comp: ItemId, t: Tick) -> Option<Image> {
         self.ctx.check_health().ok()?;
+        self.warm_plugins(r.project);
         if !self.ctx.can_readback() {
             return None;
         }
@@ -262,7 +303,8 @@ impl Gpu {
         }
         let mut e = Enc::new(&self.ctx);
         let img = walk::render(&mut e, r, comp, t)?;
-        e.download(&img)
+        let img = e.download(&img)?;
+        (!e.loop_capped()).then_some(img)
     }
 
     /// [`Gpu::render`] with deferred readbacks: the frame's readback is keyed by comp, time and
@@ -421,12 +463,18 @@ impl Accelerator for Gpu {
         let mut e = Enc::new(&self.ctx);
         let img = walk::render(&mut e, r, comp, t)?;
         let planes = yuv::convert(&mut e, yp, &img, bg)?;
+        if e.loop_capped() {
+            return None;
+        }
         // A device fault seen while the frame recorded makes the planes untrustworthy.
         self.ctx.check_health().ok()?;
         Some(planes)
     }
 
     fn supports_effect(&self, id: &str) -> bool {
+        if let Some(registered) = effectcraft_effects::dynamic::get(id) {
+            registered.probe_gpu();
+        }
         self.ctx.check_health().is_ok() && self.ctx.can_readback() && effects::supports(id)
     }
 

@@ -305,14 +305,36 @@ impl Session {
     pub fn shortcuts(&self) -> &ShortcutTable {
         self.shortcut_table.get_or_init(|| {
             let scripts: Vec<String> = crate::commands::scripts::scripts(self).into_iter().filter(|e| !e.panel).map(|e| e.name).collect();
-            ShortcutTable::build_with_scripts(&self.keymaps, &self.ui_commands, &scripts)
+            let mut table = ShortcutTable::build_with_scripts(&self.keymaps, &self.ui_commands, &scripts);
+            table.add_plugin_commands(&self.keymaps, &self.plugin_items);
+            table
         })
+    }
+
+    /// The running plug-ins' panels and commands changed: list their commands again in the
+    /// shortcut table.
+    pub fn set_plugin_items(&mut self, items: Vec<crate::PluginItem>) {
+        if self.plugin_items != items {
+            self.plugin_items = items;
+            self.shortcut_table = std::sync::OnceLock::new();
+        }
+    }
+
+    /// The running plug-in command that `plugin.run` parameters name.
+    pub fn plugin_command(&self, params: &serde_json::Value) -> Option<&crate::PluginItem> {
+        let text = |key: &str| params.get(key).and_then(serde_json::Value::as_str);
+        self.plugin_items.iter().find(|item| !item.panel && Some(item.plugin.as_str()) == text("plugin") && Some(item.id.as_str()) == text("command"))
     }
 
     /// Remember a project in File ▸ Open Recent and in the crash-recovery sentinel.
     pub(crate) fn note_project_path(&mut self, path: &str) {
         self.prefs.push_recent(path);
         self.save_prefs();
+        self.note_project_replaced();
+    }
+
+    /// The project was replaced: the recovery record starts over for the new one.
+    pub(crate) fn note_project_replaced(&mut self) {
         let _ = self.autosave_wait();
         self.autosave =
             autosave::AutoSaveState { last: self.autosave.last, sentinel: self.autosave.sentinel, background: self.autosave.background, ..Default::default() };
@@ -357,7 +379,8 @@ impl Session {
     ///
     /// With [`autosave::AutoSaveState::background`] the project is serialised and written on a
     /// background thread (the path is returned at once; [`Session::autosave_wait`] waits).
-    /// Auto-saves are compact JSON (opened like any project); File ▸ Save writes pretty JSON.
+    /// Auto-saves are compact project files with the open comps, the active comp and each comp's
+    /// time, so a recovered project comes back as it was left.
     pub fn autosave_now(&mut self) -> Result<String> {
         // One write at a time: the previous one must land before its slot rotates.
         self.autosave_wait()?;
@@ -368,11 +391,12 @@ impl Session {
         let path = plan.path.to_string_lossy().into_owned();
         if self.autosave.background && !cfg!(target_arch = "wasm32") {
             let project = self.project.clone();
+            let view = self.autosave_view();
             let config = self.config.clone();
             let job = plan.clone();
             let pending =
                 autosave::PendingWrite::spawn(plan.path.clone(), plan.slot, self.revision, self.path.clone(), self.script_ui.project_epoch, move || {
-                    let json = project.to_json_compact();
+                    let json = project.to_file_json_with_view(&view, true).map_err(std::io::Error::other)?;
                     match &config {
                         Some(c) => job.write(c.files(), json.as_bytes()),
                         None => job.write(&crate::config::StdFiles, json.as_bytes()),
@@ -381,11 +405,15 @@ impl Session {
                 .map_err(fail)?;
             self.autosave.pending = Some(pending);
         } else {
-            let json = self.project.to_json_compact();
+            let json = self.project.to_file_json_with_view(&self.autosave_view(), true).map_err(|e| fail(std::io::Error::other(e)))?;
             plan.write(self.file_ops(), json.as_bytes()).map_err(fail)?;
             self.commit_autosave(path.clone(), plan.slot, self.revision);
         }
         Ok(path)
+    }
+
+    fn autosave_view(&self) -> effectcraft_project::SavedView {
+        effectcraft_project::SavedView { autosave_of: self.path.clone(), ..self.saved_view() }
     }
 
     /// Advance recovery bookkeeping only for a successfully written snapshot.

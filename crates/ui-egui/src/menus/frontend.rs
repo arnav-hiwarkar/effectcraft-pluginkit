@@ -71,14 +71,19 @@ pub(crate) fn run_engine(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str
     for (index, ev) in events.into_iter().enumerate() {
         match ev {
             effectcraft_engine::Event::Frontend { command, params } => {
-                if let Err(e) = frontend(app, ctx, &command, params) {
-                    app.ui.status = e.clone();
-                    // A frontend-only command's own failure is the command's result (#696: a
-                    // workspace save that didn't reach disk reported success). An earlier
-                    // invocation's failure only sets the status.
-                    if index >= queued && command == id && r.is_ok() {
-                        r = Err(e);
+                let own = index >= queued && command == id;
+                match frontend(app, ctx, &command, params) {
+                    Err(e) => {
+                        app.ui.status = e.clone();
+                        // A frontend-only command's own failure is the command's result (#696: a
+                        // workspace save that didn't reach disk reported success). An earlier
+                        // invocation's failure only sets the status.
+                        if own && r.is_ok() {
+                            r = Err(e);
+                        }
                     }
+                    Ok(value) if own && !value.is_null() && r.as_ref().is_ok_and(|deferred| deferred["frontend"] == id) => r = Ok(value),
+                    Ok(_) => {}
                 }
             }
             other => app.session.events.push(other),
@@ -150,6 +155,16 @@ pub fn frontend(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, p: Valu
             let id = p.get("window").and_then(Value::as_u64).ok_or("no ScriptUI panel window")? as u32;
             app.show_panel(PanelKind::ScriptPanel(id));
             json!({"window": id})
+        }
+        "window.plugins" => {
+            app.plugin_ui.manager_open = true;
+            Value::Null
+        }
+        "window.pluginPanel" => {
+            let text = |key: &str| p.get(key).and_then(Value::as_str).ok_or(format!("`window.pluginPanel` needs a `{key}` string"));
+            let (plugin, panel) = (text("plugin")?, text("panel")?);
+            let close = p.get("close").and_then(Value::as_bool).unwrap_or(false);
+            crate::panels::plugin_view::open(app, ctx, plugin, panel, p.get("instance").and_then(Value::as_str), close)?
         }
         "layer.style.options" => {
             crate::panels::layer_styles_dialog::open(app, &p)?;
@@ -655,12 +670,10 @@ pub(super) fn file_dialog(app: &mut EffectcraftApp, id: &str, params: &Value) ->
         "render.saveCurrentPreview" => ("path", Ask::Save("Preview.mp4".into())),
         "file.runScript" if params.get("name").is_none() && params.get("recent").is_none() => ("path", Ask::Open(&["jsx", "js", "jsonl", "json", "txt"])),
         "file.installScript" | "file.installScriptUIPanel" => ("path", Ask::Open(&["jsx", "js"])),
-        "effect.plugins.load" if params.get("folder").is_none() => ("path", Ask::Open(&["wasm", "wat"])),
-        "effect.plugins.install" if params.get("bundle").is_some() => ("folder", Ask::Folder),
-        "effect.plugins.install" if params.get("folder").is_none() && params.get("path").is_none() => ("path", Ask::Open(&["wasm"])),
-        "effect.helpers.load" => ("path", Ask::Folder),
         "file.replaceFootage" => ("path", Ask::Import(&[])),
         "file.relinkFootage" => ("folder", Ask::Folder),
+        "plugin.install" if params.get("folder").is_none() => ("path", Ask::Open(&["craftplugin"])),
+        "plugin.install" | "plugin.load" => ("path", Ask::Folder),
         "file.collectFiles" => ("folder", Ask::Save("Collected Files".into())),
         // An open XML project gets ` copy` too: the copy never writes over the open file.
         "file.saveCopyAsXml" => {
@@ -773,22 +786,13 @@ pub(crate) fn dialog_answered(app: &mut EffectcraftApp, answer: crate::DialogAns
     }
 }
 
-/// A successful command can still report per-item problems in an `errors` array (Effect ▸
-/// Install Effect Plug-in Bundle does): show a short, readable report in the status line,
+/// A successful command can still report per-item problems in an `errors` array: show a short, readable report in the status line,
 /// without turning the success into an error. The full structured array stays in the result
 /// for scripts; the status line is single-line and short-lived, so it lists the first few
 /// problems and counts the rest instead of printing raw JSON.
 pub(crate) fn show_result_errors(app: &mut EffectcraftApp, result: &Value) {
     let Some(errors) = result.get("errors").and_then(Value::as_array).filter(|e| !e.is_empty()) else { return };
-    let parts: Vec<String> = errors
-        .iter()
-        .map(|e| match (e.get("file").and_then(Value::as_str), e.get("error").and_then(Value::as_str)) {
-            (Some(file), Some(error)) => format!("{file}: {error}"),
-            (_, Some(error)) => error.to_string(),
-            // A plain message (`file.import`'s errors) reads as itself, not as quoted JSON.
-            _ => e.as_str().map_or_else(|| e.to_string(), str::to_string),
-        })
-        .collect();
+    let parts: Vec<String> = errors.iter().map(|e| e.as_str().map_or_else(|| e.to_string(), str::to_string)).collect();
     let mut msg = parts.iter().take(3).cloned().collect::<Vec<_>>().join("; ");
     if parts.len() > 3 {
         msg.push_str(&format!("; +{} more", parts.len() - 3));

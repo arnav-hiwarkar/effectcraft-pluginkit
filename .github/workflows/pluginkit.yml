@@ -1,0 +1,119 @@
+name: Plugin kit
+
+on:
+  push:
+    branches: [pluginkit]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pluginkit-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: checks
+      - name: Layers
+        run: cargo run --quiet --package xtask -- layers
+      - name: Assets are attributed
+        run: cargo run --quiet --package xtask -- assets
+      - name: Kit rev is pinned once
+        run: cargo run --quiet --package xtask -- kit-rev --check
+      - name: Format
+        run: cargo fmt --check --all
+      - name: Lint
+        run: cargo clippy -p effectcraft-plugin -p effectcraft-effects -p effectcraft-gpu -p effectcraft-engine -p effectcraft-automation -p effectcraft-render -p effectcraft-project -p effectcraft-cli -p effectcraft-script -p effectcraft-ui-egui -p xtask --all-targets --keep-going -- -D warnings
+      - name: Web build
+        run: cargo run --quiet --package xtask -- wasm
+      - name: Desktop app builds
+        run: cargo check -p effectcraft
+
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: tests
+      - name: Adapter tests
+        run: cargo test -p effectcraft-plugin
+      - name: Engine, project, effects, render, raster, automation, script, CLI and xtask
+        run: |
+          cargo test -p effectcraft-engine -p effectcraft-project -p effectcraft-effects --lib
+          cargo test -p effectcraft-render -p effectcraft-raster -p effectcraft-automation -p effectcraft-script -p effectcraft-cli -p xtask
+      - name: GPU plugin tests
+        run: cargo test -p effectcraft-gpu --lib plugin
+
+  ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: ui
+      - name: Japanese and Chinese fonts the text tests lay out
+        run: sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+      - name: UI tests
+        run: cargo test -p effectcraft-ui-egui
+
+  plugins:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: plugins
+      - name: Plugins end to end
+        run: ./plugins/e2e.sh
+      - name: New plugin templates and the cookbook
+        run: ./plugins/new-plugin-check.sh
+      - name: Plugin crate tests
+        run: |
+          for manifest in plugins/*/Cargo.toml; do
+            cargo test --manifest-path "$manifest"
+          done
+
+  kit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: Cargo.toml
+          sparse-checkout-cone-mode: false
+      - name: The craft-libs rev this workspace pins
+        id: pin
+        run: echo "rev=$(sed -n 's/^craft-plugin = .*rev = "\([0-9a-f]*\)".*/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: arnav-hiwarkar/craft-libs-plugin-beta
+          ref: ${{ steps.pin.outputs.rev }}
+          path: craft-libs
+      - name: Install Rust targets and components
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: craft-libs
+      - name: Kit lint and tests
+        working-directory: craft-libs
+        run: |
+          cargo clippy -p craft-plugin -p craft-plugin-host -p craft-plugin-ui --all-targets --all-features -- -D warnings
+          cargo test -p craft-plugin -p craft-plugin-host -p craft-plugin-ui

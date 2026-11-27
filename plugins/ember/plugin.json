@@ -1,0 +1,10 @@
+{
+  "id": "org.craftkit.ember",
+  "name": "Ember",
+  "version": "1.0.0",
+  "author": "Craft Kit",
+  "license": "MIT OR Apache-2.0",
+  "description": "A deterministic 3D particle system: point, box, sphere or mask emitters, gravity, wind, drag, curl-noise turbulence and spin, colour, size and opacity over life, soft discs, streaks and sparks, motion blur and the comp camera.",
+  "entry": { "wasm": "plugin.wasm" },
+  "permissions": []
+}

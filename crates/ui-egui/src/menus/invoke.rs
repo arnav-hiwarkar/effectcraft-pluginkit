@@ -195,6 +195,25 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
     if matches!(id, "effects.copyPresetsFolderPath" | "mediaBrowser.copySourcePath") {
         return frontend(app, ctx, id, params);
     }
+    if id == "plugin.run" {
+        let text = |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default();
+        return app.plugin_ui.panels.command(&app.session, text("plugin"), text("command")).map(|()| Value::Null);
+    }
+    if id == "plugin.press" {
+        let number = |key: &str| params.get(key).and_then(Value::as_u64).ok_or_else(|| format!("`plugin.press` needs `{key}`, a number"));
+        return app.plugin_ui.panels.press(&app.session, number("layer")?, number("prop")?).map(|()| Value::Null);
+    }
+    if id == "plugin.form" {
+        return Ok(effectcraft_plugin::asked_form(&app.session, |asked| json!({"plugin": asked.plugin, "form": asked.form, "values": asked.values}))
+            .unwrap_or(Value::Null));
+    }
+    if id == "plugin.answerForm" {
+        let values = match params.get("cancel").and_then(Value::as_bool) {
+            Some(true) => None,
+            _ => Some(serde_json::from_value(params.get("values").cloned().unwrap_or_else(|| json!({}))).map_err(|error| format!("`values`: {error}"))?),
+        };
+        return effectcraft_plugin::answer_form(&app.session, values).map(|()| Value::Null);
+    }
     // Layer ▸ New ▸ Text (menu, shortcut, context menus) puts an insertion point in the centre of
     // the comp, as After Effects does, so typing goes into Source Text rather than running
     // shortcuts (#866). `engine.execute` keeps the headless default.
@@ -348,6 +367,10 @@ pub fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, id: &str, params: V
         return frontend(app, ctx, "window.workspace", json!({"name": ws}));
     }
     if let Some(t) = id.strip_prefix("tool.") {
+        if t.contains('/') {
+            return crate::panels::plugin_tools::pick(app, ctx, t).map(|()| json!({"tool": t}));
+        }
+        app.ui.plugin_tool = None;
         // C cycles through the camera tools.
         if t == "camera" {
             let tools = [Tool::Orbit, Tool::PanCamera, Tool::Dolly];

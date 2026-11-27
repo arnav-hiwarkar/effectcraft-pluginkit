@@ -24,6 +24,7 @@ const UNIFORM_BYTES: usize = 12 * 16;
 pub enum Source {
     F16(Arc<F16Frame>),
     Rgba8(Arc<egui::ColorImage>),
+    Gpu(Arc<effectcraft_gpu::DisplayFrame>),
 }
 
 impl Source {
@@ -31,6 +32,7 @@ impl Source {
         match (self, o) {
             (Source::F16(a), Source::F16(b)) => Arc::ptr_eq(a, b),
             (Source::Rgba8(a), Source::Rgba8(b)) => Arc::ptr_eq(a, b),
+            (Source::Gpu(a), Source::Gpu(b)) => Arc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -39,6 +41,7 @@ impl Source {
         match self {
             Source::F16(f) => f.size(),
             Source::Rgba8(c) => c.size,
+            Source::Gpu(f) => [f.width as usize, f.height as usize],
         }
     }
 
@@ -233,7 +236,7 @@ impl DisplayGpu {
     /// `src` in a texture (half floats or RGBA8), averaged down by `k` first when `k > 1`
     /// (8-bit frames past the texture limit, #201; half-float ones never get here, see
     /// [`Source::needs_cpu_pass`]): `reuse` when it has the size and format (a playing
-    /// preview's frames), else a new one.
+    /// preview's frames), else a new one. A GPU frame is its own texture: nothing is uploaded.
     fn upload(&self, device: &wgpu::Device, queue: &wgpu::Queue, src: &Source, k: usize, reuse: Option<wgpu::Texture>) -> wgpu::Texture {
         let write = |w: u32, h: u32, format: wgpu::TextureFormat, bytes: &[u8]| {
             let (w, h) = (w.max(1), h.max(1));
@@ -273,6 +276,7 @@ impl DisplayGpu {
                 write(c.size[0] as u32, c.size[1] as u32, rgba8, c.as_raw())
             }
             Source::Rgba8(c) => write(c.size[0] as u32, c.size[1] as u32, rgba8, c.as_raw()),
+            Source::Gpu(f) => f.texture.clone(),
         }
     }
 
@@ -404,7 +408,8 @@ impl Bake {
         let new_source = !self.source.as_ref().is_some_and(|s| s.same(src));
         if new_source {
             self.factor = crate::frames::fit_factor(src.size(), gpu.max_side(), 1);
-            self.input = Some(gpu.upload(device, queue, src, self.factor, self.input.take()));
+            let reuse = self.input.take().filter(|_| !matches!(self.source, Some(Source::Gpu(_))));
+            self.input = Some(gpu.upload(device, queue, src, self.factor, reuse));
             self.source = Some(src.clone());
         }
         let lut = match &pass.color {

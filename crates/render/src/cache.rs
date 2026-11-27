@@ -30,6 +30,9 @@ use crate::eval::EvalCtx;
 use crate::reads::ReadFiles;
 
 mod dependencies;
+mod value_hash;
+
+use value_hash::hash_value;
 
 /// Thread-safe, memory-budgeted cache of processed layer buffers, optionally backed by the
 /// persistent [`DiskCache`](crate::disk_cache::DiskCache): a memory miss reads the disk, and
@@ -317,6 +320,16 @@ impl LayerCache {
             }
         }
         self.insert_mem(key, buf, files, started.map(|t| t.elapsed()))
+    }
+
+    pub(crate) fn get_in_memory(&self, key: u64) -> Option<(Arc<Buf>, Arc<ReadFiles>)> {
+        self.kept(key, true)
+    }
+
+    pub(crate) fn insert_in_memory(&self, key: u64, buf: Arc<Buf>, files: Arc<ReadFiles>, took: std::time::Duration) {
+        if !self.gated() {
+            self.insert_mem(key, buf, files, Some(took));
+        }
     }
 
     /// The buffer kept in memory under `key` with its files, if it is not made of a file dropped
@@ -635,43 +648,59 @@ impl LayerStore for PrefetchStore {
     }
 }
 
-/// FNV-1a style 64-bit hasher fed by `Debug` output (exact float formatting) and raw values.
+/// 64-bit hasher of raw values ([`hash_value`] for whole serialisable values): each 64-bit word
+/// goes through the SplitMix64 finaliser, a bijection, so a single changed word always changes
+/// the key.
 struct KeyHasher(u64);
+
+impl KeyHasher {
+    fn mix(&mut self, word: u64) {
+        let mut z = self.0 ^ word;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        self.0 = z ^ (z >> 31);
+    }
+}
 
 impl Hasher for KeyHasher {
     fn finish(&self) -> u64 {
         self.0
     }
     fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 ^= b as u64;
-            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+        self.mix(bytes.len() as u64);
+        let (words, rest) = bytes.as_chunks::<8>();
+        for w in words {
+            self.mix(u64::from_le_bytes(*w));
+        }
+        if !rest.is_empty() {
+            self.mix(rest.iter().rev().fold(0, |w, &b| w << 8 | u64::from(b)));
         }
     }
-}
-
-impl std::fmt::Write for KeyHasher {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        Hasher::write(self, s.as_bytes());
-        Ok(())
+    fn write_u8(&mut self, v: u8) {
+        self.mix(u64::from(v));
     }
-}
-
-fn hash_debug(h: &mut KeyHasher, v: &impl std::fmt::Debug) {
-    use std::fmt::Write;
-    let _ = write!(h, "{v:?}");
-    Hasher::write_u8(h, 0xff);
+    fn write_u16(&mut self, v: u16) {
+        self.mix(u64::from(v));
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.mix(u64::from(v));
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.mix(v);
+    }
+    fn write_usize(&mut self, v: usize) {
+        self.mix(v as u64);
+    }
 }
 
 /// Time-based layer content: does any part of the source/effects read the clock directly
 /// (rather than through property values)?
-/// `effects: false` ignores the effects (a key of the source and masks only).
-fn time_dependent(layer: &Layer, effects: bool) -> bool {
-    if effects
-        && layer.switches.effects
+/// Only the first `effects` effects count (0: a key of the source and masks only).
+fn time_dependent(layer: &Layer, effects: usize) -> bool {
+    if layer.switches.effects
         && let Some(fx) = layer.effects()
     {
-        for g in fx.groups() {
+        for g in fx.groups().take(effects) {
             if let effectcraft_project::GroupKind::Effect { effect } = &g.kind
                 && g.enabled
                 && effectcraft_effects::is_time_dependent(effect)
@@ -729,7 +758,7 @@ fn hash_overrides(h: &mut KeyHasher, ctx: &EvalCtx, id: effectcraft_project::Lay
     for o in ctx.property_overrides.iter().filter(|o| o.layer == id) {
         o.prop.hash(h);
         o.font.hash(h);
-        hash_debug(h, &o.value);
+        hash_value(h, &o.value);
     }
     for m in ctx.media_overrides.iter().filter(|m| m.layer == id) {
         m.item.hash(h);
@@ -742,7 +771,7 @@ fn hash_values(h: &mut KeyHasher, ctx: &EvalCtx, layer: &Layer, g: &PropGroup) {
             Node::Prop(p) => {
                 if !p.keys.is_empty() || p.has_expression() {
                     p.uid.hash(h);
-                    hash_debug(h, &ctx.value(layer, p));
+                    hash_value(h, &ctx.value(layer, p));
                 }
             }
             Node::Group(sub) => hash_values(h, ctx, layer, sub),
@@ -788,9 +817,13 @@ fn reads_other_times(layer: &Layer, effects: Option<usize>) -> bool {
                     && matches!(&g.kind, effectcraft_project::GroupKind::Effect { effect }
                         if effect.starts_with("ec.time.")
                             || effectcraft_effects::reads_param_history(effect)
-                            || (!effect.starts_with("ec.") && effectcraft_effects::plugin::reads_other_times(effect)))
+                            || effectcraft_effects::reads_other_frames(effect))
             })
         })
+}
+
+fn resamples_input(g: &effectcraft_project::PropGroup) -> bool {
+    matches!(&g.kind, effectcraft_project::GroupKind::Effect { effect } if effect.starts_with("ec.time.") || effectcraft_effects::reads_other_frames(effect))
 }
 
 /// The layer reads values at other times (see [`reads_other_times`]) and has expressions
@@ -821,12 +854,6 @@ fn cached_footage(ctx: &EvalCtx, item: effectcraft_project::ItemId) -> bool {
 /// Motion Blur On, or Same As Layer with the layer blurred)?
 fn mask_motion_blur(ctx: &EvalCtx, layer: &Layer, blur: bool) -> bool {
     use effectcraft_project::{GroupKind, MaskMotionBlur};
-    fn animated(g: &PropGroup) -> bool {
-        g.children.iter().any(|c| match c {
-            Node::Prop(p) => !p.keys.is_empty() || p.has_expression(),
-            Node::Group(sub) => animated(sub),
-        })
-    }
     ctx.comp.enable_motion_blur
         && layer.masks().is_some_and(|m| {
             m.groups().any(|g| match g.kind {
@@ -836,6 +863,28 @@ fn mask_motion_blur(ctx: &EvalCtx, layer: &Layer, blur: bool) -> bool {
                 _ => false,
             })
         })
+}
+
+fn animated(g: &PropGroup) -> bool {
+    g.children.iter().any(|c| match c {
+        Node::Prop(p) => !p.keys.is_empty() || p.has_expression(),
+        Node::Group(sub) => animated(sub),
+    })
+}
+
+pub(crate) fn timeless(layer: &Layer) -> bool {
+    !animated(&layer.props) && !time_dependent(layer, usize::MAX)
+}
+
+pub(crate) fn frame_key(ctx: &EvalCtx, contents: &[u64], visible: &[effectcraft_project::LayerId], opts: &crate::RenderOpts) -> u64 {
+    let mut h = KeyHasher(0x6a09_e667_f3bc_c908);
+    hash_value(&mut h, &ctx.project.settings);
+    ctx.comp_id.hash(&mut h);
+    hash_value(&mut h, ctx.comp);
+    hash_value(&mut h, opts);
+    contents.hash(&mut h);
+    visible.hash(&mut h);
+    h.finish()
 }
 
 fn has_expression(g: &PropGroup) -> bool {
@@ -858,6 +907,16 @@ pub(super) enum EffectScope {
     Footprint,
 }
 
+impl EffectScope {
+    fn count(self) -> usize {
+        match self {
+            EffectScope::All => usize::MAX,
+            EffectScope::First(n) => n,
+            EffectScope::Footprint => 0,
+        }
+    }
+}
+
 /// Cache key for an adjustment layer's footprint (its source through its masks, see
 /// `Renderer::adjustment_footprint`): the GPU compositor then uploads it once, not every frame.
 pub fn footprint_key(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool) -> Option<u64> {
@@ -878,6 +937,7 @@ fn key_with(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, f
 /// `blur`: the layer is motion blurred in this render (`Renderer::mb_on`). `effects`: how far
 /// the effect stack reaches into the key (see [`EffectScope`]).
 fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, footage: bool, effects: EffectScope) -> Option<u64> {
+    let executed = effects.count();
     let mut h = KeyHasher(0xcbf2_9ce4_8422_2325);
     ctx.comp.frame_rate.as_f64().to_bits().hash(&mut h);
     ctx.comp.enable_frame_blending.hash(&mut h);
@@ -886,16 +946,16 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
         LayerSource::Solid { item } => {
             let it = ctx.project.item(*item)?;
             let ItemKind::Solid(s) = &it.kind else { return None };
-            hash_debug(&mut h, s);
+            hash_value(&mut h, s);
         }
         LayerSource::Text | LayerSource::Shape => {}
         LayerSource::Footage { item } if footage || cached_footage(ctx, ctx.media_item(layer, *item)) => {
             let item = ctx.media_item(layer, *item);
             let it = ctx.project.item(item)?;
             let ItemKind::Footage(f) = &it.kind else { return None };
-            hash_debug(&mut h, f);
+            hash_value(&mut h, f);
             // A proxy (and its Use Proxy switch) changes the pixels.
-            hash_debug(&mut h, &it.proxy);
+            hash_value(&mut h, &it.proxy);
             item.hash(&mut h);
             // A still is the same at every time (unless a proxy, which may be a movie, stands in).
             if f.kind != FootageKind::Still || it.proxy.is_some() {
@@ -931,14 +991,16 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
     // into the key: a Font override, effect parameter or any other source-affecting override
     // must not reuse another instance's processed buffer.
     hash_overrides(&mut h, ctx, layer.id);
-    hash_debug(&mut h, &layer.source);
+    hash_value(&mut h, &layer.source);
+    if effects != EffectScope::Footprint {
+        layer.plugin_data.hash(&mut h);
+    }
     // (Audio, Lock and Shy don't change pixels.)
-    hash_debug(&mut h, &layer.switches.pixels());
+    hash_value(&mut h, &layer.switches.pixels());
     // Mask motion blur and effects that read the shutter depend on whether the layer is motion
     // blurred in this render and on the comp's shutter. A footprint has no effects, so only its
     // masks put the shutter in the key.
-    if layer.masks().is_some_and(|m| !m.children.is_empty()) || (effects != EffectScope::Footprint && layer.effects().is_some_and(|fx| !fx.children.is_empty()))
-    {
+    if layer.masks().is_some_and(|m| !m.children.is_empty()) || (executed > 0 && layer.effects().is_some_and(|fx| !fx.children.is_empty())) {
         blur.hash(&mut h);
         ctx.comp.enable_motion_blur.hash(&mut h);
         ctx.comp.shutter_angle.to_bits().hash(&mut h);
@@ -971,25 +1033,24 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
                         seen <= n
                     }
                 });
-                hash_debug(&mut h, &first);
+                hash_value(&mut h, &first);
                 hash_values(&mut h, ctx, layer, &first);
                 continue;
             }
         }
         // Static structure: values, keyframes, expressions, enabled flags, effect ids, modes.
-        hash_debug(&mut h, c);
+        hash_value(&mut h, c);
         if let Node::Group(g) = c {
             hash_values(&mut h, ctx, layer, g);
         }
     }
     // Paint strokes appear and disappear with their Duration spans (not property values).
     // A footprint does not include them.
-    if effects != EffectScope::Footprint
-        && layer.switches.effects
+    if layer.switches.effects
         && let Some(fx) = layer.effects()
     {
         let lt = layer.layer_time(ctx.time).seconds();
-        for g in fx.groups().filter(|g| g.enabled && effectcraft_effects::paint::is_paint(g)) {
+        for g in fx.groups().take(executed).filter(|g| g.enabled && effectcraft_effects::paint::is_paint(g)) {
             effectcraft_effects::paint::cache_key(g, lt).0.hash(&mut h);
         }
     }
@@ -998,16 +1059,17 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
     if mask_motion_blur(ctx, layer, blur) {
         layer.layer_time(ctx.time).0.hash(&mut h);
     }
-    if time_dependent(layer, effects != EffectScope::Footprint) {
+    if time_dependent(layer, executed) {
         layer.layer_time(ctx.time).0.hash(&mut h);
         // Effects also see the layer's time mapping.
         layer.start_time.0.hash(&mut h);
         layer.stretch.to_bits().hash(&mut h);
     }
     // Effects that see the comp camera or lights (#397) change when they or the layer move.
-    if effects != EffectScope::Footprint && reads_comp_scene(layer) {
-        hash_debug(&mut h, &crate::comp_scene(ctx, layer));
+    if reads_comp_scene(layer, executed) {
+        hash_scene(&mut h, ctx, layer)?;
     }
+    effect_revisions(layer, executed).for_each(|revision| revision.hash(&mut h));
     Some(h.finish())
 }
 
@@ -1026,15 +1088,32 @@ pub(crate) fn reads_layers(ctx: &EvalCtx, layer: &Layer) -> bool {
     layer.switches.effects && layer.effects().is_some_and(|fx| fx.groups().any(|g| g.enabled && reads(ctx, layer, g, 0)))
 }
 
+pub(crate) fn effect_revisions(layer: &Layer, effects: usize) -> impl Iterator<Item = u64> {
+    layer.effects().into_iter().flat_map(move |fx| fx.groups().take(effects)).filter_map(|g| match &g.kind {
+        effectcraft_project::GroupKind::Effect { effect } => Some(effectcraft_effects::revision(effect)).filter(|r| *r != 0),
+        _ => None,
+    })
+}
+
+fn hash_scene(h: &mut KeyHasher, ctx: &EvalCtx, layer: &Layer) -> Option<()> {
+    hash_value(h, &crate::comp_scene(ctx, layer));
+    if reads_other_times(layer, None) {
+        if ctx.comp.layers.iter().any(|l| has_expression(&l.props)) {
+            return None;
+        }
+        hash_value(h, &ctx.comp.layers);
+    }
+    Some(())
+}
+
 /// Does the layer run an effect that reads the comp camera or lights (Card Dance, CC Particle
 /// World…)?
-fn reads_comp_scene(layer: &Layer) -> bool {
+fn reads_comp_scene(layer: &Layer, effects: usize) -> bool {
     layer.switches.effects
         && layer.effects().is_some_and(|fx| {
-            fx.groups().any(|g| {
-                g.enabled
-                    && matches!(&g.kind, effectcraft_project::GroupKind::Effect { effect } if effectcraft_effects::READS_COMP_SCENE.contains(&effect.as_str()))
-            })
+            fx.groups()
+                .take(effects)
+                .any(|g| g.enabled && matches!(&g.kind, effectcraft_project::GroupKind::Effect { effect } if effectcraft_effects::reads_comp_scene(effect)))
         })
 }
 
@@ -1044,7 +1123,7 @@ fn reads_comp_scene(layer: &Layer) -> bool {
 pub fn styles_key(ctx: &EvalCtx, layer: &Layer, content_key: u64) -> u64 {
     let mut h = KeyHasher(content_key ^ 0x9e37_79b9_7f4a_7c15);
     if let Some(g) = layer.layer_styles() {
-        hash_debug(&mut h, g);
+        hash_value(&mut h, g);
         hash_values(&mut h, ctx, layer, g);
     }
     h.finish()

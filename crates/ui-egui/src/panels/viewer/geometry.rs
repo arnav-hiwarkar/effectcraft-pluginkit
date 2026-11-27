@@ -17,6 +17,9 @@ pub(crate) fn l2c(ctx: &EvalCtx, layer: &Layer) -> (Mat3, f64) {
 /// `l2c` (layer → comp) applied from effect space instead: effect points and Puppet pins,
 /// measured from the top-left of the layer's effect bounds (see `effect_bounds`).
 pub(crate) fn from_effect_space(ctx: &EvalCtx, layer: &Layer, l2c: Mat3) -> Mat3 {
+    if layer.switches.adjustment {
+        return Mat3::IDENTITY;
+    }
     let o = ctx.effect_bounds(layer).1;
     l2c * Mat3::translate(gv2(o[0], o[1]))
 }

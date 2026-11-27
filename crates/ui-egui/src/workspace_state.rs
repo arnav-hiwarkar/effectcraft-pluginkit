@@ -28,6 +28,8 @@ struct Snapshot {
     focused: PanelKind,
     maximized: Option<PanelKind>,
     saved_workspaces: BTreeMap<String, Workspace>,
+    #[serde(default)]
+    plugin_instances: Vec<crate::panels::plugin_view::PanelInstance>,
 }
 
 impl Snapshot {
@@ -39,6 +41,7 @@ impl Snapshot {
             focused: ui.focused,
             maximized: ui.maximized,
             saved_workspaces: ui.saved_workspaces.clone(),
+            plugin_instances: ui.plugin_instances.clone(),
         }
     }
 
@@ -48,6 +51,7 @@ impl Snapshot {
         ui.focused = self.focused;
         ui.maximized = self.maximized;
         ui.saved_workspaces = self.saved_workspaces;
+        ui.plugin_instances = self.plugin_instances;
         // A native window's place is made safe to hand to the windowing system.
         for workspace in std::iter::once(&mut ui.dock).chain(ui.saved_workspaces.values_mut()) {
             for window in &mut workspace.layout.floating {

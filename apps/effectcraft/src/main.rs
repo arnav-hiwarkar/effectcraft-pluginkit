@@ -1,6 +1,6 @@
 //! EffectCraft desktop app.
 //!
-//! Usage: `effectcraft [--control <port>] [--demo|--empty|--home] [--] [project.ecproj | media files…]`
+//! Usage: `effectcraft [--control <port>] [--demo|--empty|--home] [--safe-mode] [--] [project.ecproj | media files…]`
 //!
 //! An unknown option or a bad port prints an error and exits with status 1 before anything starts.
 //!
@@ -26,11 +26,14 @@ mod crash_report;
 mod diagnostic_state;
 mod launch_guard;
 #[cfg(target_os = "macos")]
+mod mac_tablet;
+#[cfg(target_os = "macos")]
 mod native_menu;
 // Every native dialog. Built everywhere; only the macOS and Linux apps show the commands'
 // dialogs without blocking the frame.
 #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
 mod file_dialogs;
+mod plugin_clipboard;
 mod window;
 
 use effectcraft_ui_egui::EffectcraftApp;
@@ -63,6 +66,10 @@ fn app_icon() -> egui::IconData {
 
 /// Both native JSON projects and Save a Copy As XML projects are openable on launch.
 /// Keep this classification shared by project opening and the subsequent media-import pass.
+fn is_plugin_package(path: &str) -> bool {
+    std::path::Path::new(path).extension().and_then(std::ffi::OsStr::to_str).is_some_and(|ext| ext.eq_ignore_ascii_case("craftplugin"))
+}
+
 fn is_project_file(path: &str) -> bool {
     std::path::Path::new(path)
         .extension()
@@ -86,6 +93,7 @@ struct Args {
     demo: bool,
     /// Show or skip the Home screen (`--home`), else the Startup preference decides.
     home: Option<bool>,
+    safe_mode: bool,
 }
 
 /// Parse the arguments after the program name; `Ok(None)` for `--version`. `env_port` is
@@ -106,6 +114,7 @@ fn parse_args(args: impl IntoIterator<Item = String>, env_port: Result<String, s
             "--demo" => out.demo = true,
             "--empty" => out.demo = false,
             "--home" => out.home = Some(true),
+            "--safe-mode" => out.safe_mode = true,
             "--version" => return Ok(None),
             _ => match a.strip_prefix("--control=") {
                 Some(v) => out.control_port = Some(control_port("--control", Some(v))?),
@@ -171,27 +180,9 @@ fn install_file_dialogs(app: &mut EffectcraftApp) -> Option<std::sync::mpsc::Rec
     }
 }
 
-/// External effect helpers are native programs, so they start at launch only when the user opts
-/// in with `EFFECTCRAFT_HELPERS=1`: an environment variable, outside the settings folder, so
-/// writing there alone can't run code at launch. Otherwise Effect ▸ Scan for Effect Helpers
-/// starts them.
-fn start_helpers_if_opted_in(session: &mut effectcraft_engine::Session) {
-    if session.helpers.is_none() || std::env::var_os("EFFECTCRAFT_HELPERS").is_none_or(|v| v != "1") {
-        return;
-    }
-    match session.execute("effect.helpers.scan", json!({})) {
-        Ok(r) => {
-            for e in r["errors"].as_array().into_iter().flatten() {
-                log::warn!("effect helpers: {}", e.as_str().unwrap_or("error"));
-            }
-        }
-        Err(e) => log::warn!("effect helpers: {e}"),
-    }
-}
-
 /// Run a normal desktop launch: install logging and the panic hook, parse arguments (`--version` exits before the
 /// session log is attached), scan fonts, honor the launch guard's backend choice and open the eframe window.
-/// Builds the session, loads settings, plugins, the requested project/media and the optional control server, then
+/// Builds the session, loads settings, the requested project/media and the optional control server, then
 /// reports startup failure through `startup_failed`. Returns the event loop's result.
 fn main() -> eframe::Result {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
@@ -221,7 +212,7 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
     // feed the compatibility report.
     effectcraft_engine::logging::install();
     effectcraft_engine::logging::install_panic_hook();
-    let Args { control_port, files, demo, home } = match parse_args(std::env::args().skip(1), std::env::var("EFFECTCRAFT_CONTROL_PORT")) {
+    let Args { control_port, files, demo, home, safe_mode } = match parse_args(std::env::args().skip(1), std::env::var("EFFECTCRAFT_CONTROL_PORT")) {
         Ok(Some(args)) => args,
         Ok(None) => {
             println!("effectcraft {}", env!("CARGO_PKG_VERSION"));
@@ -340,6 +331,10 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
                 });
             }
             let mut session = effectcraft_host::session();
+            if safe_mode {
+                effectcraft_plugin::start_in_safe_mode();
+            }
+            effectcraft_plugin::install(&mut session, effectcraft_host::config_dir().as_deref());
             // Lazy open and non-blocking auto-save: footage is checked and auto-saves are
             // written on background threads (M13.14).
             session.check_footage_on_open = true;
@@ -347,17 +342,6 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
             // Settings, shortcut presets and the crash-recovery sentinel live in the platform
             // config directory. Agent-driven runs (`--control`) skip crash recovery.
             if let Some(dir) = effectcraft_host::config_dir() {
-                // WebAssembly effect plug-ins in <config>/Plug-ins load before the menus are built.
-                let plugins = dir.join(effectcraft_engine::commands::PLUGINS_DIR);
-                if plugins.is_dir() {
-                    let _ = session.execute("effect.plugins.load", json!({"folder": plugins.to_string_lossy()}));
-                    // Packages installed from the Plug-in Library (<config>/Plug-ins/Library).
-                    // Each package that fails to load is logged by the library itself.
-                    if let Err(e) = session.execute("library.loadInstalled", json!({})) {
-                        log::warn!("plug-in library: {e}");
-                    }
-                }
-                start_helpers_if_opted_in(&mut session);
                 session.config = Some(std::sync::Arc::new(effectcraft_engine::config::DirConfig::new(dir)));
             }
             session.load_settings();
@@ -376,7 +360,8 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
             } else if demo {
                 let _ = session.execute("file.openDemoProject", json!({}));
             }
-            let media: Vec<String> = files.iter().filter(|f| !is_project_file(f)).cloned().collect();
+            let packages: Vec<String> = files.iter().filter(|f| is_plugin_package(f)).cloned().collect();
+            let media: Vec<String> = files.iter().filter(|f| !is_project_file(f) && !is_plugin_package(f)).cloned().collect();
             if !media.is_empty()
                 && let Err(e) = session.execute("file.import", json!({"paths": media}))
             {
@@ -388,6 +373,7 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
             let _ = session.execute("window.restoreScriptPanels", json!({}));
             let mut app = EffectcraftApp::new(session);
             app.set_startup_update_check(startup_update_check(control_port));
+            app.open_plugin_packages(&packages);
             app.set_gpu_failure_bridge(gpu_failures);
             app.ui.start_screen = show_home;
             if let Some(n) = notice {
@@ -405,6 +391,7 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
             // Every dialog opens through `file_dialogs::guarded`: one that can't open is an error
             // in the status line, not a crash (#3084).
             let dialog_errors = file_dialogs::install_pickers(&mut app, &cc.egui_ctx);
+            plugin_clipboard::install();
             // The window closes after a lost graphics device (#591); say why, unless an agent drives
             // the app through the control channel.
             if control_port.is_none() {
@@ -430,6 +417,7 @@ fn run_desktop(reporter: &crash_report::Shutdown) -> eframe::Result {
             {
                 app.hooks.app_action = Some(Box::new(native_menu::app_action));
                 app.hooks.clipboard_text = Some(Box::new(native_menu::clipboard_text));
+                app.hooks.pen = mac_tablet::start();
             }
             if let Some(port) = control_port {
                 disable_app_nap();
@@ -592,9 +580,9 @@ impl eframe::App for Desktop {
             self.launch.exited();
             self.window.save(self.app.session.config.as_deref());
             self.app.on_exit();
-            effectcraft_host::stop_helpers();
             // Scripts in Scripts/Shutdown run with the project closed.
             let _ = self.app.session.execute("file.runShutdownScripts", json!({}));
+            effectcraft_plugin::end_run();
         }) {
             log::warn!("could not mark crash reporter clean after teardown: {error}");
         }
@@ -733,6 +721,7 @@ mod tests {
         assert_eq!(parse(&[]), Some(Args::default()));
         assert!(parse(&["--demo"]).is_some_and(|a| a.demo));
         assert!(parse(&["--demo", "--empty"]).is_some_and(|a| !a.demo));
+        assert!(parse(&["--safe-mode"]).is_some_and(|a| a.safe_mode));
         let a = parse(&["--control", "9877", "--home", "a.ecproj"]).unwrap_or_default();
         assert_eq!((a.control_port, a.home, a.files), (Some(9877), Some(true), vec!["a.ecproj".to_string()]));
         assert_eq!(parse(&["--version"]), None);

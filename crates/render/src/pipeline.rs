@@ -9,6 +9,7 @@ use super::{
     ItemId, ItemKind, Layer, LayerCache, LayerSource, Params, Project, Quality, Region, Renderer, Tick, cache, color, masks, shapes, styles, text, three_d,
     vec2,
 };
+use effectcraft_effects::Shown;
 use effectcraft_keyframe::Value;
 use effectcraft_project::LayerId;
 
@@ -18,6 +19,7 @@ pub(crate) struct EffectStack {
     pub adjustment: bool,
     pub limit: usize,
     pub origin: [f64; 2],
+    pub shown: Option<Shown>,
 }
 
 /// A footage layer's source as the decoded picture itself (see [`Renderer::footage_picture`]):
@@ -95,6 +97,10 @@ pub struct Collapsed {
 
 /// Cache key of a frame-blended footage frame: `seed` (which frames, how they mix, the footage
 /// file) and the Interpret Footage settings that change the decoded pixels.
+pub fn effect_instance(layer: &Layer, group: &effectcraft_project::PropGroup) -> u64 {
+    layer.id.0.wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(32) ^ group.uid
+}
+
 fn blended_frame_key(f: &Footage, seed: impl std::hash::Hash) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -696,12 +702,97 @@ impl<'a> Renderer<'a> {
             Some((_, _, rw, rh)) => (rw, rh),
             None => (w, h),
         };
-        let mut canvas = Image::new(w, h);
         if self.depth > 16 {
-            return canvas;
+            return Image::new(w, h);
         }
         let ctx = self.ctx(comp_id, comp, t);
-        self.draw_comp(&ctx, &mut canvas, true);
+        let key = self.static_frame_key(&ctx);
+        if let (Some(c), Some(k)) = (self.cache, key)
+            && let Some((frame, files)) = c.get_in_memory(k)
+        {
+            if let Some(log) = self.reads {
+                log.note_all(&files);
+            }
+            return frame.img.clone();
+        }
+        let canvas = Image::new(w, h);
+        let t0 = web_time::Instant::now();
+        let (canvas, files) = self.recorded(key, |r| r.finish_frame(&r.with_reads(&ctx), canvas));
+        if let (Some(c), Some(k)) = (self.cache_to_keep(), key)
+            && !files.files().iter().any(|f| f.stamp == crate::reads::FileStamp::Missing)
+        {
+            c.insert_in_memory(k, Arc::new(Buf { img: canvas.clone(), offset: [0.0; 2], scale: s }), files, t0.elapsed());
+        }
+        canvas
+    }
+
+    fn static_frame_key(&self, ctx: &EvalCtx<'a>) -> Option<u64> {
+        if !self.frame_cacheable() {
+            return None;
+        }
+        let mut contents = Vec::new();
+        for layer in ctx.comp.layers.iter() {
+            if !self.timeless_layer(ctx, layer) {
+                return None;
+            }
+            if layer.source.is_av() {
+                contents.push(self.content_cache_key(ctx, layer)?);
+            }
+        }
+        let visible: Vec<_> = self.visible_layers(ctx).iter().map(|l| l.id).collect();
+        Some(cache::frame_key(ctx, &contents, &visible, &self.opts))
+    }
+
+    fn frame_cacheable(&self) -> bool {
+        let top = self.depth == 0 && self.top && self.outer.is_none() && self.inherited.is_none() && self.collapse3d.is_none();
+        self.cache.is_some() && top && !self.whole_raster && self.opacity_mul == 1.0 && self.through.iter().all(Option::is_none)
+    }
+
+    fn timeless_layer(&self, ctx: &EvalCtx<'a>, layer: &Layer) -> bool {
+        if layer.is_3d() || layer.track_matte.is_some() || !cache::timeless(layer) || self.reads_footage_rows(ctx, layer) {
+            return false;
+        }
+        let LayerSource::Footage { item } = &layer.source else { return true };
+        self.project
+            .item(ctx.media_item(layer, *item))
+            .is_some_and(|it| it.proxy.is_none() && matches!(&it.kind, ItemKind::Footage(f) if f.kind == effectcraft_project::FootageKind::Still))
+    }
+
+    fn static_base_key(&self, ctx: &EvalCtx<'a>, visible: &[&'a Layer]) -> Option<(usize, u64)> {
+        let mut contents = Vec::new();
+        let mut ids = Vec::new();
+        for layer in visible {
+            let still_parents =
+                std::iter::successors(layer.parent.and_then(|p| ctx.layer(p)), |l| l.parent.and_then(|p| ctx.layer(p))).take(64).all(cache::timeless);
+            let base = still_parents && !layer.switches.adjustment && !layer.switches.collapse && self.timeless_layer(ctx, layer);
+            let Some(key) = base.then(|| self.content_cache_key(ctx, layer)).flatten() else { break };
+            contents.push(key);
+            ids.push(layer.id);
+        }
+        (!ids.is_empty() && ids.len() < visible.len()).then(|| (ids.len(), cache::derive(cache::frame_key(ctx, &contents, &ids, &self.opts), 0xba5e)))
+    }
+
+    fn draw_static_base(&self, ctx: &EvalCtx<'a>, visible: &[&'a Layer], canvas: &mut Image) -> usize {
+        let (Some(c), Some((n, key))) = (self.cache, self.static_base_key(ctx, visible)) else { return 0 };
+        if let Some((base, files)) = c.get_in_memory(key) {
+            if let Some(log) = self.reads {
+                log.note_all(&files);
+            }
+            canvas.clone_from(&base.img);
+            return n;
+        }
+        let t0 = web_time::Instant::now();
+        let ((), files) = self.recorded(Some(key), |r| r.draw_layers(&r.with_reads(ctx), &visible[..n], canvas, true));
+        if let Some(c) = self.cache_to_keep()
+            && !files.files().iter().any(|f| f.stamp == crate::reads::FileStamp::Missing)
+        {
+            c.insert_in_memory(key, Arc::new(Buf { img: canvas.clone(), offset: [0.0; 2], scale: self.opts.scale }), files, t0.elapsed());
+        }
+        n
+    }
+
+    fn finish_frame(&self, ctx: &EvalCtx<'a>, mut canvas: Image) -> Image {
+        self.draw_comp(ctx, &mut canvas, true);
         // The canvas is already quantised after every layer; only re-encoding changes it.
         if let Some(c) = self.pipe.from_blend() {
             color::convert(&mut canvas, &c);
@@ -726,9 +817,14 @@ impl<'a> Renderer<'a> {
 
     /// Draw a comp's layers (bottom to top) into `canvas` (blending space).
     /// `blank`: the canvas is fully transparent (lets the first layer skip re-quantising).
-    fn draw_comp(&self, ctx: &EvalCtx<'a>, canvas: &mut Image, mut blank: bool) {
-        // Bottom-to-top, with runs of consecutive 3D layers depth-sorted (farthest first).
+    fn draw_comp(&self, ctx: &EvalCtx<'a>, canvas: &mut Image, blank: bool) {
         let visible = self.visible_layers(ctx);
+        let base = if blank && self.frame_cacheable() { self.draw_static_base(ctx, &visible, canvas) } else { 0 };
+        self.draw_layers(ctx, &visible[base..], canvas, blank && base == 0);
+    }
+
+    fn draw_layers(&self, ctx: &EvalCtx<'a>, visible: &[&'a Layer], canvas: &mut Image, mut blank: bool) {
+        // Bottom-to-top, with runs of consecutive 3D layers depth-sorted (farthest first).
         let mut i = 0;
         while i < visible.len() {
             if visible[i].is_3d() {
@@ -761,16 +857,16 @@ impl<'a> Renderer<'a> {
     }
 
     pub(crate) fn apply_effects(&self, ctx: &EvalCtx, layer: &Layer, buf: Buf, adjustment: bool) -> Buf {
-        self.apply_effects_timed(ctx, layer, buf, adjustment, usize::MAX, None)
+        self.apply_effects_timed(ctx, layer, buf, EffectStack { adjustment, limit: usize::MAX, origin: [0.0; 2], shown: None }, None)
     }
 
     /// Run the first `limit` effects of the layer's stack (by position; disabled ones count) on
     /// `buf` (layer space, or the comp below for an adjustment layer).
-    fn apply_effects_timed(&self, ctx: &EvalCtx, layer: &Layer, mut buf: Buf, adjustment: bool, limit: usize, timing: Option<&mut Vec<(String, f64)>>) -> Buf {
+    fn apply_effects_timed(&self, ctx: &EvalCtx, layer: &Layer, mut buf: Buf, stack: EffectStack, timing: Option<&mut Vec<(String, f64)>>) -> Buf {
         // The comp below an adjustment layer is not in its layer space: it stays as it is.
-        let origin = if adjustment { [0.0; 2] } else { ctx.effect_bounds(layer).1 };
+        let origin = if stack.adjustment { [0.0; 2] } else { ctx.effect_bounds(layer).1 };
         buf.rebase(origin);
-        let mut out = self.effect_space_stack(ctx, layer, buf, EffectStack { adjustment, limit, origin }, timing);
+        let mut out = self.effect_space_stack(ctx, layer, buf, EffectStack { origin, ..stack }, timing);
         out.rebase([-origin[0], -origin[1]]);
         out
     }
@@ -795,7 +891,7 @@ impl<'a> Renderer<'a> {
         mut timing: Option<&mut Vec<(String, f64)>>,
         target: &mut dyn FxTarget,
     ) {
-        let EffectStack { adjustment, limit, origin } = stack;
+        let EffectStack { adjustment, limit, origin, shown } = stack;
         if !layer.switches.effects {
             return;
         }
@@ -820,7 +916,7 @@ impl<'a> Renderer<'a> {
         // Effects not known to stay inside their own margins (Twirl, Bulge, Transform, ...) still
         // get the cover: they move content past the painted bounds without growing the buffer.
         let video = || {
-            fx.groups().filter(|g| g.enabled).filter_map(|g| match &g.kind {
+            fx.groups().take(limit).filter(|g| g.enabled).filter_map(|g| match &g.kind {
                 GroupKind::Effect { effect } => effectcraft_effects::find(effect).filter(|s| !effectcraft_effects::audio_fx::is_audio_effect(s.id)),
                 _ => None,
             })
@@ -849,7 +945,7 @@ impl<'a> Renderer<'a> {
                 buf
             });
         }
-        let host = FxHost { r: self, ctx, layer, origin, index: 0, original: original.as_ref() };
+        let host = FxHost { r: self, ctx, layer, origin, index: 0, original: original.as_ref(), shown: None };
         let env = EffectEnv {
             masks: &mask_shapes,
             host: Some(&host),
@@ -861,6 +957,9 @@ impl<'a> Renderer<'a> {
             float_depth: self.pipe.levels.is_none(),
             shutter: self.mb_on(ctx, layer).then_some((ctx.comp.shutter_angle, ctx.comp.shutter_phase, ctx.comp.motion_blur_samples)),
             layer_span: crate::eval::layer_span(self.project, layer),
+            instance: 0,
+            quantize_output: None,
+            input_quantized: false,
         };
         // Video effects in stack order (index, group, spec); disabled and audio effects skipped.
         let stack: Vec<(usize, &effectcraft_project::PropGroup, &'static effectcraft_effects::EffectSpec)> = fx
@@ -874,7 +973,9 @@ impl<'a> Renderer<'a> {
             })
             .filter(|(_, _, s)| !effectcraft_effects::audio_fx::is_audio_effect(s.id))
             .collect();
+        let shown_after = self.shown_after(ctx, layer, &stack, shown);
         let accel = self.active_accel();
+        let mut input_quantized = false;
         let mut k = 0;
         while k < stack.len() {
             let (i, g, spec) = stack[k];
@@ -898,7 +999,7 @@ impl<'a> Renderer<'a> {
                             layer_size,
                             seed: g.uid as u32,
                             adjustment,
-                            env: EffectEnv { host: Some(host), effect_index: *i, ..env },
+                            env: EffectEnv { host: Some(host), effect_index: *i, instance: effect_instance(layer, g), ..env },
                         },
                     })
                     .collect();
@@ -909,21 +1010,26 @@ impl<'a> Renderer<'a> {
                         v.extend(run.iter().map(|(_, _, s)| (format!("{} (gpu)", s.id), ms)));
                     }
                     k += run.len();
+                    input_quantized = false;
                     continue;
                 }
             }
             k += 1;
             let params = self.effect_params(ctx, layer, g);
-            let host = FxHost { index: i, ..host };
-            let env = EffectEnv { host: Some(&host), effect_index: i, ..env };
+            let host = FxHost { index: i, shown: shown_after[k - 1], ..host };
+            let quantize_output = self.pipe.levels.filter(|_| spec.quantizes_output());
+            let env = EffectEnv { host: Some(&host), effect_index: i, instance: effect_instance(layer, g), quantize_output, input_quantized, ..env };
             let ectx = EffectCtx { params: &params, time: lt.seconds(), layer_size, seed: g.uid as u32, adjustment, env };
             let t0 = web_time::Instant::now();
             target.cpu(&mut |buf| {
                 let mut buf = effectcraft_effects::apply(spec, &ectx, buf);
                 // 8/16 bpc effects write integer pixels.
-                self.pipe.quantize(&mut buf.img);
+                if quantize_output.is_none() {
+                    self.pipe.quantize(&mut buf.img);
+                }
                 buf
             });
+            input_quantized = self.pipe.levels.is_some();
             if let Some(v) = timing.as_deref_mut() {
                 v.push((spec.id.to_string(), t0.elapsed().as_secs_f64() * 1e3));
             }
@@ -1254,7 +1360,7 @@ impl<'a> Renderer<'a> {
         {
             return None;
         }
-        let fx_margin = effects_margin(ctx, layer)?;
+        let fx_margin = effects_margin(ctx, layer, self.raster_scale(ctx, layer))?;
         // (a source that reads whole frames anyway: the whole frame, which the layer cache keeps)
         if comp_reads_pixels(ctx) || !self.footage.reads_rows(f, ctx.source_time(layer)) {
             return None;
@@ -1512,6 +1618,11 @@ impl<'a> Renderer<'a> {
         self.content_buf_timed(ctx, layer, None).map(|(b, _, _)| b)
     }
 
+    fn content_cache_key(&self, ctx: &EvalCtx, layer: &Layer) -> Option<u64> {
+        let key = self.cache.and_then(|_| cache::layer_key(ctx, layer, self.raster_scale(ctx, layer), self.opts.draft, self.mb_on(ctx, layer)));
+        self.content_key(ctx, layer, self.clipped_key(ctx, layer, key))
+    }
+
     /// [`Self::content_buf`], its cache key and the source files it was made of.
     pub(crate) fn content_buf_timed(
         &self,
@@ -1519,8 +1630,7 @@ impl<'a> Renderer<'a> {
         layer: &Layer,
         mut timing: Option<&mut LayerTiming>,
     ) -> Option<(Arc<Buf>, Option<u64>, Arc<ReadFiles>)> {
-        let key = self.cache.and_then(|_| cache::layer_key(ctx, layer, self.raster_scale(ctx, layer), self.opts.draft, self.mb_on(ctx, layer)));
-        let key = self.content_key(ctx, layer, self.clipped_key(ctx, layer, key));
+        let key = self.content_cache_key(ctx, layer);
         if let Some((b, files)) = self.cached(key) {
             if let Some(t) = timing.as_deref_mut() {
                 t.cached = true;
@@ -1530,11 +1640,24 @@ impl<'a> Renderer<'a> {
         // A footage layer read in part (a region of interest, #3271) isn't kept: its key names
         // the whole layer (a whole buffer kept before is used above).
         let key = key.filter(|_| !self.reads_footage_rows(ctx, layer));
+        let shown = self.shown_part(ctx, layer);
+        let key = match shown {
+            Some(shown) => {
+                let key =
+                    key.map(|key| shown.part.iter().fold(cache::derive(key, 0x5_0e0 + u64::from(shown.grid)), |key, side| cache::derive(key, side.to_bits())));
+                if let Some((b, files)) = self.cached(key) {
+                    return Some((b, key, files));
+                }
+                key
+            }
+            None => key,
+        };
         let (buf, files) = self.recorded(key, |r| {
             // (what expressions read while it is made, at shutter times too, goes to its files)
             let ctx = &r.with_reads(ctx);
             let buf = r.masked_source(ctx, layer)?;
-            Some(r.apply_effects_timed(ctx, layer, buf, false, usize::MAX, timing.map(|t| &mut t.effects)))
+            let stack = EffectStack { adjustment: false, limit: usize::MAX, origin: [0.0; 2], shown };
+            Some(r.apply_effects_timed(ctx, layer, buf, stack, timing.map(|t| &mut t.effects)))
         });
         let (buf, files) = self.keep(key, Arc::new(buf?), &files);
         Some((buf, key, files))
@@ -1563,7 +1686,7 @@ impl<'a> Renderer<'a> {
             let origin = ctx.effect_bounds(layer).1;
             buf.rebase(origin);
             if effects > 0 {
-                buf = r.effect_space_stack(ctx, layer, buf, EffectStack { adjustment: false, limit: effects, origin }, None);
+                buf = r.effect_space_stack(ctx, layer, buf, EffectStack { adjustment: false, limit: effects, origin, shown: None }, None);
             }
             Some(buf)
         });
@@ -1571,19 +1694,93 @@ impl<'a> Renderer<'a> {
     }
 }
 
-/// How far the enabled effects of `layer` reach around a pixel (layer pixels), `None` when one
-/// doesn't declare it (`effectcraft_effects::pixel_margin`).
-fn effects_margin(ctx: &EvalCtx, layer: &Layer) -> Option<f64> {
+const SHOWN_SNAP: f64 = 64.0;
+
+impl Renderer<'_> {
+    fn shown_part(&self, ctx: &EvalCtx, layer: &Layer) -> Option<Shown> {
+        let plugin_effect = layer
+            .effects()
+            .into_iter()
+            .flat_map(|fx| fx.groups())
+            .any(|g| g.enabled && matches!(&g.kind, GroupKind::Effect { effect } if effectcraft_effects::dynamic::get(effect).is_some()));
+        let whole = !plugin_effect
+            || !layer.switches.effects
+            || !self.top
+            || self.whole_raster
+            || self.depth > 0
+            || self.outer.is_some()
+            || self.collapse3d.is_some()
+            || layer.switches.adjustment
+            || layer.switches.three_d
+            || self.mb_on(ctx, layer)
+            || styles::group(layer).is_some()
+            || comp_reads_pixels(ctx);
+        if whole {
+            return None;
+        }
+        let view = self.opts.roi.unwrap_or([0.0, 0.0, f64::from(ctx.comp.width), f64::from(ctx.comp.height)]);
+        let to_comp = ctx.effect_to_comp(layer);
+        let to_effect = to_comp.inverse()?;
+        let corners = [[view[0], view[1]], [view[0] + view[2], view[1]], [view[0], view[1] + view[3]], [view[0] + view[2], view[1] + view[3]]]
+            .map(|[x, y]| to_effect.apply(vec2(x, y)));
+        let (lo, hi) = corners
+            .iter()
+            .fold(([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]), |(lo, hi), p| ([lo[0].min(p.x), lo[1].min(p.y)], [hi[0].max(p.x), hi[1].max(p.y)]));
+        let s = self.opts.scale.max(1e-3);
+        let k = [vec2(1.0, 0.0), vec2(0.0, 1.0)].iter().map(|v| to_effect.apply_vec(*v).length()).fold(1.0f64, f64::max);
+        let margin = 2.0 + (2.0 / s).ceil() + (2.0 * k / s).ceil();
+        let mut shrink = s * to_comp.mean_scale() / self.raster_scale(ctx, layer);
+        let mut grid = 1u32;
+        while shrink < 0.5 + 1e-9 && grid < 1 << 16 {
+            (shrink, grid) = (shrink * 2.0, grid * 2);
+        }
+        let snap = SHOWN_SNAP * f64::from(grid);
+        let [lo, hi] = [lo.map(|side| ((side - margin) / snap).floor() * snap), hi.map(|side| ((side + margin) / snap).ceil() * snap)];
+        let part = [lo[0], lo[1], hi[0], hi[1]];
+        let size = ctx.effect_bounds(layer).0;
+        let covers = part[0] <= 0.0 && part[1] <= 0.0 && part[2] >= size[0] && part[3] >= size[1];
+        (part.iter().all(|side| side.is_finite()) && !covers).then_some(Shown { part, grid })
+    }
+
+    fn shown_after(
+        &self,
+        ctx: &EvalCtx,
+        layer: &Layer,
+        stack: &[(usize, &effectcraft_project::PropGroup, &'static effectcraft_effects::EffectSpec)],
+        shown: Option<Shown>,
+    ) -> Vec<Option<Shown>> {
+        let mut parts = vec![None; stack.len()];
+        let mut part = shown;
+        let scale = self.raster_scale(ctx, layer);
+        for (slot, (_, g, spec)) in parts.iter_mut().zip(stack).rev() {
+            *slot = part;
+            let margin = part.and_then(|_| effect_margin(ctx, layer, g, spec.id, scale));
+            part = part.zip(margin).map(|(Shown { part: p, grid }, m)| Shown { part: [p[0] - m, p[1] - m, p[2] + m, p[3] + m], grid });
+        }
+        parts
+    }
+}
+
+/// How far the enabled effects of `layer` reach together around a pixel (layer pixels) on a grid of
+/// `scale`, `None` when one doesn't declare it (`effectcraft_effects::pixel_margin`).
+fn effects_margin(ctx: &EvalCtx, layer: &Layer, scale: f64) -> Option<f64> {
     if !layer.switches.effects {
         return Some(0.0);
     }
-    let mut most: f64 = 0.0;
+    let mut reach = 0.0;
     for g in layer.effects().into_iter().flat_map(|fx| fx.groups()).filter(|g| g.enabled) {
         let effectcraft_project::GroupKind::Effect { effect } = &g.kind else { return None };
-        let params = effectcraft_effects::flatten_params(g, &mut |p| ctx.value(layer, p));
-        most = most.max(effectcraft_effects::pixel_margin(effect, &params)?);
+        reach += effect_margin(ctx, layer, g, effect, scale)?;
     }
-    Some(most)
+    Some(reach)
+}
+
+fn effect_margin(ctx: &EvalCtx, layer: &Layer, g: &effectcraft_project::PropGroup, effect: &str, scale: f64) -> Option<f64> {
+    let params = effectcraft_effects::flatten_params(g, &mut |p| ctx.value(layer, p));
+    let time = layer.layer_time(ctx.time).seconds();
+    let effect_ctx =
+        EffectCtx { params: &params, time, layer_size: ctx.effect_bounds(layer).0, seed: g.uid as u32, adjustment: false, env: EffectEnv::default() };
+    effectcraft_effects::pixel_margin(effect, &effect_ctx, scale)
 }
 
 /// Does anything in the comp read layers' pixels where it likes: an enabled effect with a layer

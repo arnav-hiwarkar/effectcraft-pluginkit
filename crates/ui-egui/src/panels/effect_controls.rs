@@ -38,6 +38,8 @@ use crate::{EffectcraftApp, widgets};
 mod common;
 mod editors;
 mod panel;
+mod plugin_overlay;
+pub(crate) use plugin_overlay::{draw_marks, handle_has_focus};
 mod rows;
 mod viewer;
 

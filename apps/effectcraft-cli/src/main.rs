@@ -12,7 +12,7 @@
 //! effectcraft-cli get <comp> <layer> <path> [--time S]        read a property
 //! effectcraft-cli set <comp> <layer> <path> <value> [--time S] [--expression E]
 //! effectcraft-cli render-frame [--comp C] [--time S|--frame N] [--max-side PX|--scale K] [--out F.png] [--transparent]
-//! effectcraft-cli render [--comp C] --out FILE [--format h264|hevc|av1|prores|webm|png|jpeg|tiff|exr|tga|gif|wav|aiff] [--start S] [--end S]
+//! effectcraft-cli render [--comp C] --out FILE [--format h264|hevc|av1|prores|webm|png|jpeg|tiff|exr|tga|gif|wav|aiff] [--start S] [--end S] [--without-missing-plugins]
 //!     [--work-area] [--fps N] [--resolution full|half|third|quarter|K] [--quality best|draft] [--channels rgb|rgba]
 //!     [--jpeg-quality N] [--bitrate KBPS] [--prores proxy|lt|standard|hq|4444|4444xq] [--audio auto|on|off]
 //!     [--profile main|main10] [--level auto|4.1] [--rate-control bitrate|quality] [--video-quality 1-100]
@@ -24,7 +24,7 @@
 //! effectcraft-cli render --template T.ectemplate [--values V.json] --out FILE
 //! effectcraft-cli render-frame --template T.ectemplate [--values V.json] [--time S] [--out F.png]
 //! effectcraft-cli render F.ecproj --queue                    render the project's Render Queue
-//! effectcraft-cli bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--gpu [--adv3d]]   render timings
+//! effectcraft-cli bench [--comp C] [--time S] [--scale K] [--roi X,Y,W,H] [--n N] [--play N] [--cached] [--gpu [--adv3d]]   render timings
 //!     (--gpu: CPU vs GPU ms/frame for every comp at Full and Half)
 //! effectcraft-cli bench --ops [--small] [--layers N] [--comps N] [--footage N]   everyday-operation timings
 //!     on a large generated project (open, save, auto-save, undo/redo, timeline, Project panel)
@@ -112,7 +112,7 @@ const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|se
   get <comp> <layer> <path> [--time S]     read a property
   set <comp> <layer> <path> <value> [--time S] [--expression E]
   render-frame [--comp C] [--time S | --frame N] [--max-side PX | --scale K] [--out F.png] [--transparent]
-  render [--comp C] --out FILE [--format F] [--start S] [--end S] [--work-area] [--fps N]
+  render [--comp C] --out FILE [--format F] [--start S] [--end S] [--work-area] [--fps N] [--without-missing-plugins]
          [--resolution full|half|third|quarter|K] [--quality best|draft] [--channels rgb|rgba]
          [--jpeg-quality N] [--bitrate KBPS] [--prores PROFILE] [--audio auto|on|off]
          [--profile main|main10] [--level auto|4.1] [--rate-control bitrate|quality] [--video-quality N]
@@ -127,7 +127,7 @@ const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|se
                                            --progress: progress lines on stderr when it is not a terminal
                                            (progress <frames done> <total> <seconds elapsed> <seconds left|->)
   render/render-frame --template T.ectemplate [--values V.json]   render one template instance
-  bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--gpu [--adv3d]]   per-layer/effect render timings;
+  bench [--comp C] [--time S] [--scale K] [--roi X,Y,W,H] [--n N] [--play N] [--cached] [--gpu [--adv3d]]   per-layer/effect render timings;
                                            --play N renders N consecutive frames with/without the layer cache;
                                            --gpu compares CPU and GPU ms/frame for every comp at Full and Half
   bench --ops [--small] [--layers N] [--comps N] [--footage N]
@@ -158,6 +158,7 @@ const VALUED: &[&str] = &[
     "--sam2",
     "--mobilesam",
     "--play",
+    "--roi",
     "--layers",
     "--comps",
     "--footage",
@@ -223,11 +224,13 @@ const FLAGS: &[&str] = &[
     "--queue",
     "--ops",
     "--roto",
+    "--cached",
     "--small",
     "--adv3d",
     "--autosave",
     "--keep-going",
     "--progress",
+    "--without-missing-plugins",
 ];
 
 struct Args {
@@ -334,7 +337,9 @@ fn main() {
         fail_usage("missing subcommand");
     }
     let cmd = args.pos.remove(0);
-    match run(&cmd, &args, json_out) {
+    let result = run(&cmd, &args, json_out);
+    effectcraft_plugin::end_run();
+    match result {
         Ok(()) if stdout_broken() => std::process::exit(1),
         Ok(()) => {}
         Err(Failure::Usage(e)) => fail_usage(&e),
@@ -475,6 +480,7 @@ fn backend(args: &Args, default_demo: bool) -> Result<Backend, Failure> {
 /// default).
 fn session(args: &Args) -> Result<effectcraft_engine::Session, Failure> {
     let mut s = effectcraft_host::headless_session();
+    effectcraft_plugin::install(&mut s, effectcraft_host::config_dir().as_deref());
     if args.flag("--autosave") {
         let dir = effectcraft_host::config_dir().ok_or_else(|| Failure::Error("--autosave: no config directory; set EFFECTCRAFT_CONFIG_DIR".into()))?;
         // Read only auto-save settings. Opting in must not change headless rendering or load
@@ -493,6 +499,14 @@ fn session(args: &Args) -> Result<effectcraft_engine::Session, Failure> {
         s.accel_note = Some("headless: renders on the CPU unless started with --gpu".into());
     }
     Ok(s)
+}
+
+fn finish_plugin_tasks(b: &mut Backend) -> Result<(), Failure> {
+    let finished = b.session().is_none_or(|s| effectcraft_plugin::wait_for_tasks(s, effectcraft_plugin::DEFAULT_WAIT));
+    if !finished {
+        return Err(Failure::Error(format!("plug-in tasks were still running after {} s", effectcraft_plugin::DEFAULT_WAIT)));
+    }
+    Ok(())
 }
 
 /// `--save` / `--save-as` after a mutating command.
@@ -551,6 +565,7 @@ fn script_cmd(args: &Args, json_out: bool) -> Result<(), Failure> {
         };
         let msg = format!("{}{pos}: {}", e["file"].as_str().unwrap_or(&name), e["message"].as_str().unwrap_or("script error"));
         if json_out {
+            effectcraft_plugin::end_run();
             std::process::exit(1);
         }
         return Err(Failure::Error(msg));
@@ -606,6 +621,7 @@ fn replay_cmd(args: &Args, json_out: bool) -> Result<(), Failure> {
     );
     if json_out {
         note!("effectcraft-cli replay: {msg}");
+        effectcraft_plugin::end_run();
         std::process::exit(1);
     }
     Err(Failure::Error(msg))
@@ -686,6 +702,7 @@ fn run(cmd: &str, args: &Args, json_out: bool) -> Result<(), Failure> {
             if let Some(e) = failed_render(&id, &r) {
                 return Err(Failure::Error(e));
             }
+            finish_plugin_tasks(&mut b)?;
             let saved = maybe_save(&mut b, args)?;
             emit(&with_saved(r, saved), json_out);
         }
@@ -731,6 +748,9 @@ fn run(cmd: &str, args: &Args, json_out: bool) -> Result<(), Failure> {
             // the leading `<id>: `.
             for (n, (id, params)) in steps.into_iter().enumerate() {
                 let r = b.exec(&id, params).map_err(|e| Failure::Error(format!("{id}: {e} (step {n})")))?;
+                if let Some(s) = b.session() {
+                    effectcraft_plugin::pump(s);
+                }
                 if let Some(e) = failed_render(&id, &r) {
                     return Err(Failure::Error(format!("{id}: {e} (step {n})")));
                 }
@@ -739,6 +759,7 @@ fn run(cmd: &str, args: &Args, json_out: bool) -> Result<(), Failure> {
                 }
                 results.push(json!({"command": id, "result": r}));
             }
+            finish_plugin_tasks(&mut b)?;
             let saved = maybe_save(&mut b, args)?;
             if json_out {
                 emit(&with_saved(json!(results), saved), true);
@@ -976,13 +997,14 @@ fn render(args: &Args, json_out: bool) -> Result<(), Failure> {
         );
     }
     let attempted: std::collections::HashSet<u64> = s.project.render_queue.iter().filter(|i| i.is_queued()).map(|i| i.id).collect();
-    s.execute("renderQueue.render", json!({"wait": false})).map_err(err)?;
+    s.execute("renderQueue.render", json!({"wait": false, "withoutMissingPlugins": args.flag("--without-missing-plugins")})).map_err(err)?;
     let tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
     // `--progress`: one line per update for a program reading stderr (a terminal gets the live line).
     let lines = args.flag("--progress") && !tty;
     let (mut last_line, mut last_done) = (std::time::Instant::now(), u64::MAX);
     while s.is_rendering() {
         std::thread::sleep(std::time::Duration::from_millis(100));
+        effectcraft_plugin::pump(&mut s);
         if lines
             && last_line.elapsed() >= std::time::Duration::from_millis(250)
             && let Some(p) = s.render_progress()
@@ -1064,7 +1086,7 @@ fn bench_cmd(args: &Args) -> Result<(), Failure> {
     if args.flag("--roto") {
         return bench_roto(args);
     }
-    let mut s = effectcraft_host::session();
+    let mut s = session(args)?;
     match &args.project {
         Some(p) => s.execute("file.open", json!({"path": p})),
         None => s.execute("file.openDemoProject", json!({})),
@@ -1078,12 +1100,21 @@ fn bench_cmd(args: &Args) -> Result<(), Failure> {
     }
     let cid = s.active_comp_id().ok_or_else(|| Failure::Error("no composition".into()))?;
     let t = Tick::from_seconds_f64(args.num("--time")?.unwrap_or(3.0));
-    let opts = RenderOpts { scale: args.num("--scale")?.unwrap_or(1.0), ..Default::default() };
+    let roi = args.opt("--roi").map(parse_roi).transpose().map_err(Failure::Usage)?;
+    let opts = RenderOpts { scale: args.num("--scale")?.unwrap_or(1.0), roi, ..Default::default() };
     bench(&s, cid, t, opts, args.num("--n")?.unwrap_or(10.0).max(1.0) as usize);
     if let Some(n) = args.num("--play")? {
         bench_play(&s, cid, t, opts, n.max(1.0) as usize);
     }
+    if args.flag("--cached") {
+        bench_cached(&s, cid, t, opts, args.num("--n")?.unwrap_or(10.0).max(1.0) as usize);
+    }
     Ok(())
+}
+
+fn parse_roi(text: &str) -> Result<[f64; 4], String> {
+    let parts = text.split(',').map(|p| p.trim().parse::<f64>()).collect::<Result<Vec<_>, _>>().map_err(|_| format!("--roi: not four numbers: {text}"))?;
+    <[f64; 4]>::try_from(parts).map_err(|_| format!("--roi needs x,y,w,h: {text}"))
 }
 
 /// The model a bench option asks for: the file named on the command line, where failing to read or
@@ -1345,6 +1376,24 @@ fn bench_play(s: &Session, cid: ItemId, t: Tick, opts: RenderOpts, n: usize) {
     }
     let st = cache.stats();
     note!("  layer cache: {} hits, {} misses, {} entries, {:.1} MB", st.hits, st.misses, st.entries, st.bytes as f64 / 1e6);
+}
+
+/// `bench --cached`: median of `n` renders of the frame at `t` from a layer cache that already
+/// holds it, and of `n` renders of the next frame from a cache that holds frame `t`.
+fn bench_cached(s: &Session, cid: ItemId, t: Tick, opts: RenderOpts, n: usize) {
+    let Some(comp) = s.project.comp(cid) else { return };
+    let next = comp.frame_rate.tick_of(comp.frame_rate.frame_at(t) + 1);
+    let cache = LayerCache::default();
+    render_timed(s, cid, t, opts, Some(&cache));
+    let mut hit: Vec<f64> = (0..n).map(|_| render_timed(s, cid, t, opts, Some(&cache)).0).collect();
+    let mut step: Vec<f64> = (0..n)
+        .map(|_| {
+            let warm = LayerCache::default();
+            render_timed(s, cid, t, opts, Some(&warm));
+            render_timed(s, cid, next, opts, Some(&warm)).0
+        })
+        .collect();
+    note!("bench-cached: same frame median {:.2} ms; next frame median {:.2} ms", median(&mut hit), median(&mut step));
 }
 
 /// Median wall time (ms) of `n` runs of `f` after one warm-up run.
@@ -1626,6 +1675,13 @@ fn value_text(p: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bench_region_is_four_numbers() {
+        assert_eq!(parse_roi("1280, 720,640,360"), Ok([1280.0, 720.0, 640.0, 360.0]));
+        assert!(parse_roi("1,2,3").is_err());
+        assert!(parse_roi("a,b,c,d").is_err());
+    }
 
     fn parse(args: &[&str]) -> Result<Args, String> {
         Args::parse(args.iter().map(|a| a.to_string()).collect())

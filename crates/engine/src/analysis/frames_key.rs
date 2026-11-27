@@ -523,6 +523,7 @@ impl Text {
             environment,
             environment_background,
             props,
+            plugin_data,
         } = l;
         self.field("layer", id.0);
         // Expressions find layers by name (`thisComp.layer("Clip")`), as they find effects.
@@ -551,6 +552,12 @@ impl Text {
         self.opt("parent", parent.as_ref(), |t, id| t.field("id", id.0));
         self.form("autoOrient", auto_orient);
         self.field("environment", format_args!("{environment}/{environment_background}"));
+        self.field("pluginData", {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::hash::DefaultHasher::new();
+            plugin_data.hash(&mut hasher);
+            hasher.finish()
+        });
         self.group(props, 0);
     }
 
@@ -582,7 +589,7 @@ impl Text {
     fn group(&mut self, g: &PropGroup, depth: usize) {
         // Expressions find effects and groups by name (`effect("Blur")`, `propertyGroup(1).name`).
         // The uid and colour label never change pixels.
-        let PropGroup { uid: _, match_id, name, kind, enabled, label: _, children } = g;
+        let PropGroup { uid: _, match_id, name, kind, enabled, label: _, children, state_version: _ } = g;
         if depth >= MAX_DEPTH {
             self.word("tooDeep");
             return;

@@ -11,6 +11,7 @@ pub mod build;
 pub mod essential;
 mod file_check;
 pub mod limits;
+pub mod plugin_data;
 pub mod props;
 pub mod render_queue;
 pub mod render_templates;
@@ -44,8 +45,8 @@ pub use footage::{AlphaMode, CineonSettings, CineonUnits, FieldOrder, Footage, F
 pub use item::NO_LAYER;
 pub use item::{Heard, Item, ItemId, ItemKind, LayerId};
 pub use layer::{
-    AutoOrient, FrameBlend, Layer, LayerSource, LightKind, MatteKind, PrimitiveKind, Quality, Sampling, Switches, TrackMatte, is_audio_effect,
-    reads_other_frames, text_layer_name,
+    AutoOrient, FrameBlend, Layer, LayerSource, LightKind, MatteKind, PrimitiveKind, Quality, Sampling, Switches, TrackMatte, declare_reads_other_frames,
+    is_audio_effect, reads_other_frames, text_layer_name,
 };
 pub use layers::Layers;
 pub use reach::{ExprReach, PixelReach, expression_reach};
@@ -69,6 +70,20 @@ pub struct Project {
     /// Render Queue preferences (Notify, storage overflow folders).
     #[serde(default, skip_serializing_if = "render_queue::RenderQueuePrefs::is_default")]
     pub render_prefs: render_queue::RenderQueuePrefs,
+    /// The plug-ins whose effects the project uses, as they were when it was saved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<PluginUse>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "plugin_data")]
+    pub plugin_data: plugin_data::PluginData,
+}
+
+/// One plug-in a saved project uses: its id and version, and its digest once plug-ins carry one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginUse {
+    pub id: String,
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
 }
 
 #[cfg(test)]

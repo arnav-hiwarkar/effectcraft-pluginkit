@@ -398,6 +398,7 @@ pub fn state_key(app: &EffectcraftApp) -> u64 {
     s.prefs.recent_scripts.hash(&mut h);
     s.history.undo.iter().for_each(|(l, _)| l.hash(&mut h));
     s.state.open_comps.hash(&mut h);
+    s.plugin_items.hash(&mut h);
     s.active_comp_id().and_then(|c| s.state.views3d.get(&c)).map(|v| format!("{:?}", v.current)).hash(&mut h);
     // Each binding's keys: a key changed to another one gives the item a new accelerator.
     let shortcuts = s.shortcuts();
@@ -443,7 +444,8 @@ impl MenuSync {
 /// window, where any widget that holds the keyboard counts (the Viewer's text editor is not an
 /// egui text field).
 pub fn text_field_window(ctx: &egui::Context) -> Option<egui::ViewportId> {
-    craft_ui::docking::typing_window(ctx).or_else(|| ctx.egui_wants_keyboard_input().then_some(egui::ViewportId::ROOT))
+    craft_ui::docking::typing_window(ctx)
+        .or_else(|| (ctx.egui_wants_keyboard_input() && !crate::panels::effect_controls::handle_has_focus(ctx)).then_some(egui::ViewportId::ROOT))
 }
 
 /// Whether a focused text field takes the menu command `command` ([`activate`]): the native menu
@@ -617,6 +619,64 @@ mod tests {
         // The spec serializes (agents can read it).
         let v = serde_json::to_value(&spec).unwrap();
         assert!(v["menus"].as_array().is_some_and(|a| a.len() >= 9));
+    }
+
+    #[test]
+    fn a_plugin_turning_its_command_off_or_on_changes_the_native_menu_state_key() {
+        let mut app = app();
+        let item = |disabled, checked| effectcraft_engine::PluginItem {
+            plugin: "test.probe".into(),
+            id: "act".into(),
+            title: "Probe Action".into(),
+            menu: Some("Layer/Probe Tools".into()),
+            disabled,
+            checked,
+            ..Default::default()
+        };
+        app.session.set_plugin_items(vec![item(false, None)]);
+        let on = state_key(&app);
+        app.session.set_plugin_items(vec![item(true, None)]);
+        let off = state_key(&app);
+        app.session.set_plugin_items(vec![item(true, Some(true))]);
+        assert_ne!(on, off, "disabling the command resyncs the native item");
+        assert_ne!(off, state_key(&app), "checking the command resyncs the native item");
+    }
+
+    #[test]
+    fn a_plugin_entry_in_the_file_menu_follows_a_separator_after_the_last_built_in_item() {
+        let mut app = app();
+        let item = |id: &str| effectcraft_engine::PluginItem {
+            plugin: "test.probe".into(),
+            plugin_name: "Probe".into(),
+            id: id.into(),
+            title: format!("Probe {id}"),
+            menu: Some("File".into()),
+            ..Default::default()
+        };
+        app.session.set_plugin_items(vec![item("one"), item("two")]);
+        let menu = build(&app);
+        let file = menu
+            .menus
+            .iter()
+            .find_map(|node| match node {
+                NativeNode::Submenu { label, children } if label == "File" => Some(children),
+                _ => None,
+            })
+            .expect("a File menu");
+        let tail: Vec<String> = file
+            .iter()
+            .rev()
+            .take(3)
+            .rev()
+            .map(|node| match node {
+                NativeNode::Separator => "---".to_string(),
+                NativeNode::Item(item) => item.label.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(tail, ["---", "Probe one", "Probe two"]);
+        let before = &file[..file.len() - 3];
+        assert!(!before.iter().any(|node| matches!(node, NativeNode::Item(item) if item.label.starts_with("Probe "))));
     }
 
     /// Issue #191: saved workspaces are in the native Window ▸ Workspace menu, checked while current.

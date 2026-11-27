@@ -38,6 +38,9 @@ pub mod object_matte_tool;
 pub mod paint_panels;
 pub mod panel_kit;
 pub mod path_vr_panels;
+pub mod plugin_manager;
+pub mod plugin_tools;
+pub mod plugin_view;
 pub mod precomp;
 pub(crate) mod preview_merge;
 pub mod primitive_dialog;
@@ -89,6 +92,8 @@ pub enum DragPayload {
     Property { layer: u64, prop: u64 },
     /// Files from the Media Browser (import; into the timeline: import and add).
     Files(Vec<String>),
+    /// Data a plug-in panel started dragging, for a plug-in drop target.
+    Plugin { plugin: String, data: String },
 }
 
 /// An animation preset in Effects & Presets.
@@ -301,6 +306,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: PanelKind, rect: Rec
         PanelKind::ContentAwareFill => content_fill_panel::show(app, ui, rect),
         PanelKind::CreateNullsFromPaths => path_vr_panels::create_nulls(app, ui, rect),
         PanelKind::VrCompEditor => path_vr_panels::vr_editor(app, ui, rect),
+        PanelKind::Plugin(_) => plugin_view::panel(app, ui, rect, p),
     }
 }
 
@@ -399,6 +405,7 @@ pub(crate) fn panel_menu_area(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
                         }
                     }
                 }
+                PanelKind::Plugin(_) => close |= plugin_view::panel_menu(app, ui, panel),
                 _ => {
                     ui.label(egui::RichText::new(crate::i18n::label(app, "window.panel", panel.title())).weak());
                 }

@@ -1,0 +1,79 @@
+mod flare;
+#[cfg(test)]
+mod golden;
+mod looks;
+mod settings;
+mod spec;
+
+use craft_plugin::prelude::*;
+
+use crate::flare::{Pack, composite, flare, place};
+
+struct Halo;
+
+fn gpu_pass(pack: &Pack) -> Plan {
+    Plan::new().pass(PlanPass::new("halo_render", PlanImage::Source, PlanImage::Output).floats(&pack.f).uints(&pack.u))
+}
+
+impl Effect for Halo {
+    fn spec(&self) -> EffectSpec {
+        spec::spec()
+    }
+
+    fn layout(&self, cx: &Cx) -> Layout {
+        let pack = settings::pack(cx, settings::occlusion(cx));
+        Layout::pointwise().gpu(gpu_pass(&pack))
+    }
+
+    fn overlay(&self, cx: &Cx, overlay: &mut Overlay) {
+        let overall = spec::Overall::read(cx);
+        let unit = f64::from(looks::look(overall.look).glow.size) * overall.scale / 10_000.0;
+        overlay.point(cx, "light").radius("Glow/size", overall.light, unit * spec::Glow::read(cx).size, unit.max(1e-3)).named("Glow Size");
+    }
+
+    fn render(&self, cx: &Cx, frame: &mut Frame) -> Result<()> {
+        let pack = settings::pack(cx, settings::occlusion(cx));
+        let ghosts = place(&pack);
+        let x0 = frame.origin[0];
+        for (y, row) in frame.rows_in_place() {
+            let py = y as f32 + 0.5;
+            for (x, pixel) in row.iter_mut().enumerate() {
+                let light = flare(&pack, &ghosts, (x0 + x) as f32 + 0.5, py);
+                *pixel = composite(&pack, *pixel, light);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn plugin() -> Plugin {
+    Plugin::new().effect(Halo)
+}
+
+craft_plugin::export!(plugin);
+
+#[cfg(test)]
+mod tests {
+    use craft_plugin_host::assert_frame;
+    use craft_plugin_host::testing::TestPlugin;
+
+    #[test]
+    fn the_sun_look_matches_its_stored_frame() {
+        let plugin = TestPlugin::of(super::plugin);
+        assert_frame!(plugin.render("flare").set("look", 1.0), "sun");
+    }
+
+    #[test]
+    fn the_anamorphic_look_with_its_light_moved_matches_its_stored_frame() {
+        let plugin = TestPlugin::of(super::plugin);
+        assert_frame!(plugin.render("flare").set("look", 2.0).set("light", [200.0, 60.0]).set("Streak/size", 150.0), "anamorphic");
+    }
+
+    #[test]
+    fn every_effect_renders_the_same_in_bands_as_whole_at_an_odd_height() {
+        let plugin = craft_plugin_host::testing::TestPlugin::of(crate::plugin);
+        for effect in plugin.plugin().contributions().effects.iter().map(|spec| spec.id.clone()) {
+            assert_eq!(plugin.render(&effect).size(40, 257).run().err(), None, "{effect}");
+        }
+    }
+}

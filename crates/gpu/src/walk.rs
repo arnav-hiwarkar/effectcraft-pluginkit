@@ -289,28 +289,25 @@ fn draw_resident_fx(e: &mut Enc, r: &Renderer, ctx: &EvalCtx, layer: &Layer, can
     {
         return None;
     }
+    let pipe = r.pipe();
     // The decoded footage picture itself when it is the layer's input (uploaded once per frame
     // and shared with every layer that shows it), else the cached input buffer.
-    let (src, offset, scale) = match picture(r, ctx, layer) {
+    let mut fx = match picture(r, ctx, layer) {
         Some(p) => {
             if p.img.is_empty() {
                 return Some(Some(()));
             }
             let Some(src) = e.g.upload_picture(&p.img) else { return Some(None) };
-            (src, p.effect_offset, p.scale)
+            crate::effects::GpuFx::new(e, src, p.effect_offset, p.scale, pipe.levels)
         }
         None => {
             let input = r.layer_input(ctx, layer, 0)?;
             if input.img.is_empty() {
                 return Some(Some(()));
             }
-            let Some(src) = e.g.upload_buf(&input) else { return Some(None) };
-            (src, input.offset, input.scale)
+            crate::effects::GpuFx::source(e, input, pipe.levels)
         }
     };
-    let pipe = r.pipe();
-    // `layer_input` is in effect space: run the stack there, then back to layer space.
-    let mut fx = crate::effects::GpuFx::new(e, src, offset, scale, pipe.levels);
     let origin = r.run_layer_effects_on(ctx, layer, &mut fx);
     let Some((mut img, mut offset, scale)) = fx.finish() else { return Some(None) };
     offset = [offset[0] - origin[0] * scale, offset[1] - origin[1] * scale];
