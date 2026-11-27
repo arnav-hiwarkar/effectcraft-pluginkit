@@ -263,7 +263,7 @@ pub(crate) static STAMP_TOOL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub(crate) const PROBE: &str = "test.viewer-tool-ui";
 
-pub(crate) fn load_probe() -> &'static Path {
+pub(crate) fn load_probe() {
     static BUNDLE: OnceLock<ProcessDir> = OnceLock::new();
     load(&BUNDLE, || {
         let probe = craft_plugin_host::testing::probe_dir();
@@ -271,7 +271,6 @@ pub(crate) fn load_probe() -> &'static Path {
             json!({"id": PROBE, "name": "Probe", "version": "1.0.0", "entry": {"wasm": "plugin.wasm"}, "permissions": ["document.read", "document.write"]});
         bundle(&wasm(probe, "probe"), manifest)
     });
-    BUNDLE.get().expect("the probe is loaded").path()
 }
 
 pub(crate) fn probe_session() -> Session {

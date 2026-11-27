@@ -928,9 +928,10 @@ mod tests {
         let dropped = outside.path().join("footage.txt");
         std::fs::write(&dropped, "dropped footage").unwrap();
         let mut session = super::glide_tests::session_with(&[]);
-        let bundle = load_probe();
-        let plugins = effectcraft_plugin::plugins().unwrap();
-        std::fs::write(bundle.join("user-target.txt"), dropped.to_str().unwrap()).unwrap();
+        load_probe();
+        let data = effectcraft_plugin::plugins().unwrap().get(PROBE).unwrap().data_dir.clone();
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("user-target.txt"), dropped.to_str().unwrap()).unwrap();
         let refused = effectcraft_plugin::run_command(&mut session, PROBE, "read-user").unwrap_err();
         assert!(refused.contains("files.read"), "{refused}");
 
@@ -947,8 +948,7 @@ mod tests {
         assert_eq!(harness.state(), &vec![UiEvent { id: 5, kind: UiEventKind::Drop(Dropped::Files { paths: vec![path] }) }]);
 
         effectcraft_plugin::run_command(&mut session, PROBE, "read-user").unwrap();
-        let data = plugins.get(PROBE).unwrap().data_dir.join("read.txt");
-        assert_eq!(std::fs::read_to_string(data).unwrap(), "dropped footage");
+        assert_eq!(std::fs::read_to_string(data.join("read.txt")).unwrap(), "dropped footage");
     }
 
     #[test]
