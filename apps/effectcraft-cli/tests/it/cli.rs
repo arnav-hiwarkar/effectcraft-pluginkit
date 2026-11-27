@@ -33,8 +33,8 @@ fn canonical(path: &std::path::Path) -> std::io::Result<PathBuf> {
 }
 
 fn tmp(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("ec-cli-test-{}", std::process::id()));
-    std::fs::create_dir_all(&d).unwrap();
+    static DIR: std::sync::OnceLock<crate::process_dir::ProcessDir> = std::sync::OnceLock::new();
+    let d = DIR.get_or_init(crate::process_dir::ProcessDir::new).path().to_path_buf();
     // macOS's `/var` is a symlink to `/private/var`: a child process resolves its working
     // directory through `current_dir()`, which is canonical, so compare canonical paths.
     canonical(&d).unwrap_or(d).join(name)
@@ -1294,16 +1294,10 @@ fn replay_accepts_a_utf8_bom() {
 }
 
 fn probe_bundle(id: &str, permissions: &[&str]) -> PathBuf {
-    let probe = craft_plugin_host::testing::probe_dir();
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
-        .arg(probe.join("Cargo.toml"))
-        .status()
-        .unwrap();
-    assert!(status.success(), "the probe plugin builds");
+    let probe = crate::build_plugin::wasm(craft_plugin_host::testing::probe_dir(), "probe");
     let bundle = tmp(id);
     std::fs::create_dir_all(&bundle).unwrap();
-    std::fs::copy(probe.join("target/wasm32-unknown-unknown/release/probe.wasm"), bundle.join("probe.wasm")).unwrap();
+    std::fs::copy(probe, bundle.join("probe.wasm")).unwrap();
     let manifest = json!({"id": id, "name": "Probe", "version": "1.0.0", "entry": {"wasm": "probe.wasm"}, "permissions": permissions});
     std::fs::write(bundle.join("plugin.json"), manifest.to_string()).unwrap();
     bundle

@@ -6,6 +6,7 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::json;
 
 use crate::EffectcraftApp;
+use crate::panels::plugin_tools::tests::ProcessDir;
 
 const GLIDE: &str = "org.craftkit.glide";
 
@@ -14,24 +15,25 @@ fn plugin_dir(name: &str) -> PathBuf {
 }
 
 pub(crate) fn bundle(name: &str) -> &'static Path {
-    static BUNDLES: OnceLock<std::sync::Mutex<Vec<(String, &'static tempfile::TempDir)>>> = OnceLock::new();
+    static BUNDLES: OnceLock<std::sync::Mutex<Vec<(String, &'static Path)>>> = OnceLock::new();
     let bundles = BUNDLES.get_or_init(Default::default);
     let mut bundles = bundles.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((_, dir)) = bundles.iter().find(|(built, _)| built == name) {
-        return dir.path();
+    if let Some((_, path)) = bundles.iter().find(|(built, _)| built == name) {
+        return path;
     }
     let source = plugin_dir(name);
     let wasm = crate::panels::plugin_tools::tests::wasm(&source, name);
-    let dir: &'static tempfile::TempDir = Box::leak(Box::new(tempfile::tempdir().expect("temp dir")));
+    let dir = ProcessDir::new();
     std::fs::copy(wasm, dir.path().join("plugin.wasm")).expect("copy the module");
     std::fs::copy(source.join("plugin.json"), dir.path().join("plugin.json")).expect("copy the manifest");
-    bundles.push((name.to_string(), dir));
-    dir.path()
+    let path: &'static Path = Box::leak(dir.path().to_path_buf().into_boxed_path());
+    bundles.push((name.to_string(), path));
+    path
 }
 
 pub(crate) fn session_with(plugins: &[&str]) -> effectcraft_engine::Session {
-    static CONFIG: OnceLock<tempfile::TempDir> = OnceLock::new();
-    let config = CONFIG.get_or_init(|| tempfile::tempdir().expect("temp dir"));
+    static CONFIG: OnceLock<ProcessDir> = OnceLock::new();
+    let config = CONFIG.get_or_init(ProcessDir::new);
     let mut session = effectcraft_host::session();
     let installed = effectcraft_plugin::install(&mut session, Some(config.path()));
     for name in plugins {

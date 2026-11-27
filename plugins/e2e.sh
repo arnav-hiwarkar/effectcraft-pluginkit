@@ -10,7 +10,7 @@ mkdir -p "$OUT"
 for manifest in plugins/*/plugin.json; do
     cargo run --quiet --package xtask -- plugin "$(dirname "$manifest")"
 done
-cargo build --quiet --package effectcraft-cli
+cargo build --quiet --package effectcraft-cli --package effectcraft-plugin-helper
 
 export EFFECTCRAFT_CONFIG_DIR="$OUT/config"
 

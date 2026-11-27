@@ -14,18 +14,22 @@ use crate::EffectcraftApp;
 #[path = "../../../../plugin/tests/support/build_plugin.rs"]
 mod build_plugin;
 
-pub(crate) use build_plugin::wasm;
+#[path = "../../../../plugin/tests/support/process_dir.rs"]
+mod process_dir;
 
-fn bundle(wasm: &Path, manifest: Value) -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("temp dir");
+pub(crate) use build_plugin::wasm;
+pub(crate) use process_dir::ProcessDir;
+
+fn bundle(wasm: &Path, manifest: Value) -> ProcessDir {
+    let dir = ProcessDir::new();
     std::fs::copy(wasm, dir.path().join("plugin.wasm")).expect("copy the module");
     std::fs::write(dir.path().join("plugin.json"), manifest.to_string()).expect("write the manifest");
     dir
 }
 
 fn config() -> &'static Path {
-    static CONFIG: OnceLock<tempfile::TempDir> = OnceLock::new();
-    CONFIG.get_or_init(|| tempfile::tempdir().expect("temp dir")).path()
+    static CONFIG: OnceLock<ProcessDir> = OnceLock::new();
+    CONFIG.get_or_init(ProcessDir::new).path()
 }
 
 fn session() -> Session {
@@ -35,7 +39,7 @@ fn session() -> Session {
     session
 }
 
-fn load(slot: &'static OnceLock<tempfile::TempDir>, make: impl FnOnce() -> tempfile::TempDir) {
+fn load(slot: &'static OnceLock<ProcessDir>, make: impl FnOnce() -> ProcessDir) {
     let dir = slot.get_or_init(make);
     static LOADED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
     let mut loaded = LOADED.lock().unwrap();
@@ -46,7 +50,7 @@ fn load(slot: &'static OnceLock<tempfile::TempDir>, make: impl FnOnce() -> tempf
 }
 
 fn halo_session() -> Session {
-    static HALO: OnceLock<tempfile::TempDir> = OnceLock::new();
+    static HALO: OnceLock<ProcessDir> = OnceLock::new();
     let mut session = session();
     load(&HALO, || {
         let halo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/halo");
@@ -260,7 +264,7 @@ pub(crate) static STAMP_TOOL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub(crate) const PROBE: &str = "test.viewer-tool-ui";
 
 pub(crate) fn load_probe() -> &'static Path {
-    static BUNDLE: OnceLock<tempfile::TempDir> = OnceLock::new();
+    static BUNDLE: OnceLock<ProcessDir> = OnceLock::new();
     load(&BUNDLE, || {
         let probe = craft_plugin_host::testing::probe_dir();
         let manifest =
@@ -518,7 +522,7 @@ fn a_plugin_control_row_with_a_timer_draws_again_without_any_input() {
 
 #[test]
 fn a_control_row_of_a_plugin_built_against_the_sdk_before_row_events_still_draws_in_effect_controls() {
-    static CURVES: OnceLock<tempfile::TempDir> = OnceLock::new();
+    static CURVES: OnceLock<ProcessDir> = OnceLock::new();
     let mut session = session();
     load(&CURVES, || {
         let curves = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/curves");

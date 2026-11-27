@@ -1101,7 +1101,7 @@ mod tests {
         std::fs::create_dir_all(&bundle).unwrap();
         let manifest = format!(r#"{{"id": "{id}", "name": "Looks", "version": "1.0.0", "contributes": {{"luts": ["a.cube"]}}}}"#);
         std::fs::write(bundle.join("plugin.json"), manifest).unwrap();
-        std::fs::write(bundle.join("a.cube"), "").unwrap();
+        std::fs::write(bundle.join("a.cube"), "LUT_1D_SIZE 2\n0 0 0\n1 1 1\n").unwrap();
         bundle
     }
 

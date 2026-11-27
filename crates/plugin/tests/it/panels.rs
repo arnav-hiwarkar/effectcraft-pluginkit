@@ -508,7 +508,7 @@ fn stamped(panels: &mut Panels, app: &mut App, said: &str) -> bool {
 }
 
 #[test]
-fn a_held_panel_call_holds_back_neither_overlay_nor_tool_and_only_a_sandboxed_command_sandboxed_and_native() {
+fn a_held_panel_call_lets_wasm_overlay_and_tool_calls_pass_but_holds_every_call_to_a_helper_process() {
     let mut app = super::app_exclusive("test.panels-lanes", &["document.read"]);
     let native = crate::render::native_probe(&app).to_string();
     let mut arrivals = Vec::new();
@@ -550,8 +550,12 @@ fn a_held_panel_call_holds_back_neither_overlay_nor_tool_and_only_a_sandboxed_co
     }
     for (plugin, sandboxed, [overlay, tool, command]) in arrivals {
         let quick = |arrived: Duration| arrived < ms(200);
-        assert_eq!((quick(overlay), quick(tool)), (true, true), "{plugin}: overlay {overlay:?} tool {tool:?}");
-        assert_eq!((quick(command), command >= ms(1000)), (!sandboxed, sandboxed), "{plugin}: only a sandboxed command waits for the panel; {command:?}");
+        assert_eq!(
+            (quick(overlay), quick(tool)),
+            (sandboxed, sandboxed),
+            "{plugin}: a wasm plugin's lanes pass a held panel call and a helper serves one call at a time; overlay {overlay:?} tool {tool:?}"
+        );
+        assert!(command >= ms(1000), "{plugin}: a command waits for the held panel call; {command:?}");
     }
 }
 

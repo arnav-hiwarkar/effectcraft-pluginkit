@@ -16,11 +16,11 @@ const SPHERE: Value = Value::Enum(1);
 const GEM: Value = Value::Enum(4);
 
 fn bundle() -> &'static Path {
-    static BUNDLE: OnceLock<(tempfile::TempDir, PathBuf)> = OnceLock::new();
+    static BUNDLE: OnceLock<(crate::process_dir::ProcessDir, PathBuf)> = OnceLock::new();
     let (_, path) = BUNDLE.get_or_init(|| {
         let plugin = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/forge-3d");
         let wasm = crate::build_plugin::wasm(&plugin, "forge_3d");
-        let dir = tempfile::tempdir().expect("temp dir");
+        let dir = crate::process_dir::ProcessDir::new();
         let bundle = dir.path().join("org.craftkit.forge-3d");
         std::fs::create_dir_all(bundle.join("assets")).expect("bundle dir");
         std::fs::copy(wasm, bundle.join("plugin.wasm")).expect("copy the wasm");
@@ -34,7 +34,7 @@ fn bundle() -> &'static Path {
 fn spec() -> &'static EffectSpec {
     static LOADED: OnceLock<()> = OnceLock::new();
     LOADED.get_or_init(|| {
-        let config = tempfile::tempdir().expect("temp dir").keep();
+        let config = crate::process_dir::ProcessDir::new().path().to_path_buf();
         let mut session = effectcraft_host::session();
         let plugins = effectcraft_plugin::install(&mut session, Some(&config));
         plugins.load_for_session(bundle()).expect("Forge 3D loads");

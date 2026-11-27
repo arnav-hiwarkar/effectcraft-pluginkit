@@ -2,7 +2,7 @@ name: Plugin kit
 
 on:
   push:
-    branches: [pluginkit]
+    branches: [kit, pluginkit]
   workflow_dispatch:
 
 permissions:
@@ -39,6 +39,10 @@ jobs:
         run: cargo run --quiet --package xtask -- wasm
       - name: Desktop app builds
         run: cargo check -p effectcraft
+      - name: Plugin helper builds beside the app binary
+        run: |
+          cargo build -p effectcraft-plugin-helper
+          test -x target/debug/craft-plugin-helper
 
   tests:
     runs-on: ubuntu-24.04
@@ -90,20 +94,23 @@ jobs:
 
   kit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: Cargo.toml
+          sparse-checkout: Cargo.lock
           sparse-checkout-cone-mode: false
-      - name: The craft-libs rev this workspace pins
+      - name: The craft-extensions commit this workspace pins
         id: pin
-        run: echo "rev=$(sed -n 's/^craft-plugin = .*rev = "\([0-9a-f]*\)".*/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+        run: |
+          rev=$(grep -A2 '^name = "craft-plugin"$' Cargo.lock | sed -n 's|^source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#\([0-9a-f]\{40\}\)"$|\1|p')
+          test -n "$rev"
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
-          repository: arnav-hiwarkar/craft-libs-plugin-beta
+          repository: arnav-hiwarkar/craft-extensions-plugin-beta
           ref: ${{ steps.pin.outputs.rev }}
-          path: craft-libs
+          path: craft-extensions
       - name: Install Rust targets and components
         run: |
           rustup toolchain install stable --profile minimal --component clippy
@@ -111,9 +118,10 @@ jobs:
           rustup target add wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: craft-libs
-      - name: Kit lint and tests
-        working-directory: craft-libs
-        run: |
-          cargo clippy -p craft-plugin -p craft-plugin-host -p craft-plugin-ui --all-targets --all-features -- -D warnings
-          cargo test -p craft-plugin -p craft-plugin-host -p craft-plugin-ui
+          workspaces: craft-extensions
+      - name: Kit lint
+        working-directory: craft-extensions
+        run: cargo clippy -p craft-plugin -p craft-plugin-host -p craft-plugin-ui -p craft-plugin-helper -p craft-ext-core -p craft-ext-store -p craft-ext-market -p craft-ext-manager -p craft-ext-cli --all-targets --all-features -- -D warnings
+      - name: Kit and store tests
+        working-directory: craft-extensions
+        run: cargo test -p craft-plugin -p craft-plugin-host -p craft-plugin-ui -p craft-plugin-helper -p craft-ext-core -p craft-ext-store -p craft-ext-market -p craft-ext-manager -p craft-ext-cli --all-features

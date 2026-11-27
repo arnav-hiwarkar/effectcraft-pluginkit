@@ -554,6 +554,7 @@ pub(crate) fn native_probe(app: &App) -> &'static str {
     static INSTALLED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     INSTALLED.get_or_init(|| {
         let native = "test.native-probe";
+        crate::native_helper::stage_helper();
         let source = tempfile::tempdir().unwrap();
         let library = probe_native();
         let file = library.file_name().unwrap().to_str().unwrap().to_string();

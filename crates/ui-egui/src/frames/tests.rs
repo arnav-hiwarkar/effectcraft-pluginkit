@@ -443,9 +443,9 @@ fn a_newer_viewer_frame_calls_off_the_one_rendering() {
 fn a_newer_viewer_frame_calls_off_a_plugin_effect_rendering_and_renders_first() {
     use effectcraft_engine::time::FrameRate;
     use serde_json::json;
-    static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    static CONFIG: std::sync::OnceLock<crate::panels::plugin_tools::tests::ProcessDir> = std::sync::OnceLock::new();
     let mut s = effectcraft_host::session();
-    let plugins = effectcraft_plugin::install(&mut s, Some(CONFIG.get_or_init(|| tempfile::tempdir().unwrap()).path()));
+    let plugins = effectcraft_plugin::install(&mut s, Some(CONFIG.get_or_init(crate::panels::plugin_tools::tests::ProcessDir::new).path()));
     crate::panels::plugin_tools::tests::load_probe();
     let cid =
         ItemId(s.execute("comp.new", json!({"name": "A", "width": 64, "height": 36, "frameRate": 30, "duration": 10})).unwrap()["comp"].as_u64().unwrap());

@@ -9,8 +9,12 @@ mod gate;
 mod gpu;
 mod lumen;
 mod media;
+#[path = "../support/native_helper.rs"]
+mod native_helper;
 mod panels;
 mod params;
+#[path = "../support/process_dir.rs"]
+mod process_dir;
 mod render;
 mod state;
 mod trust;
@@ -85,8 +89,8 @@ fn app_exclusive(id: &str, permissions: &[&str]) -> App {
 }
 
 fn open(hold: Hold, id: &str, permissions: &[&str]) -> App {
-    static CONFIG: OnceLock<tempfile::TempDir> = OnceLock::new();
-    let config = CONFIG.get_or_init(|| tempfile::tempdir().expect("temp dir"));
+    static CONFIG: OnceLock<process_dir::ProcessDir> = OnceLock::new();
+    let config = CONFIG.get_or_init(process_dir::ProcessDir::new);
     let mut session = effectcraft_host::session();
     let plugins = effectcraft_plugin::install(&mut session, Some(config.path()));
 

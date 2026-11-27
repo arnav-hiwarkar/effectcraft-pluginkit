@@ -68,6 +68,7 @@ effect.applyLast	document.write
 effect.applyPreset	document.write
 effect.copy	document.write
 effect.cryptomatteAt	document.read
+effect.deletePreset	refused
 effect.duplicate	document.write
 effect.editDropdown	document.write
 effect.list	document.read
@@ -80,6 +81,7 @@ effect.remove	document.write
 effect.removeAll	document.write
 effect.reorder	document.write
 effect.reset	document.write
+effect.savePreset	refused
 effect.setLabel	document.write
 effect.swapTintColors	document.write
 effect.toggle	document.write
