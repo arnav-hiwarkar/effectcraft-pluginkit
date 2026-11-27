@@ -197,7 +197,7 @@ This writes the unpacked folder `plugins/dist/com.example.tint/` and the package
 
 To install the package, use any of these:
 
-- **Plugins ▸ Manage plugins… ▸ Install from file**, then choose the file. On macOS you can also
+- **Window ▸ Plug-ins ▸ Manage plugins... ▸ Install from file**, then choose the file. On macOS you can also
   double-click the file.
 - `effectcraft-cli exec plugin.install '{"path": "plugins/dist/com.example.tint-0.1.0.craftplugin"}'`
 - `plugin.install` with a folder path installs an unpacked bundle the same way.
@@ -1220,7 +1220,7 @@ host::cancel(id)?;
 `task.progress` returns an error after the user cancels, so `?` ends the task. A task runs on its own
 instance, so it shares no memory with the panel: pass what it needs in `args` and read what it found in
 `state.result`. Its edits go through the app's main thread like a command's; send them as one
-`engine.batch` to make them one undo step. Running tasks show in **Plugins ▸ Manage plugins…** with a progress bar and a Cancel button. `plugins/pulse` is a complete example.
+`engine.batch` to make them one undo step. Running tasks show in **Window ▸ Plug-ins ▸ Manage plugins...** with a progress bar and a Cancel button. `plugins/pulse` is a complete example.
 
 ## Read frames and audio
 

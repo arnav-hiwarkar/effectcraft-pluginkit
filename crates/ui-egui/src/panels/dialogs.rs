@@ -733,7 +733,7 @@ fn palette(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
         }
         for top in std::iter::once(None).chain(effectcraft_engine::menus::top_level().into_iter().map(Some)) {
             for (path, e) in effectcraft_engine::menus::plugin_commands(&app.session, top).into_iter().filter(|(_, e)| crate::menus::entry_enabled(app, e)) {
-                let mut shown = top.map_or(vec!["Plugins"], |top| vec![top]);
+                let mut shown = top.map_or_else(|| effectcraft_engine::menus::PLUGIN_MENU_PATH.to_vec(), |top| vec![top]);
                 shown.extend(path);
                 let keys = app.session.shortcuts().shortcut_of("plugin.run", &e.params).unwrap_or_default().to_string();
                 v.push((format!("{} ▸ {}", shown.join(" ▸ "), e.label), e.command, e.params, keys));

@@ -18,7 +18,7 @@ const USER_ONLY: [&str; 9] = [
 fn refuse_scripts(s: &Session, id: &str) -> Result<()> {
     if s.running_for_script() && USER_ONLY.contains(&id) {
         return Err(EngineError::Other(format!(
-            "Scripts can't run `{id}`: installing, approving, loading and removing plug-ins is the user's act. Do it yourself in Plugins ▸ Manage plugins."
+            "Scripts can't run `{id}`: installing, approving, loading and removing plug-ins is the user's act. Do it yourself in Window ▸ Plug-ins ▸ Manage plugins."
         )));
     }
     Ok(())

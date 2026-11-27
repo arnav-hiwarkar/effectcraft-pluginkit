@@ -276,7 +276,7 @@ cargo xtask plugin plugins/my-tint
 …/plugins/dist/com.example.my-tint-0.1.0.craftplugin
 ```
 
-The `.craftplugin` file is what a user installs: **Plugins ▸ Manage plugins… ▸ Install
+The `.craftplugin` file is what a user installs: **Window ▸ Plug-ins ▸ Manage plugins... ▸ Install
 from file**, choose the file, then turn the plugin on in the manager to grant the permissions it asks
 for and start it. `cargo xtask plugin bench plugins/my-tint` times the sandboxed and the native build at
 1080p and 4K.
