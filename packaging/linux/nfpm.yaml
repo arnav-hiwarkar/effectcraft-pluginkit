@@ -71,6 +71,9 @@ contents:
   - src: ${STAGE}/usr/bin/${NFPM_CLI}
     dst: /usr/bin/${NFPM_CLI}
     file_info: { mode: 0755 }
+  - src: ${STAGE}/usr/bin/${HELPER_NAME}
+    dst: /usr/bin/${HELPER_NAME}
+    file_info: { mode: 0755 }
   - src: ${STAGE}/usr/lib/
     dst: /usr/lib/
     type: tree

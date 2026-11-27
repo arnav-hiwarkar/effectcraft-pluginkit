@@ -36,9 +36,11 @@ nightly_init() {
 nightly_compile_gui() {
   # The guard sits here as well as in the entrypoints: no caller may compile with signing material.
   nightly_refuse_signing_env
-  (cd "$ROOT" && EFFECTCRAFT_VERSION="$VERSION" cargo build --release --locked -p effectcraft --target "$NIGHTLY_RUST_TARGET")
+  (cd "$ROOT" && EFFECTCRAFT_VERSION="$VERSION" cargo build --release --locked -p effectcraft -p "$HELPER_PACKAGE" --target "$NIGHTLY_RUST_TARGET")
   NIGHTLY_GUI="$CARGO_TARGET_DIR/$NIGHTLY_RUST_TARGET/release/effectcraft"
+  NIGHTLY_HELPER="$CARGO_TARGET_DIR/$NIGHTLY_RUST_TARGET/release/$HELPER_NAME"
   [[ -f "$NIGHTLY_GUI" && ! -L "$NIGHTLY_GUI" ]] || nightly_die 'the owned GUI build did not produce a regular executable'
+  [[ -f "$NIGHTLY_HELPER" && ! -L "$NIGHTLY_HELPER" ]] || nightly_die 'the owned build did not produce a regular plug-in helper executable'
   [[ "$(git -C "$ROOT" rev-parse HEAD)" == "$EFFECTCRAFT_BUILD_SHA" && -z "$(git -C "$ROOT" status --porcelain)" ]] || nightly_die 'source changed during the build'
 }
 

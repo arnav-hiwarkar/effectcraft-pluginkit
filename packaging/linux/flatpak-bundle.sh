@@ -58,6 +58,7 @@ rm -rf "$WORK"
 mkdir -p "$WORK/stage"
 tar -xzf "$TARBALL" -C "$WORK/stage" --strip-components=1
 [[ -x "$WORK/stage/bin/effectcraft" ]] || { echo "error: $TARBALL has no bin/effectcraft" >&2; exit 1; }
+require_helper_beside "$WORK/stage/bin/effectcraft" "$WORK/stage/bin/effectcraft-cli"
 if [[ "$FLATPAK_ID" != "$APP_ID" ]]; then
   mv "$WORK/stage/bin/effectcraft" "$WORK/stage/bin/effectcraft-bin"
   # The Nightly build refuses EFFECTCRAFT_CONFIG_DIR, so the wrapper passes the profile protocol.
@@ -92,7 +93,7 @@ WRAPPER
   install -Dm644 "$NIGHTLY_ICON" \
     "$WORK/stage/share/icons/hicolor/256x256/apps/$FLATPAK_ID.png"
   sed -e "s|ai\.storyteller\.effectcraft|$FLATPAK_ID|g" \
-      -e 's|- install -Dm755 bin/effectcraft /app/bin/effectcraft|- install -Dm755 bin/effectcraft-bin /app/libexec/effectcraft\n      - install -Dm755 bin/effectcraft /app/bin/effectcraft|' \
+      -e 's|- install -Dm755 bin/effectcraft /app/bin/effectcraft|- install -Dm755 bin/effectcraft-bin /app/libexec/effectcraft\n      - install -Dm755 bin/craft-plugin-helper /app/libexec/craft-plugin-helper\n      - install -Dm755 bin/effectcraft /app/bin/effectcraft|' \
       "$HERE/flatpak/$APP_ID.bundle.yml" >"$WORK/$FLATPAK_ID.yml"
 else
   cp "$HERE/flatpak/$APP_ID.bundle.yml" "$WORK/$FLATPAK_ID.yml"

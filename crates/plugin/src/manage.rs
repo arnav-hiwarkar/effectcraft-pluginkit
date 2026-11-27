@@ -14,7 +14,7 @@ use craft_plugin_host::PluginImage;
 use craft_plugin_host::ui::PanelPlace;
 use craft_plugin_host::{Bundle, BundleError, EffectRegistry, Limits, Permission, Plugin, Refusal, Registry, RunMode, TaskState};
 use effectcraft_engine::{EngineError, PluginContext, PluginItem, Session};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::data_only;
@@ -72,13 +72,14 @@ impl Loaded {
     }
 }
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginState {
     Running,
     NeedsApproval,
     Disabled,
     Quarantined,
+    Unavailable,
     Failed,
 }
 
@@ -142,7 +143,9 @@ struct Inner {
     loaded: BTreeMap<String, Arc<Loaded>>,
     data: BTreeSet<String>,
     failed: BTreeMap<String, String>,
+    unavailable: BTreeSet<String>,
     refused: BTreeMap<String, Refusal>,
+    native_supported: bool,
     safe_mode: bool,
 }
 
@@ -225,6 +228,10 @@ impl Inner {
             }
             return;
         }
+        if bundle.mode != RunMode::Sandboxed && !self.native_supported {
+            self.unavailable.insert(id);
+            return;
+        }
         let loaded = load(&self.registry, &bundle, &digest, grants);
         match loaded {
             Ok(loaded) => {
@@ -240,6 +247,7 @@ impl Inner {
 
     fn stop(&mut self, id: &str) {
         self.failed.remove(id);
+        self.unavailable.remove(id);
         self.refused.remove(id);
         if self.data.remove(id) {
             data_only::unregister(id);
@@ -343,6 +351,7 @@ impl Inner {
         let running: Vec<String> = self.loaded.keys().chain(&self.data).cloned().collect();
         running.iter().for_each(|id| self.stop(id));
         self.failed.clear();
+        self.unavailable.clear();
         self.refused.clear();
         bundles.retain(|bundle| !self.is_session_only(&bundle.manifest.id));
         bundles.extend(self.session_only.iter().cloned());
@@ -368,6 +377,7 @@ impl Inner {
         let (state, error) = match (running, failed, self.refused.get(&manifest.id)) {
             (true, ..) => (PluginState::Running, None),
             (false, Some(error), _) => (PluginState::Failed, Some(error)),
+            (false, None, _) if self.unavailable.contains(&manifest.id) => (PluginState::Unavailable, Some(NATIVE_UNAVAILABLE.to_string())),
             (false, None, Some(Refusal::Disabled)) => (PluginState::Disabled, None),
             (false, None, Some(refusal @ Refusal::Quarantined(_))) => (PluginState::Quarantined, Some(refusal.to_string())),
             (false, None, Some(Refusal::NotApproved)) => (PluginState::NeedsApproval, None),
@@ -418,6 +428,8 @@ fn local_effect<'a>(plugin: &str, loaded: &'a Loaded, effect_id: &str) -> Option
     loaded.plugin.contributions().effects.iter().map(|e| e.id.as_str()).find(|local| effects::effect_id(plugin, local) == effect_id)
 }
 
+const NATIVE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+const NATIVE_UNAVAILABLE: &str = "native plug-ins run only on Linux and macOS, so this one cannot start on this system";
 const SAFE_MODE_NOTE: &str = "EffectCraft started in safe mode, so no plug-ins were started";
 pub const APP_ID: &str = "effectcraft";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -468,7 +480,9 @@ impl Plugins {
             loaded: BTreeMap::new(),
             data: BTreeSet::new(),
             failed: BTreeMap::new(),
+            unavailable: BTreeSet::new(),
             refused: BTreeMap::new(),
+            native_supported: NATIVE_SUPPORTED,
             safe_mode,
         };
         inner.reload();

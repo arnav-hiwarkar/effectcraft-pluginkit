@@ -58,12 +58,12 @@ echo "==> EffectCraft $VERSION for macOS ($ARCH), identity: $IDENTITY, notarize:
 if [[ "$SKIP_BUILD" = 0 ]]; then
   args=()
   for t in "${TARGETS[@]}"; do args+=(--target "$t"); done
-  (cd "$ROOT" && cargo build --release --locked -p effectcraft -p effectcraft-cli "${args[@]}")
+  (cd "$ROOT" && cargo build --release --locked -p effectcraft -p effectcraft-cli -p "$HELPER_PACKAGE" "${args[@]}")
 fi
 
 rm -rf "$WORK"
 mkdir -p "$WORK/bin"
-for bin in effectcraft effectcraft-cli; do
+for bin in effectcraft effectcraft-cli "$HELPER_NAME"; do
   inputs=()
   for t in "${TARGETS[@]}"; do inputs+=("$CARGO_TARGET_DIR/$t/release/$bin"); done
   lipo -create -output "$WORK/bin/$bin" "${inputs[@]}"
@@ -117,6 +117,8 @@ echo "==> assembling $APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Executable and icon carry the display name (CFBundleExecutable / CFBundleIconFile).
 cp "$WORK/bin/effectcraft" "$APP/Contents/MacOS/EffectCraft"
+cp "$WORK/bin/$HELPER_NAME" "$APP/Contents/MacOS/$HELPER_NAME"
+require_helper_beside "$APP/Contents/MacOS/EffectCraft"
 cp "$ROOT/assets/app-icon/effectcraft.icns" "$APP/Contents/Resources/EffectCraft.icns"
 # Required embedded-font notices are independent of optional font inputs.
 cp "$ROOT/NOTICE" "$APP/Contents/Resources/NOTICE"
@@ -127,7 +129,7 @@ plutil -lint "$APP/Contents/Info.plist"
 printf 'APPL????' >"$APP/Contents/PkgInfo"
 
 # Sign inside-out: nested code first, then the bundle itself (no --deep on the final signature).
-# Today the only nested code is the main executable; frameworks/helpers would be signed here too.
+sign --options runtime --entitlements "$HERE/entitlements-helper.plist" "$APP/Contents/MacOS/$HELPER_NAME"
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/EffectCraft"
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
@@ -206,10 +208,12 @@ fi
 echo "==> building $CLI_ZIP"
 CLI_DIR="$WORK/effectcraft-cli-$VERSION-macos-$ARCH"
 mkdir -p "$CLI_DIR"
-cp "$WORK/bin/effectcraft-cli" "$CLI_DIR/"
+cp "$WORK/bin/effectcraft-cli" "$WORK/bin/$HELPER_NAME" "$CLI_DIR/"
+require_helper_beside "$CLI_DIR/effectcraft-cli"
 copy_docs "$CLI_DIR"
 sign --options runtime "$CLI_DIR/effectcraft-cli"
-codesign --verify --strict --verbose=2 "$CLI_DIR/effectcraft-cli"
+sign --options runtime --entitlements "$HERE/entitlements-helper.plist" "$CLI_DIR/$HELPER_NAME"
+codesign --verify --strict --verbose=2 "$CLI_DIR/effectcraft-cli" "$CLI_DIR/$HELPER_NAME"
 rm -f "$CLI_ZIP"
 ditto -c -k --keepParent "$CLI_DIR" "$CLI_ZIP"
 # A bare Mach-O can't carry a stapled ticket; Gatekeeper looks the notarization up online.

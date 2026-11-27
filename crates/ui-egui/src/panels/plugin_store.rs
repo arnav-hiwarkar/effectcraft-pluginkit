@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use craft_ext_manager::ui::{self, Theme};
 use craft_ext_manager::{Action, Effect, Job, Model, Outcome, Scope, StoreBackend, Word};
+use effectcraft_plugin::PluginState;
 use egui::RichText;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -16,18 +17,8 @@ use crate::theme::Tokens;
 pub(crate) struct Listed {
     pub id: String,
     pub name: String,
-    pub state: State,
+    pub state: PluginState,
     pub error: Option<String>,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum State {
-    Running,
-    NeedsApproval,
-    Disabled,
-    Quarantined,
-    Failed,
 }
 
 struct Manager {
@@ -239,7 +230,7 @@ fn tasks(app: &mut EffectcraftApp, ui: &mut egui::Ui, commands: &mut Vec<(&'stat
 }
 
 fn not_started(app: &mut EffectcraftApp, ui: &mut egui::Ui, commands: &mut Vec<(&'static str, Value)>) {
-    let failed: Vec<Listed> = listed(app).into_iter().filter(|plugin| plugin.state == State::Failed).collect();
+    let failed: Vec<Listed> = listed(app).into_iter().filter(|plugin| matches!(plugin.state, PluginState::Failed | PluginState::Unavailable)).collect();
     if failed.is_empty() {
         return;
     }
@@ -247,10 +238,12 @@ fn not_started(app: &mut EffectcraftApp, ui: &mut egui::Ui, commands: &mut Vec<(
     for plugin in &failed {
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(tr_args("{} did not start: {}", &[&plugin.name, &plugin.error.as_deref().unwrap_or_default()])).color(t.danger));
-            let restart = ui.button(tr(Word::FixRestart.english()));
-            app.auto.add_response(&format!("plugins.{}.restart", plugin.id), &restart, "Restart");
-            if restart.clicked() {
-                commands.push(("plugin.restart", json!({"id": plugin.id})));
+            if plugin.state == PluginState::Failed {
+                let restart = ui.button(tr(Word::FixRestart.english()));
+                app.auto.add_response(&format!("plugins.{}.restart", plugin.id), &restart, "Restart");
+                if restart.clicked() {
+                    commands.push(("plugin.restart", json!({"id": plugin.id})));
+                }
             }
         });
     }

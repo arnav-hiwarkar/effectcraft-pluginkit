@@ -157,7 +157,7 @@ class Fixture:
         with zipfile.ZipFile(self.input, "a") as z:
             z.writestr(info, data)
 
-    def bundle(self, version=VERSION, extra=None, gui=None):
+    def bundle(self, version=VERSION, extra=None, gui=None, without_helper=False):
         """The archive nightly.sh makes: the real template through the real plist helper."""
         stage = self.root / "stage"
         shutil.rmtree(stage, ignore_errors=True)
@@ -167,6 +167,11 @@ class Fixture:
         exe = app / "Contents/MacOS/EffectCraft"
         exe.write_text(gui or f"#!/bin/sh\ntouch {self.ran}\necho 'EffectCraft {version} (nightly-v1)'\n")
         exe.chmod(0o755)
+        helper = app / "Contents/MacOS/craft-plugin-helper"
+        helper.write_bytes(b"generated plug-in helper")
+        helper.chmod(0o755)
+        if without_helper:
+            helper.unlink()
         (app / "Contents/Resources/effectcraft-nightly.icns").write_bytes(b"generated icon")
         rendered = PLIST.render((HERE / "Info.plist.in").read_bytes(), version, COMMIT)
         (app / "Contents/Info.plist").write_bytes(rendered)
@@ -276,9 +281,12 @@ class Sign(unittest.TestCase):
         self.assertFalse(self.f.ran.exists(), "the payload must never run in the signing step")
         self.assertEqual(self.f.input.read_bytes(), self.unsigned)
         signs = [call for call in calls if call[0] == "codesign" and "--sign" in call]
-        self.assertEqual([Path(call[-1]).name for call in signs], ["EffectCraft", APP], "inside-out: executable, then bundle")
+        self.assertEqual(
+            [Path(call[-1]).name for call in signs], ["craft-plugin-helper", "EffectCraft", APP], "inside-out: helper, executable, then bundle"
+        )
+        entitlements = {"craft-plugin-helper": "entitlements-helper.plist", "EffectCraft": "entitlements.plist", APP: "entitlements.plist"}
         for call in signs:
-            for flag in ("--force", "--timestamp", "runtime", str(HERE / "entitlements.plist"), IDENTITY):
+            for flag in ("--force", "--timestamp", "runtime", str(HERE / entitlements[Path(call[-1]).name]), IDENTITY):
                 self.assertIn(flag, call)
         order = [" ".join(call[:3]) for call in calls]
         submit = order.index("xcrun notarytool submit")
@@ -324,6 +332,7 @@ class Sign(unittest.TestCase):
     def test_refuses_a_payload_that_is_not_the_exact_gui_only_nightly(self):
         cases = {
             "cli": dict(extra={"Contents/MacOS/effectcraft-cli": b"generated cli"}),
+            "no helper": dict(without_helper=True),
             "version": dict(version=VERSION.replace("4567", "4568")),
         }
         for label, change in cases.items():

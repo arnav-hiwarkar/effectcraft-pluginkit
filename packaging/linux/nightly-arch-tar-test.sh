@@ -17,6 +17,7 @@ printf '<%s>\n' "$@"
 RECORDER
 chmod 755 "$stage/bin/effectcraft"
 cp "$stage/bin/effectcraft" "$stage/bin/effectcraft-cli"
+cp "$stage/bin/effectcraft" "$stage/bin/craft-plugin-helper"
 
 bash "$HERE/nightly-arch-tar.sh" "$stage" "$work/stage" "$dst" "$base"
 tar -xzf "$dst/$base.tar.gz" -C "$work/extract"
@@ -30,6 +31,8 @@ mv "$bin/effectcraft-cli" "$bin/effectcraft-nightly-cli"
 
 [[ ! -e "$stage/bin/.effectcraft-nightly" ]]
 cmp "$stage/bin/effectcraft" "$bin/.effectcraft-nightly/effectcraft"
+cmp "$stage/bin/craft-plugin-helper" "$bin/.effectcraft-nightly/craft-plugin-helper"
+[[ ! -e "$bin/craft-plugin-helper" ]]
 cmp "$stage/bin/effectcraft-cli" "$bin/effectcraft-nightly-cli"
 # The launcher must start the hidden GUI through the Nightly profile; the profile base is fixed
 # here so the recorded arguments are exactly comparable.
