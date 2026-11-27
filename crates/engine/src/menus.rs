@@ -1366,7 +1366,7 @@ Window
 Plugins
   Find plugins… | plugin.find
   Manage plugins… | window.plugins
-  Report a problem… | plugin.reportProblem
+  Report a problem… | plugin.report
   ---
   @dynamic:pluginCommands
   ---

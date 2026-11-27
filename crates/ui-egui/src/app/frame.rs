@@ -545,7 +545,7 @@ impl EffectcraftApp {
         updates_ui::show(self, &ctx);
         panels::scriptui_view::sync_panels(self);
         panels::scriptui_view::show_windows(self, &ctx);
-        panels::plugin_manager::show(self, &ctx);
+        panels::plugin_store::show(self, &ctx);
         // After the windows' events and the menus' commands: a script that asked for a file
         // dialog in this pass gets it now.
         panels::scriptui_view::serve_file_dialogs(self);

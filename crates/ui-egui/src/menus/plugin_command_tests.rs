@@ -39,7 +39,7 @@ fn a_plugin_command_with_a_menu_path_runs_from_layer_probe_tools() {
     click(&mut harness, layer, egui::PointerButton::Primary);
     let edit = json!({"plugin": PROBE, "command": "edit"});
     let in_plugins_menu = effectcraft_engine::menus::plugin_commands(&harness.state().session, None).iter().any(|(_, entry)| entry.params == edit);
-    assert!(!in_plugins_menu, "a command with a menu path leaves Window ▸ Plug-ins");
+    assert!(!in_plugins_menu, "a command with a menu path leaves the Plugins menu");
     harness.get(menu_row("Probe Tools")).hover();
     harness.run_steps(3);
     let toolbar_button = center(&harness, &format!("tools.command.{PROBE}.edit"));

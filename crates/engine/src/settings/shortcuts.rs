@@ -589,7 +589,7 @@ impl ShortcutTable {
         for item in items.iter().filter(|item| !item.panel) {
             let params = plugin_command_params(&item.plugin, &item.id);
             let label = format!("{}: {}", item.plugin_name, item.title);
-            let path = vec!["Window".into(), "Plug-ins".into()];
+            let path = vec!["Plugins".into()];
             let mut b = Bindable {
                 key: binding_key("plugin.run", &params),
                 command: "plugin.run".into(),

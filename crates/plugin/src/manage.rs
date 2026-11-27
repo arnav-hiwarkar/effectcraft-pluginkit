@@ -386,8 +386,8 @@ fn local_effect<'a>(plugin: &str, loaded: &'a Loaded, effect_id: &str) -> Option
 }
 
 const SAFE_MODE_NOTE: &str = "EffectCraft started in safe mode, so no plug-ins were started";
-const APP_ID: &str = "effectcraft";
-const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const APP_ID: &str = "effectcraft";
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const STORE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 fn catalogue_modified(suite: &Path) -> Option<SystemTime> {
@@ -711,6 +711,24 @@ pub fn end_run() {
     }
 }
 
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    if !from.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let target = to.join(entry.file_name());
+        if kind.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else if kind.is_file() {
+            fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let backup = legacy.with_extension("migrated");
     if !legacy.is_dir() || backup.exists() {
@@ -759,6 +777,10 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
         if let Some(consent) = source.consent(id) {
             consents.entry(id.clone()).or_insert_with(|| consent.clone());
         }
+        let data = target.data_dir(id);
+        if !data.exists() {
+            copy_tree(&source.data_dir(id), &data)?;
+        }
     }
     let mut staging = tempfile::NamedTempFile::new_in(&state_dir)?;
     serde_json::to_writer_pretty(&mut staging, &consents)?;
@@ -791,7 +813,7 @@ pub fn install(session: &mut Session, config_dir: Option<&Path>) -> &'static Plu
             Err(error) => {
                 log::warn!("the shared plug-in store could not be opened: {error}");
                 let root = legacy.unwrap_or_else(|| std::env::temp_dir().join("effectcraft-plugins"));
-                Plugins::open(&root, true)
+                Plugins::open(&root, safe_mode)
             }
         };
         let development = std::env::var_os(DEVELOPMENT_PATH).filter(|_| !safe_mode);

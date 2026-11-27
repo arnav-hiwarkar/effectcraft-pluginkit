@@ -64,7 +64,6 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         window!("plugin.find", "Find plugins…", "{id?}"),
         window!("window.plugins", "Manage plugins…", "{}"),
-        window!("plugin.reportProblem", "Report a problem…", "{}"),
         window!("plugin.installFromFile", "Install from file", "{path?}"),
         window!("window.pluginPanel", "Show Plug-in Panel", "{plugin, panel, floating?: bool}"),
     ]
