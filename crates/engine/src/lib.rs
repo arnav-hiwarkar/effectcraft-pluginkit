@@ -19,6 +19,7 @@ mod home;
 mod interchange;
 pub mod menus;
 mod output_guard;
+pub mod plugin_hooks;
 pub mod plugin_refs;
 pub mod preview;
 pub mod render_queue;
@@ -214,6 +215,8 @@ pub struct Session {
     pub script: Option<ScriptRunner>,
     pub plugin_commands: Option<PluginCommands>,
     pub plugin_items: Vec<PluginItem>,
+    /// Asks plugins before a save or an export (set by the host that loads plugins).
+    pub plugin_hooks: Option<plugin_hooks::PluginHooks>,
     /// ScriptUI windows and panels opened by scripts (see [`scriptui`]).
     pub script_ui: scriptui::ScriptUi,
     /// The last physical-memory reading (Settings ▸ Memory & CPU budgets); `None` = unknown
@@ -384,6 +387,7 @@ impl Default for Session {
             script_ui: scriptui::ScriptUi::default(),
             plugin_commands: None,
             plugin_items: vec![],
+            plugin_hooks: None,
             sys_memory: None,
             memory_low: false,
             key_move: None,

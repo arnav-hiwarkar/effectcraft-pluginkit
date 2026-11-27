@@ -122,6 +122,7 @@ pub(crate) fn file_text(s: &Session, path: &str) -> Result<String> {
 }
 
 fn save_to(s: &mut Session, path: &str) -> Result<Value> {
+    s.plugins_before_save(path);
     let json = file_text(s, path)?;
     s.services.write_file(path, json.as_bytes()).map_err(|e| EngineError::Other(format!("cannot write {path}: {e}")))?;
     s.path = Some(path.to_string());

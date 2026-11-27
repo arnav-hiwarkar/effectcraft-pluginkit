@@ -857,6 +857,7 @@ fn save_current_preview(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(refusal) = s.check_outputs(&[vec![(item.clone(), path.clone())]]).first() {
         return Err(EngineError::Other(refusal.reason.clone()));
     }
+    s.plugins_before_export([path.as_str()]).map_err(EngineError::Other)?;
     let job = crate::ExportJob {
         project: &s.project,
         footage: s.footage.as_ref(),

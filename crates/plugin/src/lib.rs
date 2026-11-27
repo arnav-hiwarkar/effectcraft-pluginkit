@@ -2,6 +2,7 @@ mod data_only;
 mod effects;
 mod forms;
 mod gate;
+mod hooks;
 mod manage;
 mod panels;
 pub mod viewer;
