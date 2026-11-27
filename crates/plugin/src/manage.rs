@@ -770,15 +770,20 @@ fn copy_data(from: &Path, to: &Path) -> std::io::Result<()> {
     fs::rename(&staging, to)
 }
 
-fn migrate_bundle(source: &Registry, target: &mut Registry, bundle: &Bundle) -> Result<Option<(String, Consent)>, Box<dyn std::error::Error>> {
+fn prepare_migration_bundle(target: &mut Registry, bundle: &Bundle) -> Result<Option<(String, String)>, Box<dyn std::error::Error>> {
     let id = &bundle.manifest.id;
     let dest = target.root().join(id);
     let digest = bundle.digest()?;
-    let migrated = if dest.exists() {
+    let migrated = if dest.try_exists()? {
         Bundle::open(&dest)?
     } else {
-        match target.install(&bundle.dir) {
+        match target.install_checked(&bundle.dir, |_| match dest.try_exists() {
+            Ok(false) => Ok(()),
+            Ok(true) => Err(format!("the shared store already has a plug-in `{id}`")),
+            Err(error) => Err(error.to_string()),
+        }) {
             Ok(installed) => installed,
+            Err(BundleError::Rejected(_)) => Bundle::open(&dest)?,
             Err(BundleError::Refused(_, Refusal::Revoked(_))) => return Ok(None),
             Err(error) => return Err(error.into()),
         }
@@ -787,10 +792,27 @@ fn migrate_bundle(source: &Registry, target: &mut Registry, bundle: &Bundle) -> 
         log::warn!("the shared store already has a different plug-in `{id}`");
         return Ok(None);
     }
-    if let Err(error) = copy_data(&source.data_dir(id), &target.data_dir(id)) {
+    Ok(Some((id.clone(), digest)))
+}
+
+fn merge_migration_bundle(
+    source: &Registry,
+    target: &Registry,
+    id: String,
+    digest: &str,
+    consents: &mut BTreeMap<String, Consent>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (_, installed_digest) = Bundle::read(&target.root().join(&id))?;
+    if installed_digest != digest {
+        return Err(format!("the shared plug-in `{id}` changed during migration").into());
+    }
+    if let Err(error) = copy_data(&source.data_dir(&id), &target.data_dir(&id)) {
         log::warn!("the data of plug-in `{id}` was not moved into the shared store: {error}");
     }
-    Ok(source.consent(id).map(|consent| (id.clone(), consent.clone())))
+    if let Some(consent) = source.consent(&id) {
+        consents.entry(id).or_insert_with(|| consent.clone());
+    }
+    Ok(())
 }
 
 fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -798,34 +820,43 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
     if !legacy.is_dir() || backup.exists() {
         return Ok(());
     }
+    let state_dir = suite.join(APPS_DIR).join(APP_ID);
+    fs::create_dir_all(&state_dir)?;
+    let migration_lock = File::options().read(true).write(true).create(true).truncate(false).open(state_dir.join("migration.lock"))?;
+    migration_lock.lock()?;
+    if !legacy.is_dir() || backup.exists() {
+        return Ok(());
+    }
+
     let mut target = Registry::for_app(suite, APP_ID);
     if target.root().canonicalize().ok().as_deref() == Some(&legacy.canonicalize()?) {
         return Err("the old plug-in folder is also the shared bundle folder".into());
     }
-    let state_dir = suite.join(APPS_DIR).join(APP_ID);
-    fs::create_dir_all(&state_dir)?;
+    target.set_revocations(craft_ext_market::cached_revocations(suite));
+    let source = Registry::open(legacy);
+    let candidates: Vec<_> = source
+        .bundles()
+        .into_iter()
+        .filter_map(|bundle| match bundle.map_err(Into::into).and_then(|bundle| prepare_migration_bundle(&mut target, &bundle)) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                log::warn!("a plug-in in the old store was not moved into the shared store: {error}");
+                None
+            }
+        })
+        .collect();
+
     let lock = File::options().read(true).write(true).create(true).truncate(false).open(state_dir.join("state.lock"))?;
     lock.lock()?;
-    if backup.exists() {
-        return Ok(());
-    }
-
     let state = state_dir.join("state.json");
     let mut consents: BTreeMap<String, Consent> = match File::open(&state) {
         Ok(file) => serde_json::from_reader(file)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
         Err(error) => return Err(error.into()),
     };
-    target.set_revocations(craft_ext_market::cached_revocations(suite));
-    let source = Registry::open(legacy);
-    for bundle in source.bundles() {
-        let moved = bundle.map_err(Into::into).and_then(|bundle| migrate_bundle(&source, &mut target, &bundle));
-        match moved {
-            Ok(Some((id, consent))) => {
-                consents.entry(id).or_insert(consent);
-            }
-            Ok(None) => {}
-            Err(error) => log::warn!("a plug-in in the old store was not moved into the shared store: {error}"),
+    for (id, digest) in candidates {
+        if let Err(error) = merge_migration_bundle(&source, &target, id, &digest, &mut consents) {
+            log::warn!("a plug-in in the old store was not moved into the shared store: {error}");
         }
     }
     let mut staging = tempfile::NamedTempFile::new_in(&state_dir)?;
@@ -1151,6 +1182,22 @@ mod tests {
         assert!(!moved.data_dir("test.good").join("half.json").exists());
         assert!(!interrupted.exists());
         assert!(!legacy.exists() && legacy.with_extension("migrated").join("test.broken").is_dir());
+    }
+
+    #[test]
+    fn migration_does_not_transfer_consent_to_a_changed_shared_bundle() {
+        let root = tempfile::tempdir().unwrap();
+        let mut source = Registry::open(&root.path().join("Plugins"));
+        let mut target = Registry::for_app(&root.path().join("suite"), APP_ID);
+        let bundle = source.install(&data_bundle(root.path(), "test.changed-migration")).unwrap();
+        source.approve(&bundle).unwrap();
+        let (id, digest) = prepare_migration_bundle(&mut target, &bundle).unwrap().unwrap();
+        fs::write(target.root().join(&id).join("a.cube"), "LUT_1D_SIZE 2\n1 1 1\n0 0 0\n").unwrap();
+
+        let mut consents = BTreeMap::new();
+        let error = merge_migration_bundle(&source, &target, id, &digest, &mut consents).unwrap_err();
+        assert_eq!(error.to_string(), "the shared plug-in `test.changed-migration` changed during migration");
+        assert!(consents.is_empty());
     }
 
     #[test]
