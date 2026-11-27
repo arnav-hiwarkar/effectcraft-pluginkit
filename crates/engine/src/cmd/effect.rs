@@ -1001,6 +1001,7 @@ fn fx_effect(s: &Session, p: &Value, cmd: &str) -> Result<(effectcraft_project::
 /// effect, shared with the other apps of the suite.
 fn save_preset(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "effect.savePreset";
+    super::plugin::refuse_scripts(s, cmd)?;
     let name = str_p(p, "name").ok_or_else(|| bad(cmd, "missing `name`"))?;
     let store = user_presets(s, cmd)?;
     let (cid, lid, uid, effect) = fx_effect(s, p, cmd)?;
@@ -1022,6 +1023,7 @@ fn save_preset(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn delete_preset(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "effect.deletePreset";
+    super::plugin::refuse_scripts(s, cmd)?;
     let name = str_p(p, "name").ok_or_else(|| bad(cmd, "missing `name`"))?;
     let store = user_presets(s, cmd)?;
     let (.., effect) = fx_effect(s, p, cmd)?;

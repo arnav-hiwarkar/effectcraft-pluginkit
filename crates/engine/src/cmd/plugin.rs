@@ -3,7 +3,7 @@ use serde_json::Value;
 use super::{CommandSpec, always, frontend};
 use crate::{EngineError, Result, Session, cmd, query};
 
-const USER_ONLY: [&str; 9] = [
+const MANAGE_USER_ONLY: [&str; 9] = [
     "plugin.install",
     "plugin.installFromFile",
     "plugin.approve",
@@ -15,13 +15,16 @@ const USER_ONLY: [&str; 9] = [
     "plugin.restart",
 ];
 
-fn refuse_scripts(s: &Session, id: &str) -> Result<()> {
-    if s.running_for_script() && USER_ONLY.contains(&id) {
-        return Err(EngineError::Other(format!(
-            "Scripts can't run `{id}`: installing, approving, loading and removing plug-ins is the user's act. Do it yourself in Window ▸ Plug-ins ▸ Manage plugins."
-        )));
+pub(super) fn refuse_scripts(s: &Session, id: &str) -> Result<()> {
+    if !s.running_for_script() {
+        return Ok(());
     }
-    Ok(())
+    let reason = match id {
+        "effect.savePreset" | "effect.deletePreset" => "the shared plug-in preset store requires a user command.",
+        _ if MANAGE_USER_ONLY.contains(&id) => "managing plug-ins requires a user command. Open Window ▸ Plug-ins ▸ Manage plugins.",
+        _ => return Ok(()),
+    };
+    Err(EngineError::Other(format!("Scripts can't run `{id}`: {reason}")))
 }
 
 fn forward(s: &mut Session, id: &str, params: &Value) -> Result<Value> {
