@@ -289,19 +289,23 @@ impl Inner {
     }
 
     fn reconcile_store_with(&mut self, restart: Option<&str>, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) -> bool {
-        if self.refresh_store(read_revocations) {
-            self.reload_bundles();
-            return true;
-        }
+        let disabled_before = self.catalogue_disabled();
+        self.refresh_store(read_revocations);
+        let disabled_now = self.catalogue_disabled();
+        let mut forced: BTreeSet<String> = disabled_now
+            .iter()
+            .filter(|(bundle, disabled)| disabled_before.get(*bundle).is_some_and(|before| before != *disabled))
+            .map(|((id, _), _)| id.clone())
+            .collect();
+        forced.extend(restart.map(String::from));
         let bundles = self.installed();
         let now = self.installed_state(&bundles);
-        let mut changed: BTreeSet<&str> =
-            self.seen.keys().chain(now.keys()).filter(|id| self.seen.get(*id) != now.get(*id) && !self.is_session_only(id)).map(String::as_str).collect();
-        changed.extend(restart);
+        let mut changed: BTreeSet<String> =
+            self.seen.keys().chain(now.keys()).filter(|id| self.seen.get(*id) != now.get(*id) && !self.is_session_only(id)).cloned().collect();
+        changed.extend(forced.iter().cloned());
         let mut starts: Vec<Bundle> =
-            bundles.into_iter().filter(|bundle| changed.contains(bundle.manifest.id.as_str()) && !self.is_session_only(&bundle.manifest.id)).collect();
-        starts.extend(self.session_only.iter().filter(|bundle| restart == Some(bundle.manifest.id.as_str())).cloned());
-        let changed: Vec<String> = changed.into_iter().map(String::from).collect();
+            bundles.into_iter().filter(|bundle| changed.contains(&bundle.manifest.id) && !self.is_session_only(&bundle.manifest.id)).collect();
+        starts.extend(self.session_only.iter().filter(|bundle| forced.contains(&bundle.manifest.id)).cloned());
         changed.iter().for_each(|id| self.stop(id));
         starts.sort_by_key(|bundle| bundle.manifest.is_data_only());
         starts.iter().for_each(|bundle| self.start(bundle));
@@ -309,20 +313,16 @@ impl Inner {
         !changed.is_empty()
     }
 
-    fn refresh_store(&mut self, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) -> bool {
-        let Some(suite) = &self.suite else { return false };
+    fn refresh_store(&mut self, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) {
+        let Some(suite) = &self.suite else { return };
         self.generation = self.registry.generation();
         self.registry = Registry::for_app(suite, APP_ID);
         let modified = catalogue_modified(suite);
-        let mut changed = false;
         if modified != self.catalogue_modified {
-            let revocations = read_revocations(suite);
-            changed = self.revocations != revocations;
-            self.revocations = revocations;
+            self.revocations = read_revocations(suite);
             self.catalogue_modified = modified;
         }
         self.registry.set_revocations(self.revocations.clone());
-        changed
     }
 
     fn poll_store(&mut self, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) -> bool {
@@ -1348,6 +1348,36 @@ mod tests {
         inner.reload_bundles();
         assert_eq!(inner.refused.get("test.revoked"), Some(&Refusal::Revoked(Severity::Disable)));
         assert!(!inner.data.contains("test.revoked"));
+    }
+
+    #[test]
+    fn a_catalogue_revocation_stops_the_plugin_it_disables_and_leaves_the_others_running_with_their_tasks() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let mut registry = Registry::for_app(&suite, APP_ID);
+        for id in ["test.revocation-kept", "test.revocation-disabled"] {
+            let installed = registry.install(&probe_bundle(root.path(), id, json!({"wasm": "probe.wasm"}))).unwrap();
+            registry.approve(&installed).unwrap();
+        }
+        let plugins = Plugins::with_registry(registry, Some(suite.clone()), false);
+        let mut inner = plugins.lock();
+        let kept = inner.loaded.get("test.revocation-kept").cloned().expect("the plugin the revocation does not touch runs");
+        assert!(inner.loaded.contains_key("test.revocation-disabled"));
+        let mut session = effectcraft_host::session();
+        let task = kept.plugin.start("forever", Value::Null, &SessionHost::new(&mut session, &kept)).unwrap();
+        assert_eq!(kept.plugin.tasks().iter().map(|state| (state.id, state.status)).collect::<Vec<_>>(), vec![(task, TaskStatus::Running)]);
+
+        let catalogue = suite.join(craft_ext_store::CATALOGUE_DIR);
+        fs::create_dir_all(&catalogue).unwrap();
+        fs::write(catalogue.join(SNAPSHOT), "").unwrap();
+        let revocations = vec![revocation("test.revocation-kept", Severity::Advisory), disable_revocation("test.revocation-disabled")];
+        assert!(inner.reconcile_store_with(None, |_| revocations));
+
+        assert!(!inner.loaded.contains_key("test.revocation-disabled"));
+        assert_eq!(inner.refused.get("test.revocation-disabled"), Some(&Refusal::Revoked(Severity::Disable)));
+        assert!(Arc::ptr_eq(&kept, inner.loaded.get("test.revocation-kept").expect("the other plugin still runs")));
+        assert_eq!(kept.plugin.tasks().iter().map(|state| (state.id, state.status)).collect::<Vec<_>>(), vec![(task, TaskStatus::Running)]);
+        kept.plugin.cancel_all();
     }
 
     #[test]
