@@ -64,6 +64,8 @@ const REFUSED: &[&str] = &[
     "scriptui.set",
     "scriptui.mouse",
     "scriptui.close",
+    // Hands a script the file it waits on, so its code goes on.
+    "scriptui.fileDialog",
     "file.executeFile",
     "file.revealInFinder",
     "layer.openSource",

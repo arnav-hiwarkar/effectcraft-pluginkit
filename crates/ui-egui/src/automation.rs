@@ -12,6 +12,8 @@ pub struct Element {
     pub rect: [f32; 4],
     #[serde(skip)]
     pub(crate) response_id: Option<egui::Id>,
+    #[serde(skip)]
+    pub(crate) panel: Option<crate::dock::PanelKind>,
 }
 
 #[derive(Default)]
@@ -28,6 +30,7 @@ impl Registry {
             label: label.to_string(),
             rect: [rect.min.x, rect.min.y, rect.width(), rect.height()],
             response_id: None,
+            panel: None,
         });
     }
     /// Bind an automation name to the widget that actually receives keyboard input.

@@ -1,39 +1,33 @@
-//! ISO-BMFF (MP4/MOV/M4A) and Matroska/WebM (MKV/MKA/WebM) media-reader routes backed by
-//! `craft-media`, `craft-video`, `craft-audio`, and `craft-media-source`.
+//! ISO-BMFF (MP4/MOV/M4A), Matroska/WebM (MKV/MKA/WebM), MXF, AVI, MPEG-TS/PS, YUV4MPEG2 and
+//! standalone audio media-reader routes backed by `craft-media`, `craft-video`, `craft-audio`, and
+//! `craft-media-source`.
 //!
 //! Preserves sync-sample backward seek, B-frame reordering, cooperative cancellation, VUI +
 //! container colour resolution, draft mode for reduced-resolution playback, and bounded worker
 //! threads, while falling back to `filmcraft-codecs` for unsupported codecs or audio streams.
 //!
 //! ## Route Matrix (`crates/media`)
-//! - **ISO-BMFF (`MP4`/`MOV`/`M4A`, video+audio & audio-only)**:
-//!   - Shared (`craft-media::isobmff` + `craft-video` + `craft-audio`): `H264`, `Hevc`, `Av1`,
-//!     `Vp9`, `Vp8`, `ProRes` (coded alpha via `craft_video::prores::probe`, #3999), `Dnxhd`,
-//!     `Mpeg2Video`, and strictly admitted video-only `Apv` MP4;
-//!     audio `Aac`, `Alac`, `Flac`, `Opus`, `Ac3`, `Mp3`/`Mp2`/`Mp1`.
-//!   - Fallback (`filmcraft-codecs`): `Mjpeg`, `Mpeg4Video`, `Ffv1`, other `Apv`, or unsupported audio.
-//! - **Matroska / WebM (`MKV`/`MKA`/`WebM`, video+audio & audio-only)**:
-//!   - Shared (`craft-media::matroska` + `craft-video` + `craft-audio`): `H264`, `Hevc`, `Av1`,
-//!     `Vp9`, `Vp8`, `ProRes`, `Dnxhd`, `Mpeg2Video`; audio `Aac`, `Alac`, `Flac`, `Opus`, `Ac3`,
-//!     `Mp3`/`Mp2`/`Mp1` (with `CodecDelay` + `SeekPreRoll` timing).
-//!   - Fallback (`filmcraft-codecs`): `alpha_mode == 1` (`BlockAdditional` alpha), unreadable/zlib
-//!     encodings, `Mjpeg`/`Ffv1`/`Theora`/`Apv`, or unsupported audio (`Vorbis`/`Pcm`).
-//! - **MXF (`MXF`, video+audio & audio-only OP1a/OP-Atom)**:
-//!   - Shared (`craft-media::mxf` + `craft-video` + `MxfFile::read_pcm`): `H264`, `Hevc`, `Av1`,
-//!     `Vp9`, `Vp8`, `ProRes`, `Dnxhd`, `Mpeg2Video`; sound `Pcm` and `Aes3` (D-10).
-//!   - Fallback (`filmcraft-codecs`): compressed MXF sound or unsupported video codecs.
-//! - **AVI / MPEG-TS / MPEG-PS**:
-//!   - Shared (`craft-media::avi`, `craft-media::mpegts` + `craft-video` + `craft-audio`):
-//!     `H264`, `Hevc`, `Mpeg2Video`, `Av1`, `Vp9`, `Vp8`, `ProRes`, `Dnxhd`; audio `Aac`,
-//!     `Ac3`/`Eac3`, `Mp3`/`Mp2`/`Mp1`, `Pcm`. AVI also accepts complete 24/32-bit `BI_RGB` streams.
-//!   - Fallback (`filmcraft-codecs`): unsupported codecs (`Mjpeg`, `Mpeg4Video`, `Ffv1`, `Theora`,
-//!     `Apv`, other raw AVI layouts) or unsupported audio.
-//! - **Other containers & standalone audio**:
-//!   - Shared (`craft_audio::Decoder` with `decode-native`): standalone `WAV`, `AIFF`, `MP3`/`MP2`/`MP1`,
-//!     `AAC` (ADTS), `AC-3`, and `Ogg` (`Opus`). Bounded standalone FLAC uses the shared native
-//!     FLAC decoder and the same resampling policy.
-//!   - Fallback (`filmcraft-codecs`): `Ogg Vorbis`, `CAF`, or FLAC and WAV/AIFF input the shared
-//!     readers decline.
+//! Video codecs admitted by [`supports_video_codec`] in every container: `H264`, `Hevc`, `Av1`,
+//! `Vp9`, `Vp8`, `ProRes`, `Dnxhd`, `Mpeg2Video` and `Ffv1`. Audio goes through
+//! `craft_audio::TrackDecoder` whenever it accepts the track (including `Pcm`); a track it declines
+//! sends the whole file to `filmcraft-codecs`.
+//! - **ISO-BMFF (`MP4`/`MOV`/`M4A`)**: shared, plus strictly admitted video-only `Apv` MP4.
+//!   Fallback: `Mjpeg`, `Mpeg4Video`, other `Apv`, or declined audio.
+//! - **Matroska / WebM (`MKV`/`MKA`/`WebM`)**: shared, with `CodecDelay` + `SeekPreRoll` timing.
+//!   Fallback: `alpha_mode == 1` (`BlockAdditional` alpha), unreadable or compressed frame
+//!   encodings, `V_FFV1` without `CodecPrivate`, `Mjpeg`/`Theora`/`Apv`, or declined audio
+//!   (for example `Vorbis`).
+//! - **MXF (OP1a/OP-Atom)**: shared, with sound `Pcm` and `Aes3` (D-10) read by
+//!   `MxfFile::read_pcm`. Fallback: compressed sound, video that needs reordering, or other codecs.
+//! - **AVI / MPEG-TS / MPEG-PS**: shared; AVI also accepts complete 24/32-bit `BI_RGB` streams.
+//!   Fallback: other codecs (`Mjpeg`, `Mpeg4Video`, `Theora`, `Apv`), other raw AVI layouts, or
+//!   declined audio.
+//! - **YUV4MPEG2 (`Y4M`)**: `craft_media_source::y4m`. Fallback: files it reports as unsupported
+//!   (for example a frame above the shared media buffer limit).
+//! - **Standalone audio**: `craft_audio::Decoder` with `decode-native` for `WAV`, `AIFF`,
+//!   `MP3`/`MP2`/`MP1`, `AAC` (ADTS), `AC-3` and `Ogg` (`Opus`); bounded FLAC uses the shared
+//!   native FLAC decoder. Fallback: `Ogg Vorbis`, `CAF`, or FLAC and WAV/AIFF input the shared
+//!   readers decline.
 
 use std::sync::{Arc, Mutex};
 
@@ -47,6 +41,7 @@ use craft_media::matroska::{self, MkvFile};
 use craft_media::mpegts;
 use craft_media::mxf::{self, MxfFile, SoundFormat};
 use craft_media::{ByteSource, CodecId, CodecParams};
+use craft_media_source::cancel::cancelled;
 use craft_media_source::{
     AudioStreamInfo, FrameRequest, MAX_AUDIO_STREAMS, MediaError, MediaInfo, MediaKind, MediaSource, Result, SharedBytes, SharedSource, VideoStreamInfo,
 };
@@ -113,34 +108,37 @@ fn looks_like_matroska(head: &[u8]) -> bool {
     head.starts_with(&[0x1A, 0x45, 0xDF, 0xA3])
 }
 
-/// True when `head` contains an MXF SMPTE KLV partition pack key.
-fn looks_like_mxf(head: &[u8]) -> bool {
-    head.windows(12).any(|w| w == [0x06, 0x0e, 0x2b, 0x34, 0x02, 0x05, 0x01, 0x01, 0x0d, 0x01, 0x02, 0x01])
-}
+/// The MXF sniffer needs the 16-byte partition key after the bounded 64 KiB run-in.
+#[cfg(any(unix, windows))]
+pub(crate) const NATIVE_SNIFF_HEAD_LEN: usize = 64 * 1024 + 16;
 
 /// Open an in-place ISO-BMFF, Matroska/WebM, MXF, AVI, MPEG-TS/PS, or standalone audio source via `craft-media` / `craft-video` / `craft-audio`.
 /// Returns `None` when the container/codec/audio combination should fall back to `filmcraft-codecs`.
 #[cfg(any(unix, windows))]
 pub(crate) fn open_reader(name: &str, head: &[u8], reader: &SharedBytes) -> Option<Result<SharedSource>> {
-    if looks_like_isobmff(head) {
+    let usual_head = &head[..head.len().min(craft_media_source::HEAD_LEN)];
+    if looks_like_isobmff(usual_head) {
         return open_isobmff(name, reader.clone());
     }
-    if looks_like_matroska(head) {
+    if looks_like_matroska(usual_head) {
         return open_matroska(name, reader.clone());
     }
-    if looks_like_mxf(head) {
+    if mxf::sniff(head) {
         return open_mxf(name, reader.clone());
     }
-    if avi::sniff(head) {
+    if avi::sniff(usual_head) {
         return open_avi(name, reader.clone());
     }
-    if let Some(fmt) = mpegts::sniff(head) {
+    if let Some(fmt) = mpegts::sniff(usual_head) {
         return open_mpeg(name, fmt, reader.clone());
     }
-    if let Some(source) = standalone_flac::open_reader(name, head, reader) {
+    if craft_media_source::y4m::sniff(usual_head) {
+        return open_y4m(name, reader.clone());
+    }
+    if let Some(source) = standalone_flac::open_reader(name, usual_head, reader) {
         return Some(Ok(source));
     }
-    open_standalone_audio(name, head, reader.clone())
+    open_standalone_audio(name, usual_head, reader.clone())
 }
 
 /// Open an in-memory ISO-BMFF, Matroska/WebM, MXF, AVI, MPEG-TS/PS, or standalone audio source via `craft-media` / `craft-video` / `craft-audio`.
@@ -151,7 +149,7 @@ pub(crate) fn open_bytes(name: &str, bytes: Arc<[u8]>) -> Option<Result<SharedSo
     if looks_like_matroska(&bytes) {
         return open_matroska(name, Arc::new(bytes));
     }
-    if looks_like_mxf(&bytes) {
+    if mxf::sniff(&bytes) {
         return open_mxf(name, Arc::new(bytes));
     }
     if avi::sniff(&bytes) {
@@ -159,6 +157,9 @@ pub(crate) fn open_bytes(name: &str, bytes: Arc<[u8]>) -> Option<Result<SharedSo
     }
     if let Some(fmt) = mpegts::sniff(&bytes) {
         return open_mpeg(name, fmt, Arc::new(bytes));
+    }
+    if craft_media_source::y4m::sniff(&bytes) {
+        return open_y4m(name, Arc::new(bytes));
     }
     if let Some(source) = standalone_flac::open_bytes(name, &bytes) {
         return Some(Ok(source));
@@ -172,6 +173,16 @@ pub(crate) fn open_bytes(name: &str, bytes: Arc<[u8]>) -> Option<Result<SharedSo
     #[cfg(not(any(unix, windows)))]
     {
         None
+    }
+}
+
+/// Open a YUV4MPEG2 stream through the shared indexed source. A stream the shared source reports
+/// as unsupported keeps the FilmCraft route, so a file that opened before still opens.
+fn open_y4m(name: &str, source: SharedBytes) -> Option<Result<SharedSource>> {
+    match craft_media_source::y4m::Y4mSource::open(name, source) {
+        Ok(y4m) => Some(Ok(Arc::new(y4m))),
+        Err(MediaError::Unsupported(_)) => None,
+        Err(e) => Some(Err(e)),
     }
 }
 
@@ -495,7 +506,7 @@ impl AudioStarts {
         // rounded or laced packets. A first discontinuous seek may still have to
         // index the unread suffix; normal open and sequential decode never do this.
         while let Some(idx) = self.pending.as_ref().map(|prefix| prefix.len) {
-            if filmcraft_media::cancel::cancelled() {
+            if cancelled() {
                 return Err(MediaError::Cancelled);
             }
             // Do not commit a guessed duration after an I/O error; the next
@@ -598,7 +609,7 @@ fn compute_audio_starts(container: &ContainerFile, track_idx: usize, codec: Code
             let den = i128::from(s.rate.max(1));
             let scale = i128::from(s.scale.max(1));
             if s.sample_size > 0 {
-                let mut acc = 0i64;
+                let mut acc = delayed_avi_pcm_start(s).map_or(0, |(start, _)| start);
                 return AudioStarts::complete(
                     s.chunks
                         .iter()
@@ -1389,6 +1400,33 @@ fn default_video_info(width: u32, height: u32, frame_rate: FrameRate, codec: &Co
     }
 }
 
+/// A byte-timed PCM stream uses one indexed unit per interleaved sample frame.
+/// Convert its stream-clock start to native samples before counting those units.
+fn delayed_avi_pcm_start(stream: &avi::Stream) -> Option<(i64, u32)> {
+    if stream.start == 0 || stream.scale == 0 || stream.rate == 0 {
+        return None;
+    }
+    let wave = stream.audio.as_ref()?;
+    if !matches!((wave.format_tag, wave.bits_per_sample), (1, 8 | 16 | 24 | 32) | (3, 32 | 64)) {
+        return None;
+    }
+    let (sample_rate, channels) = filmcraft_media::bounded_audio_dimensions(wave.sample_rate, u32::from(wave.channels)).ok()?;
+    let packed = u32::from(wave.bits_per_sample.div_ceil(8)) * channels;
+    // The shared decoder consumes packed PCM. Keep the prior route when the
+    // indexed sample size or block padding implies a different packet clock.
+    if stream.sample_size != packed || u32::from(wave.block_align) > packed {
+        return None;
+    }
+    let start = i128::from(stream.start) * i128::from(stream.scale) * i128::from(sample_rate) / i128::from(stream.rate);
+    Some((i64::try_from(start).ok()?, sample_rate))
+}
+
+fn delayed_avi_pcm_end(stream: &avi::Stream) -> Option<Tick> {
+    let (start, sample_rate) = delayed_avi_pcm_start(stream)?;
+    let end = stream.chunks.iter().fold(start, |frames, chunk| frames.saturating_add(i64::from(chunk.size / stream.sample_size)));
+    Some(Tick::from_units(end, i64::from(sample_rate)))
+}
+
 fn open_avi(name: &str, source: SharedBytes) -> Option<Result<SharedSource>> {
     let file = avi::open(&*source).ok()?;
     let video_idx = file.streams.iter().position(|s| s.kind == avi::StreamKind::Video && !s.chunks.is_empty() && s.rate > 0 && s.scale > 0);
@@ -1403,22 +1441,25 @@ fn open_avi(name: &str, source: SharedBytes) -> Option<Result<SharedSource>> {
     if video_idx.is_none() && audio_candidates.is_empty() {
         return None;
     }
+    let delayed_audio_end = audio_candidates.iter().filter_map(|&(idx, _, _, _)| delayed_avi_pcm_end(&file.streams[idx])).max().unwrap_or(Tick::ZERO);
 
     if let Some(idx) = video_idx
         && let Some(raw) = RawAvi::new(&file.streams[idx])
     {
-        // Shared AVI audio positions are relative to the first chunk. Keep the
-        // legacy path for a track with a separate stream start.
-        if audio_candidates.iter().any(|&(audio, _, _, _)| file.streams[audio].start != 0) {
+        if audio_candidates.iter().any(|&(audio, _, _, _)| {
+            let stream = &file.streams[audio];
+            stream.start != 0 && delayed_avi_pcm_start(stream).is_none()
+        }) {
             return None;
         }
         let duration = audio_candidates
             .iter()
+            .filter(|&&(audio, _, _, _)| file.streams[audio].start == 0)
             .map(|&(audio, _, _, _)| {
                 let s = &file.streams[audio];
                 Tick::from_units(i64::from(s.length).saturating_mul(i64::from(s.scale.max(1))), i64::from(s.rate.max(1)))
             })
-            .fold(raw.duration(file.streams[idx].chunks.len()), Tick::max);
+            .fold(raw.duration(file.streams[idx].chunks.len()).max(delayed_audio_end), Tick::max);
         let video = ContainerVideoPart { track_idx: idx, info: raw.info(&file.streams[idx]), state: Mutex::new(VideoState::RawAvi(raw)) };
         return finish_container_source(name, "avi", source, ContainerFile::Avi(Box::new(file)), Some(video), duration, audio_candidates);
     }
@@ -1452,6 +1493,7 @@ fn open_avi(name: &str, source: SharedBytes) -> Option<Result<SharedSource>> {
     } else {
         let duration = audio_candidates
             .iter()
+            .filter(|&&(idx, _, _, _)| delayed_avi_pcm_start(&file.streams[idx]).is_none())
             .map(|(idx, _, params, _)| {
                 let s = &file.streams[*idx];
                 let units = if params.codec == CodecId::Pcm && s.sample_size > 0 {
@@ -1467,7 +1509,7 @@ fn open_avi(name: &str, source: SharedBytes) -> Option<Result<SharedSource>> {
         (None, duration)
     };
 
-    finish_container_source(name, "avi", source, ContainerFile::Avi(Box::new(file)), video, duration, audio_candidates)
+    finish_container_source(name, "avi", source, ContainerFile::Avi(Box::new(file)), video, duration.max(delayed_audio_end), audio_candidates)
 }
 
 fn estimate_mpeg_frame_rate_pts(pts: impl IntoIterator<Item = i64>) -> FrameRate {
@@ -1630,6 +1672,13 @@ fn decode_track_packet(
     let mut frame = DecodedVideoFrame::try_from(decode_prores(packet, &options)?)?;
     frame.pts = Some(pts);
     Ok(vec![frame])
+}
+
+fn video_decode_error(error: VideoError) -> MediaError {
+    match error {
+        VideoError::Unsupported(detail) => MediaError::Unsupported(detail),
+        other => MediaError::Decode(other.to_string()),
+    }
 }
 
 struct AudioTrackState {
@@ -1800,7 +1849,7 @@ impl MediaSource for CraftMediaSource {
         // Backward seek, jump to a later GOP, or draft/full-quality mode switch: reset decoder to
         // the target sync sample so full-quality frames never reuse draft-decoded references.
         if draft_changed || target_idx < state.next_decode_idx || sync_idx > state.gop_start_idx {
-            state.decoder.reset().map_err(|e| MediaError::Decode(e.to_string()))?;
+            state.decoder.reset().map_err(video_decode_error)?;
             state.decoded.clear();
             state.next_decode_idx = sync_idx;
             state.gop_start_idx = sync_idx;
@@ -1810,19 +1859,18 @@ impl MediaSource for CraftMediaSource {
         let sample_count = self.file.sample_count(video_idx);
         let is_isobmff = matches!(&self.file, ContainerFile::Isobmff(_));
         while !state.decoded.iter().any(|c| c.pts >= target_pts && c.draft == want_draft) {
-            if filmcraft_media::cancel::cancelled() {
+            if cancelled() {
                 return Err(MediaError::Cancelled);
             }
             if state.next_decode_idx < sample_count {
                 let idx = state.next_decode_idx;
                 let pts = self.file.sample_pts(video_idx, idx);
                 let pkt = self.file.read_sample(&*self.source, video_idx, idx)?;
-                let frames =
-                    decode_track_packet(&mut state.decoder, is_isobmff, &pkt, pts, prores::decode_frame_with).map_err(|e| MediaError::Decode(e.to_string()))?;
+                let frames = decode_track_packet(&mut state.decoder, is_isobmff, &pkt, pts, prores::decode_frame_with).map_err(video_decode_error)?;
                 state.next_decode_idx = idx + 1;
                 push_decoded(&mut state.decoded, frames, want_draft, self.presentation, &self.file, video_idx)?;
             } else if !state.flushed {
-                let frames = state.decoder.flush().map_err(|e| MediaError::Decode(e.to_string()))?;
+                let frames = state.decoder.flush().map_err(video_decode_error)?;
                 state.flushed = true;
                 push_decoded(&mut state.decoded, frames, want_draft, self.presentation, &self.file, video_idx)?;
                 break;
@@ -1904,7 +1952,7 @@ impl MediaSource for CraftMediaSource {
                 channels
             }
             AudioBackend::MxfPcm { presented_start, presented_len } => {
-                if filmcraft_media::cancel::cancelled() {
+                if cancelled() {
                     return Err(MediaError::Cancelled);
                 }
                 let ContainerFile::Mxf(mxf_file) = &self.file else {
@@ -2077,7 +2125,7 @@ fn decode_standalone_range(native_rate: u32, channels_count: usize, state: &mut 
     }
 
     while state.decoded_pos + state.buf.first().map_or(0, Vec::len) as i64 <= end {
-        if filmcraft_media::cancel::cancelled() {
+        if cancelled() {
             return Err(MediaError::Cancelled);
         }
         let Some(block) = state.decoder.next_block().map_err(|e| MediaError::Decode(e.to_string()))? else {
@@ -2223,7 +2271,7 @@ fn decode_audio_range(
 
     let sample_count = file.sample_count(track_idx);
     while state.next_sample < sample_count {
-        if filmcraft_media::cancel::cancelled() {
+        if cancelled() {
             return Err(MediaError::Cancelled);
         }
         let idx = state.next_sample;
@@ -2300,6 +2348,9 @@ fn push_decoded(
 #[cfg(test)]
 mod rgb8_tests;
 
+#[cfg(test)]
+mod wide_rgb_tests;
+
 fn to_craft_frame(vf: DecodedVideoFrame, presentation: FramePresentation, pts: Tick) -> Result<VideoFrame> {
     let FramePresentation { container_color, par: default_par, rotation, aperture } = presentation;
     let (mut width, mut height) = (vf.width(), vf.height());
@@ -2311,7 +2362,7 @@ fn to_craft_frame(vf: DecodedVideoFrame, presentation: FramePresentation, pts: T
         Some(sar) => sar,
         None => default_par,
     };
-    let color = resolve_color(tags, container_color);
+    let mut color = resolve_color(tags, container_color);
     let bit_depth = vf.bit_depth();
     let (planes, alpha) = vf.into_planes();
 
@@ -2337,6 +2388,38 @@ fn to_craft_frame(vf: DecodedVideoFrame, presentation: FramePresentation, pts: T
                 rgba.extend_from_slice(&[r, g, b, a]);
             }
             PixelData::Rgba8(Arc::new(rgba))
+        }
+        ColorFamily::Rgb if color.range == Range::Full && (9..=16).contains(&bit_depth) && planes.iter().all(|p| p.bit_depth() == bit_depth) => {
+            let luma = aperture.and_then(|clap| clean_aperture_region(clap, (width, height)));
+            if let Some(r) = luma {
+                (width, height) = (r.w as u32, r.h as u32);
+            }
+            let samples = (width as usize)
+                .checked_mul(height as usize)
+                .and_then(|n| n.checked_mul(4))
+                .filter(|&n| n <= craft_frame::DEFAULT_MAX_FRAME_BYTES / size_of::<f32>())
+                .ok_or_else(|| MediaError::Decode("RGB picture exceeds the frame buffer limit".into()))?;
+            let [r, g, b]: [Plane; 3] = planes.try_into().map_err(|_| MediaError::Decode("expected three RGB planes".into()))?;
+            let r = plane_u16(r, luma)?;
+            let g = plane_u16(g, luma)?;
+            let b = plane_u16(b, luma)?;
+            let alpha_max = alpha.as_ref().map_or(1, |a| ((1u32 << a.bit_depth()) - 1) as u16);
+            let alpha = alpha.map(|a| plane_u16(a, luma)).transpose()?.into_iter().flatten().chain(std::iter::repeat(alpha_max));
+            // One transfer lookup per code avoids evaluating the curve per pixel and keeps
+            // every decoded code distinct, including at 16 bits.
+            let max_code = (1usize << bit_depth) - 1;
+            let mut transfer = Vec::new();
+            transfer.try_reserve_exact(max_code + 1).map_err(|_| MediaError::Decode("could not allocate the RGB transfer table".into()))?;
+            transfer.extend((0..=max_code).map(|code| craft_color::to_linear(code as f32 / max_code as f32, color.transfer)));
+            let linear = |value: u16| transfer[usize::from(value).min(max_code)];
+            let mut rgba = Vec::new();
+            rgba.try_reserve_exact(samples).map_err(|_| MediaError::Decode("could not allocate the RGB picture".into()))?;
+            for (((r, g), b), a) in r.into_iter().zip(g).zip(b).zip(alpha) {
+                let a = (f32::from(a) / f32::from(alpha_max)).min(1.0);
+                rgba.extend_from_slice(&[linear(r) * a, linear(g) * a, linear(b) * a, a]);
+            }
+            color.transfer = Transfer::Linear;
+            PixelData::RgbaF32(Arc::new(rgba))
         }
         ColorFamily::YCbCr => {
             let chroma = match subsampling {
@@ -2474,6 +2557,10 @@ fn rotate_frame(mut frame: VideoFrame, turns: u8) -> VideoFrame {
             let rotated = rotate_plane(pixels.as_chunks::<4>().0, w, h, turns);
             PixelData::Rgba8(Arc::new(rotated.into_flattened()))
         }
+        PixelData::RgbaF32(pixels) => {
+            let rotated = rotate_plane(pixels.as_chunks::<4>().0, w, h, turns);
+            PixelData::RgbaF32(Arc::new(rotated.into_flattened()))
+        }
         PixelData::Yuv8 { planes: [y, cb, cr], chroma, alpha } => {
             let (cw, ch, out_chroma) = match chroma {
                 Chroma::C420 => (w.div_ceil(2), h.div_ceil(2), Chroma::C420),
@@ -2513,7 +2600,6 @@ fn rotate_frame(mut frame: VideoFrame, turns: u8) -> VideoFrame {
                 alpha: alpha.map(|a| Arc::new(rotate_plane(&a, w, h, turns))),
             }
         }
-        other => other,
     };
     frame.width = nw;
     frame.height = nh;
@@ -2784,6 +2870,15 @@ mod raw_avi_tests;
 mod tests {
     use super::*;
 
+    /// A decoder's "unsupported" stays unsupported; anything else is a decode failure.
+    #[test]
+    fn video_decode_errors_keep_unsupported_apart() {
+        assert!(matches!(video_decode_error(VideoError::Unsupported("H.264: 4:2:2".into())), MediaError::Unsupported(s) if s == "H.264: 4:2:2"));
+        assert!(
+            matches!(video_decode_error(VideoError::Malformed("VP9: bad header".into())), MediaError::Decode(s) if s == "malformed video: VP9: bad header")
+        );
+    }
+
     // One 20 ms mono packet from craft-audio's generated tone.opus test fixture.
     // Re-mux it into ordinary small audio-only files without an external encoder.
     const OPUS_TONE: &[u8] = b"\x78\x82\x01\xB7\x6C\x7E\x40\xE6\x00\x00\x0A\xBE\x9A\xA7\xBE\xFF\xB6\x85\xD7\x0A\x71\xE0\xDD\
@@ -3013,6 +3108,82 @@ mod tests {
             }
             assert_eq!(new_alpha.as_deref(), alpha[i].as_ref());
             assert_eq!(new_alpha.as_deref(), old_alpha.as_deref());
+        }
+    }
+
+    /// Two distinct self-generated pictures of `colour` (`W4 H2`), 16-bit little-endian above 8 bits.
+    fn generated_y4m(colour: &str, bits: u8, planes: usize, chroma_len: usize) -> Arc<[u8]> {
+        let mut out = format!("YUV4MPEG2 W4 H2 F25:1 Ip A2:1 C{colour} XCOLORRANGE=FULL\n").into_bytes();
+        for frame in 0..2u16 {
+            out.extend_from_slice(b"FRAME\n");
+            for plane in 0..planes {
+                let len = if plane == 0 || plane == 3 { 8 } else { chroma_len };
+                for i in 0..len as u16 {
+                    let v = (frame * 97 + plane as u16 * 31 + i * 13) % (1 << bits.min(10));
+                    if bits > 8 {
+                        out.extend_from_slice(&v.to_le_bytes());
+                    } else {
+                        out.push(v as u8);
+                    }
+                }
+            }
+        }
+        out.into()
+    }
+
+    #[test]
+    fn y4m_import_uses_the_shared_source_with_film_parity() {
+        use crate::stream::{DecodedFrame, MediaSource as Opened};
+
+        fn planes(frame: DecodedFrame) -> (Vec<Vec<u16>>, Option<Vec<u16>>, u32) {
+            let wide = |p: &[u8]| p.iter().map(|&v| u16::from(v)).collect::<Vec<_>>();
+            match frame {
+                DecodedFrame::Craft(f) => match &f.data {
+                    PixelData::Yuv8 { planes, alpha, .. } => (planes.iter().map(|p| wide(p)).collect(), alpha.as_ref().map(|a| wide(a)), 8u32),
+                    PixelData::Yuv16 { planes, alpha, bits, .. } => (planes.iter().map(|p| p.to_vec()).collect(), alpha.as_ref().map(|a| a.to_vec()), *bits),
+                    _ => panic!("shared Y4M frame is planar YUV"),
+                },
+                DecodedFrame::Film(f) => match &f.data {
+                    filmcraft_frame::PixelData::Yuv8 { planes, alpha, .. } => (planes.iter().map(|p| wide(p)).collect(), alpha.as_ref().map(|a| wide(a)), 8u32),
+                    filmcraft_frame::PixelData::Yuv16 { planes, alpha, bits, .. } => {
+                        (planes.iter().map(|p| p.to_vec()).collect(), alpha.as_ref().map(|a| a.to_vec()), *bits)
+                    }
+                    _ => panic!("legacy Y4M frame is planar YUV"),
+                },
+            }
+        }
+
+        let step = craft_time::TICKS_PER_SECOND / 25;
+        for (colour, bits, plane_count, chroma_len) in
+            [("420jpeg", 8, 3, 2), ("444alpha", 8, 4, 8), ("mono", 8, 1, 0), ("420p10", 10, 3, 2), ("422p12", 12, 3, 4)]
+        {
+            let bytes = generated_y4m(colour, bits, plane_count, chroma_len);
+            let path = "generated.y4m";
+            let shared = crate::stream::open_bytes(path, bytes.clone()).unwrap();
+            assert!(matches!(shared, Opened::Craft(_)), "{colour}: Y4M must use the shared source");
+            let direct = filmcraft_codecs::open_bytes(path, bytes.clone()).unwrap();
+            let old = crate::probe::footage_from_info(path, direct.info());
+            let film = Opened::Film(direct);
+            let footage = crate::probe_bytes(path, bytes.clone()).unwrap();
+            assert_eq!((footage.width, footage.height), (4, 2), "{colour}");
+            assert_eq!(footage.frame_rate, old.frame_rate, "{colour}");
+            assert_eq!(footage.duration, old.duration, "{colour}");
+            assert_eq!(footage.duration.0, step * 2, "{colour}");
+            assert_eq!(footage.pixel_aspect, old.pixel_aspect, "{colour}");
+            assert_eq!(footage.alpha, old.alpha, "{colour}");
+            assert_eq!(footage.color_profile, old.color_profile, "{colour}");
+            assert_eq!(footage.codec, old.codec, "{colour}");
+            let mut seen = Vec::new();
+            for at in [step, 0, step - 1, step, 0] {
+                let time = effectcraft_time::Tick(at);
+                let new = planes(shared.video_frame(time, 1.0).unwrap());
+                let legacy = planes(film.video_frame(time, 1.0).unwrap());
+                assert_eq!(new, legacy, "{colour} at {at}");
+                assert_eq!(new.2, u32::from(bits), "{colour}");
+                assert_eq!(new.1.is_some(), colour == "444alpha", "{colour}");
+                seen.push(new.0);
+            }
+            assert_ne!(seen[0], seen[1], "{colour}: the two pictures differ");
         }
     }
 
@@ -4127,11 +4298,60 @@ mod tests {
     }
 
     #[test]
-    fn mxf_sniffer_and_rational_units() {
-        assert!(looks_like_mxf(&[0x06, 0x0e, 0x2b, 0x34, 0x02, 0x05, 0x01, 0x01, 0x0d, 0x01, 0x02, 0x01, 0x01, 0x02]));
-        assert!(!looks_like_mxf(&[0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p']));
+    fn mxf_rational_units() {
         assert_eq!(tick_to_rational_units(Tick(craft_time::TICKS_PER_SECOND), 25, 1), 25);
         assert_eq!(tick_to_rational_units(Tick(craft_time::TICKS_PER_SECOND), 30000, 1001), 29);
+    }
+
+    #[test]
+    fn mxf_routing_leaves_avi_payload_partition_markers_in_avi() {
+        // Partitions might occur as arbitrary sample bytes in another container.
+        let mut detected = Vec::new();
+        for (padding, kind) in [(0, 3), (66_000, 2)] {
+            let key = [0x06, 0x0e, 0x2b, 0x34, 0x02, 0x05, 0x01, 0x01, 0x0d, 0x01, 0x02, 0x01, 0x01, kind, 0x04, 0x00];
+            let mut pcm = vec![0; padding];
+            pcm.extend(key);
+            let mut writer = avi::AviWriter::new(
+                std::io::Cursor::new(Vec::new()),
+                vec![avi::StreamSpec::Audio(avi::AudioSpec::pcm(48_000, 1, 16))],
+                avi::MuxOptions::default(),
+            )
+            .expect("AVI writer");
+            writer.write_chunk(0, &pcm, true).expect("PCM chunk");
+            let bytes = writer.finish().expect("finish AVI").into_inner();
+            detected.push(open_bytes("audio.avi", bytes.into()).and_then(Result::ok).map(|src| src.info().container.clone()));
+        }
+        assert_eq!(detected, [Some("avi".to_string()), Some("avi".to_string())]);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn mxf_routing_opens_a_header_at_the_native_run_in_boundary() {
+        use crate::stream::{MediaSource, open_source, probe_source};
+
+        let options = mxf::write::OpAtomPcm {
+            sample_rate: 48_000,
+            bits: 16,
+            channels: 1,
+            edit_rate: None,
+            ids: mxf::write::PackageIds::from_seed("mxf-run-in", "pcm"),
+            timecode: None,
+        };
+        let mut bytes = vec![0xab; 65_535];
+        bytes.extend(mxf::write::write_opatom_pcm(&options, &[8192; 480]).expect("write OpAtom PCM"));
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let path = dir.path().join("run-in.mxf");
+        std::fs::write(&path, &bytes).expect("write MXF fixture");
+
+        let memory = open_bytes("run-in.mxf", bytes.into()).expect("recognize in memory").expect("open in memory");
+        let expected = memory.audio(0, 16, 48_000).expect("read memory PCM").channels;
+        assert_eq!(expected[0], vec![0.25; 16]);
+
+        let (disk, _) = open_source(&path).expect("open file");
+        let MediaSource::Craft(disk) = disk.expect("open disk MXF") else { panic!("use shared MXF reader on disk") };
+        assert_eq!(disk.audio(0, 16, 48_000).expect("read disk PCM").channels, expected);
+        let probe = probe_source(&path).expect("recognize disk probe").expect("open disk probe");
+        assert!(matches!(probe, MediaSource::Craft(src) if src.info().container == "mxf"));
     }
 
     #[test]
@@ -4522,6 +4742,22 @@ mod tests {
             mux.write_frame(0, &Frame { data: &packet.data, pts: packet.pts, dts: Some(packet.dts), key: true }).unwrap();
         }
         mux.finish().unwrap()
+    }
+
+    #[test]
+    fn shared_video_read_observes_filmcraft_request_cancellation() {
+        use std::sync::atomic::AtomicBool;
+
+        let source = crate::stream::open_bytes("cancelled.ts", generated_two_frame_ts().into()).unwrap();
+        assert!(matches!(source, crate::stream::MediaSource::Craft(_)));
+        let cancel = Arc::new(AtomicBool::new(true));
+        let request = || source.video_frame(effectcraft_time::Tick::ZERO, 1.0);
+        let interrupted = filmcraft_media::cancel::with_cancel(&cancel, request);
+        assert!(matches!(interrupted, Err(crate::MediaError::Cancelled)));
+
+        let interrupted = craft_media_source::cancel::with_cancel(&cancel, request);
+        assert!(matches!(interrupted, Err(crate::MediaError::Cancelled)));
+        assert!(request().is_ok());
     }
 
     #[test]

@@ -75,7 +75,10 @@ fn glides_panel_follows_the_keyframe_selection_and_its_auto_apply_box_works_from
     for (time, value) in [(0.0, 0.0), (2.0, 100.0)] {
         session.execute("prop.addKey", json!({"layer": 1, "path": "transform/opacity", "time": time, "value": value})).unwrap();
     }
-    let mut harness = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_| EffectcraftApp::new(session));
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 900.0))
+        .with_context_setup(crate::framework::install_headless)
+        .build_eframe(|_| EffectcraftApp::new(session));
     harness.step();
     let ctx = harness.ctx.clone();
     crate::menus::invoke(harness.state_mut(), &ctx, "window.pluginPanel", json!({"plugin": GLIDE, "panel": "glide"})).unwrap();

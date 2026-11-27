@@ -64,7 +64,10 @@ fn halo_session() -> Session {
 }
 
 pub(crate) fn harness(session: Session) -> Harness<'static, EffectcraftApp> {
-    Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(|_| EffectcraftApp::new(session))
+    Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .with_context_setup(crate::framework::install_headless)
+        .build_eframe(|_| EffectcraftApp::new(session))
 }
 
 pub(crate) fn element(harness: &Harness<'_, EffectcraftApp>, id: &str) -> egui::Rect {
@@ -606,6 +609,13 @@ fn a_plugin_form_returns_the_values_entered_on_ok_nothing_on_cancel_and_automati
     ask(&mut harness);
     click(&mut harness, "plugin.form.soft");
     click(&mut harness, "plugin.form.cancel");
+    assert_eq!(answered(&mut harness), "cancelled");
+
+    ask(&mut harness);
+    assert!(crate::panels::plugin_view::form_open(harness.state()));
+    click(&mut harness, "plugin.form.label");
+    assert!(harness.ctx.text_edit_focused());
+    harness.key_press(egui::Key::Escape);
     assert_eq!(answered(&mut harness), "cancelled");
 
     ask(&mut harness);

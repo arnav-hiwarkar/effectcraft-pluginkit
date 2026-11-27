@@ -275,7 +275,7 @@ mod tests {
     type H<'a> = Harness<'a, crate::EffectcraftApp>;
 
     fn harness<'a>(session: effectcraft_engine::Session, gpu: bool) -> Option<H<'a>> {
-        let builder = Harness::builder().with_size(egui::vec2(1200.0, 800.0));
+        let builder = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).with_context_setup(crate::framework::install_headless);
         let mut h = if gpu {
             builder.renderer(egui_kittest::wgpu::WgpuTestRenderer::new()).build_eframe(|_| crate::EffectcraftApp::new(session))
         } else {
@@ -312,6 +312,9 @@ mod tests {
         }
         panic!("the viewer shows {:?}, not {want}", centre(h));
     }
+    /// The LUT generation is process-wide: a test that changes a LUT file moves it for every
+    /// viewer in the process, so the tests that read frame keys run one at a time.
+    static LUT_GENERATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// #3493: the viewer shows the frame again once the LUT file it was graded with changes,
     /// though its key was otherwise the same (same project revision, frame and options).
@@ -327,6 +330,7 @@ mod tests {
 
     fn lut_file_changed_on_disk(gpu: bool) {
         let _alone = crate::frames::gpu_slot_test();
+        let _serial = LUT_GENERATION.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let lut = dir.path().join("viewer.cube");
         let write = |text: &str, secs: u64| {
@@ -364,6 +368,7 @@ mod tests {
 
     fn still_reloaded_at_the_same_size(gpu: bool) {
         let _alone = crate::frames::gpu_slot_test();
+        let _serial = LUT_GENERATION.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let png = dir.path().join("still.png");
         let save = |rgb: [u8; 3]| image::RgbaImage::from_pixel(64, 36, image::Rgba([rgb[0], rgb[1], rgb[2], 255])).save(&png).unwrap();

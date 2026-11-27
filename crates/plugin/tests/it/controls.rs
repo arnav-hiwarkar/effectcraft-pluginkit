@@ -87,7 +87,8 @@ fn a_queued_press_stops_when_its_effect_is_removed_or_another_edit_lands_while_i
     panels.press(&app.session, layer, ask).unwrap();
     pump(&mut app, &mut panels, |app, _| effectcraft_plugin::asked_form(&app.session, |_| ()).is_some());
     set(&mut app, "manual", json!(true)).unwrap();
-    effectcraft_plugin::answer_form(&app.session, Some(Default::default())).unwrap();
+    let request = effectcraft_plugin::asked_form(&app.session, |asked| asked.id).unwrap();
+    effectcraft_plugin::answer_form(&app.session, request, Some(Default::default())).unwrap();
     pump(&mut app, &mut panels, |_, panels| panels.idle());
     assert_eq!(values(&mut app), [json!(0.0), json!(1.0)], "the press stops before its write after the other edit");
     assert!(log(&mut app).contains("another edit changed the project while it ran"));

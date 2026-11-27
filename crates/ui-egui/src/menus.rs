@@ -33,6 +33,7 @@ pub use invoke::{invoke, panel_command_id, reveal, waits_on_dialog};
 pub(crate) use plugin_commands::{context_section as plugin_context_section, toolbar as plugin_toolbar};
 #[cfg(test)]
 use shortcuts::modifiers_at_start;
+pub(crate) use shortcuts::plugin_panel_keys;
 pub use shortcuts::{Binding, bindings, chord_matches, forwardable_during_text_edit, handle_shortcuts, handle_tab_shortcut, parse_shortcut, shortcut_text};
 
 pub struct UiCommand {

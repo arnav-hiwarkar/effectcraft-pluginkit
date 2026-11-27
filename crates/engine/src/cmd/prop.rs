@@ -591,6 +591,19 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let v = p.get("value").ok_or_else(|| bad("prop.set", "missing `value`"))?.clone();
     let at = snapped_key_time(s, cid, lid, p, "prop.set")?;
+    let selected: Vec<Tick> = s.state.selected_keys.iter().filter(|k| k.layer == lid && k.prop == uid).map(|k| k.time).collect();
+    let layer = s.project.comp(cid).and_then(|comp| comp.layer(lid)).ok_or(EngineError::NoComp)?;
+    let playhead = layer.layer_time(s.time_of(cid));
+    let prop = layer.props.find(uid).ok_or_else(|| bad("prop.set", "property vanished"))?;
+    let move_selected = selected.len() > 1
+        && at.is_none_or(|time| time == playhead)
+        && selected.contains(&playhead)
+        && key_at(&prop.keys, playhead).and_then(|index| prop.keys.get(index)).is_some_and(|key| key.value.interpolates());
+    if move_selected {
+        for key in prop.keys.iter().filter(|key| key.time != playhead && selected.contains(&key.time)) {
+            editable(s, cid, lid, uid, key.time)?;
+        }
+    }
     let out = with_prop(s, "Change Property", merge_p(p), (cid, lid, uid), at, |pr, lt| {
         let cur = pr.value_at(lt);
         let mut nv = cur.coerce_json(&v).ok_or_else(|| bad("prop.set", format!("can't use {v} for a {} property", cur.kind_name())))?;
@@ -600,7 +613,23 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         {
             nv = effectcraft_keyframe::Value::Scalar(x.clamp(min, max));
         }
-        pr.set_value_at(lt, nv.clone());
+        let target = lt;
+        // After Effects: editing the value with the CTI on one of several selected keys moves all
+        // the selected keys by the same change, measured from the stored key (even a muted one); between keys, or at an explicit
+        // other time, it only edits that key.
+        if move_selected && nv.interpolates() {
+            let stored = key_at(&pr.keys, target).and_then(|i| pr.keys.get(i)).map(|k| k.value.components()).unwrap_or_default();
+            let delta: Vec<f64> = nv.components().iter().zip(&stored).map(|(n, o)| n - o).collect();
+            let range = if let effectcraft_project::ParamUi::Slider { min, max, .. } = pr.ui { Some((min, max)) } else { None };
+            for k in pr.keys.iter_mut().filter(|k| k.time != target && selected.contains(&k.time)) {
+                let moved: Vec<f64> = k.value.components().iter().zip(&delta).map(|(c, d)| c + d).collect();
+                k.value = k.value.with_components(&moved);
+                if let (Some((min, max)), effectcraft_keyframe::Value::Scalar(x)) = (range, &k.value) {
+                    k.value = effectcraft_keyframe::Value::Scalar(x.clamp(min, max));
+                }
+            }
+        }
+        pr.set_value_at(target, nv.clone());
         Ok(nv.to_json())
     })?;
     if p.get("timeBase").is_none() {

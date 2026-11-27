@@ -656,10 +656,10 @@ impl Panels {
         }
     }
 
-    pub fn press_key(&mut self, key: &Owner, chord: &str) {
-        if let Some(slot) = self.slots.get_mut(key) {
-            slot.retained.press(chord);
-        }
+    pub fn press_key(&mut self, key: &Owner, chord: &str) -> bool {
+        let Some(slot) = self.slots.get_mut(key) else { return false };
+        slot.retained.press(chord);
+        true
     }
 
     pub fn menu(&self, key: &Owner) -> &[craft_plugin_host::ui::MenuItem] {

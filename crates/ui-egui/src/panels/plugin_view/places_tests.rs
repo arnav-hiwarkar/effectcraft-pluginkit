@@ -146,7 +146,8 @@ fn a_closed_notes_instance_is_forgotten_so_the_next_new_notes_starts_empty() {
 #[test]
 fn two_instance_keys_whose_dock_keys_would_fold_together_open_two_tabs_with_their_own_text() {
     let _notes = NOTES.lock().unwrap_or_else(|e| e.into_inner());
-    assert_eq!(PanelKind::plugin_instance(PROBE, "notes", "k384"), PanelKind::plugin_instance(PROBE, "notes", "k608"), "the keys fold to one u16");
+    assert_eq!(serde_json::to_value(PanelKind::plugin_instance(PROBE, "notes", "k384")).unwrap(), "plugin.test.viewer-tool-ui.notes#k384");
+    assert_eq!(serde_json::to_value(PanelKind::plugin_instance(PROBE, "notes", "k608")).unwrap(), "plugin.test.viewer-tool-ui.notes#k608");
     let mut harness = harness(probe_session());
     until(&mut harness, "the probe's notes panel registering", |h| {
         h.state().session.plugin_items.iter().any(|item| item.plugin == PROBE && item.id == "notes")
