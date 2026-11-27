@@ -485,6 +485,11 @@ impl Plugins {
         Plugins { inner: Mutex::new(inner) }
     }
 
+    fn presets_root(&self) -> PathBuf {
+        let inner = self.lock();
+        inner.suite.clone().unwrap_or_else(|| inner.registry.root().to_path_buf())
+    }
+
     pub fn store_generation(&self) -> u64 {
         self.lock().generation
     }
@@ -850,15 +855,28 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+fn resolve_suite_root(private: Option<&Path>, extensions_override: bool) -> Result<PathBuf, String> {
+    match private.filter(|_| !extensions_override) {
+        Some(root) => Ok(root.to_path_buf()),
+        None => location::default_root().map_err(|error| error.to_string()),
+    }
+}
+
+/// The suite folder the running plug-ins come from, when they come from a shared suite store
+/// rather than a private test store.
+pub fn suite_root() -> Option<PathBuf> {
+    plugins()?.lock().suite.clone()
+}
+
 enum Store<'a> {
-    Shared { legacy: Option<PathBuf> },
+    Shared { legacy: Option<PathBuf>, private: Option<PathBuf> },
     Isolated(&'a Path),
 }
 
 fn open_store(store: Store, safe_mode: bool) -> Plugins {
     match store {
         Store::Isolated(root) => Plugins::open(root, safe_mode),
-        Store::Shared { legacy } => match location::default_root() {
+        Store::Shared { legacy, private } => match resolve_suite_root(private.as_deref(), std::env::var_os(location::OVERRIDE_VAR).is_some()) {
             Ok(suite) => {
                 if let Some(legacy) = legacy
                     && let Err(error) = migrate(&legacy, &suite)
@@ -889,15 +907,17 @@ fn install_store(session: &mut Session, store: Store) -> &'static Plugins {
     });
     session.plugin_commands = Some(command);
     session.plugin_hooks = Some(crate::hooks::ask);
-    session.user_presets = crate::presets::SuitePresets::open();
+    session.user_presets = Some(crate::presets::SuitePresets::open(&plugins.presets_root()));
     session.set_plugin_items(plugins.items());
     plugins
 }
 
 /// Plugins from the suite store shared with the launcher and the other Craft apps, moving the old
-/// `<config_dir>/Plugins` folder into it once.
-pub fn install_shared(session: &mut Session, config_dir: Option<&Path>) -> &'static Plugins {
-    install_store(session, Store::Shared { legacy: config_dir.map(|dir| dir.join(PLUGINS_DIR)) })
+/// `<config_dir>/Plugins` folder into it once. `private_suite` replaces the shared suite for a
+/// private data folder (tests, agents, a Nightly profile), unless `CRAFT_EXT_DIR` names one.
+pub fn install_shared(session: &mut Session, config_dir: Option<&Path>, private_suite: Option<&Path>) -> &'static Plugins {
+    let legacy = config_dir.map(|dir| dir.join(PLUGINS_DIR));
+    install_store(session, Store::Shared { legacy, private: private_suite.map(Path::to_path_buf) })
 }
 
 /// Plugins from a private store under `config_dir` (or the temporary folder), for tests and
@@ -1190,6 +1210,13 @@ mod tests {
         inner.reload_bundles();
         assert_eq!(inner.refused.get("test.revoked"), Some(&Refusal::Revoked(Severity::Disable)));
         assert!(!inner.data.contains("test.revoked"));
+    }
+
+    #[test]
+    fn a_private_suite_is_used_unless_the_extensions_folder_is_set() {
+        let private = Path::new("/tmp/ec-config/Extensions");
+        assert_eq!(resolve_suite_root(Some(private), false).as_deref(), Ok(private));
+        assert_eq!(resolve_suite_root(Some(private), true), resolve_suite_root(None, false));
     }
 
     #[test]

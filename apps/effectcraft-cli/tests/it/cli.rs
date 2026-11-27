@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use serde_json::{Value, json};
 
 fn bin() -> Command {
-    Command::new(crate::binary())
+    crate::command()
 }
 
 /// Run with `--json`; returns (exit code, parsed stdout).

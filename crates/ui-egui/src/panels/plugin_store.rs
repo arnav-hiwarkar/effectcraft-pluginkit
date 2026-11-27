@@ -60,7 +60,8 @@ struct Manager {
 
 impl Manager {
     fn start() -> Result<Manager, String> {
-        let backend = StoreBackend::open_default(vec![effectcraft_plugin::APP_ID.to_string()])?;
+        let suite = effectcraft_plugin::suite_root().ok_or("plug-ins are running from a private store, so the shared plug-in store is not available")?;
+        let backend = StoreBackend::open(suite, vec![effectcraft_plugin::APP_ID.to_string()])?;
         let scope = Scope::App { id: effectcraft_plugin::APP_ID.to_string(), version: effectcraft_plugin::APP_VERSION.to_string() };
         let (jobs, done) = channel();
         Ok(Manager { model: Model::new(scope), backend: Arc::new(Mutex::new(backend)), jobs, done, generation: store_generation() })

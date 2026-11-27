@@ -1,6 +1,6 @@
+use std::path::Path;
 use std::sync::Arc;
 
-use craft_ext_store::location;
 use craft_plugin_host::{ContributedPreset, EffectSpec, Presets};
 use effectcraft_engine::plugin_presets::{PresetValues, UserPresets};
 
@@ -13,14 +13,8 @@ pub(crate) struct SuitePresets {
 }
 
 impl SuitePresets {
-    pub(crate) fn open() -> Option<Arc<dyn UserPresets>> {
-        match location::default_root() {
-            Ok(suite) => Some(Arc::new(SuitePresets { presets: Presets::open(&suite) })),
-            Err(error) => {
-                log::warn!("plug-in presets are not available: {error}");
-                None
-            }
-        }
+    pub(crate) fn open(root: &Path) -> Arc<dyn UserPresets> {
+        Arc::new(SuitePresets { presets: Presets::open(root) })
     }
 }
 

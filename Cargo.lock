@@ -2930,6 +2930,7 @@ dependencies = [
  "effectcraft-ui-egui",
  "image",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

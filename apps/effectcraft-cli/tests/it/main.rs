@@ -7,3 +7,12 @@ mod qa_template;
 fn binary() -> std::ffi::OsString {
     std::env::var_os("NEXTEST_BIN_EXE_effectcraft_cli").unwrap_or_else(|| env!("CARGO_BIN_EXE_effectcraft-cli").into())
 }
+
+/// The CLI with its own empty plug-in suite, so no test loads or changes the person's plug-ins.
+fn command() -> std::process::Command {
+    static SUITE: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let suite = SUITE.get_or_init(|| tempfile::tempdir().unwrap());
+    let mut command = std::process::Command::new(binary());
+    command.env("CRAFT_EXT_DIR", suite.path());
+    command
+}

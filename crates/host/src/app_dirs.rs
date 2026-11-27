@@ -102,6 +102,17 @@ pub fn resolve(env: impl Fn(&str) -> Option<OsString>, exe_dir: Option<&Path>) -
     }
 }
 
+/// The folder under a private data folder that holds its own plug-in suite.
+pub const PRIVATE_PLUGIN_SUITE: &str = "Extensions";
+
+impl DataDir {
+    /// The plug-in suite of a private data folder (a Nightly profile or `EFFECTCRAFT_CONFIG_DIR`),
+    /// so tests, agents and Nightly never load or change the plug-ins of the person's normal setup.
+    pub fn private_plugin_suite(&self) -> Option<PathBuf> {
+        self.dir.as_ref().filter(|_| self.mode == Mode::Override).map(|dir| dir.join(PRIVATE_PLUGIN_SUITE))
+    }
+}
+
 /// The platform convention, from `env` (so tests can fake `HOME`/`APPDATA`/`XDG_CONFIG_HOME`).
 pub fn platform_dir(env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     let home = || env("HOME").map(PathBuf::from);
@@ -153,6 +164,20 @@ mod tests {
         let home = root.join("home");
         let appdata = root.join("appdata");
         env_of(&[("HOME", &home), ("APPDATA", &appdata)])
+    }
+
+    #[test]
+    fn only_a_private_data_folder_has_a_private_plugin_suite() {
+        let root = temp("suite");
+        let exe = root.join("bin");
+        std::fs::create_dir_all(&exe).unwrap();
+        let config = root.join("config");
+        let overridden = resolve(env_of(&[("EFFECTCRAFT_CONFIG_DIR", &config)]), Some(&exe));
+        assert_eq!(overridden.private_plugin_suite(), Some(config.join(PRIVATE_PLUGIN_SUITE)));
+        let nightly = resolve_with_profile(Some(&root.join("nightly")), fake_home(&root), Some(&exe));
+        assert_eq!(nightly.private_plugin_suite(), Some(root.join("nightly").join(PRIVATE_PLUGIN_SUITE)));
+        assert_eq!(resolve(fake_home(&root), Some(&exe)).private_plugin_suite(), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
