@@ -196,6 +196,7 @@ fn the_ring_and_point_handles_take_tab_focus_and_arrow_keys() {
     let centre = element(&harness, &format!("viewer.pluginHandle.{effect}.0")).center();
     press_drag_release(&mut harness, &[centre]);
     harness.step();
+    settle(&mut harness, |h| h.state().plugin_ui.panels.idle());
     let key = |h: &mut Harness<'_, EffectcraftApp>, key: egui::Key, modifiers: egui::Modifiers| {
         h.input_mut().events.push(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers });
         h.step();
