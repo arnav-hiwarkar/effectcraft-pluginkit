@@ -527,8 +527,8 @@ fn not_running(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pa
     };
     let mut body = ui.new_child(UiBuilder::new().max_rect(rect.shrink(12.0)));
     body.label(RichText::new(message).color(app.tokens.text_dim));
-    let manage = body.button(tr("Manage plugins…"));
-    app.auto.add_response(&format!("{}.manage", kind.id()), &manage, "Manage plugins…");
+    let manage = body.button(tr("Manage plugins..."));
+    app.auto.add_response(&format!("{}.manage", kind.id()), &manage, "Manage plugins...");
     if manage.clicked() {
         let ctx = ui.ctx().clone();
         if let Err(error) = crate::menus::invoke(app, &ctx, "window.plugins", json!({})) {

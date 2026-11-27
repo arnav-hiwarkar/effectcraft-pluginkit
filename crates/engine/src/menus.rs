@@ -1364,9 +1364,9 @@ Window
   VR Comp Editor | window.panel {"panel":"vrCompEditor"}
   @dynamic:scriptPanels
 Plugins
-  Find plugins… | plugin.find
-  Manage plugins… | window.plugins
-  Report a problem… | plugin.report
+  Find plugins... | plugin.find
+  Manage plugins... | window.plugins
+  Report a problem... | plugin.report
   ---
   @dynamic:pluginCommands
   ---
