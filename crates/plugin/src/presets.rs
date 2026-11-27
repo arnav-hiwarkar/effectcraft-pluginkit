@@ -55,7 +55,7 @@ impl Owned {
 impl UserPresets for SuitePresets {
     fn list(&self, effect: &str) -> Vec<(String, PresetValues)> {
         let Ok(owned) = Owned::of(effect) else { return Vec::new() };
-        match self.presets.list(&owned.plugin, &owned.spec.id, &[]) {
+        match self.presets.user(&owned.plugin, &owned.spec.id) {
             Ok(found) => found.into_iter().map(|preset| (preset.name, preset_values(&owned.spec, &preset.values))).collect(),
             Err(error) => {
                 log::warn!("the presets of `{effect}` were not read: {error}");

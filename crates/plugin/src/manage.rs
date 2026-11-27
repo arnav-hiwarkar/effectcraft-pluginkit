@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use craft_ext_core::catalogue::{Revocation, Severity};
-use craft_ext_market::{Catalogue, Curl, DEFAULT_INDEX, MarketError, SNAPSHOT};
+use craft_ext_market::SNAPSHOT;
 use craft_ext_store::{APPS_DIR, Consent, location};
 
 use craft_plugin_host::PluginImage;
@@ -253,7 +253,7 @@ impl Inner {
     fn read_revocations(&mut self) -> bool {
         let Some(suite) = &self.suite else { return false };
         self.catalogue_modified = catalogue_modified(suite);
-        let Some(revocations) = cached_revocations(suite) else { return false };
+        let revocations = craft_ext_market::cached_revocations(suite);
         if self.revocations == revocations {
             return false;
         }
@@ -434,7 +434,7 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const STORE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 fn catalogue_modified(suite: &Path) -> Option<SystemTime> {
-    fs::metadata(suite.join("catalogue").join(SNAPSHOT)).ok()?.modified().ok()
+    fs::metadata(suite.join(craft_ext_store::CATALOGUE_DIR).join(SNAPSHOT)).ok()?.modified().ok()
 }
 
 fn issues_url(source: &str) -> Option<String> {
@@ -453,21 +453,6 @@ fn issues_url(source: &str) -> Option<String> {
     url.set_query(None);
     url.set_fragment(None);
     Some(url.into())
-}
-
-fn catalogue(suite: &Path) -> Catalogue<Curl> {
-    Catalogue::new(Curl::default(), DEFAULT_INDEX, craft_ext_core::signature::trusted_keys(), suite.join("catalogue"))
-}
-
-fn cached_revocations(suite: &Path) -> Option<Vec<Revocation>> {
-    match catalogue(suite).cached() {
-        Ok(index) => Some(index.revocations),
-        Err(MarketError::NoCache) => None,
-        Err(error) => {
-            log::warn!("the cached plug-in catalogue was not read: {error}");
-            None
-        }
-    }
 }
 
 impl Plugins {
@@ -690,7 +675,7 @@ impl Plugins {
             .or_else(|| {
                 let suite = inner.suite.as_ref()?;
                 let id = craft_ext_core::id::ExtensionId::new(id).ok()?;
-                let index = catalogue(suite).cached().ok()?;
+                let index = craft_ext_market::suite_catalogue(suite).cached().ok()?;
                 issues_url(&index.package(&id)?.repo)
             })
             .unwrap_or_else(|| DEFAULT_ISSUES.into())
@@ -838,9 +823,7 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
         Err(error) => return Err(error.into()),
     };
-    if let Some(revocations) = cached_revocations(suite) {
-        target.set_revocations(revocations);
-    }
+    target.set_revocations(craft_ext_market::cached_revocations(suite));
     let source = Registry::open(legacy);
     for bundle in source.bundles() {
         let moved = bundle.map_err(Into::into).and_then(|bundle| migrate_bundle(&source, &mut target, &bundle));

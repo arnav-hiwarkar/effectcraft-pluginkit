@@ -3,7 +3,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use craft_ext_manager::ui::{self, Theme};
-use craft_ext_manager::{Action, Effect, Job, Model, Outcome, Scope, StoreBackend, Tab, Word};
+use craft_ext_manager::{Action, Effect, Job, Model, Outcome, Scope, StoreBackend, Word};
 use egui::RichText;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -110,9 +110,9 @@ impl PluginStore {
         self.open = true;
     }
 
-    pub(crate) fn find(&mut self, query: &str) {
+    pub(crate) fn find(&mut self, id: &str) {
         self.open = true;
-        self.queued.extend([Action::SetTab(Tab::Discover), Action::SetQuery(query.to_string())]);
+        self.queued.push(Action::Find(id.to_string()));
     }
 
     pub(crate) fn install_file(&mut self, path: PathBuf) {
@@ -285,7 +285,7 @@ mod tests {
         let mut app = EffectcraftApp::new(effectcraft_host::session());
         crate::menus::invoke(&mut app, &egui::Context::default(), "plugin.find", json!({"id": "acme.glow"})).unwrap();
         assert!(app.plugin_store.open);
-        assert_eq!(app.plugin_store.queued, vec![Action::SetTab(Tab::Discover), Action::SetQuery("acme.glow".into())]);
+        assert_eq!(app.plugin_store.queued, vec![Action::Find("acme.glow".into())]);
     }
 
     #[test]
