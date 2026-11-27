@@ -1006,7 +1006,8 @@ and go inside their own `row`, `column` or `group` so the others keep their iden
 
 `Effect::overlay` runs while the effect is selected and **View ▸ Show Layer Controls** is on. Its `cx`
 is in layer pixels: `scale` 1, `offset` 0, `size` the layer size. On an adjustment layer the effect
-works on the comp below, so `size` is the comp size and the handles are drawn in comp pixels. It runs in
+works on the comp below, so `size` is the comp size and the handles are drawn in comp pixels, like the
+app's own crosshairs for point parameters there. It runs in
 a pooled instance, like `render`, on the plugin's viewer thread, so a slow panel call does not delay it;
 keep what it needs in `cx`, not in the effect. The last overlay stays on screen until the new one arrives.
 The app keeps the overlay and calls `overlay` again only when the request changes: a value, the time,

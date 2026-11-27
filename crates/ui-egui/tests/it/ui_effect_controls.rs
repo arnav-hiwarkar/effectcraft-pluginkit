@@ -1776,3 +1776,39 @@ fn lut_library_opens_by_keyboard_and_entries_are_chosen_by_id() {
     assert_eq!(value(&h), "/packs/warm.cube");
     contributed::remove(owner);
 }
+
+#[test]
+fn a_point_on_a_moved_adjustment_layer_is_drawn_and_dragged_in_comp_space() {
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"width": 800, "height": 450, "frameRate": 30, "duration": 1})).unwrap();
+    s.execute("layer.newSolid", json!({"name": "Back", "color": "#406080"})).unwrap();
+    let lid = s.execute("layer.newAdjustment", json!({"name": "Adjust"})).unwrap()["layer"].as_u64().unwrap();
+    s.execute("prop.set", json!({"layer": lid, "path": "transform/position", "value": [500.0, 275.0]})).unwrap();
+    let fx = s.execute("effect.apply", json!({"layer": lid, "effect": "ec.blur.ccradialfast"})).unwrap()["effects"][0].as_u64().unwrap();
+    let point = layer(&s, lid).effects().unwrap().find_group(fx).unwrap().get("center").unwrap().uid;
+    s.execute("prop.set", json!({"layer": lid, "prop": point, "value": [400.0, 300.0]})).unwrap();
+    s.state.selected_layers = vec![LayerId(lid)];
+    s.state.selected_props = vec![(LayerId(lid), point)];
+    let mut app = EffectcraftApp::new(s);
+    app.show_panel(PanelKind::EffectControls);
+    let mut h = Harness::builder().with_size(egui::vec2(1700.0, 1100.0)).build_eframe(|_| app);
+    settle(&mut h);
+    let id = format!("viewer.effectPoint.{point}");
+    let at = |h: &Harness<'_, EffectcraftApp>, comp: [f32; 2]| effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, comp).unwrap();
+    let from = rect_of(&h, &id).center();
+    assert!(from.distance(at(&h, [400.0, 300.0])) < 0.5, "the crosshair sits on comp (400, 300), not offset with the layer: {from:?}");
+    let to = at(&h, [430.0, 315.0]);
+    h.event(egui::Event::PointerMoved(from));
+    h.step();
+    h.event(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+    h.step();
+    for i in 1..=5 {
+        h.event(egui::Event::PointerMoved(from + (to - from) * (i as f32 / 5.0)));
+        h.step();
+    }
+    h.event(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    h.step();
+    let after = layer(&h.state().session, lid).props.find(point).unwrap().value.as_vec2();
+    let tol = 1.0 / effectcraft_ui_egui::panels::viewer::last_fit(&h.ctx) as f64;
+    assert!((after[0] - 430.0).abs() <= tol && (after[1] - 315.0).abs() <= tol, "the drag writes comp (430, 315): {after:?}");
+}

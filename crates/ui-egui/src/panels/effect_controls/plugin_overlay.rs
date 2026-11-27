@@ -45,10 +45,7 @@ pub(super) fn effect_overlay(
 ) -> Option<Arc<Shown>> {
     let shown = app.plugin_ui.panels.overlay(&mut app.session, ectx, layer, g)?;
     let t = app.tokens;
-    let fm = &match layer.switches.adjustment {
-        true => Mat3::IDENTITY,
-        false => crate::panels::viewer::fx2c(ectx, layer),
-    };
+    let fm = &crate::panels::viewer::fx2c(ectx, layer);
     let painter = ui.painter_at(map.area);
     draw_marks(&t, &painter, map, &shown.overlay.marks, Some(fm));
     for (index, handle) in shown.overlay.handles.iter().enumerate() {
