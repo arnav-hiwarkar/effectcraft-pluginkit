@@ -1655,6 +1655,7 @@ fn register_gain_effect() {
     let mix = ParamUi::Scaled { min: -100.0, max: 300.0, slider_min: -100.0, slider_max: 300.0, decimals: 1, log: false, percent: true };
     dynamic::register(DynamicEffect {
         owner: "test.ui.gain".into(),
+        owner_name: "Test Plug-in".into(),
         version: "1.0.0".into(),
         id: "test.ui.gain.gain".into(),
         name: "Gain Test".into(),
@@ -1713,6 +1714,7 @@ fn a_plugin_group_row_shows_the_name_its_author_gave_and_twirls_closed() {
     use effectcraft_engine::project::ParamUi;
     dynamic::register(DynamicEffect {
         owner: "test.ui.tuned".into(),
+        owner_name: "Test Plug-in".into(),
         version: "1.0.0".into(),
         id: "test.ui.tuned.tuned".into(),
         name: "Tuned Test".into(),
@@ -1760,6 +1762,7 @@ fn an_effect_whose_plugin_is_missing_is_marked_in_effect_controls() {
     use effectcraft_engine::effects::dynamic::{self, DynamicEffect};
     dynamic::register(DynamicEffect {
         owner: "test.ui.refs".into(),
+        owner_name: "Test Plug-in".into(),
         version: "1.0.0".into(),
         id: "test.ui.refs.tint".into(),
         name: "Refs Tint".into(),
@@ -1787,7 +1790,7 @@ fn an_effect_whose_plugin_is_missing_is_marked_in_effect_controls() {
     let lid = s.execute("layer.newSolid", json!({"name": "Tinted"})).unwrap()["layer"].as_u64().unwrap();
     let fx = s.execute("effect.apply", json!({"layers": [lid], "effect": "test.ui.refs.tint"})).unwrap()["effects"][0].as_u64().unwrap();
     std::sync::Arc::make_mut(&mut s.project).plugins =
-        vec![effectcraft_engine::project::PluginUse { id: "test.ui.refs".into(), version: "1.0.0".into(), digest: None }];
+        vec![effectcraft_engine::project::PluginUse { id: "test.ui.refs".into(), version: "1.0.0".into(), digest: None, name: None }];
     dynamic::unregister("test.ui.refs");
     s.state.selected_layers = vec![LayerId(lid)];
     let mut app = EffectcraftApp::new(s);
@@ -1811,6 +1814,7 @@ fn a_missing_plugin_effect_shows_a_placeholder_with_a_find_action_and_keeps_its_
     use effectcraft_engine::effects::dynamic::{self, DynamicEffect, DynamicParam};
     dynamic::register(DynamicEffect {
         owner: "test.ui.gone".into(),
+        owner_name: "Test Plug-in".into(),
         version: "3.0.0".into(),
         id: "test.ui.gone.bloom".into(),
         name: "Gone Bloom".into(),
@@ -1839,6 +1843,8 @@ fn a_missing_plugin_effect_shows_a_placeholder_with_a_find_action_and_keeps_its_
     let fx = s.execute("effect.apply", json!({"layers": [lid], "effect": "test.ui.gone.bloom"})).unwrap()["effects"][0].as_u64().unwrap();
     s.execute("prop.set", json!({"layer": lid, "path": "effects/#1/amount", "value": 0.25})).unwrap();
     std::sync::Arc::make_mut(&mut s.project).plugin_refs = vec!["test.ui.gone/bloom@3.0.0".into()];
+    std::sync::Arc::make_mut(&mut s.project).plugins =
+        vec![effectcraft_engine::project::PluginUse { id: "test.ui.gone".into(), version: "3.0.0".into(), digest: None, name: Some("Ghost Pack".into()) }];
     dynamic::unregister("test.ui.gone");
     s.state.selected_layers = vec![LayerId(lid)];
     let mut app = EffectcraftApp::new(s);
@@ -1852,7 +1858,7 @@ fn a_missing_plugin_effect_shows_a_placeholder_with_a_find_action_and_keeps_its_
     let label_of = |h: &Harness<'_, EffectcraftApp>, id: &str| {
         h.state().auto.previous.iter().chain(h.state().auto.elements.iter()).find(|e| e.id == id).map(|e| e.label.clone())
     };
-    assert_eq!(label_of(&h, &format!("effectControls.effect.{fx}.missingPlugin")).as_deref(), Some("Missing plugin: test.ui.gone"));
+    assert_eq!(label_of(&h, &format!("effectControls.effect.{fx}.missingPlugin")).as_deref(), Some("Missing plugin: Ghost Pack"));
     assert_eq!(label_of(&h, &format!("effectControls.effect.{fx}.findPlugin")).as_deref(), Some("Find plugin"));
     h.get_by_label("Find plugin").click();
     h.run_steps(3);

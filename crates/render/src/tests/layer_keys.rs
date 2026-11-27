@@ -105,6 +105,7 @@ fn a_scene_reader_sampling_other_frames_gets_a_key_per_comp_frame_while_the_scen
     let id = "test.keys.scene-ahead";
     dynamic::register(DynamicEffect {
         owner: "test.keys".into(),
+        owner_name: "Test Plug-in".into(),
         version: "1.0.0".into(),
         id: id.into(),
         name: id.into(),
@@ -144,6 +145,7 @@ fn a_frame_reader_above_an_effect_that_reads_another_layer_is_not_cached() {
     let id = "test.keys.rewind-over-matte";
     dynamic::register(DynamicEffect {
         owner: "test.keys".into(),
+        owner_name: "Test Plug-in".into(),
         version: "1.0.0".into(),
         id: id.into(),
         name: id.into(),

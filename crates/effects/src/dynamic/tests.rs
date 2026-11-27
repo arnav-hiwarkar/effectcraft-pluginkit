@@ -12,6 +12,7 @@ const WHITE: [f32; 4] = [1.0; 4];
 fn tint(id: &str, renders: Arc<AtomicUsize>) -> DynamicEffect {
     DynamicEffect {
         owner: "test.identity".into(),
+        owner_name: "Test Plug-in".into(),
         version: "1.0.0".into(),
         id: id.into(),
         name: id.into(),

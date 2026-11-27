@@ -27,7 +27,7 @@ pub(crate) fn record(p: &Project) -> Vec<PluginUse> {
     let mut uses = BTreeMap::new();
     for effect in effect_ids(p) {
         let used = match dynamic::get(effect) {
-            Some(r) => PluginUse { id: r.effect.owner.clone(), version: r.effect.version.clone(), digest: None },
+            Some(r) => PluginUse { id: r.effect.owner.clone(), version: r.effect.version.clone(), digest: None, name: Some(r.effect.owner_name.clone()) },
             None => match recorded_owner(p, effect) {
                 Some(kept) => kept.clone(),
                 None => continue,
@@ -108,6 +108,11 @@ pub fn missing_owner(p: &Project, effect: &str) -> Option<String> {
         return None;
     }
     effect_ref(p, effect).map(|found| found.plugin)
+}
+
+/// The display name of plug-in `id`: the running plug-in's, else the one the project saved, else the id.
+pub fn plugin_name(p: &Project, id: &str) -> String {
+    dynamic::plugin_name(id).or_else(|| p.plugins.iter().find(|used| used.id == id).and_then(|used| used.name.clone())).unwrap_or_else(|| id.to_string())
 }
 
 fn missing_effects(p: &Project) -> BTreeMap<&str, Option<String>> {

@@ -16,6 +16,7 @@ fn register() -> MutexGuard<'static, ()> {
     let serial = REGISTERED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     dynamic::register(DynamicEffect {
         owner: OWNER.into(),
+        owner_name: "Refs Glow Pack".into(),
         version: "2.1.0".into(),
         id: EFFECT.into(),
         name: "Refs Glow".into(),
@@ -184,8 +185,11 @@ fn a_save_records_each_plugin_effect_as_a_plugin_ref_and_keeps_it_while_the_plug
     let mut s = Session::new();
     s.execute("file.open", json!({"path": first})).unwrap();
     assert_eq!(super::missing_owner(&s.project, EFFECT).as_deref(), Some(OWNER));
+    assert_eq!(super::plugin_name(&s.project, OWNER), "Refs Glow Pack");
+    assert_eq!(super::plugin_name(&s.project, "test.refs.never"), "test.refs.never");
     s.execute("file.saveAs", json!({"path": second})).unwrap();
     assert_eq!(saved_json(&second)["plugin_refs"], json!(["test.refs.glow/glow@2.1.0"]));
+    assert_eq!(saved_json(&second)["plugins"][0]["name"], "Refs Glow Pack");
     assert_eq!(effect_group(&second), effect_group(&first));
 }
 
