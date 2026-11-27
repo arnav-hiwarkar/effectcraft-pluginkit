@@ -1807,6 +1807,60 @@ fn an_effect_whose_plugin_is_missing_is_marked_in_effect_controls() {
 }
 
 #[test]
+fn a_missing_plugin_effect_shows_a_placeholder_with_a_find_action_and_keeps_its_values() {
+    use effectcraft_engine::effects::dynamic::{self, DynamicEffect, DynamicParam};
+    dynamic::register(DynamicEffect {
+        owner: "test.ui.gone".into(),
+        version: "3.0.0".into(),
+        id: "test.ui.gone.bloom".into(),
+        name: "Gone Bloom".into(),
+        category: "Test".into(),
+        params: vec![DynamicParam { id: "amount".into(), name: "Amount".into(), default: KV::Scalar(1.0), ui: Default::default() }],
+        render: Box::new(|ctx, buf| ctx.unchanged(buf)),
+        shader: None,
+        gpu: None,
+        time_dependent: false,
+        reads_other_frames: false,
+        reads_comp_scene: false,
+        reads_param_history: false,
+        presets: Vec::new(),
+        revision: 1,
+        files: None,
+        margin: None,
+        state_version: 0,
+        migrate: None,
+        param_state: None,
+        aux: Vec::new(),
+        identity: None,
+    });
+    let mut s = Session::default();
+    s.execute("comp.new", json!({"name": "Gone", "width": 32, "height": 18, "frameRate": 30, "duration": 2})).unwrap();
+    let lid = s.execute("layer.newSolid", json!({"name": "Bloomed"})).unwrap()["layer"].as_u64().unwrap();
+    let fx = s.execute("effect.apply", json!({"layers": [lid], "effect": "test.ui.gone.bloom"})).unwrap()["effects"][0].as_u64().unwrap();
+    s.execute("prop.set", json!({"layer": lid, "path": "effects/#1/amount", "value": 0.25})).unwrap();
+    std::sync::Arc::make_mut(&mut s.project).plugin_refs = vec!["test.ui.gone/bloom@3.0.0".into()];
+    dynamic::unregister("test.ui.gone");
+    s.state.selected_layers = vec![LayerId(lid)];
+    let mut app = EffectcraftApp::new(s);
+    app.show_panel(PanelKind::EffectControls);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .with_step_dt(1.0 / 60.0)
+        .with_context_setup(effectcraft_ui_egui::framework::install_headless)
+        .build_eframe(|_| app);
+    h.run_steps(4);
+    let label_of = |h: &Harness<'_, EffectcraftApp>, id: &str| {
+        h.state().auto.previous.iter().chain(h.state().auto.elements.iter()).find(|e| e.id == id).map(|e| e.label.clone())
+    };
+    assert_eq!(label_of(&h, &format!("effectControls.effect.{fx}.missingPlugin")).as_deref(), Some("Missing plugin: test.ui.gone"));
+    assert_eq!(label_of(&h, &format!("effectControls.effect.{fx}.findPlugin")).as_deref(), Some("Find plugin"));
+    h.get_by_label("Find plugin").click();
+    h.run_steps(3);
+    let amount = layer(&h.state().session, lid).props.find_group(fx).unwrap().get("amount").unwrap().value.clone();
+    assert_eq!(amount, KV::Scalar(0.25));
+}
+
+#[test]
 fn lut_library_opens_by_keyboard_and_entries_are_chosen_by_id() {
     use effectcraft_engine::effects::contributed;
     let owner = "lut-library-ids-test";

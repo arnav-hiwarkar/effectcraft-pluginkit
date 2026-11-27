@@ -219,6 +219,22 @@ fn designer_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, effect: &str, g:
     ROW + 6.0
 }
 
+fn missing_plugin_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, bp: &egui::Painter, effect: &str, g: &PropGroup, row: Rect, actions: &mut Actions) -> f32 {
+    let Some(plugin) = effectcraft_engine::plugin_refs::missing_owner(&app.session.project, effect) else { return 0.0 };
+    let t = app.tokens;
+    let label = crate::i18n::tr_args("Missing plugin: {}", &[&plugin]);
+    let text = bp.text(row.left_center(), Align2::LEFT_CENTER, &label, Tokens::ui(11.5), t.warning);
+    app.auto.add(&format!("effectControls.effect.{}.missingPlugin", g.uid), text, &label);
+    let find = crate::i18n::tr("Find plugin");
+    let button = Rect::from_min_max(pos2(text.max.x + 10.0, row.min.y), pos2(row.max.x, row.max.y));
+    let resp = ui.scope_builder(egui::UiBuilder::new().max_rect(button), |ui| ui.button(find)).inner;
+    app.auto.add_response(&format!("effectControls.effect.{}.findPlugin", g.uid), &resp, find);
+    if resp.clicked() {
+        actions.push(("plugin.find".into(), json!({"id": plugin})));
+    }
+    ROW + 6.0
+}
+
 fn about_button(app: &mut EffectcraftApp, ui: &mut egui::Ui, bp: &egui::Painter, t: &Tokens, effect: &str, g: &PropGroup, r: Rect) {
     // About…: the effect's name and category (AE's About dialog).
     let about = Rect::from_min_size(pos2(r.max.x - 50.0, r.center().y - 9.0), vec2(44.0, 18.0));
@@ -442,6 +458,15 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         y += designer_button(
             app,
             ui,
+            effect,
+            g,
+            Rect::from_min_size(pos2(body.min.x + 10.0, y + 3.0), vec2((body.width() - 20.0).max(60.0), ROW)),
+            &mut actions,
+        );
+        y += missing_plugin_row(
+            app,
+            ui,
+            &bp,
             effect,
             g,
             Rect::from_min_size(pos2(body.min.x + 10.0, y + 3.0), vec2((body.width() - 20.0).max(60.0), ROW)),
