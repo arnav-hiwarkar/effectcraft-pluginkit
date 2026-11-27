@@ -80,17 +80,18 @@ pub(crate) fn release(app: &App) {
 }
 
 pub(crate) fn relay(app: &mut App, panels: &mut Panels, frame: &mut u64, relayed: Value, held: bool) {
-    let (id, bundle) = (app.id.clone(), app.bundle.path().to_path_buf());
-    relay_in(app, panels, frame, (&id, &bundle), relayed, held);
-}
-
-fn relay_in(app: &mut App, panels: &mut Panels, frame: &mut u64, (plugin, bundle): (&str, &std::path::Path), relayed: Value, held: bool) {
-    let surface = Surface::Panel { plugin, panel: "relay", instance: None };
-    let relay = button(&settled(app, panels, surface, frame), 0);
+    let bundle = app.bundle.path();
     std::fs::write(bundle.join("relay.json"), relayed.to_string()).expect("write the relayed request");
     if held {
         hold_in(bundle);
     }
+    let id = app.id.clone();
+    press_relay(app, panels, frame, &id, held);
+}
+
+fn press_relay(app: &mut App, panels: &mut Panels, frame: &mut u64, plugin: &str, held: bool) {
+    let surface = Surface::Panel { plugin, panel: "relay", instance: None };
+    let relay = button(&settled(app, panels, surface, frame), 0);
     let before = held_notices(app);
     panels.submit(&surface.owner(), vec![click(relay)], "");
     *frame += 1;
@@ -105,7 +106,7 @@ fn relay_in(app: &mut App, panels: &mut Panels, frame: &mut u64, (plugin, bundle
         std::thread::sleep(ms(2));
     }
     assert!(!held || held_notices(app) > before, "the relay call never started waiting on the hold");
-    assert!(!held || panels.busy(&surface.owner()), "the relay call waits while the bundle holds");
+    assert!(!held || panels.busy(&surface.owner()), "the relay call waits while the hold file exists");
 }
 
 fn held_notices(app: &App) -> usize {
@@ -507,20 +508,48 @@ fn stamped(panels: &mut Panels, app: &mut App, said: &str) -> bool {
         .is_some_and(|overlay| overlay.marks.iter().any(|mark| matches!(&mark.shape, Shape::Text { text, .. } if text == said)))
 }
 
+fn native_lanes_probe(app: &App) -> String {
+    let id = "test.native-lanes";
+    crate::native_helper::stage_helper();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/native-lanes-probe");
+    let file = format!("{}native_lanes_probe{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
+    let library = crate::build_plugin::build(&fixture, &file, None);
+    let source = tempfile::tempdir().unwrap();
+    std::fs::copy(library, source.path().join(&file)).unwrap();
+    let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    let manifest = json!({
+        "id": id, "name": "Native Lanes Probe", "version": "1.0.0",
+        "entry": {"native": {target: file}},
+        "permissions": ["document.read"]
+    });
+    std::fs::write(source.path().join("plugin.json"), manifest.to_string()).unwrap();
+    app.plugins.install(source.path()).unwrap();
+    app.plugins.approve(id).unwrap();
+    id.into()
+}
+
 #[test]
 fn a_held_panel_call_lets_wasm_overlay_and_tool_calls_pass_but_holds_every_call_to_a_helper_process() {
     let mut app = super::app_exclusive("test.panels-lanes", &["document.read"]);
-    let native = crate::render::native_probe(&app).to_string();
+    let native = native_lanes_probe(&app);
     let mut arrivals = Vec::new();
     for (plugin, sandboxed) in [(app.id.clone(), true), (native, false)] {
-        let bundle = app.plugins.get(&plugin).expect("the probe runs").bundle.dir.clone();
         let (mut panels, mut frame) = (Panels::default(), 0);
         app.session.execute("comp.new", json!({"name": plugin, "width": 64, "height": 36, "frameRate": 24, "duration": 2})).unwrap();
         app.session.execute("layer.newSolid", json!({"name": "Aim", "color": "#204060", "width": 64, "height": 36})).unwrap();
         app.session.execute("effect.apply", json!({"layer": "Aim", "effect": format!("{plugin}.aim")})).unwrap();
         app.session.events.clear();
-        relay_in(&mut app, &mut panels, &mut frame, (&plugin, &bundle), json!({"command": "comp.info", "params": {}}), true);
-        let hold = bundle.join("hold");
+        let hold_dir = if sandboxed {
+            relay(&mut app, &mut panels, &mut frame, json!({"command": "comp.info", "params": {}}), true);
+            app.bundle.path().to_path_buf()
+        } else {
+            let data = app.plugins.get(&plugin).expect("the native probe runs").data_dir.clone();
+            std::fs::create_dir_all(&data).unwrap();
+            hold_in(&data);
+            press_relay(&mut app, &mut panels, &mut frame, &plugin, true);
+            data
+        };
+        let hold = hold_dir.join("hold");
         let start = Instant::now();
         let releaser = std::thread::spawn(move || {
             std::thread::sleep(ms(1000));
