@@ -9,7 +9,7 @@ use effectcraft_project::LayerId;
 use effectcraft_time::{TICKS_PER_SECOND, Tick};
 use serde_json::{Value, json};
 
-use super::prop::{key_gesture, layer_shift, move_key_refs};
+use super::prop::{key_gesture, keys_turned_on, layer_shift, move_key_refs};
 use super::{CommandSpec, b_p, bad, f_p, has_keys, has_layers, layers_p, merge_p};
 use crate::{EngineError, Result, Session, cmd};
 
@@ -102,6 +102,7 @@ fn keys(s: &mut Session, p: &Value) -> Result<Value> {
     let order = order(NAME, from.iter().map(|k| k.layer), |id| comp.layer(id).is_some_and(|l| !l.switches.locked))?;
     let by_layer: HashMap<LayerId, Tick> = order.iter().copied().zip(shares(total, order.len())).collect();
     let next = merge.map(|m| crate::KeyMove { merge: m.to_string(), from: from.clone(), total });
+    let turned_on = keys_turned_on(s, NAME);
     let moved = s.edit("Quick Offset Keyframes", merge, |proj, st| {
         if let Some(b) = &base {
             *proj = (**b).clone();
@@ -113,6 +114,7 @@ fn keys(s: &mut Session, p: &Value) -> Result<Value> {
             shifted(l.start_time, *d, NAME, &what)?;
             shifted(t, layer_shift(l, *d), NAME, &what)
         })?;
+        turned_on(proj, cid, &st.selected_keys)?;
         Ok(json!({"keys": st.selected_keys.len(), "layers": order.iter().map(|id| json!({"layer": id.0, "offset": by_layer.get(id).copied().unwrap_or_default().seconds()})).collect::<Vec<_>>()}))
     })?;
     // Only a step that applied counts towards the drag (a refused one is as if never sent).

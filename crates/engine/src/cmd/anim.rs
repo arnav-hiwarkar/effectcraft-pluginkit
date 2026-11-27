@@ -6,7 +6,7 @@ use effectcraft_project::{ItemId, LayerId, Property, Uid};
 use effectcraft_time::Tick;
 use serde_json::{Value, json};
 
-use super::prop::{KeyTimeBase, key_time, key_timing, prop_ref};
+use super::prop::{KeyTimeBase, key_time, key_timing, keys_turned_on, prop_ref};
 use super::{CommandSpec, bad, comp_id, f_p, has_comp, has_keys, layers_p, merge_p, str_p, time_p};
 use crate::{EngineError, KeyClip, KeyRef, Result, Session, cmd, query};
 
@@ -120,6 +120,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     if plan.is_empty() {
         return Err(bad("keys.paste", "no compatible unlocked property to paste into (unlock the target or select a property of the same type)"));
     }
+    let turned_on = keys_turned_on(s, "keys.paste");
     s.edit("Paste Keyframes", merge_p(p), |proj, st| {
         let comp = proj.comp_mut(cid).ok_or(EngineError::NoComp)?;
         let mut sel = locked_selection(comp, &st.selected_keys);
@@ -145,6 +146,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
             }
             retime_roving(&mut pr.keys, pr.spatial);
         }
+        turned_on(proj, cid, &sel[retained..])?;
         let pasted = sel.len().saturating_sub(retained);
         st.selected_keys = sel;
         Ok(json!(pasted))
@@ -214,6 +216,7 @@ pub(super) fn paste_path(s: &mut Session, p: &Value, (cid, lid, uid): (ItemId, L
             (time, value, at(path.in_tangents.get(v)), at(path.out_tangents.get(v)), i != 0 && i != last)
         })
         .collect();
+    let turned_on = keys_turned_on(s, "keys.paste");
     s.edit("Paste Keyframes", merge_p(p), |proj, st| {
         let comp = proj.comp(cid).ok_or(EngineError::NoComp)?;
         let mut selected = locked_selection(comp, &st.selected_keys);
@@ -233,6 +236,7 @@ pub(super) fn paste_path(s: &mut Session, p: &Value, (cid, lid, uid): (ItemId, L
         let pasted: Vec<usize> = pr.keys.iter().enumerate().filter(|(_, k)| sel.contains(&k.time)).map(|(i, _)| i).collect();
         retime_roving(&mut pr.keys, pr.spatial);
         selected.extend(pasted.iter().filter_map(|&i| pr.keys.get(i)).map(|k| KeyRef { layer: lid, prop: uid, time: k.time }));
+        turned_on(proj, cid, &selected[retained..])?;
         let count = selected.len().saturating_sub(retained);
         st.selected_keys = selected;
         Ok(json!(count))
@@ -320,6 +324,7 @@ fn set_key(s: &mut Session, p: &Value) -> Result<Value> {
     let t = key_time(layer, comp.frame_rate, p, "time", base, "keys.set", false)?.ok_or_else(|| bad("keys.set", "missing `time` (layer time by default)"))?;
     let new_t = key_time(layer, comp.frame_rate, p, "newTime", base, "keys.set", true)?;
     let value = p.get("value").cloned();
+    let turned_on = keys_turned_on(s, "keys.set");
     let nt = s.edit("Edit Keyframe", merge_p(p), |proj, st| {
         let l = super::layer_mut(proj, cid, lid)?;
         let pr = l.props.find_mut(uid).ok_or_else(|| bad("keys.set", "no property"))?;
@@ -343,6 +348,7 @@ fn set_key(s: &mut Session, p: &Value) -> Result<Value> {
         for k in st.selected_keys.iter_mut().filter(|k| k.layer == lid && k.prop == uid && k.time == old_t) {
             k.time = nt;
         }
+        turned_on(proj, cid, &[KeyRef { layer: lid, prop: uid, time: nt }])?;
         Ok(nt)
     })?;
     let layer = s.project.comp(cid).and_then(|c| c.layer(lid)).ok_or(EngineError::NoComp)?;
@@ -522,6 +528,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
 fn time_reverse(s: &mut Session, _: &Value) -> Result<Value> {
     let cid = s.active_comp_id().ok_or(EngineError::NoComp)?;
     let sel = s.state.selected_keys.clone();
+    let turned_on = keys_turned_on(s, "keys.timeReverse");
     s.edit("Time-Reverse Keyframes", None, |proj, st| {
         let comp = proj.comp_mut(cid).ok_or(EngineError::NoComp)?;
         let mut groups: std::collections::BTreeMap<(LayerId, Uid), Vec<Tick>> = Default::default();
@@ -548,6 +555,7 @@ fn time_reverse(s: &mut Session, _: &Value) -> Result<Value> {
                 }
             }
         }
+        turned_on(proj, cid, &new_sel)?;
         st.selected_keys = new_sel;
         Ok(json!(st.selected_keys.len()))
     })

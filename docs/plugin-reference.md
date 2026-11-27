@@ -245,7 +245,10 @@ out from the current values, expressions included (an expression that samples fo
 with no call to the plugin. A hidden or greyed parameter keeps its value and its keyframes, and `render`
 still receives it. Hiding is display only: `prop.set`, the Timeline and presets may still set a hidden
 parameter. A greyed (disabled) parameter takes no edit from the user: `prop.set`, keyframe commands and the
-Timeline refuse it (`is turned off by another control of its effect`), a preset skips it (judged by the
+Timeline refuse it (`is turned off by another control of its effect at 2 s`), judged at the time each write
+lands, not at the playhead: `prop.set` and `prop.addKey` at their `time`, and `keys.paste`, `keys.move`,
+`keys.nudge`, `keys.quickOffset`, `keys.set`, `keys.transform` and `keys.timeReverse` at each key's new time
+in the edited project. A preset skips it (judged by the
 preset's own values over the current ones), and a form answer keeps its previous value. The plugin itself may
 still set it through `host::command`, so a reset handler can restore it. A condition that names an unknown parameter, the parameter
 itself or one of a kind it cannot test stops the plugin from loading with

@@ -23,6 +23,7 @@ mod face;
 mod fidelity;
 mod frame_export;
 mod fuzz_open;
+mod greyed_params;
 mod history;
 mod import_project;
 mod instance3d;
