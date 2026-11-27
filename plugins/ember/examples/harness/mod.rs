@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use craft_plugin_host::{Bundle, Call, Host, Layout, Limits, MaskPath, Pixel, Pixels, Plugin, RenderCx, Scene, Value};
@@ -14,6 +15,11 @@ pub enum Kind {
 const MANIFEST: &str = env!("CARGO_MANIFEST_DIR");
 
 pub fn bundle(kind: Kind) -> PathBuf {
+    static BUILT: [OnceLock<PathBuf>; 2] = [OnceLock::new(), OnceLock::new()];
+    BUILT[kind as usize].get_or_init(|| built(kind)).clone()
+}
+
+fn built(kind: Kind) -> PathBuf {
     let root = Path::new(MANIFEST);
     let mut build = Command::new(env!("CARGO"));
     build.args(["build", "--release", "--quiet", "--manifest-path"]).arg(root.join("Cargo.toml"));
