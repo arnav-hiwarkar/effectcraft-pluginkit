@@ -408,17 +408,20 @@ fn plugin_panels_from_the_fork_restore_and_save_by_name() {
     let mut restored = UiState::default();
     let mut store = WorkspaceStore::load(Some(&config), &mut restored, &items);
     assert_eq!(store.error, None);
-    assert!(restored.dock.is_floating(notes));
-    for workspace in std::iter::once(&mut ui.dock).chain(ui.saved_workspaces.values_mut()) {
-        for panel in [unknown, missing] {
-            workspace.apply(Action::close(panel), false, crate::dock::permissions).unwrap();
-        }
+    assert_eq!(restored.focused, notes);
+    assert_eq!(restored.plugin_instances, ui.plugin_instances);
+    for workspace in [&restored.dock, &restored.saved_workspaces["Plugin desk"]] {
+        assert_eq!(workspace.panels(), [PanelKind::Composition, counter, notes]);
+        assert_eq!(workspace.layout().floating[0].rect, rect(10.0, 20.0, 360.0, 320.0));
+        assert_eq!(workspace.hidden().iter().map(|(panel, _)| *panel).collect::<Vec<_>>(), [unknown, missing]);
     }
-    assert_eq!(Snapshot::capture(&restored), Snapshot::capture(&ui));
     assert!(store.save(Some(&config), &restored).unwrap());
     assert_eq!(config.read(BACKUP).as_deref(), Some(old.as_str()));
     let saved = config.read(FILE).unwrap();
     assert!(saved.contains("\"plugin.test.probe.notes#1\""));
     assert!(saved.contains("\"plugin.test.probe.counter\""));
     assert!(saved.contains("\"plugin.test.missing.history\""));
+    let mut reloaded = UiState::default();
+    assert_eq!(WorkspaceStore::load(Some(&config), &mut reloaded, &items).error, None);
+    assert_eq!(Snapshot::capture(&reloaded), Snapshot::capture(&restored));
 }

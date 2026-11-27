@@ -58,7 +58,7 @@ fn a_plugin_tool_gets_context_on_a_right_click_and_open_after_a_double_click_in_
         button(primary, true),
         button(primary, false),
     ]);
-    settle(&mut harness, |h| h.state().plugin_ui.panels.idle());
+    crate::panels::plugin_tools::tests::settle_opened_stamp(&mut harness);
     assert_eq!(tool_texts(&mut harness), ["Down 40.0 30.0", "Up 40.0 30.0", "Open 40.0 30.0"]);
     harness.input_mut().events.extend([button(secondary, true), button(secondary, false)]);
     settle(&mut harness, |h| h.state().plugin_ui.panels.idle());

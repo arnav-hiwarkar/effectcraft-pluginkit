@@ -235,6 +235,13 @@ fn the_handles_of_an_effect_on_a_moved_adjustment_layer_sit_where_the_effect_dra
     assert!((centre - light).length() < 0.5, "the centre handle sits on Light Position {at:?} in comp pixels, {light:?}, not at {centre:?}");
 }
 
+pub(crate) fn settle_opened_stamp(harness: &mut Harness<'_, EffectcraftApp>) {
+    settle(harness, |h| {
+        let app = h.state();
+        app.plugin_ui.panels.idle() && app.session.active_comp().is_some_and(|comp| comp.layers.iter().any(|layer| layer.name == "Opened"))
+    });
+}
+
 pub(crate) fn tool_texts(harness: &mut Harness<'_, EffectcraftApp>) -> Vec<String> {
     let app = harness.state_mut();
     let overlay = app.plugin_ui.panels.tool_overlay(&mut app.session).cloned().unwrap_or_default();
@@ -293,7 +300,7 @@ fn a_plugin_tool_receives_its_gesture_in_comp_coordinates_at_half_and_double_zoo
 }
 
 #[test]
-fn two_taps_that_arrive_in_one_pass_send_one_open_after_the_second_release() {
+fn two_taps_queued_together_send_one_open_after_the_second_release() {
     let _one_at_a_time = STAMP_TOOL.lock().unwrap_or_else(|e| e.into_inner());
     let mut harness = harness(probe_session());
     settle(&mut harness, |h| h.state().auto.find("tools.plugin.test.viewer-tool-ui.stamp").is_some());
@@ -305,7 +312,7 @@ fn two_taps_that_arrive_in_one_pass_send_one_open_after_the_second_release() {
     let at = comp_point(&harness, [40.0, 30.0]);
     let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
     harness.input_mut().events.extend([egui::Event::PointerMoved(at), button(true), button(false), button(true), button(false)]);
-    settle(&mut harness, |h| h.state().plugin_ui.panels.idle());
+    settle_opened_stamp(&mut harness);
     let names: Vec<String> = harness.state().session.active_comp().unwrap().layers.iter().map(|layer| layer.name.clone()).collect();
     assert_eq!(names.iter().filter(|name| name.starts_with("Opened")).count(), 1, "{names:?}");
     assert_eq!(tool_texts(&mut harness), ["Down 40.0 30.0", "Up 40.0 30.0", "Open 40.0 30.0"]);

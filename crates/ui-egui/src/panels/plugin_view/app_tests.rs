@@ -176,9 +176,13 @@ fn delete_with_the_timeline_focused_goes_to_the_timeline_even_with_the_pointer_o
 fn a_click_on_a_widget_of_the_panel_focuses_it_and_delete_then_reaches_the_plugin_with_the_pointer_elsewhere() {
     let mut harness = with_app_panel();
     harness.state_mut().ui.focused = PanelKind::Timeline;
-    let scope = format!("plugin.{PROBE}.app.");
-    let widget = harness.state().auto.query(&scope).into_iter().find(|control| control.label == "Opacity").unwrap().id.clone();
-    let widget = element(&harness, &widget).center();
+    let body = element(&harness, &format!("plugin.{PROBE}.app"));
+    let widget = harness
+        .query_all(egui_kittest::kittest::by().role(egui::accesskit::Role::Slider))
+        .find(|control| body.contains(control.rect().center()))
+        .expect("the Opacity slider is in the plugin panel")
+        .rect()
+        .center();
     click(&mut harness, widget, egui::PointerButton::Primary);
     assert_eq!(harness.state().ui.focused, PanelKind::plugin(PROBE, "app"));
     harness.event(egui::Event::PointerMoved(pos2(5.0, 790.0)));

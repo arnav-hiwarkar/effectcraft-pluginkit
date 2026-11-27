@@ -31,7 +31,7 @@ fn a_quarantined_plugin_says_why_and_turn_back_on_asks_to_approve_it() {
     let id = "test.manager-quarantined";
     app.plugin_ui.manager_open = true;
     app.plugin_ui.listed = Some((std::time::Instant::now(), Ok(vec![quarantined(id)])));
-    let mut harness = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(|_| app);
+    let mut harness = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).with_context_setup(crate::framework::install_headless).build_eframe(|_| app);
     harness.step();
 
     assert_eq!(super::state_text(&quarantined(id)), "Turned off: it was turned off because the app closed unexpectedly while it ran unsandboxed");

@@ -1694,7 +1694,8 @@ fn a_log_slider_row_maps_the_track_by_ratio() {
     s.state.selected_layers = vec![LayerId(layer_id)];
     let mut app = EffectcraftApp::new(s);
     app.show_panel(PanelKind::EffectControls);
-    let mut h = Harness::builder().with_size(egui::vec2(1700.0, 1100.0)).build_eframe(|_| app);
+    let mut h =
+        Harness::builder().with_size(egui::vec2(1700.0, 1100.0)).with_context_setup(effectcraft_ui_egui::framework::install_headless).build_eframe(|_| app);
     settle(&mut h);
     h.state_mut().ui.fx_slider_open.insert(gain);
     h.run_steps(3);
@@ -1740,7 +1741,8 @@ fn a_plugin_group_row_shows_the_name_its_author_gave_and_twirls_closed() {
     s.state.selected_layers = vec![LayerId(layer_id)];
     let mut app = EffectcraftApp::new(s);
     app.show_panel(PanelKind::EffectControls);
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| app);
+    let mut h =
+        Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).with_context_setup(effectcraft_ui_egui::framework::install_headless).build_eframe(|_| app);
     settle(&mut h);
     let twirl = format!("effectControls.group.{group}.twirl");
     let label = h.state().auto.elements.iter().find(|e| e.id == twirl).map(|e| e.label.clone());
@@ -1787,7 +1789,11 @@ fn an_effect_whose_plugin_is_missing_is_marked_in_effect_controls() {
     s.state.selected_layers = vec![LayerId(lid)];
     let mut app = EffectcraftApp::new(s);
     app.show_panel(PanelKind::EffectControls);
-    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).with_step_dt(1.0 / 60.0).build_eframe(|_| app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .with_step_dt(1.0 / 60.0)
+        .with_context_setup(effectcraft_ui_egui::framework::install_headless)
+        .build_eframe(|_| app);
     h.run_steps(4);
     let mark = format!("effectControls.effect.{fx}.error");
     let label = h.state().auto.previous.iter().chain(h.state().auto.elements.iter()).find(|e| e.id == mark).map(|e| e.label.clone());
@@ -1811,7 +1817,11 @@ fn lut_library_opens_by_keyboard_and_entries_are_chosen_by_id() {
     let mut app = EffectcraftApp::new(s);
     app.show_panel(PanelKind::EffectControls);
     app.toggle_maximize(PanelKind::EffectControls);
-    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).with_step_dt(1.0 / 60.0).build_eframe(|_| app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .with_step_dt(1.0 / 60.0)
+        .with_context_setup(effectcraft_ui_egui::framework::install_headless)
+        .build_eframe(|_| app);
     h.run_steps(4);
     let value = |h: &Harness<'_, EffectcraftApp>| match layer(&h.state().session, lid).props.find_group(fx).unwrap().get("lut").unwrap().value.clone() {
         KV::Str(s) => s,
@@ -1856,7 +1866,8 @@ fn a_point_on_a_moved_adjustment_layer_is_drawn_and_dragged_in_comp_space() {
     s.state.selected_props = vec![(LayerId(lid), point)];
     let mut app = EffectcraftApp::new(s);
     app.show_panel(PanelKind::EffectControls);
-    let mut h = Harness::builder().with_size(egui::vec2(1700.0, 1100.0)).build_eframe(|_| app);
+    let mut h =
+        Harness::builder().with_size(egui::vec2(1700.0, 1100.0)).with_context_setup(effectcraft_ui_egui::framework::install_headless).build_eframe(|_| app);
     settle(&mut h);
     let id = format!("viewer.effectPoint.{point}");
     let at = |h: &Harness<'_, EffectcraftApp>, comp: [f32; 2]| effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, comp).unwrap();
