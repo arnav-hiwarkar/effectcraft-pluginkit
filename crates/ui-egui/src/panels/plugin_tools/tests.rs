@@ -11,15 +11,10 @@ use serde_json::{Value, json};
 
 use crate::EffectcraftApp;
 
-fn wasm(crate_dir: &Path, name: &str) -> PathBuf {
-    let status = std::process::Command::new(env!("CARGO"))
-        .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
-        .arg(crate_dir.join("Cargo.toml"))
-        .status()
-        .expect("cargo runs");
-    assert!(status.success(), "{name} builds for WebAssembly");
-    crate_dir.join(format!("target/wasm32-unknown-unknown/release/{name}.wasm"))
-}
+#[path = "../../../../plugin/tests/support/build_plugin.rs"]
+mod build_plugin;
+
+pub(crate) use build_plugin::wasm;
 
 fn bundle(wasm: &Path, manifest: Value) -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("temp dir");

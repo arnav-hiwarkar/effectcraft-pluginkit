@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 
 use egui_kittest::Harness;
@@ -22,14 +21,8 @@ pub(crate) fn bundle(name: &str) -> &'static Path {
         return dir.path();
     }
     let source = plugin_dir(name);
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
-        .arg(source.join("Cargo.toml"))
-        .status()
-        .expect("cargo runs");
-    assert!(status.success(), "{name} builds");
+    let wasm = crate::panels::plugin_tools::tests::wasm(&source, name);
     let dir: &'static tempfile::TempDir = Box::leak(Box::new(tempfile::tempdir().expect("temp dir")));
-    let wasm = source.join("target/wasm32-unknown-unknown/release").join(format!("{}.wasm", name.replace('-', "_")));
     std::fs::copy(wasm, dir.path().join("plugin.wasm")).expect("copy the module");
     std::fs::copy(source.join("plugin.json"), dir.path().join("plugin.json")).expect("copy the manifest");
     bundles.push((name.to_string(), dir));

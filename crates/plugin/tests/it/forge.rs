@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 
 use effectcraft_engine::effects::{self, Buf, EffectCtx, EffectSpec, Params};
@@ -20,16 +19,11 @@ fn bundle() -> &'static Path {
     static BUNDLE: OnceLock<(tempfile::TempDir, PathBuf)> = OnceLock::new();
     let (_, path) = BUNDLE.get_or_init(|| {
         let plugin = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/forge-3d");
-        let status = Command::new(env!("CARGO"))
-            .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
-            .arg(plugin.join("Cargo.toml"))
-            .status()
-            .expect("cargo runs");
-        assert!(status.success(), "Forge 3D builds");
+        let wasm = crate::build_plugin::wasm(&plugin, "forge_3d");
         let dir = tempfile::tempdir().expect("temp dir");
         let bundle = dir.path().join("org.craftkit.forge-3d");
         std::fs::create_dir_all(bundle.join("assets")).expect("bundle dir");
-        std::fs::copy(plugin.join("target/wasm32-unknown-unknown/release/forge_3d.wasm"), bundle.join("plugin.wasm")).expect("copy the wasm");
+        std::fs::copy(wasm, bundle.join("plugin.wasm")).expect("copy the wasm");
         std::fs::copy(plugin.join("plugin.json"), bundle.join("plugin.json")).expect("copy the manifest");
         std::fs::copy(plugin.join("assets/gem.obj"), bundle.join("assets/gem.obj")).expect("copy the model");
         (dir, bundle)

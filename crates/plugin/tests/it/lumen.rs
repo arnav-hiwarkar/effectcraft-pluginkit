@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 
 use effectcraft_engine::effects::{self, Buf, EffectCtx, EffectSpec, Params};
@@ -31,16 +30,11 @@ fn bundle() -> &'static Path {
     static BUNDLE: OnceLock<(tempfile::TempDir, PathBuf)> = OnceLock::new();
     let (_, path) = BUNDLE.get_or_init(|| {
         let plugin = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/lumen-glow");
-        let status = Command::new(env!("CARGO"))
-            .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
-            .arg(plugin.join("Cargo.toml"))
-            .status()
-            .expect("cargo runs");
-        assert!(status.success(), "Lumen Glow builds");
+        let wasm = crate::build_plugin::wasm(&plugin, "lumen_glow");
         let dir = tempfile::tempdir().expect("temp dir");
         let bundle = dir.path().join("org.craftkit.lumen-glow");
         std::fs::create_dir_all(&bundle).expect("bundle dir");
-        std::fs::copy(plugin.join("target/wasm32-unknown-unknown/release/lumen_glow.wasm"), bundle.join("plugin.wasm")).expect("copy the wasm");
+        std::fs::copy(wasm, bundle.join("plugin.wasm")).expect("copy the wasm");
         std::fs::copy(plugin.join("plugin.json"), bundle.join("plugin.json")).expect("copy the manifest");
         (dir, bundle)
     });

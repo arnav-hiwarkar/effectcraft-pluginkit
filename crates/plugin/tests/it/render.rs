@@ -546,13 +546,8 @@ fn a_gradient_edited_past_the_stop_limit_reaches_the_plugin_cut_with_one_warning
 
 fn probe_native() -> std::path::PathBuf {
     let probe = craft_plugin_host::testing::probe_dir();
-    let status = std::process::Command::new(env!("CARGO"))
-        .args(["build", "--release", "--quiet", "--manifest-path"])
-        .arg(probe.join("Cargo.toml"))
-        .status()
-        .expect("cargo runs");
-    assert!(status.success(), "the native probe builds");
-    probe.join("target/release").join(format!("{}probe{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX))
+    let artifact = format!("{}probe{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
+    crate::build_plugin::build(probe, &artifact, None)
 }
 
 pub(crate) fn native_probe(app: &App) -> &'static str {

@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+#[path = "../../plugin/tests/support/build_plugin.rs"]
+mod build_plugin;
 
 use craft_behavior::dock::Action;
 use effectcraft_ui_egui::EffectcraftApp;
@@ -15,15 +17,10 @@ fn root() -> PathBuf {
 }
 
 fn bundle(source: &Path, crate_name: &str, manifest: Option<serde_json::Value>, into: &Path) -> PathBuf {
-    let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
-        .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
-        .arg(source.join("Cargo.toml"))
-        .status()
-        .expect("cargo runs");
-    assert!(status.success(), "{} builds", source.display());
+    let wasm = build_plugin::wasm(source, crate_name);
     let dir = into.join(crate_name);
     std::fs::create_dir_all(&dir).expect("bundle folder");
-    std::fs::copy(source.join(format!("target/wasm32-unknown-unknown/release/{crate_name}.wasm")), dir.join("plugin.wasm")).expect("copy the module");
+    std::fs::copy(wasm, dir.join("plugin.wasm")).expect("copy the module");
     match manifest {
         Some(manifest) => std::fs::write(dir.join("plugin.json"), manifest.to_string()).expect("write the manifest"),
         None => std::fs::copy(source.join("plugin.json"), dir.join("plugin.json")).map(|_| ()).expect("copy the manifest"),

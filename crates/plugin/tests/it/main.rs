@@ -1,4 +1,6 @@
 mod aux;
+#[path = "../support/build_plugin.rs"]
+mod build_plugin;
 mod controls;
 mod data;
 mod data_only;
@@ -15,7 +17,6 @@ mod trust;
 mod viewer;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
 
 use effectcraft_engine::Session;
@@ -24,16 +25,7 @@ use serde_json::json;
 
 fn probe_wasm() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
-    BUILT.get_or_init(|| {
-        let probe = craft_plugin_host::testing::probe_dir();
-        let status = Command::new(env!("CARGO"))
-            .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
-            .arg(probe.join("Cargo.toml"))
-            .status()
-            .expect("cargo runs");
-        assert!(status.success(), "the probe plugin builds");
-        probe.join("target/wasm32-unknown-unknown/release/probe.wasm")
-    })
+    BUILT.get_or_init(|| build_plugin::wasm(craft_plugin_host::testing::probe_dir(), "probe"))
 }
 
 static SHARED_PLUGINS: Gate = Gate { readers: Mutex::new(Some(0)), changed: Condvar::new() };
