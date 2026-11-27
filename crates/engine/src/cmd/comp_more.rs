@@ -276,6 +276,7 @@ fn save_frame(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let path = str_p(p, "path").ok_or_else(|| bad("comp.saveFrameAs", "missing `path` (.png)"))?.to_string();
     s.refuse_export(&path)?;
+    s.plugins_before_export([path.as_str()]).map_err(EngineError::Other)?;
     let cid = comp_id(s, p)?;
     let comp = s.project.comp(cid).ok_or(EngineError::NoComp)?;
     let t = f_p(p, "time").map(Tick::from_seconds_f64).unwrap_or(s.time());
