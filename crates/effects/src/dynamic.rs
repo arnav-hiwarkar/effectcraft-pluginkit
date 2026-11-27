@@ -245,6 +245,13 @@ pub fn plugin_version(owner: &str) -> Option<String> {
     REGISTRY.read().unwrap_or_else(|poisoned| poisoned.into_inner()).iter().find(|r| r.effect.owner == owner).map(|r| r.effect.version.clone())
 }
 
+/// The ids of the plugins with registered effects.
+pub fn owners() -> Vec<String> {
+    let registry = REGISTRY.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let owners: std::collections::BTreeSet<&str> = registry.iter().map(|r| r.effect.owner.as_str()).collect();
+    owners.into_iter().map(str::to_string).collect()
+}
+
 pub fn specs() -> Vec<&'static EffectSpec> {
     REGISTRY.read().unwrap_or_else(|poisoned| poisoned.into_inner()).iter().map(|r| r.spec).collect()
 }

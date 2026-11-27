@@ -112,10 +112,11 @@ fn open_file(s: &mut Session, path: &str, home: impl FnOnce(&str) -> Option<Stri
 pub(crate) fn file_text(s: &Session, path: &str) -> Result<String> {
     let compact = s.prefs.project.compact_project_files && !crate::xml_project::is_xml_path(path);
     let plugins = crate::plugin_refs::record(&s.project);
-    let project = if plugins == s.project.plugins {
+    let plugin_refs = crate::plugin_refs::record_refs(&s.project);
+    let project = if plugins == s.project.plugins && plugin_refs == s.project.plugin_refs {
         std::borrow::Cow::Borrowed(&*s.project)
     } else {
-        std::borrow::Cow::Owned(Project { plugins, ..(*s.project).clone() })
+        std::borrow::Cow::Owned(Project { plugins, plugin_refs, ..(*s.project).clone() })
     };
     let json = project.to_file_json_with_view(&s.saved_view(), compact)?;
     if crate::xml_project::is_xml_path(path) { crate::xml_project::to_xml(&json).map_err(EngineError::Other) } else { Ok(json) }

@@ -163,3 +163,53 @@ fn a_missing_effect_on_a_layer_whose_fx_switch_is_off_does_not_block_export() {
     let rendered = s.execute("renderQueue.render", json!({})).unwrap();
     assert_eq!(rendered["items"][0]["status"], "Done", "{rendered}");
 }
+
+fn saved_json(path: &std::path::Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn a_save_records_each_plugin_effect_as_a_plugin_ref_and_keeps_it_while_the_plugin_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (first, second) = (dir.path().join("first.ecproj"), dir.path().join("second.ecproj"));
+    let _registered = register();
+    let mut s = Session::new();
+    s.execute("comp.new", json!({"name": "Main"})).unwrap();
+    let layer = s.execute("layer.newSolid", json!({})).unwrap()["layer"].clone();
+    s.execute("effect.apply", json!({"layer": layer, "effect": EFFECT})).unwrap();
+    s.execute("file.saveAs", json!({"path": first})).unwrap();
+    assert_eq!(saved_json(&first)["plugin_refs"], json!(["test.refs.glow/glow@2.1.0"]));
+
+    dynamic::unregister(OWNER);
+    let mut s = Session::new();
+    s.execute("file.open", json!({"path": first})).unwrap();
+    assert_eq!(super::missing_owner(&s.project, EFFECT).as_deref(), Some(OWNER));
+    s.execute("file.saveAs", json!({"path": second})).unwrap();
+    assert_eq!(saved_json(&second)["plugin_refs"], json!(["test.refs.glow/glow@2.1.0"]));
+    assert_eq!(effect_group(&second), effect_group(&first));
+}
+
+#[test]
+fn an_old_project_gets_its_plugin_refs_from_the_installed_plugin_and_unreadable_refs_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let (saved, old, resaved) = (dir.path().join("saved.ecproj"), dir.path().join("old.ecproj"), dir.path().join("resaved.ecproj"));
+    let _registered = register();
+    let mut s = Session::new();
+    s.execute("comp.new", json!({"name": "Main"})).unwrap();
+    let layer = s.execute("layer.newSolid", json!({})).unwrap()["layer"].clone();
+    s.execute("effect.apply", json!({"layer": layer, "effect": EFFECT})).unwrap();
+    s.execute("file.saveAs", json!({"path": saved})).unwrap();
+    let mut text = saved_json(&saved);
+    let fields = text.as_object_mut().unwrap();
+    assert!(fields.remove("plugins").is_some() && fields.remove("plugin_refs").is_some());
+    fields.insert("plugin_refs".into(), json!(["from a newer format: glow #2"]));
+    std::fs::write(&old, text.to_string()).unwrap();
+
+    let mut s = Session::new();
+    s.execute("file.open", json!({"path": old})).unwrap();
+    assert_eq!(super::effect_ref(&s.project, EFFECT), Some(craft_plugin::PluginRef::new(OWNER, "glow", "2.1.0")));
+    assert_eq!(super::effect_ref(&s.project, "ec.blur.gaussian"), None);
+    assert_eq!(super::effect_ref(&s.project, "nobody.knows.this"), None);
+    s.execute("file.saveAs", json!({"path": resaved})).unwrap();
+    assert_eq!(saved_json(&resaved)["plugin_refs"], json!(["from a newer format: glow #2", "test.refs.glow/glow@2.1.0"]));
+}
