@@ -64,6 +64,7 @@ effectcraft-plugin = { path = "crates/plugin" }
 craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
 craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
 craft-plugin-ui = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
+craft-ext-store = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
 effectcraft-ui-egui = { path = "crates/ui-egui" }
 effectcraft-automation = { path = "crates/automation" }
 effectcraft-script = { path = "crates/script" }

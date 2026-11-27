@@ -75,6 +75,10 @@ pub struct Project {
     /// The plug-ins whose effects the project uses, as they were when it was saved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plugins: Vec<PluginUse>,
+    /// Each plugin effect the project uses, saved as `plugin/item@version`. A string this version
+    /// cannot read is kept and saved back as it was.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugin_refs: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "plugin_data")]
     pub plugin_data: plugin_data::PluginData,
 }

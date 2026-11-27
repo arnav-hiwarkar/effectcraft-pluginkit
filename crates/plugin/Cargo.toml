@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 craft-plugin-host = { workspace = true }
+craft-ext-store = { workspace = true }
 effectcraft-automation = { workspace = true }
 effectcraft-engine = { workspace = true }
 log = { workspace = true }

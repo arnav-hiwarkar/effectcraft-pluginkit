@@ -2,8 +2,11 @@ mod data_only;
 mod effects;
 mod forms;
 mod gate;
+mod hooks;
+mod locale;
 mod manage;
 mod panels;
+mod presets;
 pub mod viewer;
 
 pub use craft_plugin_host::ui;
@@ -11,6 +14,7 @@ pub use craft_plugin_host::{ControlsReply, PickFile, Pixels, PluginImage, TaskSt
 pub use effects::plugin_param;
 pub use forms::{AskedForm, Values, answer_form, asked_form};
 pub use gate::{FilePicker, Job, set_file_picker};
+pub use locale::set_locale;
 pub use manage::{
     DEFAULT_WAIT, Loaded, PluginInfo, PluginState, PluginTask, Plugins, cancel_task, end_run, image, install, panel_request, panel_spec, placed_panels,
     plugins, pump, run_command, start_in_safe_mode, start_task, wait_for_tasks,

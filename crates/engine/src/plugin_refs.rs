@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use craft_plugin::{PluginRef, Saved};
 use effectcraft_effects::dynamic;
 use effectcraft_project::{GroupKind, ItemId, Node, PluginUse, Project};
 use serde_json::{Value, json};
@@ -61,11 +62,52 @@ pub(crate) fn open_notice(found: &[Value]) -> Option<String> {
         .then(|| format!("This project uses plug-ins that are missing or a different version: {}.", found.iter().map(line).collect::<Vec<_>>().join(", ")))
 }
 
+/// The plugin effect that effect id `effect` (`"{plugin}.{item}"`) names: the registered one, else
+/// the reference the project saved for it, else the id split at the longest plugin id that is
+/// registered or recorded in the project. `None` for a built-in effect or an id no plugin claims.
+pub fn effect_ref(p: &Project, effect: &str) -> Option<PluginRef> {
+    if let Some(registered) = dynamic::get(effect) {
+        let owner = &registered.effect.owner;
+        let item = effect.strip_prefix(owner.as_str())?.strip_prefix('.')?;
+        return Some(PluginRef::new(owner, item, &registered.effect.version));
+    }
+    if effectcraft_effects::find(effect).is_some() {
+        return None;
+    }
+    let saved = p.plugin_refs.iter().find_map(|text| match PluginRef::parse_saved(text, []) {
+        Saved::Ref(found) if names(&found, effect) => Some(found),
+        _ => None,
+    });
+    saved.or_else(|| {
+        let mut installed = dynamic::owners();
+        installed.extend(p.plugins.iter().map(|used| used.id.clone()));
+        match PluginRef::parse_saved(effect, installed.iter().map(String::as_str)) {
+            Saved::Ref(found) => {
+                let version = p.plugins.iter().find(|used| used.id == found.plugin).map(|used| used.version.as_str()).unwrap_or_default();
+                Some(PluginRef::new(&found.plugin, &found.item, version))
+            }
+            Saved::Raw(_) => None,
+        }
+    })
+}
+
+fn names(found: &PluginRef, effect: &str) -> bool {
+    effect.strip_prefix(found.plugin.as_str()).and_then(|rest| rest.strip_prefix('.')) == Some(found.item.as_str())
+}
+
+/// What a save writes as [`Project::plugin_refs`]: one reference per plugin effect in use, plus
+/// every saved string this version could not read, unchanged.
+pub(crate) fn record_refs(p: &Project) -> Vec<String> {
+    let mut refs: BTreeSet<String> = effect_ids(p).into_iter().filter_map(|effect| effect_ref(p, effect)).map(|found| found.to_saved()).collect();
+    refs.extend(p.plugin_refs.iter().filter(|text| matches!(PluginRef::parse_saved(text, []), Saved::Raw(_))).cloned());
+    refs.into_iter().collect()
+}
+
 pub fn missing_owner(p: &Project, effect: &str) -> Option<String> {
     if effectcraft_effects::find(effect).is_some() {
         return None;
     }
-    recorded_owner(p, effect).map(|u| u.id.clone())
+    effect_ref(p, effect).map(|found| found.plugin)
 }
 
 fn missing_effects(p: &Project) -> BTreeMap<&str, Option<String>> {

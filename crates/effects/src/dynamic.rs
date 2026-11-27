@@ -9,6 +9,7 @@ pub type RenderDyn = Box<dyn Fn(&EffectCtx, Buf) -> Buf + Send + Sync>;
 pub type GpuDyn = Box<dyn Fn(&EffectCtx, Grid, Planning) -> Option<GpuProgram> + Send + Sync>;
 pub type StampDyn = Box<dyn Fn() -> u64 + Send + Sync>;
 pub type MarginDyn = Box<dyn Fn(&EffectCtx, f64) -> Option<f64> + Send + Sync>;
+pub type IdentityDyn = Box<dyn Fn(&EffectCtx) -> bool + Send + Sync>;
 pub type GpuProbeDyn = Box<dyn Fn() -> bool + Send + Sync>;
 pub type ParamStateDyn = Box<dyn Fn(&str, &dyn Fn(&str) -> Option<Value>) -> [bool; 2] + Send + Sync>;
 pub type MigrateDyn = Box<dyn Fn(u32, &mut std::collections::BTreeMap<String, Value>) -> Result<(), String> + Send + Sync>;
@@ -133,6 +134,9 @@ pub struct DynamicEffect {
     pub migrate: Option<MigrateDyn>,
     pub param_state: Option<ParamStateDyn>,
     pub aux: Vec<effectcraft_raster::channels3d::AuxLookup>,
+    /// Whether the effect changes nothing at these params, so its input is used as is and
+    /// neither `render` nor `gpu` is called.
+    pub identity: Option<IdentityDyn>,
 }
 
 pub struct Registered {
@@ -145,6 +149,10 @@ pub struct Registered {
 }
 
 impl Registered {
+    pub fn passes_through(&self, ctx: &EffectCtx) -> bool {
+        self.effect.identity.as_ref().is_some_and(|identity| identity(ctx))
+    }
+
     pub fn probe_gpu(&self) {
         let Some(probe) = self.gpu_probe.get() else { return };
         self.gpu_probed.get_or_init(|| {
@@ -237,6 +245,16 @@ pub fn plugin_version(owner: &str) -> Option<String> {
     REGISTRY.read().unwrap_or_else(|poisoned| poisoned.into_inner()).iter().find(|r| r.effect.owner == owner).map(|r| r.effect.version.clone())
 }
 
+/// The ids of the plugins with registered effects.
+pub fn owners() -> Vec<String> {
+    let registry = REGISTRY.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let owners: std::collections::BTreeSet<&str> = registry.iter().map(|r| r.effect.owner.as_str()).collect();
+    owners.into_iter().map(str::to_string).collect()
+}
+
 pub fn specs() -> Vec<&'static EffectSpec> {
     REGISTRY.read().unwrap_or_else(|poisoned| poisoned.into_inner()).iter().map(|r| r.spec).collect()
 }
+
+#[cfg(test)]
+mod tests;
