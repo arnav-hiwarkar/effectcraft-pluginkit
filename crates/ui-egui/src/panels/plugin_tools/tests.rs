@@ -20,7 +20,7 @@ mod process_dir;
 pub(crate) use build_plugin::wasm;
 pub(crate) use process_dir::ProcessDir;
 
-fn bundle(wasm: &Path, manifest: Value) -> ProcessDir {
+pub(crate) fn bundle(wasm: &Path, manifest: Value) -> ProcessDir {
     let dir = ProcessDir::new();
     std::fs::copy(wasm, dir.path().join("plugin.wasm")).expect("copy the module");
     std::fs::write(dir.path().join("plugin.json"), manifest.to_string()).expect("write the manifest");
@@ -32,7 +32,7 @@ fn config() -> &'static Path {
     CONFIG.get_or_init(ProcessDir::new).path()
 }
 
-fn session() -> Session {
+pub(crate) fn session() -> Session {
     let mut session = effectcraft_host::session();
     effectcraft_plugin::install(&mut session, Some(config()));
     session.execute("comp.new", json!({"name": "Viewer", "width": 320, "height": 180, "frameRate": 24, "duration": 2})).unwrap();

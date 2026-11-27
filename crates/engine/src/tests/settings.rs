@@ -1631,3 +1631,22 @@ fn a_plugin_command_gets_its_free_default_shortcut_never_a_built_in_one_and_can_
     s.shortcuts_changed();
     assert_eq!(s.shortcuts().shortcut_of("plugin.run", &params("taken")), Some("Alt+Shift+F10"));
 }
+
+#[test]
+fn scripts_cannot_change_shared_effect_presets() {
+    let mut s = crate::Session::default();
+    s.prefs.scripting.allow_scripts_write_files = true;
+    for id in ["effect.savePreset", "effect.deletePreset"] {
+        let params = json!({"name": "Example"});
+        let reason = format!("Scripts can't run `{id}`: the shared plug-in preset store requires a user command.");
+        let direct = s.execute_for_script(id, params.clone()).unwrap_err().to_string();
+        assert!(direct.contains(&reason), "{direct}");
+
+        let batch = json!({"steps": [{"command": id, "params": params}]});
+        let nested = s.execute_for_script("engine.batch", batch).unwrap_err().to_string();
+        assert!(nested.contains(&reason), "{nested}");
+
+        let user = s.execute(id, params).unwrap_err().to_string();
+        assert!(user.contains("plug-in presets are not available in this session"), "{user}");
+    }
+}

@@ -14,9 +14,10 @@ fn binary() -> std::ffi::OsString {
 
 /// The CLI with its own empty plug-in suite, so no test loads or changes the person's plug-ins.
 fn command() -> std::process::Command {
-    static SUITE: std::sync::OnceLock<process_dir::ProcessDir> = std::sync::OnceLock::new();
-    let suite = SUITE.get_or_init(process_dir::ProcessDir::new);
+    static CONFIG: std::sync::OnceLock<process_dir::ProcessDir> = std::sync::OnceLock::new();
+    let config = CONFIG.get_or_init(process_dir::ProcessDir::new);
     let mut command = std::process::Command::new(binary());
-    command.env("CRAFT_EXT_DIR", suite.path());
+    command.env("EFFECTCRAFT_CONFIG_DIR", config.path().join("Config"));
+    command.env("CRAFT_EXT_DIR", config.path().join("Extensions"));
     command
 }

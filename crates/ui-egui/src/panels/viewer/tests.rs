@@ -244,11 +244,12 @@ fn panes_app_with(
     let counter = std::sync::Arc::new(UiThreadReads { inner: session.footage.clone(), ui: std::thread::current().id(), reads: Default::default() });
     session.footage = counter.clone();
     session.layer_cache.set_gate(Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true))));
-    let harness = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_| {
-        let mut app = crate::EffectcraftApp::new(session);
-        app.frames.set_remote(remote);
-        app
-    });
+    let harness =
+        egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_context_setup(crate::framework::install_headless).build_eframe(|_| {
+            let mut app = crate::EffectcraftApp::new(session);
+            app.frames.set_remote(remote);
+            app
+        });
     (dir, harness, cid, counter)
 }
 

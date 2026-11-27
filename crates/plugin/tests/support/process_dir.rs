@@ -27,8 +27,9 @@ fn open_scratch() -> (PathBuf, File) {
     std::fs::create_dir_all(&root).expect("the scratch root");
     sweep_finished_processes(&root);
     let scratch = tempfile::Builder::new().prefix("process-").tempdir_in(&root).expect("a scratch directory").keep();
-    let lock = File::create(scratch.with_extension(LOCK_EXTENSION)).expect("the scratch lock");
-    lock.lock().expect("the scratch lock is held while this process runs");
+    let lock = tempfile::NamedTempFile::new_in(&root).expect("the scratch lock");
+    lock.as_file().lock().expect("the scratch lock is held while this process runs");
+    let lock = lock.persist_noclobber(scratch.with_extension(LOCK_EXTENSION)).expect("publish the held scratch lock");
     (scratch, lock)
 }
 

@@ -6,7 +6,7 @@ use serde_json::json;
 use super::panel_tests::{shows, until};
 use crate::EffectcraftApp;
 use crate::dock::PanelKind;
-use crate::panels::plugin_tools::tests::{element, harness, menu_row, probe_session};
+use crate::panels::plugin_tools::tests::{bundle, element, harness, menu_row, probe_session, session, wasm};
 
 const PROBE: &str = "test.viewer-tool-ui";
 const HELP: &str = "https://example.org/probe-app";
@@ -67,21 +67,42 @@ fn with_the_probe_panel_focused_delete_and_cmd_d_reach_the_plugin_and_backspace_
 
 #[test]
 fn a_panel_key_waits_while_a_file_dialog_is_up() {
+    use std::path::Path;
     use std::sync::{Arc, Mutex};
-    let mut harness = with_app_panel();
-    let body = element(&harness, &format!("plugin.{PROBE}.app"));
+    const ID: &str = "test.modal-shortcut";
+    let mut s = session();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/modal-key-probe");
+    let probe =
+        bundle(&wasm(&source, "modal-key-probe"), json!({"id": ID, "name": "Modal Shortcut Probe", "version": "1.0.0", "entry": {"wasm": "plugin.wasm"}}));
+    let plugins = effectcraft_plugin::install(&mut s, None);
+    plugins.load_for_session(probe.path()).unwrap();
+    let mut harness = harness(s);
+    let kind = PanelKind::plugin(ID, "keys");
+    until(&mut harness, "the shortcut probe registering", |h| super::running_panel(h.state(), kind).is_some());
+    let ctx = harness.ctx.clone();
+    crate::menus::invoke(harness.state_mut(), &ctx, "window.pluginPanel", json!({"plugin": ID, "panel": "keys"})).unwrap();
+    said(&mut harness, "Waiting for Delete");
+
+    let body = element(&harness, &format!("plugin.{ID}.keys"));
     click(&mut harness, body.max - egui::vec2(12.0, 12.0), egui::PointerButton::Primary);
-    assert_eq!(harness.state().ui.focused, PanelKind::plugin(PROBE, "app"));
+    assert_eq!(harness.state().ui.focused, kind);
     let pending: Arc<Mutex<Vec<crate::DialogDone>>> = Arc::default();
     let queue = pending.clone();
     harness.state_mut().hooks.file_dialog_async = Some(Box::new(move |_dialog, done| queue.lock().unwrap().push(done)));
-    let ctx = harness.ctx.clone();
     crate::menus::invoke(harness.state_mut(), &ctx, "file.saveAs", json!({})).unwrap();
     assert_eq!(pending.lock().unwrap().len(), 1, "Save As shows its file dialog");
     harness.key_press(egui::Key::Delete);
     harness.run_steps(3);
-    delivered(&harness, &[]);
+    assert!(harness.state().plugin_ui.pressed_keys.is_empty());
+    assert!(shows(&harness, "Waiting for Delete"));
     assert!(!shows(&harness, "pressed Delete"));
+
+    pending.lock().unwrap().pop().unwrap()(Ok(Vec::new()));
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Delete);
+    said(&mut harness, "pressed Delete");
+    assert_eq!(harness.state().plugin_ui.pressed_keys, [(effectcraft_plugin::Owner::panel(ID, "keys", None), "Delete".into())]);
+    plugins.disable(ID).unwrap();
 }
 
 #[test]

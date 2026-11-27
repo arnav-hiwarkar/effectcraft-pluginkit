@@ -522,13 +522,13 @@ fn not_running(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pa
     };
     let installed = owner.and_then(|id| super::plugin_store::listed(app).into_iter().find(|plugin| plugin.id == id));
     let message = match installed {
-        Some(plugin) => tr_args("{} is not running. Turn it on in Plugins ▸ Manage plugins.", &[&plugin.name]),
-        None => tr("The plug-in that provides this panel is not installed. Install it in Plugins ▸ Manage plugins.").to_string(),
+        Some(plugin) => tr_args("{} is not running. Turn it on in Window ▸ Plug-ins ▸ Manage plugins.", &[&plugin.name]),
+        None => tr("The plug-in that provides this panel is not installed. Install it in Window ▸ Plug-ins ▸ Manage plugins.").to_string(),
     };
     let mut body = ui.new_child(UiBuilder::new().max_rect(rect.shrink(12.0)));
     body.label(RichText::new(message).color(app.tokens.text_dim));
-    let manage = body.button(tr("Manage plugins…"));
-    app.auto.add_response(&format!("{}.manage", kind.id()), &manage, "Manage plugins…");
+    let manage = body.button(tr("Manage plugins..."));
+    app.auto.add_response(&format!("{}.manage", kind.id()), &manage, "Manage plugins...");
     if manage.clicked() {
         let ctx = ui.ctx().clone();
         if let Err(error) = crate::menus::invoke(app, &ctx, "window.plugins", json!({})) {

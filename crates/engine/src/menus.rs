@@ -234,6 +234,8 @@ fn nest(out: &mut Vec<MenuNode>, path: &[&str], e: MenuEntry) {
     }
 }
 
+pub const PLUGIN_MENU_PATH: [&str; 2] = ["Window", "Plug-ins"];
+
 pub fn plugin_commands<'a>(s: &'a Session, top: Option<&str>) -> Vec<(Vec<&'a str>, MenuEntry)> {
     let tops = top_level();
     s.plugin_items
@@ -1363,14 +1365,14 @@ Window
   Create Nulls From Paths | window.panel {"panel":"createNullsFromPaths"}
   VR Comp Editor | window.panel {"panel":"vrCompEditor"}
   @dynamic:scriptPanels
-Plugins
-  Find plugins… | plugin.find
-  Manage plugins… | window.plugins
-  Report a problem… | plugin.report
-  ---
-  @dynamic:pluginCommands
-  ---
-  @dynamic:pluginPanels
+  Plug-ins
+    Find plugins... | plugin.find
+    Manage plugins... | window.plugins
+    Report a problem... | plugin.report
+    ---
+    @dynamic:pluginCommands
+    ---
+    @dynamic:pluginPanels
 Help
   EffectCraft Help... | help.docs {"page":"help"} | F1
   Scripting Help... | help.docs {"page":"scripting"}
