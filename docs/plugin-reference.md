@@ -756,7 +756,7 @@ In plugin tests, `TestPlugin::panel_for(id, key)` drives one instance as `panel(
 `Space`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, an arrow `Up`/`Down`/`Left`/`Right`, or one of
 ``; ' , . / \ = - ` [ ] +``), joined by `+`. A chord the app cannot read is refused at load with that
 grammar. While the panel has the keyboard focus (the user last pressed in it, or one of its widgets has the
-keyboard), or the pointer is over it, and no text field has the focus, those chords go to the panel
+keyboard; the pointer does not matter), and no text field has the focus, those chords go to the panel
 instead of the app's shortcuts: the panel is called and `ui.key("Delete")` is true for that call (case does
 not matter). The chords of the app's Save, Save As, Undo, Redo and Quit always stay with the app. Other
 chords keep their app meaning. A chord pressed while the panel's tab is hidden is not delivered later.

@@ -26,7 +26,6 @@ pub(crate) struct PluginUi {
     pub listed: Option<(std::time::Instant, Result<Vec<super::plugin_manager::Listed>, String>)>,
     pub images: Images,
     pub control_heights: HashMap<u64, f32>,
-    pub pointer: Option<PanelKind>,
 }
 
 pub(crate) fn tick(app: &mut EffectcraftApp, ctx: &egui::Context) {
@@ -334,11 +333,6 @@ pub fn panel(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, kind: Pane
     let keys = typed(ui, rect);
     hold(app, ui, &owner, rect);
     submit(app, ui, &owner, events, &keys);
-    if ui.rect_contains_pointer(rect) {
-        app.plugin_ui.pointer = Some(kind);
-    } else if app.plugin_ui.pointer == Some(kind) {
-        app.plugin_ui.pointer = None;
-    }
 }
 
 fn hold(app: &mut EffectcraftApp, ui: &egui::Ui, owner: &Owner, rect: Rect) {
@@ -347,8 +341,8 @@ fn hold(app: &mut EffectcraftApp, ui: &egui::Ui, owner: &Owner, rect: Rect) {
 }
 
 pub(crate) fn key_target(app: &EffectcraftApp) -> Option<(Owner, Vec<String>)> {
-    let focused = matches!(app.ui.focused, PanelKind::Plugin(_)).then_some(app.ui.focused);
-    let kind = focused.or(app.plugin_ui.pointer.filter(|kind| crate::menus::panel_shown(app, *kind)))?;
+    let kind = app.ui.focused;
+    let PanelKind::Plugin(_) = kind else { return None };
     let Scoped { item, owner, .. } = scoped(app, kind)?;
     let keys = effectcraft_plugin::panel_spec(&item.plugin, &item.id)?.keys;
     Some((owner, keys))

@@ -139,3 +139,29 @@ fn a_panel_key_reaches_the_plugin_while_one_of_its_widgets_has_the_keyboard_and_
     until(&mut harness, "Cmd+Z undoing the new layer", |h| names(h) == ["Keep"]);
     assert!(!shows(&harness, "pressed Cmd+Z"), "the app's undo chord never reaches the plugin");
 }
+
+#[test]
+fn delete_with_the_timeline_focused_goes_to_the_timeline_even_with_the_pointer_over_a_panel_that_declares_delete() {
+    let mut harness = with_app_panel();
+    let body = element(&harness, &format!("plugin.{PROBE}.app"));
+    harness.state_mut().ui.focused = PanelKind::Timeline;
+    harness.event(egui::Event::PointerMoved(body.max - egui::vec2(12.0, 12.0)));
+    harness.run_steps(2);
+    assert_eq!(harness.state().ui.focused, PanelKind::Timeline);
+    harness.key_press(egui::Key::Delete);
+    until(&mut harness, "Delete clearing the layer", |h| names(h).is_empty());
+    assert!(!shows(&harness, "pressed Delete"), "the plugin got a key it was not focused for");
+}
+
+#[test]
+fn a_click_on_a_widget_of_the_panel_focuses_it_and_delete_then_reaches_the_plugin_with_the_pointer_elsewhere() {
+    let mut harness = with_app_panel();
+    harness.state_mut().ui.focused = PanelKind::Timeline;
+    let widget = harness.get_by_label("Disable Probe Action").rect().center();
+    click(&mut harness, widget, egui::PointerButton::Primary);
+    assert_eq!(harness.state().ui.focused, PanelKind::plugin(PROBE, "app"));
+    harness.event(egui::Event::PointerMoved(pos2(5.0, 790.0)));
+    harness.key_press(egui::Key::Delete);
+    said(&mut harness, "pressed Delete");
+    assert_eq!(names(&harness), ["Keep"], "the key did not reach the app's Clear");
+}
