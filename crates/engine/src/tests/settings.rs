@@ -1635,9 +1635,11 @@ fn a_plugin_command_gets_its_free_default_shortcut_never_a_built_in_one_and_can_
 #[test]
 fn scripts_cannot_change_shared_effect_presets() {
     let mut s = crate::Session::default();
+    s.execute("comp.new", json!({})).unwrap();
+    let layer = s.execute("layer.newSolid", json!({})).unwrap()["layer"].clone();
     s.prefs.scripting.allow_scripts_write_files = true;
     for id in ["effect.savePreset", "effect.deletePreset"] {
-        let params = json!({"name": "Example"});
+        let params = json!({"layer": layer, "effect": 1, "name": "Example"});
         let reason = format!("Scripts can't run `{id}`: the shared plug-in preset store requires a user command.");
         let direct = s.execute_for_script(id, params.clone()).unwrap_err().to_string();
         assert!(direct.contains(&reason), "{direct}");
