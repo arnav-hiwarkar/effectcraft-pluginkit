@@ -795,6 +795,9 @@ fn scripts_cant_install_approve_or_unsandbox_plugins() {
         }
         assert_eq!(s.execute(id, json!({})).unwrap(), json!(id));
     }
+    let e =
+        run_code(&mut s, "__exec('plugin.installFromFile', JSON.stringify({path: '/p.craftplugin'}))", "grant.jsx").error.expect("installFromFile was allowed");
+    assert!(e.message.contains("Scripts can't run `plugin.installFromFile`"), "{e:?}");
     for id in ["plugin.list", "plugin.run", "plugin.startTask", "plugin.tasks", "plugin.log", "plugin.cancelTask"] {
         assert_eq!(ok(&mut s, &format!("JSON.parse(__exec('{id}', '{{}}'))")).result, json!(id), "{id}");
     }
