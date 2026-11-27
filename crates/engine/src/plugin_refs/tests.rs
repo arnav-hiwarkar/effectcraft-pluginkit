@@ -72,7 +72,7 @@ fn a_project_names_its_missing_plugin_refuses_a_final_render_and_keeps_the_value
     s.execute("renderQueue.add", json!({"output": dir.path().join("out.mp4")})).unwrap();
     s.execute("file.saveAs", json!({"path": first})).unwrap();
     let saved: Value = serde_json::from_str(&std::fs::read_to_string(&first).unwrap()).unwrap();
-    assert_eq!(saved["plugins"], json!([{"id": OWNER, "version": "2.1.0"}]));
+    assert_eq!(saved["plugins"], json!([{"id": OWNER, "version": "2.1.0", "name": "Refs Glow Pack"}]));
 
     dynamic::unregister(OWNER);
     let mut s = Session::new();
