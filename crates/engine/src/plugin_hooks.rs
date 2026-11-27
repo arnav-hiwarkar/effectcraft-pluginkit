@@ -99,6 +99,26 @@ mod tests {
     }
 
     #[test]
+    fn a_timeline_movie_veto_runs_before_the_background_export_starts() {
+        fn refuse_movie(hook: PluginHook, path: &str) -> Vec<PluginVeto> {
+            if hook == PluginHook::BeforeExport && path.ends_with(".mov") {
+                vec![PluginVeto { plugin: "Movie Guard".into(), reason: path.into() }]
+            } else {
+                vec![]
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let timeline = dir.path().join("Edit.otio");
+        let mut s = Session { plugin_hooks: Some(refuse_movie), ..Session::default() };
+        s.execute("comp.new", json!({"name": "Spot", "width": 16, "height": 16, "frameRate": 24, "duration": 1})).unwrap();
+        let layer = s.execute("layer.newSolid", json!({"name": "Blue", "color": "#0000ff"})).unwrap()["layer"].as_u64().unwrap();
+        let movie = dir.path().join(format!("Edit_Spot_Blue_{layer}.mov"));
+        let error = s.execute("file.exportTimeline", json!({"path": timeline, "prerender": "all", "background": true})).unwrap_err().to_string();
+        assert_eq!(error, format!("Not rendered: Movie Guard: {}", movie.display()));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
     fn an_export_veto_names_the_plugin_and_its_reason() {
         let s = Session { plugin_hooks: Some(refuse_gif), ..Session::default() };
         assert_eq!(s.plugins_before_export(["/out/a.mov", "/out/b.gif"]), Err("Not rendered: Alpha Guard: GIF drops the alpha this look needs".into()));
