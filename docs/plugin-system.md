@@ -23,29 +23,20 @@ work from the registry entry.
 
 | Crate | Path | Job |
 |---|---|---|
-| `craft-plugin` | craft-libs `crates/plugin-sdk` | The SDK a plugin author depends on. Also holds the manifest and message types the host reads. |
-| `craft-plugin-host` | craft-libs `crates/plugin-host` | Loads plugins, runs them, checks permissions, and keeps the list of installed plugins. |
+| `craft-plugin` | craft-extensions `crates/plugin-sdk` | The SDK a plugin author depends on. Also holds the manifest and message types the host reads. |
+| `craft-plugin-host` | craft-extensions `crates/plugin-host` | Loads plugins, runs them, checks permissions, and keeps the list of installed plugins. |
 | `effectcraft-plugin` | `crates/plugin` | Connects the runtime to EffectCraft: effects, engine commands, and the file rules. |
-| `craft-plugin-ui` | craft-libs `crates/plugin-ui` | Draws plugin panels, custom controls and viewer marks in egui. The app passes its theme, translations, textures and drag payloads through a `Host`. |
+| `craft-plugin-ui` | craft-extensions `crates/plugin-ui` | Draws plugin panels, custom controls and viewer marks in egui. The app passes its theme, translations, textures and drag payloads through a `Host`. |
 
-The SDK, the host and the UI crate live in craft-libs (the fork
-[arnav-hiwarkar/craft-libs-plugin-beta](https://github.com/arnav-hiwarkar/craft-libs-plugin-beta), branch `pluginkit`), so they cannot depend on
-EffectCraft. EffectCraft takes them by git at one `rev` in the workspace `Cargo.toml`; the reference
-plugins in `plugins/` and the `cargo xtask plugin new` templates use the same `rev` (the templates read it
-from the workspace `Cargo.toml`). Another Craft app adopts the system by writing its own version of
-`effectcraft-plugin`, which is about 600 lines here.
+EffectCraft gets the SDK, host, and painter from the `kit` branch of
+[craft-extensions-plugin-beta](https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta).
+`Cargo.lock` records the commit. After the kit changes land, update the app's three packages
+with `cargo update -p craft-plugin -p craft-plugin-host -p craft-plugin-ui`.
 
-To change the kit and EffectCraft together, check out craft-libs branch `pluginkit` next to this
-repository (`../craft-libs`; from a worktree under `pluginkit/wt/` the path is `../../craft-libs`, so edit the
-block's paths) and uncomment the `[patch."https://github.com/arnav-hiwarkar/craft-libs-plugin-beta"]` block in the
-workspace `Cargo.toml`: the app then builds the kit from that checkout. The reference plugins are
-workspaces of their own and keep the git `rev`; add the same block to a plugin's `Cargo.toml` to build it
-against the checkout too. When the change is done, push craft-libs `pluginkit`, set the new `rev` in the
-workspace `Cargo.toml`, in `plugins/*/Cargo.toml` and in `xtask/tests/check-fixture/Cargo.toml`, let cargo
-update the `Cargo.lock` files, and comment the block again. `cargo xtask kit-rev <sha>` does the rev and lockfile
-steps for every manifest at once (refreshing only the kit packages in each lockfile), and `cargo xtask kit-rev --check`,
-which CI runs, fails and names the manifests when any of them pins a different rev than the workspace `Cargo.toml`. The kit's own tests run in craft-libs:
-`cargo test -p craft-plugin -p craft-plugin-host -p craft-plugin-ui`.
+`cargo xtask plugin new` reads the kit source from the app's workspace manifest. The
+standalone reference plugins keep their pinned SDK revision. `cargo xtask kit-rev --check`
+checks that standalone manifests using the old source agree on that revision.
+`cargo xtask kit-rev <sha>` updates those manifests and their lockfiles.
 
 ## How the app and a plugin talk
 

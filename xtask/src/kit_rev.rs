@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const MOVED_KIT_URL: &str = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta";
 const KIT_URL: &str = "https://github.com/arnav-hiwarkar/craft-libs-plugin-beta";
 const KIT_PACKAGES: [&str; 3] = ["craft-plugin", "craft-plugin-host", "craft-plugin-ui"];
 const SKIPPED_DIRS: [&str; 3] = ["target", ".git", "node_modules"];
@@ -41,10 +42,16 @@ fn bump(root: &Path, sha: &str, refresh: bool) -> Result<(), String> {
 fn check(root: &Path) -> Result<(), String> {
     let manifests = kit_manifests(root)?;
     let workspace = root.join("Cargo.toml");
-    let want = pinned_revs(&std::fs::read_to_string(&workspace).map_err(|e| format!("Cargo.toml: {e}"))?)
-        .into_iter()
-        .next()
-        .ok_or("kit-rev: the workspace Cargo.toml pins no craft-libs rev")?;
+    let workspace = std::fs::read_to_string(&workspace).map_err(|e| format!("Cargo.toml: {e}"))?;
+    let want = match pinned_revs(&workspace).into_iter().next() {
+        Some(rev) => rev,
+        None if moved_kit(&workspace) => {
+            let manifest = manifests.first().ok_or("kit-rev: no standalone manifests pin the old kit")?;
+            let text = std::fs::read_to_string(manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
+            pinned_revs(&text).into_iter().next().ok_or("kit-rev: the standalone kit revision is missing")?
+        }
+        None => return Err("kit-rev: the workspace Cargo.toml has no kit source".into()),
+    };
     let mut drift = Vec::new();
     for manifest in &manifests {
         let text = std::fs::read_to_string(manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
@@ -57,7 +64,14 @@ fn check(root: &Path) -> Result<(), String> {
         println!("kit-rev: {} manifests all pin {want}", manifests.len());
         return Ok(());
     }
-    Err(format!("kit-rev: the workspace Cargo.toml pins {want} but {}; run `cargo xtask kit-rev {want}` or bump all together", drift.join("; ")))
+    Err(format!("kit-rev: the expected standalone pin is {want} but {}; run `cargo xtask kit-rev {want}` or bump all together", drift.join("; ")))
+}
+
+fn moved_kit(workspace: &str) -> bool {
+    KIT_PACKAGES.iter().all(|package| {
+        let prefix = format!("{package} = ");
+        workspace.lines().any(|line| line.starts_with(&prefix) && line.contains(MOVED_KIT_URL) && line.contains("branch = \"kit\""))
+    })
 }
 
 fn display(root: &Path, path: &Path) -> String {
