@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
         with:
           cache-key: checks
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
         with:
           cache-key: tests
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
         with:
           cache-key: ui
@@ -74,7 +74,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/rust
         with:
           cache-key: plugins
@@ -92,14 +92,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: Cargo.toml
           sparse-checkout-cone-mode: false
       - name: The craft-libs rev this workspace pins
         id: pin
         run: echo "rev=$(sed -n 's/^craft-plugin = .*rev = "\([0-9a-f]*\)".*/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: arnav-hiwarkar/craft-libs-plugin-beta
           ref: ${{ steps.pin.outputs.rev }}
