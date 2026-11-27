@@ -9,6 +9,8 @@ mod gate;
 mod gpu;
 mod lumen;
 mod media;
+#[path = "../support/native_helper.rs"]
+mod native_helper;
 mod panels;
 mod params;
 mod render;
