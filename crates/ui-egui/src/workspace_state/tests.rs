@@ -398,7 +398,13 @@ fn plugin_panels_from_the_fork_restore_and_save_by_name() {
     let old = old.to_string();
     config.write(FILE, &old).unwrap();
 
-    let items = [effectcraft_engine::PluginItem { plugin: "test.probe".into(), id: "counter".into(), panel: true, ..Default::default() }];
+    let items = [("counter", false), ("notes", true)].map(|(id, multiple)| effectcraft_engine::PluginItem {
+        plugin: "test.probe".into(),
+        id: id.into(),
+        panel: true,
+        multiple,
+        ..Default::default()
+    });
     let mut restored = UiState::default();
     let mut store = WorkspaceStore::load(Some(&config), &mut restored, &items);
     assert_eq!(store.error, None);

@@ -328,14 +328,16 @@ impl EffectcraftApp {
             .dock
             .panels()
             .into_iter()
-            .map(|panel| SpecRow {
-                panel: panel.id(),
-                label: titles.iter().find(|(p, _)| *p == panel).map_or_else(|| Self::logical_label(panel), |(_, t)| t.clone()),
-                swatch: swatches.iter().find(|(p, _)| *p == panel).map(|(_, swatch)| swatch.map(rgba)),
-                float_size: panels::plugin_view::running_panel(self, panel)
-                    .and_then(|item| effectcraft_plugin::panel_spec(&item.plugin, &item.id))
-                    .map(|spec| panels::plugin_view::float_size(spec.size).into()),
-                documents: if panel == PanelKind::Timeline { docs.clone() } else { Vec::new() },
+            .map(|panel| {
+                let plugin = panels::plugin_view::running_panel(self, panel).and_then(|item| effectcraft_plugin::panel_spec(&item.plugin, &item.id));
+                SpecRow {
+                    panel: panel.id(),
+                    label: titles.iter().find(|(p, _)| *p == panel).map_or_else(|| Self::logical_label(panel), |(_, t)| t.clone()),
+                    swatch: swatches.iter().find(|(p, _)| *p == panel).map(|(_, swatch)| swatch.map(rgba)),
+                    float_size: plugin.as_ref().map(|spec| panels::plugin_view::float_size(spec.size).into()),
+                    icon: plugin.and_then(|spec| spec.icon),
+                    documents: if panel == PanelKind::Timeline { docs.clone() } else { Vec::new() },
+                }
             })
             .collect();
         if self.live_dock.specs.rows != rows {
@@ -646,6 +648,7 @@ struct SpecRow {
     swatch: Option<Option<[u8; 4]>>,
     documents: Vec<DocRow>,
     float_size: Option<[f32; 2]>,
+    icon: Option<String>,
 }
 
 /// One of the Timeline's comp tabs.
@@ -667,6 +670,10 @@ impl PanelSpecs<PanelKind> for DockSpecs {
         if let Some(swatch) = row.swatch {
             spec = spec.swatch(swatch.map(srgba));
         }
+        if let Some(icon) = &row.icon {
+            spec = spec
+                .icon(PluginDockGlyph::named(icon).map_or_else(|| craft_ui::primitives::IconSpec::initial(&row.label), craft_ui::primitives::IconSpec::glyph));
+        }
         if let Some(size) = row.float_size {
             spec = spec.float_size(size.into());
         }
@@ -683,6 +690,32 @@ impl PanelSpecs<PanelKind> for DockSpecs {
 
     fn permissions(&self, panel: &PanelKind) -> Permissions {
         dock::permissions(panel)
+    }
+}
+
+struct PluginDockGlyph(Icon);
+
+impl PluginDockGlyph {
+    fn named(name: &str) -> Option<&'static (dyn craft_ui::primitives::Glyph + 'static)> {
+        use std::collections::HashMap;
+        use std::sync::{LazyLock, Mutex};
+
+        static GLYPHS: LazyLock<Mutex<HashMap<Icon, &'static PluginDockGlyph>>> = LazyLock::new(Default::default);
+        let icon = panels::plugin_view::named_icon(name)?;
+        let mut glyphs = GLYPHS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Some(*glyphs.entry(icon).or_insert_with(|| Box::leak(Box::new(Self(icon)))))
+    }
+}
+
+impl craft_ui::contract::MemoProps for PluginDockGlyph {
+    fn key(&self, key: &mut craft_ui::contract::MemoKey) {
+        key.feed_hash(&self.0);
+    }
+}
+
+impl craft_ui::primitives::Glyph for PluginDockGlyph {
+    fn paint(&self, painter: &egui::Painter, _: &craft_ui::style::UiTokens, rect: Rect, color: egui::Color32, _: bool) {
+        icons::paint(painter, rect, self.0, color);
     }
 }
 

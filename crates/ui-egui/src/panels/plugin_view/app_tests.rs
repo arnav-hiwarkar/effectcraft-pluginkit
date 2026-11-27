@@ -148,6 +148,18 @@ fn a_panel_key_reaches_the_plugin_while_one_of_its_widgets_has_the_keyboard_and_
 }
 
 #[test]
+fn tab_moves_focus_past_the_last_plugin_control() {
+    let mut harness = with_app_panel();
+    harness.get_by_label("Disable Probe Action").focus();
+    harness.run_steps(2);
+    let last = crate::framework::focused_widget(&harness.ctx).expect("the checkbox has focus");
+    harness.key_press(egui::Key::Tab);
+    harness.run_steps(2);
+    assert_ne!(crate::framework::focused_widget(&harness.ctx), Some(last));
+    delivered(&harness, &[]);
+}
+
+#[test]
 fn delete_with_the_timeline_focused_goes_to_the_timeline_even_with_the_pointer_over_a_panel_that_declares_delete() {
     let mut harness = with_app_panel();
     let body = element(&harness, &format!("plugin.{PROBE}.app"));
