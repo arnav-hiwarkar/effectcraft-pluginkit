@@ -2,7 +2,7 @@ name: Plugin kit
 
 on:
   push:
-    branches: [kit, pluginkit]
+    branches: [kit, pluginkit, "ci/**"]
   workflow_dispatch:
 
 permissions:
