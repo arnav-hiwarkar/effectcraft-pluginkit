@@ -3,6 +3,8 @@
 #[path = "../../../../crates/plugin/tests/support/build_plugin.rs"]
 mod build_plugin;
 mod cli;
+#[path = "../../../../crates/plugin/tests/support/process_dir.rs"]
+mod process_dir;
 mod qa_template;
 
 /// Nextest archives relocate binaries; plain Cargo keeps the compile-time path valid.
@@ -12,8 +14,8 @@ fn binary() -> std::ffi::OsString {
 
 /// The CLI with its own empty plug-in suite, so no test loads or changes the person's plug-ins.
 fn command() -> std::process::Command {
-    static SUITE: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-    let suite = SUITE.get_or_init(|| tempfile::tempdir().unwrap());
+    static SUITE: std::sync::OnceLock<process_dir::ProcessDir> = std::sync::OnceLock::new();
+    let suite = SUITE.get_or_init(process_dir::ProcessDir::new);
     let mut command = std::process::Command::new(binary());
     command.env("CRAFT_EXT_DIR", suite.path());
     command

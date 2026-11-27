@@ -33,8 +33,8 @@ fn canonical(path: &std::path::Path) -> std::io::Result<PathBuf> {
 }
 
 fn tmp(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("ec-cli-test-{}", std::process::id()));
-    std::fs::create_dir_all(&d).unwrap();
+    static DIR: std::sync::OnceLock<crate::process_dir::ProcessDir> = std::sync::OnceLock::new();
+    let d = DIR.get_or_init(crate::process_dir::ProcessDir::new).path().to_path_buf();
     // macOS's `/var` is a symlink to `/private/var`: a child process resolves its working
     // directory through `current_dir()`, which is canonical, so compare canonical paths.
     canonical(&d).unwrap_or(d).join(name)

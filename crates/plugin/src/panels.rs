@@ -1003,6 +1003,10 @@ pub fn panel_frame(session: &Session, plugin: &str, request: &FrameRequest) -> R
 }
 
 #[cfg(test)]
+#[path = "../tests/support/process_dir.rs"]
+mod process_dir;
+
+#[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;
 
@@ -1010,9 +1014,11 @@ mod tests {
 
     use super::*;
 
+    use super::process_dir::ProcessDir;
+
     fn legacy(session: &mut Session, id: &str) -> (tempfile::TempDir, Arc<Loaded>) {
-        static CONFIG: OnceLock<tempfile::TempDir> = OnceLock::new();
-        let config = CONFIG.get_or_init(|| tempfile::tempdir().expect("temp dir"));
+        static CONFIG: OnceLock<ProcessDir> = OnceLock::new();
+        let config = CONFIG.get_or_init(ProcessDir::new);
         let plugins = crate::manage::install(session, Some(config.path()));
         let bundle = tempfile::tempdir().expect("temp dir");
         std::fs::copy(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/it/legacy/legacy.wasm"), bundle.path().join("legacy.wasm")).unwrap();
