@@ -1294,16 +1294,10 @@ fn replay_accepts_a_utf8_bom() {
 }
 
 fn probe_bundle(id: &str, permissions: &[&str]) -> PathBuf {
-    let probe = craft_plugin_host::testing::probe_dir();
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "--release", "--quiet", "--target", "wasm32-unknown-unknown", "--manifest-path"])
-        .arg(probe.join("Cargo.toml"))
-        .status()
-        .unwrap();
-    assert!(status.success(), "the probe plugin builds");
+    let probe = crate::build_plugin::wasm(craft_plugin_host::testing::probe_dir(), "probe");
     let bundle = tmp(id);
     std::fs::create_dir_all(&bundle).unwrap();
-    std::fs::copy(probe.join("target/wasm32-unknown-unknown/release/probe.wasm"), bundle.join("probe.wasm")).unwrap();
+    std::fs::copy(probe, bundle.join("probe.wasm")).unwrap();
     let manifest = json!({"id": id, "name": "Probe", "version": "1.0.0", "entry": {"wasm": "probe.wasm"}, "permissions": permissions});
     std::fs::write(bundle.join("plugin.json"), manifest.to_string()).unwrap();
     bundle

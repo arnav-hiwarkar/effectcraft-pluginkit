@@ -1,5 +1,7 @@
 //! The crate's integration tests, one binary (each module is a former `tests/<name>.rs`).
 
+#[path = "../../../../crates/plugin/tests/support/build_plugin.rs"]
+mod build_plugin;
 mod cli;
 mod qa_template;
 
