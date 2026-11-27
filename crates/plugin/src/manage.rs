@@ -124,10 +124,17 @@ pub struct PluginInfo {
     pub path: PathBuf,
 }
 
+#[derive(PartialEq, Debug)]
+struct Installed {
+    consent: Option<Consent>,
+    digest: Option<String>,
+}
+
 struct Inner {
     registry: Registry,
     suite: Option<PathBuf>,
     generation: u64,
+    seen: BTreeMap<String, Installed>,
     catalogue_modified: Option<SystemTime>,
     revocations: Vec<Revocation>,
     last_poll: Instant,
@@ -271,6 +278,40 @@ impl Inner {
         self.registry.set_revocations(self.revocations.clone());
     }
 
+    fn installed_state(&self) -> BTreeMap<String, Installed> {
+        let state = |bundle: Bundle| {
+            let id = bundle.manifest.id.clone();
+            let installed = Installed { consent: self.registry.consent(&id).cloned(), digest: bundle.digest().ok() };
+            (id, installed)
+        };
+        self.installed().into_iter().map(state).collect()
+    }
+
+    fn changed_here(&mut self) {
+        self.generation = self.registry.generation();
+        self.seen = self.installed_state();
+    }
+
+    fn changed_elsewhere(&mut self) -> Vec<String> {
+        self.refresh_registry();
+        let now = self.installed_state();
+        let ids: BTreeSet<&String> = self.seen.keys().chain(now.keys()).collect();
+        let changed: Vec<String> = ids.into_iter().filter(|id| self.seen.get(*id) != now.get(*id)).cloned().collect();
+        self.seen = now;
+        changed
+    }
+
+    fn restart_changed(&mut self, changed: &[String]) {
+        let mut bundles = Vec::new();
+        let installed: Vec<&String> = changed.iter().filter(|id| !self.is_session_only(id)).collect();
+        for id in installed {
+            self.stop(id);
+            bundles.extend(self.installed().into_iter().filter(|bundle| &bundle.manifest.id == id));
+        }
+        bundles.sort_by_key(|bundle| bundle.manifest.is_data_only());
+        bundles.iter().for_each(|bundle| self.start(bundle));
+    }
+
     fn poll_store(&mut self) -> bool {
         if self.last_poll.elapsed() < STORE_POLL_INTERVAL {
             return false;
@@ -280,8 +321,9 @@ impl Inner {
             return false;
         }
         if self.registry.generation() != self.generation {
-            self.reload();
-            return true;
+            let changed = self.changed_elsewhere();
+            self.restart_changed(&changed);
+            return !changed.is_empty();
         }
         self.refresh_revocations()
     }
@@ -306,6 +348,7 @@ impl Inner {
     }
 
     fn reload_bundles(&mut self) {
+        self.seen = self.installed_state();
         let running: Vec<String> = self.loaded.keys().chain(&self.data).cloned().collect();
         running.iter().for_each(|id| self.stop(id));
         self.failed.clear();
@@ -442,6 +485,7 @@ impl Plugins {
             registry,
             suite,
             generation: 0,
+            seen: BTreeMap::new(),
             catalogue_modified: None,
             revocations: Vec::new(),
             last_poll: Instant::now(),
@@ -552,9 +596,9 @@ impl Plugins {
         inner.stop(&incoming.id);
         inner.forget_session_copy(&incoming.id);
         let (snapshot, digest) = Bundle::read(&bundle.dir).map_err(|e| e.to_string())?;
-        if snapshot.manifest.is_data_only() {
-            approve_snapshot(&mut inner.registry, &snapshot, &digest)?;
-        }
+        let approved = if snapshot.manifest.is_data_only() { approve_snapshot(&mut inner.registry, &snapshot, &digest) } else { Ok(()) };
+        inner.changed_here();
+        approved?;
         inner.start(&snapshot);
         Ok(inner.info(&snapshot, false))
     }
@@ -564,6 +608,7 @@ impl Plugins {
         inner.refresh_revocations();
         let bundle = inner.find(id)?;
         inner.registry.approve(&bundle).map_err(|e| e.to_string())?;
+        inner.changed_here();
         inner.start(&bundle);
         Ok(inner.info(&bundle, false))
     }
@@ -576,6 +621,7 @@ impl Plugins {
             return Err(format!("allow plugin `{id}` before choosing how it runs"));
         }
         inner.registry.set_unsandboxed(&bundle.manifest, !sandboxed).map_err(|e| e.to_string())?;
+        inner.changed_here();
         inner.start(&bundle);
         Ok(inner.info(&bundle, false))
     }
@@ -585,7 +631,9 @@ impl Plugins {
         inner.stop(id);
         let had_session_copy = inner.forget_session_copy(id);
         inner.refused.insert(id.to_string(), Refusal::Disabled);
-        match inner.registry.disable(id) {
+        let result = inner.registry.disable(id);
+        inner.changed_here();
+        match result {
             Err(BundleError::NotInstalled(_)) if had_session_copy => Ok(()),
             other => other.map_err(|e| e.to_string()),
         }
@@ -595,7 +643,9 @@ impl Plugins {
         let mut inner = self.lock();
         inner.stop(id);
         let had_session_copy = inner.forget_session_copy(id);
-        match inner.registry.uninstall(id) {
+        let result = inner.registry.uninstall(id);
+        inner.changed_here();
+        match result {
             Err(BundleError::NotInstalled(_)) if had_session_copy => Ok(()),
             other => other.map_err(|e| e.to_string()),
         }
@@ -729,6 +779,42 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+fn copy_data(from: &Path, to: &Path) -> std::io::Result<()> {
+    if to.exists() || !from.is_dir() {
+        return Ok(());
+    }
+    let name = to.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let staging = to.with_file_name(format!(".{name}.migrating"));
+    if staging.exists() {
+        fs::remove_dir_all(&staging)?;
+    }
+    copy_tree(from, &staging)?;
+    fs::rename(&staging, to)
+}
+
+fn migrate_bundle(source: &Registry, target: &mut Registry, bundle: &Bundle) -> Result<Option<(String, Consent)>, Box<dyn std::error::Error>> {
+    let id = &bundle.manifest.id;
+    let dest = target.root().join(id);
+    let digest = bundle.digest()?;
+    let migrated = if dest.exists() {
+        Bundle::open(&dest)?
+    } else {
+        match target.install(&bundle.dir) {
+            Ok(installed) => installed,
+            Err(BundleError::Refused(_, Refusal::Revoked(_))) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        }
+    };
+    if migrated.digest()? != digest {
+        log::warn!("the shared store already has a different plug-in `{id}`");
+        return Ok(None);
+    }
+    if let Err(error) = copy_data(&source.data_dir(id), &target.data_dir(id)) {
+        log::warn!("the data of plug-in `{id}` was not moved into the shared store: {error}");
+    }
+    Ok(source.consent(id).map(|consent| (id.clone(), consent.clone())))
+}
+
 fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let backup = legacy.with_extension("migrated");
     if !legacy.is_dir() || backup.exists() {
@@ -757,29 +843,13 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
     }
     let source = Registry::open(legacy);
     for bundle in source.bundles() {
-        let bundle = bundle?;
-        let id = &bundle.manifest.id;
-        let dest = target.root().join(id);
-        let digest = bundle.digest()?;
-        let migrated = if dest.exists() {
-            Bundle::open(&dest)?
-        } else {
-            match target.install(&bundle.dir) {
-                Ok(installed) => installed,
-                Err(BundleError::Refused(_, Refusal::Revoked(_))) => continue,
-                Err(error) => return Err(error.into()),
+        let moved = bundle.map_err(Into::into).and_then(|bundle| migrate_bundle(&source, &mut target, &bundle));
+        match moved {
+            Ok(Some((id, consent))) => {
+                consents.entry(id).or_insert(consent);
             }
-        };
-        if migrated.digest()? != digest {
-            log::warn!("the shared store already has a different plug-in `{id}`");
-            continue;
-        }
-        if let Some(consent) = source.consent(id) {
-            consents.entry(id.clone()).or_insert_with(|| consent.clone());
-        }
-        let data = target.data_dir(id);
-        if !data.exists() {
-            copy_tree(&source.data_dir(id), &data)?;
+            Ok(None) => {}
+            Err(error) => log::warn!("a plug-in in the old store was not moved into the shared store: {error}"),
         }
     }
     let mut staging = tempfile::NamedTempFile::new_in(&state_dir)?;
@@ -1064,6 +1134,62 @@ mod tests {
         std::fs::create_dir_all(&legacy).unwrap();
         migrate(&legacy, &suite).unwrap();
         assert!(legacy.is_dir());
+    }
+
+    #[test]
+    fn one_unreadable_old_plugin_does_not_stop_the_others_from_moving() {
+        let root = tempfile::tempdir().unwrap();
+        let (legacy, suite) = (root.path().join("Plugins"), root.path().join("suite"));
+        let mut old = Registry::open(&legacy);
+        let installed = old.install(&data_bundle(root.path(), "test.good")).unwrap();
+        old.approve(&installed).unwrap();
+        std::fs::create_dir_all(old.data_dir("test.good")).unwrap();
+        std::fs::write(old.data_dir("test.good").join("prefs.json"), "{}").unwrap();
+        let broken = legacy.join("test.broken");
+        std::fs::create_dir_all(&broken).unwrap();
+        std::fs::write(broken.join("plugin.json"), "not json").unwrap();
+        let interrupted = Registry::for_app(&suite, APP_ID).data_dir("test.good").with_file_name(".test.good.migrating");
+        std::fs::create_dir_all(&interrupted).unwrap();
+        std::fs::write(interrupted.join("half.json"), "{").unwrap();
+
+        migrate(&legacy, &suite).unwrap();
+
+        let moved = Registry::for_app(&suite, APP_ID);
+        assert!(moved.consent("test.good").is_some_and(|consent| consent.enabled));
+        assert!(moved.data_dir("test.good").join("prefs.json").is_file());
+        assert!(!moved.data_dir("test.good").join("half.json").exists());
+        assert!(!interrupted.exists());
+        assert!(!legacy.exists() && legacy.with_extension("migrated").join("test.broken").is_dir());
+    }
+
+    #[test]
+    fn a_store_change_restarts_only_the_plugins_it_touched() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let mut registry = Registry::for_app(&suite, APP_ID);
+        for id in ["test.kept", "test.turned"] {
+            let installed = registry.install(&data_bundle(root.path(), id)).unwrap();
+            registry.approve(&installed).unwrap();
+        }
+        let plugins = Plugins::with_registry(registry, Some(suite.clone()), false);
+
+        plugins.disable("test.kept").unwrap();
+        plugins.approve("test.kept").unwrap();
+        {
+            let mut inner = plugins.lock();
+            assert_eq!(inner.generation, inner.registry.generation());
+            assert!(inner.changed_elsewhere().is_empty());
+        }
+
+        Registry::for_app(&suite, APP_ID).disable("test.turned").unwrap();
+        let mut inner = plugins.lock();
+        assert_ne!(inner.generation, inner.registry.generation());
+        let changed = inner.changed_elsewhere();
+        assert_eq!(changed, vec!["test.turned".to_string()]);
+        inner.restart_changed(&changed);
+        assert!(inner.data.contains("test.kept"));
+        assert!(!inner.data.contains("test.turned"));
+        assert_eq!(inner.refused.get("test.turned"), Some(&Refusal::Disabled));
     }
 
     #[test]
