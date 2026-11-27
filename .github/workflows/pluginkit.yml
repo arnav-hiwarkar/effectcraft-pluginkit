@@ -63,7 +63,7 @@ jobs:
         run: |
           exe=$(cargo test -p effectcraft-plugin --test it --no-run --message-format=json | jq -r 'select(.reason == "compiler-artifact" and .target.name == "it" and .executable != null) | .executable')
           cp "$exe" "$UNPACKED/bin/it"
-          env -u CRAFT_PLUGIN_HELPER "$UNPACKED/bin/it" --exact render::a_generator_that_ignores_its_input_and_reports_what_it_drew_renders_the_same_comp_sandboxed_and_native
+          rustup run stable env -u CRAFT_PLUGIN_HELPER "$UNPACKED/bin/it" --exact render::a_generator_that_ignores_its_input_and_reports_what_it_drew_renders_the_same_comp_sandboxed_and_native
 
   tests:
     runs-on: ubuntu-24.04
