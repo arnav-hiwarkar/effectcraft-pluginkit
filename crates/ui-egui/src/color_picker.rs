@@ -926,8 +926,11 @@ mod tests {
         session.execute("time.set", serde_json::json!({"frame": 15})).unwrap();
         let uploads = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let renderer = CountingRenderer { inner: egui_kittest::wgpu::WgpuTestRenderer::new(), uploads: uploads.clone() };
-        let mut harness =
-            egui_kittest::Harness::builder().with_size(vec2(1200.0, 800.0)).renderer(renderer).build_eframe(|_| crate::EffectcraftApp::new(session));
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(vec2(1200.0, 800.0))
+            .with_context_setup(crate::framework::install_headless)
+            .renderer(renderer)
+            .build_eframe(|_| crate::EffectcraftApp::new(session));
         let settle = |h: &mut egui_kittest::Harness<'_, crate::EffectcraftApp>, old: Option<u64>, favour_gpu: bool| {
             for _ in 0..1500 {
                 if favour_gpu
