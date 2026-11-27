@@ -667,7 +667,8 @@ impl craft_ui::dialog::StackDialog for PluginForm {
         craft_ui::dialog::dialog_id("plugin.form")
     }
 
-    fn show(&mut self, ui: &mut egui::Ui, _: &craft_ui::dialog::DialogStack) -> Option<craft_ui::dialog::DialogResult<Self::Result>> {
+    fn show(&mut self, ui: &mut egui::Ui, stack: &craft_ui::dialog::DialogStack) -> Option<craft_ui::dialog::DialogResult<Self::Result>> {
+        use craft_ui::contract::ShowContainer as _;
         use craft_ui::dialog::{Dialog, DialogResult};
         let mut answer = None;
         let mut images = Images::default();
@@ -677,6 +678,9 @@ impl craft_ui::dialog::StackDialog for PluginForm {
             answer = craft_plugin_ui::draw_form(ui, &self.asked.form, &mut self.asked.values, "plugin.form", &mut host);
         });
         shown.result(|| self.asked.values.clone()).or_else(|| {
+            if !stack.is_top(self.id()) {
+                return None;
+            }
             answer.map(|answer| match answer {
                 craft_plugin_ui::Answer::Ok => DialogResult::Ok(self.asked.values.clone()),
                 craft_plugin_ui::Answer::Cancel => DialogResult::Cancel,
