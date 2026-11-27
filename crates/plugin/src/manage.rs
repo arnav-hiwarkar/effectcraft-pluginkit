@@ -250,32 +250,14 @@ impl Inner {
         }
     }
 
-    fn read_revocations(&mut self) -> bool {
-        let Some(suite) = &self.suite else { return false };
-        self.catalogue_modified = catalogue_modified(suite);
-        let revocations = craft_ext_market::cached_revocations(suite);
-        if self.revocations == revocations {
-            return false;
+    fn sync_store_if_changed(&mut self) {
+        if self.store_changed() {
+            self.reconcile_store(None);
         }
-        self.revocations = revocations;
-        true
     }
 
-    fn refresh_revocations(&mut self) -> bool {
-        if self.suite.as_deref().and_then(catalogue_modified) == self.catalogue_modified || !self.read_revocations() {
-            return false;
-        }
-        self.registry.set_revocations(self.revocations.clone());
-        self.reload_bundles();
-        true
-    }
-
-    fn refresh_registry(&mut self) {
-        let Some(suite) = &self.suite else { return };
-        self.generation = self.registry.generation();
-        self.registry = Registry::for_app(suite, APP_ID);
-        self.read_revocations();
-        self.registry.set_revocations(self.revocations.clone());
+    fn store_changed(&self) -> bool {
+        self.suite.as_deref().is_some_and(|suite| self.registry.generation() != self.generation || catalogue_modified(suite) != self.catalogue_modified)
     }
 
     fn installed_state(&self, bundles: &[Bundle]) -> BTreeMap<String, Installed> {
@@ -288,7 +270,14 @@ impl Inner {
     }
 
     fn reconcile_store(&mut self, restart: Option<&str>) -> bool {
-        self.refresh_registry();
+        self.reconcile_store_with(restart, craft_ext_market::cached_revocations)
+    }
+
+    fn reconcile_store_with(&mut self, restart: Option<&str>, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) -> bool {
+        if self.refresh_store(read_revocations) {
+            self.reload_bundles();
+            return true;
+        }
         let bundles = self.installed();
         let now = self.installed_state(&bundles);
         let mut changed: BTreeSet<&str> =
@@ -305,18 +294,28 @@ impl Inner {
         !changed.is_empty()
     }
 
-    fn poll_store(&mut self) -> bool {
+    fn refresh_store(&mut self, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) -> bool {
+        let Some(suite) = &self.suite else { return false };
+        self.generation = self.registry.generation();
+        self.registry = Registry::for_app(suite, APP_ID);
+        let modified = catalogue_modified(suite);
+        let mut changed = false;
+        if modified != self.catalogue_modified {
+            let revocations = read_revocations(suite);
+            changed = self.revocations != revocations;
+            self.revocations = revocations;
+            self.catalogue_modified = modified;
+        }
+        self.registry.set_revocations(self.revocations.clone());
+        changed
+    }
+
+    fn poll_store(&mut self, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) -> bool {
         if self.last_poll.elapsed() < STORE_POLL_INTERVAL {
             return false;
         }
         self.last_poll = Instant::now();
-        if self.suite.is_none() {
-            return false;
-        }
-        if self.registry.generation() != self.generation {
-            return self.reconcile_store(None);
-        }
-        self.refresh_revocations()
+        self.store_changed() && self.reconcile_store_with(None, read_revocations)
     }
 
     fn is_session_only(&self, id: &str) -> bool {
@@ -334,7 +333,7 @@ impl Inner {
     }
 
     fn reload(&mut self) {
-        self.refresh_registry();
+        self.refresh_store(craft_ext_market::cached_revocations);
         self.reload_bundles();
     }
 
@@ -487,7 +486,7 @@ impl Plugins {
 
     pub fn poll_store(&self, session: &mut Session) {
         let before = effectcraft_engine::effects::dynamic::generation();
-        if self.lock().poll_store() {
+        if self.lock().poll_store(craft_ext_market::cached_revocations) {
             self.refresh_session(session, before);
         }
     }
@@ -571,7 +570,7 @@ impl Plugins {
         let incoming = Bundle::manifest_of(source).map_err(|e| e.to_string())?;
         craft_plugin_host::validate(&incoming, &Default::default())?;
         let mut inner = self.lock();
-        inner.refresh_revocations();
+        inner.sync_store_if_changed();
         let rejects = |bundle: &Bundle| if bundle.manifest.is_data_only() { data_only::check(bundle).map(drop) } else { Ok(()) };
         let bundle = inner.registry.install_checked(source, rejects).map_err(|e| e.to_string())?;
         inner.forget_session_copy(&incoming.id);
@@ -587,7 +586,7 @@ impl Plugins {
 
     pub fn approve(&self, id: &str) -> Result<PluginInfo, String> {
         let mut inner = self.lock();
-        inner.refresh_revocations();
+        inner.sync_store_if_changed();
         let bundle = inner.find(id)?;
         let result = inner.registry.approve(&bundle);
         inner.reconcile_store(result.is_ok().then_some(id));
@@ -597,7 +596,7 @@ impl Plugins {
 
     pub fn set_sandboxed(&self, id: &str, sandboxed: bool) -> Result<PluginInfo, String> {
         let mut inner = self.lock();
-        inner.refresh_revocations();
+        inner.sync_store_if_changed();
         let bundle = inner.find(id)?;
         if !inner.registry.consent(id).is_some_and(|consent| consent.enabled) {
             return Err(format!("allow plugin `{id}` before choosing how it runs"));
@@ -637,7 +636,7 @@ impl Plugins {
             return Err("a native plugin runs only after it is installed and approved".into());
         }
         let mut inner = self.lock();
-        inner.refresh_revocations();
+        inner.sync_store_if_changed();
         inner.session_only.retain(|b| b.manifest.id != bundle.manifest.id);
         inner.session_only.push(bundle.clone());
         inner.start(&bundle);
@@ -650,7 +649,7 @@ impl Plugins {
 
     fn restart(&self, id: &str) -> Result<(), String> {
         let mut inner = self.lock();
-        inner.refresh_revocations();
+        inner.sync_store_if_changed();
         let bundle = inner.find(id)?;
         inner.start(&bundle);
         let info = inner.info(&bundle, inner.is_session_only(id));
@@ -1216,6 +1215,33 @@ mod tests {
         inner.reload_bundles();
         assert_eq!(inner.refused.get("test.revoked"), Some(&Refusal::Revoked(Severity::Disable)));
         assert!(!inner.data.contains("test.revoked"));
+    }
+
+    #[test]
+    fn a_store_poll_applies_revocation_and_consent_changes_together() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let mut registry = Registry::for_app(&suite, APP_ID);
+        for id in ["test.poll-revoked", "test.poll-disabled"] {
+            let installed = registry.install(&data_bundle(root.path(), id)).unwrap();
+            registry.approve(&installed).unwrap();
+        }
+        let plugins = Plugins::with_registry(registry, Some(suite.clone()), false);
+        let mut inner = plugins.lock();
+        assert!(inner.data.contains("test.poll-revoked"));
+        assert!(inner.data.contains("test.poll-disabled"));
+
+        Registry::for_app(&suite, APP_ID).disable("test.poll-disabled").unwrap();
+        let catalogue = suite.join(craft_ext_store::CATALOGUE_DIR);
+        fs::create_dir_all(&catalogue).unwrap();
+        fs::write(catalogue.join(SNAPSHOT), "").unwrap();
+        inner.last_poll = Instant::now() - STORE_POLL_INTERVAL;
+        assert!(inner.poll_store(|_| vec![disable_revocation("test.poll-revoked")]));
+
+        assert!(!inner.data.contains("test.poll-revoked"));
+        assert!(!inner.data.contains("test.poll-disabled"));
+        assert_eq!(inner.refused.get("test.poll-revoked"), Some(&Refusal::Revoked(Severity::Disable)));
+        assert_eq!(inner.refused.get("test.poll-disabled"), Some(&Refusal::Disabled));
     }
 
     #[test]
