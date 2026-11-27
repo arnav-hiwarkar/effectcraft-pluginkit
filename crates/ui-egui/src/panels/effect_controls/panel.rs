@@ -438,6 +438,9 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     }
                 });
             }
+            if effectcraft_engine::effects::dynamic::get(effect).is_some() {
+                item(ui, "Save Preset…", true, "effect.savePreset", json!({"layer": lid, "effect": g.uid}));
+            }
             item(ui, "Remove", true, "effect.remove", json!({"layer": lid, "effect": g.uid}));
             ui.separator();
             item(ui, "Move Up", fi > 0, "effect.reorder", json!({"layer": lid, "effect": g.uid, "index": fi.max(1)}));
