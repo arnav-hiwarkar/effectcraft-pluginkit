@@ -797,11 +797,15 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-pub fn install(session: &mut Session, config_dir: Option<&Path>) -> &'static Plugins {
-    let plugins = PLUGINS.get_or_init(|| {
-        let safe_mode = SAFE_MODE.load(Ordering::Relaxed) || std::env::var_os(SAFE_MODE_VARIABLE).is_some_and(|value| value == "1");
-        let legacy = config_dir.map(|dir| dir.join(PLUGINS_DIR));
-        let plugins = match location::default_root() {
+enum Store<'a> {
+    Shared { legacy: Option<PathBuf> },
+    Isolated(&'a Path),
+}
+
+fn open_store(store: Store, safe_mode: bool) -> Plugins {
+    match store {
+        Store::Isolated(root) => Plugins::open(root, safe_mode),
+        Store::Shared { legacy } => match location::default_root() {
             Ok(suite) => {
                 if let Some(legacy) = legacy
                     && let Err(error) = migrate(&legacy, &suite)
@@ -812,10 +816,16 @@ pub fn install(session: &mut Session, config_dir: Option<&Path>) -> &'static Plu
             }
             Err(error) => {
                 log::warn!("the shared plug-in store could not be opened: {error}");
-                let root = legacy.unwrap_or_else(|| std::env::temp_dir().join("effectcraft-plugins"));
-                Plugins::open(&root, safe_mode)
+                Plugins::open(&legacy.unwrap_or_else(|| std::env::temp_dir().join("effectcraft-plugins")), safe_mode)
             }
-        };
+        },
+    }
+}
+
+fn install_store(session: &mut Session, store: Store) -> &'static Plugins {
+    let plugins = PLUGINS.get_or_init(|| {
+        let safe_mode = SAFE_MODE.load(Ordering::Relaxed) || std::env::var_os(SAFE_MODE_VARIABLE).is_some_and(|value| value == "1");
+        let plugins = open_store(store, safe_mode);
         let development = std::env::var_os(DEVELOPMENT_PATH).filter(|_| !safe_mode);
         for dir in development.iter().flat_map(std::env::split_paths) {
             if let Err(error) = plugins.load_for_session(&dir) {
@@ -827,6 +837,19 @@ pub fn install(session: &mut Session, config_dir: Option<&Path>) -> &'static Plu
     session.plugin_commands = Some(command);
     session.set_plugin_items(plugins.items());
     plugins
+}
+
+/// Plugins from the suite store shared with the launcher and the other Craft apps, moving the old
+/// `<config_dir>/Plugins` folder into it once.
+pub fn install_shared(session: &mut Session, config_dir: Option<&Path>) -> &'static Plugins {
+    install_store(session, Store::Shared { legacy: config_dir.map(|dir| dir.join(PLUGINS_DIR)) })
+}
+
+/// Plugins from a private store under `config_dir` (or the temporary folder), for tests and
+/// embedders that must not touch the shared one.
+pub fn install(session: &mut Session, config_dir: Option<&Path>) -> &'static Plugins {
+    let root = config_dir.map_or_else(|| std::env::temp_dir().join("effectcraft-plugins"), |dir| dir.join(PLUGINS_DIR));
+    install_store(session, Store::Isolated(&root))
 }
 
 pub(crate) fn running(plugin: &str) -> Result<Arc<Loaded>, String> {
@@ -996,5 +1019,75 @@ mod tests {
         let error = approve_snapshot(&mut registry, &snapshot, &digest).unwrap_err();
         assert!(error.contains("changed while it was installed"), "{error}");
         assert!(registry.consent("test.swapped").is_none_or(|consent| !consent.enabled));
+    }
+
+    fn data_bundle(dir: &Path, id: &str) -> PathBuf {
+        let bundle = dir.join(id);
+        std::fs::create_dir_all(&bundle).unwrap();
+        let manifest = format!(r#"{{"id": "{id}", "name": "Looks", "version": "1.0.0", "contributes": {{"luts": ["a.cube"]}}}}"#);
+        std::fs::write(bundle.join("plugin.json"), manifest).unwrap();
+        std::fs::write(bundle.join("a.cube"), "").unwrap();
+        bundle
+    }
+
+    fn disable_revocation(id: &str) -> Revocation {
+        Revocation {
+            id: craft_ext_core::id::ExtensionId::new(id).ok(),
+            versions: None,
+            sha256: None,
+            vendor: None,
+            severity: Severity::Disable,
+            reason: "stolen keys".into(),
+            date: "2026-11-27".into(),
+        }
+    }
+
+    #[test]
+    fn the_old_plugin_folder_moves_into_the_suite_once_with_its_consent_and_data() {
+        let root = tempfile::tempdir().unwrap();
+        let (legacy, suite) = (root.path().join("Plugins"), root.path().join("suite"));
+        let mut old = Registry::open(&legacy);
+        let installed = old.install(&data_bundle(root.path(), "test.moved")).unwrap();
+        old.approve(&installed).unwrap();
+        std::fs::create_dir_all(old.data_dir("test.moved")).unwrap();
+        std::fs::write(old.data_dir("test.moved").join("prefs.json"), "{}").unwrap();
+
+        migrate(&legacy, &suite).unwrap();
+
+        let moved = Registry::for_app(&suite, APP_ID);
+        assert!(moved.consent("test.moved").is_some_and(|consent| consent.enabled));
+        assert_eq!(std::fs::read_to_string(moved.data_dir("test.moved").join("prefs.json")).unwrap(), "{}");
+        assert!(!legacy.exists() && legacy.with_extension("migrated").is_dir());
+
+        std::fs::create_dir_all(&legacy).unwrap();
+        migrate(&legacy, &suite).unwrap();
+        assert!(legacy.is_dir());
+    }
+
+    #[test]
+    fn a_plugin_the_catalogue_disables_is_refused_at_load_without_a_network() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let mut registry = Registry::for_app(&suite, APP_ID);
+        let installed = registry.install(&data_bundle(root.path(), "test.revoked")).unwrap();
+        registry.approve(&installed).unwrap();
+        let plugins = Plugins::with_registry(registry, Some(suite), false);
+        assert!(plugins.lock().data.contains("test.revoked"));
+
+        let mut inner = plugins.lock();
+        inner.registry.set_revocations(vec![disable_revocation("test.revoked")]);
+        inner.reload_bundles();
+        assert_eq!(inner.refused.get("test.revoked"), Some(&Refusal::Revoked(Severity::Disable)));
+        assert!(!inner.data.contains("test.revoked"));
+    }
+
+    #[test]
+    fn a_problem_report_goes_to_the_issues_of_the_plugins_source_repository() {
+        assert_eq!(issues_url("https://github.com/acme/glow.git").as_deref(), Some("https://github.com/acme/glow/issues"));
+        assert_eq!(issues_url("https://github.com/acme/glow/issues/").as_deref(), Some("https://github.com/acme/glow/issues"));
+        assert_eq!(issues_url("https://gitlab.com/acme/glow").as_deref(), Some("https://gitlab.com/acme/glow/-/issues"));
+        assert_eq!(issues_url("https://user:token@github.com/acme/glow"), None);
+        assert_eq!(issues_url("file:///home/acme/glow"), None);
+        assert_eq!(issues_url("https://github.com/acme"), None);
     }
 }

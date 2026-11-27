@@ -197,7 +197,7 @@ This writes the unpacked folder `plugins/dist/com.example.tint/` and the package
 
 To install the package, use any of these:
 
-- **Window ▸ Plug-ins ▸ Manage Plug-ins ▸ Install Plug-in...**, then choose the file. On macOS you can also
+- **Plugins ▸ Manage plugins… ▸ Install from file**, then choose the file. On macOS you can also
   double-click the file.
 - `effectcraft-cli exec plugin.install '{"path": "plugins/dist/com.example.tint-0.1.0.craftplugin"}'`
 - `plugin.install` with a folder path installs an unpacked bundle the same way.
@@ -678,7 +678,7 @@ fn plugin() -> Plugin {
 }
 ```
 
-The panel appears in **Window ▸ Plug-ins**. Its tab docks like the app's own panels.
+The panel appears in **Plugins**. Its tab docks like the app's own panels.
 
 A widget is known by its label and how many times that label came before it, and a click arrives on the
 next call. Draw each item of a list that can change inside `ui.keyed(item_id, |ui| …)`, so a click on
@@ -715,7 +715,7 @@ Plugin::new()
 ```
 
 The status item sits in the status bar and the options in the Tools bar while Stamp is active; build
-each in one `ui.row`. Window ▸ Plug-ins gets "New Notes"; `host::show_panel_for("notes", "2")` opens
+each in one `ui.row`. The Plugins menu gets "New Notes"; `host::show_panel_for("notes", "2")` opens
 instance "2", and `ui.instance()` tells a `Notes` which one it is.
 
 ### Show a long list
@@ -1125,7 +1125,7 @@ Plugin::new().command("add-null", "Add Control Null", || {
 })
 ```
 
-The command appears in **Window ▸ Plug-ins** and in the command palette, and the user can give it a
+The command appears in **Plugins** and in the command palette, and the user can give it a
 shortcut in Edit ▸ Keyboard Shortcuts. To suggest one, add `.shortcut` after it:
 
 ```rust
@@ -1220,8 +1220,7 @@ host::cancel(id)?;
 `task.progress` returns an error after the user cancels, so `?` ends the task. A task runs on its own
 instance, so it shares no memory with the panel: pass what it needs in `args` and read what it found in
 `state.result`. Its edits go through the app's main thread like a command's; send them as one
-`engine.batch` to make them one undo step. Running tasks show in **Window ▸ Plug-ins ▸ Manage
-Plug-ins** with a progress bar and a Cancel button. `plugins/pulse` is a complete example.
+`engine.batch` to make them one undo step. Running tasks show in **Plugins ▸ Manage plugins…** with a progress bar and a Cancel button. `plugins/pulse` is a complete example.
 
 ## Read frames and audio
 

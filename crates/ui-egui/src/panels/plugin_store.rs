@@ -275,3 +275,23 @@ fn not_started(app: &mut EffectcraftApp, ui: &mut egui::Ui, commands: &mut Vec<(
     }
     ui.separator();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_opens_the_manager_on_discover_searching_that_plugin() {
+        let mut app = EffectcraftApp::new(effectcraft_host::session());
+        crate::menus::invoke(&mut app, &egui::Context::default(), "plugin.find", json!({"id": "acme.glow"})).unwrap();
+        assert!(app.plugin_store.open);
+        assert_eq!(app.plugin_store.queued, vec![Action::SetTab(Tab::Discover), Action::SetQuery("acme.glow".into())]);
+    }
+
+    #[test]
+    fn installing_from_a_picked_file_hands_it_to_the_manager() {
+        let mut app = EffectcraftApp::new(effectcraft_host::session());
+        crate::menus::invoke(&mut app, &egui::Context::default(), "plugin.installFromFile", json!({"path": "/tmp/glow.craftplugin"})).unwrap();
+        assert_eq!(app.plugin_store.queued, vec![Action::InstallFile(PathBuf::from("/tmp/glow.craftplugin"))]);
+    }
+}
