@@ -62,19 +62,35 @@ jobs:
         run: cargo test -p effectcraft-gpu --lib plugin
 
   ui:
+    name: ui (${{ matrix.partition }}/3)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust
         with:
           cache-key: ui
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.150
       - name: Japanese and Chinese fonts the text tests lay out
         run: sudo apt-get install -y --no-install-recommends fonts-noto-cjk
       - name: UI tests
-        env:
-          RUST_TEST_THREADS: "2"
-        run: cargo test -p effectcraft-ui-egui
+        run: |
+          (while true; do echo "::group::resources $(date -u +%T)"; free -m; df -h /; echo "::endgroup::"; sleep 60; done) &
+          monitor=$!
+          trap 'kill $monitor' EXIT
+          cargo nextest run -p effectcraft-ui-egui --no-fail-fast --partition count:${{ matrix.partition }}/3
+      - name: UI doctests
+        if: matrix.partition == 1
+        run: cargo test -p effectcraft-ui-egui --doc
+      - name: Kernel log after a failure
+        if: failure()
+        run: sudo dmesg | tail -50
 
   plugins:
     runs-on: ubuntu-24.04
