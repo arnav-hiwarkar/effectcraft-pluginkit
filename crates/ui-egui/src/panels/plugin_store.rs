@@ -30,26 +30,6 @@ pub(crate) enum State {
     Failed,
 }
 
-#[derive(Deserialize, Clone)]
-struct ListedTask {
-    plugin: String,
-    id: u64,
-    task: String,
-    status: TaskStatus,
-    progress: f64,
-    message: String,
-    error: Option<String>,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum TaskStatus {
-    Running,
-    Done,
-    Failed,
-    Cancelled,
-}
-
 struct Manager {
     model: Model,
     backend: Arc<Mutex<StoreBackend>>,
@@ -223,33 +203,33 @@ fn carry_out(app: &mut EffectcraftApp, ctx: &egui::Context, effect: Effect) {
 }
 
 fn tasks(app: &mut EffectcraftApp, ui: &mut egui::Ui, commands: &mut Vec<(&'static str, Value)>) {
-    let running: Vec<ListedTask> = app.session.execute("plugin.tasks", json!({})).ok().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+    let running = effectcraft_plugin::plugins().map(effectcraft_plugin::Plugins::tasks).unwrap_or_default();
     if running.is_empty() {
         return;
     }
     let t = app.tokens;
     ui.label(RichText::new(tr("Tasks")).font(Tokens::semibold(14.0)).color(t.text));
-    for task in &running {
+    for effectcraft_plugin::PluginTask { plugin, state: task } in &running {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{} · {}", task.plugin, task.task)).color(t.text));
+            ui.label(RichText::new(format!("{plugin} · {}", task.task)).color(t.text));
             match task.status {
-                TaskStatus::Running => {
+                effectcraft_plugin::TaskStatus::Running => {
                     let bar = egui::ProgressBar::new(task.progress as f32).desired_width(180.0).text(task.message.as_str()).show_percentage();
                     let response = ui.add(bar);
-                    app.auto.add_response(&format!("plugins.{}.task.{}.progress", task.plugin, task.id), &response, "Task progress");
+                    app.auto.add_response(&format!("plugins.{}.task.{}.progress", plugin, task.id), &response, "Task progress");
                     let cancel = ui.button(tr("Cancel"));
-                    app.auto.add_response(&format!("plugins.{}.task.{}.cancel", task.plugin, task.id), &cancel, "Cancel");
+                    app.auto.add_response(&format!("plugins.{}.task.{}.cancel", plugin, task.id), &cancel, "Cancel");
                     if cancel.clicked() {
-                        commands.push(("plugin.cancelTask", json!({"plugin": task.plugin, "id": task.id})));
+                        commands.push(("plugin.cancelTask", json!({"plugin": plugin, "id": task.id})));
                     }
                 }
-                TaskStatus::Done => {
+                effectcraft_plugin::TaskStatus::Done => {
                     ui.label(RichText::new(tr("Finished")).color(t.text_dim));
                 }
-                TaskStatus::Cancelled => {
+                effectcraft_plugin::TaskStatus::Cancelled => {
                     ui.label(RichText::new(tr("Cancelled")).color(t.text_dim));
                 }
-                TaskStatus::Failed => {
+                effectcraft_plugin::TaskStatus::Failed => {
                     ui.label(RichText::new(tr_args("Failed: {}", &[&task.error.clone().unwrap_or_default()])).color(t.danger));
                 }
             }

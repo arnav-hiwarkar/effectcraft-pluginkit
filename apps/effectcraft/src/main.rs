@@ -488,7 +488,6 @@ fn run_desktop(reporter: &crash_report::Shutdown, arguments: &[std::ffi::OsStrin
             if safe_mode {
                 effectcraft_plugin::start_in_safe_mode();
             }
-            effectcraft_plugin::install_shared(&mut session, effectcraft_host::config_dir().as_deref(), effectcraft_host::private_plugin_suite().as_deref());
             // Lazy open and non-blocking auto-save: footage is checked and auto-saves are
             // written on background threads (M13.14).
             session.check_footage_on_open = true;
@@ -499,6 +498,9 @@ fn run_desktop(reporter: &crash_report::Shutdown, arguments: &[std::ffi::OsStrin
                 session.config = Some(std::sync::Arc::new(effectcraft_engine::config::DirConfig::new(dir)));
             }
             session.load_settings();
+            let language = effectcraft_ui_egui::i18n::session_language(&session);
+            effectcraft_plugin::set_locale(&mut session, language);
+            effectcraft_plugin::install_shared(&mut session, effectcraft_host::config_dir().as_deref(), effectcraft_host::private_plugin_suite().as_deref());
             // Fit the window to its monitor, or put it back where it was (still hidden).
             let saved_window = session.config.as_deref().and_then(window::load);
             let opened = cc.winit_window().map(|w| window::restore(w, saved_window));
