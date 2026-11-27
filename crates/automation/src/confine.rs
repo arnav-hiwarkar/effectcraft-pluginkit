@@ -50,6 +50,8 @@ const REFUSED: &[&str] = &[
     "plugin.uninstall",
     "plugin.disable",
     "plugin.reload",
+    "plugin.restart",
+    "plugin.installFromFile",
     "plugin.run",
     "plugin.press",
     "file.installScript",

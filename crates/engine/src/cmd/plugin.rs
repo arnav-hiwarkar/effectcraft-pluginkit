@@ -3,12 +3,13 @@ use serde_json::Value;
 use super::{CommandSpec, always, frontend};
 use crate::{EngineError, Result, Session, cmd, query};
 
-const USER_ONLY: [&str; 7] = ["plugin.install", "plugin.approve", "plugin.setSandbox", "plugin.disable", "plugin.uninstall", "plugin.load", "plugin.reload"];
+const USER_ONLY: [&str; 8] =
+    ["plugin.install", "plugin.approve", "plugin.setSandbox", "plugin.disable", "plugin.uninstall", "plugin.load", "plugin.reload", "plugin.restart"];
 
 fn forward(s: &mut Session, id: &str, params: &Value) -> Result<Value> {
     if s.running_for_script() && USER_ONLY.contains(&id) {
         return Err(EngineError::Other(format!(
-            "Scripts can't run `{id}`: installing, approving, loading and removing plug-ins is the user's act. Do it yourself in Window ▸ Plug-ins ▸ Manage Plug-ins."
+            "Scripts can't run `{id}`: installing, approving, loading and removing plug-ins is the user's act. Do it yourself in Plugins ▸ Manage plugins."
         )));
     }
     let run = s.plugin_commands.ok_or_else(|| EngineError::Other("plug-ins are not available in this session".into()))?;
@@ -41,6 +42,8 @@ pub fn specs() -> Vec<CommandSpec> {
         plugin!("plugin.uninstall", "Remove Plug-in", "{id}"),
         plugin!("plugin.load", "Load Plug-in for This Session", "{path: plug-in folder} — development: runs it with the permissions it asks for until quit"),
         plugin!("plugin.reload", "Reload Plug-ins", "{}"),
+        plugin!("plugin.restart", "Restart plugin", "{id}"),
+        plugin!("plugin.report", "Open plugin issue tracker", "{id?}"),
         plugin!("plugin.run", "Run Plug-in Command", "{plugin, command}"),
         plugin!(
             "plugin.press",
@@ -59,7 +62,10 @@ pub fn specs() -> Vec<CommandSpec> {
             "Read Plug-in Log",
             "{id, after?: number, load?: number} — {load, missed, lines}: the plug-in's log lines, panics and failed calls with a sequence number each; pass the last `seq` and `load` seen to read only newer lines"
         ),
-        window!("window.plugins", "Manage Plug-ins...", "{}"),
-        window!("window.pluginPanel", "Show Plug-in Panel", "{plugin, panel}"),
+        window!("plugin.find", "Find plugins…", "{id?}"),
+        window!("window.plugins", "Manage plugins…", "{}"),
+        window!("plugin.reportProblem", "Report a problem…", "{}"),
+        window!("plugin.installFromFile", "Install from file", "{path?}"),
+        window!("window.pluginPanel", "Show Plug-in Panel", "{plugin, panel, floating?: bool}"),
     ]
 }

@@ -11,17 +11,21 @@ workspace = true
 
 [dependencies]
 craft-plugin-host = { workspace = true }
+craft-ext-core = { workspace = true }
+craft-ext-store = { workspace = true }
+craft-ext-market = { workspace = true }
 effectcraft-automation = { workspace = true }
 effectcraft-engine = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 craft-plugin-host = { workspace = true, features = ["testing"] }
 effectcraft-host = { workspace = true }
 effectcraft-gpu = { workspace = true }
-tempfile = { workspace = true }
 exr = { workspace = true }
 
 [[test]]

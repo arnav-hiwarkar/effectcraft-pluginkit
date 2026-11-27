@@ -1,8 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
+
+use craft_ext_core::catalogue::{Revocation, Severity};
+use craft_ext_market::{Catalogue, Curl, DEFAULT_INDEX, MarketError, SNAPSHOT};
+use craft_ext_store::{APPS_DIR, Consent, location};
 
 use craft_plugin_host::PluginImage;
 use craft_plugin_host::ui::PanelPlace;
@@ -120,6 +126,11 @@ pub struct PluginInfo {
 
 struct Inner {
     registry: Registry,
+    suite: Option<PathBuf>,
+    generation: u64,
+    catalogue_modified: Option<SystemTime>,
+    revocations: Vec<Revocation>,
+    last_poll: Instant,
     session_only: Vec<Bundle>,
     loaded: BTreeMap<String, Arc<Loaded>>,
     data: BTreeSet<String>,
@@ -132,8 +143,11 @@ pub struct Plugins {
     inner: Mutex<Inner>,
 }
 
-fn load(bundle: &Bundle, digest: &str, grants: BTreeSet<Permission>, data_dir: PathBuf) -> Result<Arc<Loaded>, String> {
-    let plugin = Plugin::open(bundle, digest, grants, data_dir.clone(), Limits::default()).map_err(|e| e.to_string())?;
+fn load(registry: &Registry, bundle: &Bundle, digest: &str, grants: BTreeSet<Permission>) -> Result<Arc<Loaded>, String> {
+    let id = &bundle.manifest.id;
+    let data_dir = registry.data_dir(id);
+    let plugin = Plugin::open_with_protected_paths(bundle, digest, grants, data_dir.clone(), Limits::default(), registry.protected_paths(id))
+        .map_err(|e| e.to_string())?;
     let mut hasher = DefaultHasher::new();
     bundle.manifest.version.hash(&mut hasher);
     digest.hash(&mut hasher);
@@ -154,10 +168,19 @@ impl Inner {
     fn start(&mut self, bundle: &Bundle) {
         let id = bundle.manifest.id.clone();
         self.stop(&id);
+        if self.safe_mode {
+            return;
+        }
         let (bundle, grants, digest) = if self.is_session_only(&id) {
             match Bundle::read(&bundle.dir) {
                 Ok((read, digest)) if read.manifest.id == id => {
                     self.session_only.iter_mut().filter(|kept| kept.manifest.id == id).for_each(|kept| *kept = read.clone());
+                    if let Some(revocation) = self.registry.revocation(&read.manifest)
+                        && revocation.severity == Severity::Disable
+                    {
+                        self.refused.insert(id, Refusal::Revoked(Severity::Disable));
+                        return;
+                    }
                     (read.clone().with_mode(RunMode::Sandboxed), read.manifest.permissions.clone(), digest)
                 }
                 Ok(_) => {
@@ -178,6 +201,10 @@ impl Inner {
                 }
             }
         };
+        if !bundle.manifest.supports(APP_ID, APP_VERSION) {
+            self.failed.insert(id, format!("this plug-in does not support EffectCraft {APP_VERSION}"));
+            return;
+        }
         if bundle.manifest.is_data_only() {
             match data_only::check(&bundle) {
                 Ok(checked) => {
@@ -191,18 +218,7 @@ impl Inner {
             }
             return;
         }
-        let unsandboxed = bundle.mode == RunMode::Unsandboxed;
-        if unsandboxed {
-            self.mark(Some(&id));
-        }
-        let loaded = load(&bundle, &digest, grants, self.registry.data_dir(&id));
-        let replaced = loaded.as_ref().ok().filter(|_| unsandboxed).and_then(|_| self.registry.grants(&bundle).err());
-        if let Some(refusal) = replaced {
-            log::warn!("plugin `{id}` changed while it loaded, so it was not started: {refusal}");
-            self.refused.insert(id, refusal);
-            self.mark(None);
-            return;
-        }
+        let loaded = load(&self.registry, &bundle, &digest, grants);
         match loaded {
             Ok(loaded) => {
                 effects::Engine.register(&loaded);
@@ -211,9 +227,6 @@ impl Inner {
             Err(error) => {
                 log::warn!("plugin `{id}` did not load: {error}");
                 self.failed.insert(id, error);
-                if unsandboxed {
-                    self.mark(None);
-                }
             }
         }
     }
@@ -227,18 +240,50 @@ impl Inner {
         if let Some(loaded) = self.loaded.remove(id) {
             loaded.plugin.cancel_all();
             effects::Engine.unregister(id);
-            if loaded.bundle.mode == RunMode::Unsandboxed {
-                self.mark(None);
-            }
         }
     }
 
-    fn mark(&mut self, starting: Option<&str>) {
-        let live = self.loaded.iter().filter(|(_, loaded)| loaded.bundle.mode == RunMode::Unsandboxed).map(|(id, _)| id.as_str());
-        let unsandboxed: BTreeSet<String> = live.chain(starting).map(str::to_string).collect();
-        if let Err(error) = self.registry.mark_running(&unsandboxed) {
-            log::warn!("the plug-in run marker was not written: {error}");
+    fn read_revocations(&mut self) -> bool {
+        let Some(suite) = &self.suite else { return false };
+        self.catalogue_modified = catalogue_modified(suite);
+        let Some(revocations) = cached_revocations(suite) else { return false };
+        if self.revocations == revocations {
+            return false;
         }
+        self.revocations = revocations;
+        true
+    }
+
+    fn refresh_revocations(&mut self) -> bool {
+        if self.suite.as_deref().and_then(catalogue_modified) == self.catalogue_modified || !self.read_revocations() {
+            return false;
+        }
+        self.registry.set_revocations(self.revocations.clone());
+        self.reload_bundles();
+        true
+    }
+
+    fn refresh_registry(&mut self) {
+        let Some(suite) = &self.suite else { return };
+        self.generation = self.registry.generation();
+        self.registry = Registry::for_app(suite, APP_ID);
+        self.read_revocations();
+        self.registry.set_revocations(self.revocations.clone());
+    }
+
+    fn poll_store(&mut self) -> bool {
+        if self.last_poll.elapsed() < STORE_POLL_INTERVAL {
+            return false;
+        }
+        self.last_poll = Instant::now();
+        if self.suite.is_none() {
+            return false;
+        }
+        if self.registry.generation() != self.generation {
+            self.reload();
+            return true;
+        }
+        self.refresh_revocations()
     }
 
     fn is_session_only(&self, id: &str) -> bool {
@@ -256,11 +301,17 @@ impl Inner {
     }
 
     fn reload(&mut self) {
+        self.refresh_registry();
+        self.reload_bundles();
+    }
+
+    fn reload_bundles(&mut self) {
         let running: Vec<String> = self.loaded.keys().chain(&self.data).cloned().collect();
         running.iter().for_each(|id| self.stop(id));
         self.failed.clear();
         self.refused.clear();
         let mut bundles = self.installed();
+        bundles.retain(|bundle| !self.is_session_only(&bundle.manifest.id));
         bundles.extend(self.session_only.iter().cloned());
         bundles.sort_by_key(|bundle| bundle.manifest.is_data_only());
         for bundle in bundles {
@@ -335,6 +386,46 @@ fn local_effect<'a>(plugin: &str, loaded: &'a Loaded, effect_id: &str) -> Option
 }
 
 const SAFE_MODE_NOTE: &str = "EffectCraft started in safe mode, so no plug-ins were started";
+const APP_ID: &str = "effectcraft";
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const STORE_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+fn catalogue_modified(suite: &Path) -> Option<SystemTime> {
+    fs::metadata(suite.join("catalogue").join(SNAPSHOT)).ok()?.modified().ok()
+}
+
+fn issues_url(source: &str) -> Option<String> {
+    let mut url = url::Url::parse(source).ok()?;
+    if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() || url.password().is_some() {
+        return None;
+    }
+    let path = url.path().trim_end_matches('/');
+    if path.split('/').filter(|part| !part.is_empty()).count() < 2 {
+        return None;
+    }
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let suffix = if url.host_str() == Some("gitlab.com") { "/-/issues" } else { "/issues" };
+    let path = if path.ends_with(suffix) { path.to_string() } else { format!("{path}{suffix}") };
+    url.set_path(&path);
+    url.set_query(None);
+    url.set_fragment(None);
+    Some(url.into())
+}
+
+fn catalogue(suite: &Path) -> Catalogue<Curl> {
+    Catalogue::new(Curl::default(), DEFAULT_INDEX, craft_ext_core::signature::trusted_keys(), suite.join("catalogue"))
+}
+
+fn cached_revocations(suite: &Path) -> Option<Vec<Revocation>> {
+    match catalogue(suite).cached() {
+        Ok(index) => Some(index.revocations),
+        Err(MarketError::NoCache) => None,
+        Err(error) => {
+            log::warn!("the cached plug-in catalogue was not read: {error}");
+            None
+        }
+    }
+}
 
 impl Plugins {
     pub fn open(root: &Path, safe_mode: bool) -> Plugins {
@@ -343,12 +434,50 @@ impl Plugins {
             Ok(quarantined) => quarantined.iter().for_each(|id| log::warn!("plug-in `{id}` was turned off: EffectCraft closed unexpectedly while it ran")),
             Err(error) => log::warn!("the last run's plug-in marker was not read: {error}"),
         }
-        let (loaded, failed, refused) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
-        let mut inner = Inner { registry, session_only: Vec::new(), loaded, data: BTreeSet::new(), failed, refused, safe_mode };
-        if !safe_mode {
-            inner.reload();
-        }
+        Self::with_registry(registry, None, safe_mode)
+    }
+
+    fn with_registry(registry: Registry, suite: Option<PathBuf>, safe_mode: bool) -> Plugins {
+        let mut inner = Inner {
+            registry,
+            suite,
+            generation: 0,
+            catalogue_modified: None,
+            revocations: Vec::new(),
+            last_poll: Instant::now(),
+            session_only: Vec::new(),
+            loaded: BTreeMap::new(),
+            data: BTreeSet::new(),
+            failed: BTreeMap::new(),
+            refused: BTreeMap::new(),
+            safe_mode,
+        };
+        inner.reload();
         Plugins { inner: Mutex::new(inner) }
+    }
+
+    pub fn store_generation(&self) -> u64 {
+        self.lock().generation
+    }
+
+    pub fn poll_store(&self, session: &mut Session) {
+        let before = effectcraft_engine::effects::dynamic::generation();
+        if self.lock().poll_store() {
+            self.refresh_session(session, before);
+        }
+    }
+
+    fn refresh_session(&self, session: &mut Session, effects_before: u64) {
+        session.set_plugin_items(self.items());
+        if effectcraft_engine::effects::dynamic::generation() != effects_before {
+            match session.edit("Update Plug-in Effects", None, |project, _| Ok(effectcraft_engine::upgrade_effects(project))) {
+                Ok(upgraded) => {
+                    upgraded.lost.iter().for_each(|lost| log::warn!("{lost} lost its animation when its plug-in started"));
+                    upgraded.kept.into_iter().for_each(|kept| session.toast(kept));
+                }
+                Err(error) => log::warn!("the open project's plug-in effects were not updated: {error}"),
+            }
+        }
     }
 
     pub fn end_run(&self) {
@@ -417,10 +546,11 @@ impl Plugins {
         let incoming = Bundle::manifest_of(source).map_err(|e| e.to_string())?;
         craft_plugin_host::validate(&incoming, &Default::default())?;
         let mut inner = self.lock();
-        inner.stop(&incoming.id);
-        inner.session_only.retain(|b| b.manifest.id != incoming.id);
+        inner.refresh_revocations();
         let rejects = |bundle: &Bundle| if bundle.manifest.is_data_only() { data_only::check(bundle).map(drop) } else { Ok(()) };
         let bundle = inner.registry.install_checked(source, rejects).map_err(|e| e.to_string())?;
+        inner.stop(&incoming.id);
+        inner.forget_session_copy(&incoming.id);
         let (snapshot, digest) = Bundle::read(&bundle.dir).map_err(|e| e.to_string())?;
         if snapshot.manifest.is_data_only() {
             approve_snapshot(&mut inner.registry, &snapshot, &digest)?;
@@ -431,6 +561,7 @@ impl Plugins {
 
     pub fn approve(&self, id: &str) -> Result<PluginInfo, String> {
         let mut inner = self.lock();
+        inner.refresh_revocations();
         let bundle = inner.find(id)?;
         inner.registry.approve(&bundle).map_err(|e| e.to_string())?;
         inner.start(&bundle);
@@ -439,6 +570,7 @@ impl Plugins {
 
     pub fn set_sandboxed(&self, id: &str, sandboxed: bool) -> Result<PluginInfo, String> {
         let mut inner = self.lock();
+        inner.refresh_revocations();
         let bundle = inner.find(id)?;
         if !inner.registry.consent(id).is_some_and(|consent| consent.enabled) {
             return Err(format!("allow plugin `{id}` before choosing how it runs"));
@@ -476,6 +608,7 @@ impl Plugins {
             return Err("a native plugin runs only after it is installed and approved".into());
         }
         let mut inner = self.lock();
+        inner.refresh_revocations();
         inner.session_only.retain(|b| b.manifest.id != bundle.manifest.id);
         inner.session_only.push(bundle.clone());
         inner.start(&bundle);
@@ -484,6 +617,33 @@ impl Plugins {
             Some(error) => Err(error.clone()),
             None => Ok(info),
         }
+    }
+
+    fn restart(&self, id: &str) -> Result<(), String> {
+        let mut inner = self.lock();
+        inner.refresh_revocations();
+        let bundle = inner.find(id)?;
+        inner.start(&bundle);
+        let info = inner.info(&bundle, inner.is_session_only(id));
+        if info.state == PluginState::Running {
+            return Ok(());
+        }
+        Err(info.error.unwrap_or_else(|| format!("plugin `{id}` is not enabled")))
+    }
+
+    fn report_url(&self, id: Option<&str>) -> String {
+        const DEFAULT_ISSUES: &str = "https://github.com/arnav-hiwarkar/craft-plugins/issues";
+        let inner = self.lock();
+        let Some(id) = id else { return DEFAULT_ISSUES.into() };
+        let installed = inner.find(id).ok().and_then(|bundle| issues_url(&bundle.manifest.source));
+        installed
+            .or_else(|| {
+                let suite = inner.suite.as_ref()?;
+                let id = craft_ext_core::id::ExtensionId::new(id).ok()?;
+                let index = catalogue(suite).cached().ok()?;
+                issues_url(&index.package(&id)?.repo)
+            })
+            .unwrap_or_else(|| DEFAULT_ISSUES.into())
     }
 
     pub fn reload(&self) {
@@ -551,14 +711,89 @@ pub fn end_run() {
     }
 }
 
+fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let backup = legacy.with_extension("migrated");
+    if !legacy.is_dir() || backup.exists() {
+        return Ok(());
+    }
+    let mut target = Registry::for_app(suite, APP_ID);
+    if target.root().canonicalize().ok().as_deref() == Some(&legacy.canonicalize()?) {
+        return Err("the old plug-in folder is also the shared bundle folder".into());
+    }
+    let state_dir = suite.join(APPS_DIR).join(APP_ID);
+    fs::create_dir_all(&state_dir)?;
+    let lock = File::options().read(true).write(true).create(true).truncate(false).open(state_dir.join("state.lock"))?;
+    lock.lock()?;
+    if backup.exists() {
+        return Ok(());
+    }
+
+    let state = state_dir.join("state.json");
+    let mut consents: BTreeMap<String, Consent> = match File::open(&state) {
+        Ok(file) => serde_json::from_reader(file)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+        Err(error) => return Err(error.into()),
+    };
+    if let Some(revocations) = cached_revocations(suite) {
+        target.set_revocations(revocations);
+    }
+    let source = Registry::open(legacy);
+    for bundle in source.bundles() {
+        let bundle = bundle?;
+        let id = &bundle.manifest.id;
+        let dest = target.root().join(id);
+        let digest = bundle.digest()?;
+        let migrated = if dest.exists() {
+            Bundle::open(&dest)?
+        } else {
+            match target.install(&bundle.dir) {
+                Ok(installed) => installed,
+                Err(BundleError::Refused(_, Refusal::Revoked(_))) => continue,
+                Err(error) => return Err(error.into()),
+            }
+        };
+        if migrated.digest()? != digest {
+            log::warn!("the shared store already has a different plug-in `{id}`");
+            continue;
+        }
+        if let Some(consent) = source.consent(id) {
+            consents.entry(id.clone()).or_insert_with(|| consent.clone());
+        }
+    }
+    let mut staging = tempfile::NamedTempFile::new_in(&state_dir)?;
+    serde_json::to_writer_pretty(&mut staging, &consents)?;
+    staging.as_file().sync_all()?;
+    staging.persist(&state)?;
+
+    let generation = suite.join(craft_ext_store::GENERATION_FILE);
+    let generation_lock = File::options().read(true).write(true).create(true).truncate(false).open(generation.with_extension("lock"))?;
+    generation_lock.lock()?;
+    let mut staging = tempfile::NamedTempFile::new_in(suite)?;
+    std::io::Write::write_all(&mut staging, target.generation().saturating_add(1).to_string().as_bytes())?;
+    staging.persist(&generation)?;
+    fs::rename(legacy, backup)?;
+    Ok(())
+}
+
 pub fn install(session: &mut Session, config_dir: Option<&Path>) -> &'static Plugins {
     let plugins = PLUGINS.get_or_init(|| {
-        let root = match config_dir {
-            Some(dir) => dir.join(PLUGINS_DIR),
-            None => std::env::temp_dir().join("effectcraft-plugins"),
-        };
         let safe_mode = SAFE_MODE.load(Ordering::Relaxed) || std::env::var_os(SAFE_MODE_VARIABLE).is_some_and(|value| value == "1");
-        let plugins = Plugins::open(&root, safe_mode);
+        let legacy = config_dir.map(|dir| dir.join(PLUGINS_DIR));
+        let plugins = match location::default_root() {
+            Ok(suite) => {
+                if let Some(legacy) = legacy
+                    && let Err(error) = migrate(&legacy, &suite)
+                {
+                    log::warn!("the old plug-in store was not migrated: {error}");
+                }
+                Plugins::with_registry(Registry::for_app(&suite, APP_ID), Some(suite), safe_mode)
+            }
+            Err(error) => {
+                log::warn!("the shared plug-in store could not be opened: {error}");
+                let root = legacy.unwrap_or_else(|| std::env::temp_dir().join("effectcraft-plugins"));
+                Plugins::open(&root, true)
+            }
+        };
         let development = std::env::var_os(DEVELOPMENT_PATH).filter(|_| !safe_mode);
         for dir in development.iter().flat_map(std::env::split_paths) {
             if let Err(error) = plugins.load_for_session(&dir) {
@@ -626,6 +861,7 @@ pub fn run_command(session: &mut Session, plugin: &str, command: &str) -> Result
 
 pub fn pump(session: &mut Session) -> bool {
     let Some(plugins) = plugins() else { return false };
+    plugins.poll_store(session);
     let mut running = false;
     for loaded in plugins.running_plugins() {
         loaded.plugin.pump(&mut SessionHost::new(session, &loaded));
@@ -676,6 +912,12 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
         }
         "plugin.disable" => plugins.disable(text("id")?).map(|()| Value::Null).map_err(failed),
         "plugin.uninstall" => plugins.uninstall(text("id")?).map(|()| Value::Null).map_err(failed),
+        "plugin.restart" => plugins.restart(text("id")?).map(|()| Value::Null).map_err(failed),
+        "plugin.report" => {
+            let url = plugins.report_url(params.get("id").and_then(Value::as_str));
+            session.events.push(effectcraft_engine::Event::OpenUrl(url.clone()));
+            Ok(json!({"url": url}))
+        }
         "plugin.reload" => {
             plugins.reload();
             Ok(Value::Null)
@@ -709,16 +951,7 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
         }
         _ => Err(failed(format!("unknown plugin command `{id}`"))),
     };
-    session.set_plugin_items(plugins.items());
-    if effectcraft_engine::effects::dynamic::generation() != effects_before {
-        match session.edit("Update Plug-in Effects", None, |project, _| Ok(effectcraft_engine::upgrade_effects(project))) {
-            Ok(upgraded) => {
-                upgraded.lost.iter().for_each(|lost| log::warn!("{lost} lost its animation when its plug-in started"));
-                upgraded.kept.into_iter().for_each(|kept| session.toast(kept));
-            }
-            Err(error) => log::warn!("the open project's plug-in effects were not updated: {error}"),
-        }
-    }
+    plugins.refresh_session(session, effects_before);
     result
 }
 
