@@ -550,7 +550,11 @@ fn a_held_panel_call_lets_wasm_overlay_and_tool_calls_pass_but_holds_every_call_
     }
     for (plugin, sandboxed, [overlay, tool, command]) in arrivals {
         let quick = |arrived: Duration| arrived < ms(200);
-        assert_eq!((quick(overlay), quick(tool)), (sandboxed, sandboxed), "{plugin}: a wasm plugin's lanes pass a held panel call and a helper serves one call at a time; overlay {overlay:?} tool {tool:?}");
+        assert_eq!(
+            (quick(overlay), quick(tool)),
+            (sandboxed, sandboxed),
+            "{plugin}: a wasm plugin's lanes pass a held panel call and a helper serves one call at a time; overlay {overlay:?} tool {tool:?}"
+        );
         assert!(command >= ms(1000), "{plugin}: a command waits for the held panel call; {command:?}");
     }
 }
