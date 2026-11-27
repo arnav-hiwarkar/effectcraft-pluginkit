@@ -1,11 +1,11 @@
 //! Persistent workspace layouts, separate from document-bound and transient UI state.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use effectcraft_engine::config::ConfigStore;
 use serde::{Deserialize, Serialize};
 
-use crate::dock::{PanelKind, Workspace};
+use crate::dock::{PanelKind, Workspace, WorkspaceExt as _};
 use crate::state::UiState;
 
 mod legacy;
@@ -69,6 +69,29 @@ impl Snapshot {
         }
     }
 
+    fn close_unavailable_plugins(&mut self, items: &[effectcraft_engine::PluginItem]) -> Result<(), String> {
+        let mut running: HashSet<PanelKind> =
+            items.iter().filter(|item| item.panel && !item.multiple).map(|item| PanelKind::plugin(&item.plugin, &item.id)).collect();
+        running.extend(self.plugin_instances.iter().filter_map(|instance| {
+            items
+                .iter()
+                .any(|item| item.panel && item.multiple && item.plugin == instance.plugin && item.id == instance.panel)
+                .then(|| PanelKind::plugin_instance(&instance.plugin, &instance.panel, &instance.instance))
+        }));
+        let unavailable = |panel: PanelKind| matches!(panel, PanelKind::Plugin(_)) && !running.contains(&panel);
+        for workspace in std::iter::once(&mut self.dock).chain(self.saved_workspaces.values_mut()) {
+            let actions: Vec<_> = workspace.panels().into_iter().filter(|panel| unavailable(*panel)).map(craft_behavior::dock::Action::close).collect();
+            if !actions.is_empty() {
+                workspace.apply_all(actions, false, crate::dock::permissions).map_err(|error| error.to_string())?;
+            }
+        }
+        if unavailable(self.focused) {
+            self.focused = self.dock.panels().into_iter().find(|panel| self.dock.is_visible(*panel)).unwrap_or(PanelKind::Composition);
+        }
+        self.maximized = self.maximized.filter(|panel| !unavailable(*panel));
+        Ok(())
+    }
+
     fn validate(&self) -> Result<(), String> {
         if self.version != VERSION {
             return Err(format!("unsupported workspace version {}", self.version));
@@ -115,7 +138,7 @@ impl WorkspaceStore {
             text.map(|text| {
                 let mut value: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
                 let plugin_migration = legacy::migrate_plugin_ids(&mut value, items);
-                let snapshot = if legacy::is_legacy(&value) {
+                let mut snapshot = if legacy::is_legacy(&value) {
                     let snapshot = legacy::migrate(value, ui)?;
                     original = Some(text);
                     snapshot
@@ -134,6 +157,7 @@ impl WorkspaceStore {
                     snapshot
                 };
                 snapshot.validate()?;
+                snapshot.close_unavailable_plugins(items)?;
                 Ok(snapshot)
             })
             .transpose()

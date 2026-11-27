@@ -366,8 +366,9 @@ fn plugin_panels_from_the_fork_restore_and_save_by_name() {
     let counter = PanelKind::plugin("test.probe", "counter");
     let notes = PanelKind::plugin_instance("test.probe", "notes", "1");
     let unknown = PanelKind::from_name("plugin.#legacy.42").unwrap();
+    let missing = PanelKind::plugin("test.missing", "history");
     ui.dock = Workspace::new(Layout::new(
-        Some(tabs(&[PanelKind::Composition, counter, unknown])),
+        Some(tabs(&[PanelKind::Composition, counter, unknown, missing])),
         vec![Floating::single(1, vec![notes], 0, rect(10.0, 20.0, 360.0, 320.0))],
     ));
     ui.focused = notes;
@@ -402,10 +403,16 @@ fn plugin_panels_from_the_fork_restore_and_save_by_name() {
     let mut store = WorkspaceStore::load(Some(&config), &mut restored, &items);
     assert_eq!(store.error, None);
     assert!(restored.dock.is_floating(notes));
+    for workspace in std::iter::once(&mut ui.dock).chain(ui.saved_workspaces.values_mut()) {
+        for panel in [unknown, missing] {
+            workspace.apply(Action::close(panel), false, crate::dock::permissions).unwrap();
+        }
+    }
     assert_eq!(Snapshot::capture(&restored), Snapshot::capture(&ui));
     assert!(store.save(Some(&config), &restored).unwrap());
     assert_eq!(config.read_bounded(BACKUP, MAX_BYTES).unwrap().as_deref(), Some(old.as_str()));
     let saved = config.read_bounded(FILE, MAX_BYTES).unwrap().unwrap();
     assert!(saved.contains("\"plugin.test.probe.notes#1\""));
     assert!(saved.contains("\"plugin.test.probe.counter\""));
+    assert!(saved.contains("\"plugin.test.missing.history\""));
 }
