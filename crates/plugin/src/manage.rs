@@ -93,6 +93,10 @@ pub struct PluginTask {
 pub struct Contribution {
     pub id: String,
     pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked: Option<bool>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -288,7 +292,7 @@ impl Inner {
             (false, None, None) => (PluginState::NeedsApproval, None),
         };
         let found = loaded.map(|l| l.plugin.contributions().clone()).unwrap_or_default();
-        let named = |id: &str, title: &str| Contribution { id: id.to_string(), title: title.to_string() };
+        let named = |id: &str, title: &str| Contribution { id: id.to_string(), title: title.to_string(), enabled: None, checked: None };
         PluginInfo {
             id: manifest.id.clone(),
             name: manifest.name.clone(),
@@ -303,7 +307,14 @@ impl Inner {
             session_only,
             effects: found.effects.iter().map(|e| named(&effects::effect_id(&manifest.id, &e.id), &e.name)).collect(),
             panels: found.panels.iter().map(|p| named(&p.id, &p.title)).collect(),
-            commands: found.commands.iter().map(|c| named(&c.id, &c.title)).collect(),
+            commands: found
+                .commands
+                .iter()
+                .map(|c| {
+                    let (enabled, checked) = loaded.map_or((true, None), |loaded| loaded.command_state(&c.id));
+                    Contribution { enabled: Some(enabled), checked, ..named(&c.id, &c.title) }
+                })
+                .collect(),
             path: bundle.dir.clone(),
         }
     }

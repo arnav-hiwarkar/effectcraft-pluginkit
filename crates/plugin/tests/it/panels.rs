@@ -649,6 +649,14 @@ fn a_command_its_plugin_turned_off_is_marked_off_and_refused_by_name_until_turne
         (item.disabled, item.checked)
     };
     assert_eq!(set(&mut app, &mut panels, true), (true, Some(false)));
+    let listed = app.session.execute("plugin.list", json!({})).unwrap();
+    let plugin = listed.as_array().and_then(|all| all.iter().find(|plugin| plugin["id"] == id.as_str())).cloned().unwrap_or_default();
+    let command = plugin["commands"].as_array().and_then(|all| all.iter().find(|command| command["id"] == "app-act")).cloned();
+    assert_eq!(
+        command,
+        Some(json!({"id": "app-act", "title": "Probe Action", "enabled": false, "checked": false})),
+        "automation sees the state the menus show"
+    );
     assert_eq!(app.run("app-act"), Err("Probe turned its command `Probe Action` off for now, so it did not run".into()));
     assert_eq!(panels.command(&app.session, &id, "app-act"), Err("Probe turned its command `Probe Action` off for now, so it did not run".into()));
     assert_eq!(set(&mut app, &mut panels, false), (false, Some(true)));

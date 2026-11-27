@@ -398,6 +398,7 @@ pub fn state_key(app: &EffectcraftApp) -> u64 {
     s.prefs.recent_scripts.hash(&mut h);
     s.history.undo.iter().for_each(|(l, _)| l.hash(&mut h));
     s.state.open_comps.hash(&mut h);
+    s.plugin_items.hash(&mut h);
     s.active_comp_id().and_then(|c| s.state.views3d.get(&c)).map(|v| format!("{:?}", v.current)).hash(&mut h);
     // Each binding's keys: a key changed to another one gives the item a new accelerator.
     let shortcuts = s.shortcuts();
@@ -618,6 +619,27 @@ mod tests {
         // The spec serializes (agents can read it).
         let v = serde_json::to_value(&spec).unwrap();
         assert!(v["menus"].as_array().is_some_and(|a| a.len() >= 9));
+    }
+
+    #[test]
+    fn a_plugin_turning_its_command_off_or_on_changes_the_native_menu_state_key() {
+        let mut app = app();
+        let item = |disabled, checked| effectcraft_engine::PluginItem {
+            plugin: "test.probe".into(),
+            id: "act".into(),
+            title: "Probe Action".into(),
+            menu: Some("Layer/Probe Tools".into()),
+            disabled,
+            checked,
+            ..Default::default()
+        };
+        app.session.set_plugin_items(vec![item(false, None)]);
+        let on = state_key(&app);
+        app.session.set_plugin_items(vec![item(true, None)]);
+        let off = state_key(&app);
+        app.session.set_plugin_items(vec![item(true, Some(true))]);
+        assert_ne!(on, off, "disabling the command resyncs the native item");
+        assert_ne!(off, state_key(&app), "checking the command resyncs the native item");
     }
 
     /// Issue #191: saved workspaces are in the native Window ▸ Workspace menu, checked while current.

@@ -39,7 +39,23 @@ fn shape(harness: &Harness<'_, EffectcraftApp>) -> egui::Rect {
 fn the_controls_panel_is_toured_by_tab_from_its_focused_notes_and_counts_a_point_dragged_onto_its_curve() {
     let mut harness = open_controls();
     tab_from_the_focused_notes_reaches_every_plugin_control_in_the_dock(&mut harness);
+    the_menu_key_on_the_focused_live_toggle_opens_its_context_menu(&mut harness);
     dragging_on_the_plugin_curve_adds_a_point_that_the_plugin_counts(&mut harness);
+}
+
+fn the_menu_key_on_the_focused_live_toggle_opens_its_context_menu(harness: &mut Harness<'static, EffectcraftApp>) {
+    for _ in 0..8 {
+        if focused(harness).as_deref() == Some("Live") {
+            break;
+        }
+        harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+        harness.step();
+    }
+    assert_eq!(focused(harness).as_deref(), Some("Live"));
+    harness.key_press(egui::Key::Menu);
+    until(harness, "the context menu opening", |h| shows(h, "Say hello"));
+    harness.key_press(egui::Key::Escape);
+    harness.step();
 }
 
 fn tab_from_the_focused_notes_reaches_every_plugin_control_in_the_dock(harness: &mut Harness<'static, EffectcraftApp>) {

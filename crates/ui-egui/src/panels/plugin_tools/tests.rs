@@ -357,9 +357,9 @@ fn a_plugin_tool_gets_the_pen_pressure_tilt_and_end_of_each_event_and_a_mouse_ge
     assert_eq!(
         tool_texts(&mut harness),
         [
-            "Down 40.0 30.0 pen 0.25 0.50 -0.25 eraser at 0.25",
-            "Move 50.0 35.0 pen 0.75 0.25 0.50 eraser at 0.75",
-            "Up 50.0 35.0 pen 0.00 0.25 0.50 eraser at 0.00"
+            "Down 40.0 30.0 pen 0.25 0.50 -0.25 turn 0.00 eraser at 0.25",
+            "Move 50.0 35.0 pen 0.75 0.25 0.50 turn 0.00 eraser at 0.75",
+            "Up 50.0 35.0 pen 0.00 0.25 0.50 turn 0.00 eraser at 0.00"
         ]
     );
     pen.set(None);
