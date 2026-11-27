@@ -72,6 +72,8 @@ jobs:
       - name: Japanese and Chinese fonts the text tests lay out
         run: sudo apt-get install -y --no-install-recommends fonts-noto-cjk
       - name: UI tests
+        env:
+          RUST_TEST_THREADS: "2"
         run: cargo test -p effectcraft-ui-egui
 
   plugins:
