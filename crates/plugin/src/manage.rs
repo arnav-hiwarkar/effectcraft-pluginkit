@@ -281,6 +281,13 @@ impl Inner {
         self.reconcile_store_with(restart, craft_ext_market::cached_revocations)
     }
 
+    fn catalogue_disabled(&self) -> BTreeMap<(String, Option<String>), bool> {
+        let disabled = |bundle: &Bundle| self.registry.revocation(&bundle.manifest).is_some_and(|revocation| revocation.severity >= Severity::Disable);
+        let bundles = self.installed();
+        let session_only = self.session_only.iter();
+        bundles.iter().chain(session_only).map(|bundle| ((bundle.manifest.id.clone(), bundle.digest().ok()), disabled(bundle))).collect()
+    }
+
     fn reconcile_store_with(&mut self, restart: Option<&str>, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) -> bool {
         if self.refresh_store(read_revocations) {
             self.reload_bundles();
@@ -1118,8 +1125,13 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
 }
 
 #[cfg(test)]
+#[path = "../tests/support/build_plugin.rs"]
+mod build_plugin;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use craft_plugin_host::TaskStatus;
 
     #[test]
     fn approval_refuses_a_bundle_replaced_after_it_was_classified() {
@@ -1147,16 +1159,31 @@ mod tests {
         bundle
     }
 
-    fn disable_revocation(id: &str) -> Revocation {
+    fn revocation(id: &str, severity: Severity) -> Revocation {
         Revocation {
             id: craft_ext_core::id::ExtensionId::new(id).ok(),
             versions: None,
             sha256: None,
             vendor: None,
-            severity: Severity::Disable,
+            severity,
             reason: "stolen keys".into(),
             date: "2026-11-27".into(),
         }
+    }
+
+    fn disable_revocation(id: &str) -> Revocation {
+        revocation(id, Severity::Disable)
+    }
+
+    fn probe_bundle(dir: &Path, id: &str, entry: serde_json::Value) -> PathBuf {
+        static PROBE: OnceLock<PathBuf> = OnceLock::new();
+        let wasm = PROBE.get_or_init(|| build_plugin::wasm(craft_plugin_host::testing::probe_dir(), "probe"));
+        let bundle = dir.join(id);
+        fs::create_dir_all(&bundle).unwrap();
+        fs::copy(wasm, bundle.join("probe.wasm")).unwrap();
+        let manifest = json!({"id": id, "name": "Probe", "version": "1.0.0", "entry": entry});
+        fs::write(bundle.join("plugin.json"), manifest.to_string()).unwrap();
+        bundle
     }
 
     #[test]
@@ -1321,6 +1348,30 @@ mod tests {
         inner.reload_bundles();
         assert_eq!(inner.refused.get("test.revoked"), Some(&Refusal::Revoked(Severity::Disable)));
         assert!(!inner.data.contains("test.revoked"));
+    }
+
+    #[test]
+    fn a_native_plugin_is_unavailable_where_native_plugins_cannot_run_and_a_sandboxed_one_still_starts() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let mut registry = Registry::for_app(&suite, APP_ID);
+        let native_entry = json!({"wasm": "probe.wasm", "native": {format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH): "probe.wasm"}});
+        for (id, entry, native) in [("test.unavailable-native", native_entry, true), ("test.unavailable-sandboxed", json!({"wasm": "probe.wasm"}), false)] {
+            let installed = registry.install(&probe_bundle(root.path(), id, entry)).unwrap();
+            registry.approve(&installed).unwrap();
+            if native {
+                registry.set_unsandboxed(&installed.manifest, true).unwrap();
+            }
+        }
+        let plugins = Plugins::with_registry(registry, Some(suite), false);
+        plugins.lock().native_supported = false;
+        plugins.reload();
+
+        let listed = |id: &str| plugins.list().into_iter().find(|info| info.id == id).unwrap();
+        let native = listed("test.unavailable-native");
+        assert_eq!(native.state, PluginState::Unavailable);
+        assert_eq!(native.error.as_deref(), Some(NATIVE_UNAVAILABLE));
+        assert_eq!(listed("test.unavailable-sandboxed").state, PluginState::Running);
     }
 
     #[test]
