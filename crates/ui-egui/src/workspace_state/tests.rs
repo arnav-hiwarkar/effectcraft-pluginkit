@@ -1,5 +1,5 @@
 use super::*;
-use crate::dock::{Floating, Layout, Node, StackEntry, WorkspaceExt as _};
+use crate::dock::{Floating, Layout, Node, StackEntry};
 use craft_behavior::dock::Action;
 use craft_behavior::dock::SplitSize;
 use craft_behavior::flow::Axis;
@@ -60,7 +60,7 @@ fn corrupt_future_or_unknown_workspace_keeps_defaults_and_original_file() {
         assert!(!store.save(Some(&config), &ui).unwrap());
         assert!(store.save_now(Some(&config), &ui).unwrap_err().contains("couldn't be loaded"));
         assert_eq!(config.read(FILE).as_deref(), Some(text.as_str()));
-        assert_eq!(config.read_bounded(BACKUP, MAX_BYTES), None);
+        assert_eq!(config.read(BACKUP), None);
     }
 }
 
@@ -78,7 +78,7 @@ fn explicit_save_rewrites_an_earlier_file_and_keeps_a_backup() {
     let mut store = WorkspaceStore::load(Some(&config), &mut ui, &[]);
     assert!(store.has_changes(&ui));
     store.save_now(Some(&config), &ui).unwrap();
-    assert_eq!(config.read_bounded(BACKUP, MAX_BYTES).as_deref(), Some(V1));
+    assert_eq!(config.read(BACKUP).as_deref(), Some(V1));
     let mut restored = UiState::default();
     let loaded = WorkspaceStore::load(Some(&config), &mut restored, &[]);
     assert_eq!(loaded.error, None);
@@ -135,7 +135,7 @@ fn version_one_file_is_rewritten_once_in_the_current_format_and_kept_as_a_backup
     let migrated = Snapshot::capture(&ui);
     assert!(store.has_changes(&ui), "the migrated layout is written without waiting for an edit");
     assert!(store.save(Some(&config), &ui).unwrap());
-    assert_eq!(config.read_bounded(BACKUP, MAX_BYTES).as_deref(), Some(V1));
+    assert_eq!(config.read(BACKUP).as_deref(), Some(V1));
     let text = config.read(FILE).unwrap();
     assert_eq!(serde_json::from_str::<serde_json::Value>(&text).unwrap()["version"], VERSION);
     assert!(!store.has_changes(&ui));
@@ -416,8 +416,8 @@ fn plugin_panels_from_the_fork_restore_and_save_by_name() {
     }
     assert_eq!(Snapshot::capture(&restored), Snapshot::capture(&ui));
     assert!(store.save(Some(&config), &restored).unwrap());
-    assert_eq!(config.read_bounded(BACKUP, MAX_BYTES).unwrap().as_deref(), Some(old.as_str()));
-    let saved = config.read_bounded(FILE, MAX_BYTES).unwrap().unwrap();
+    assert_eq!(config.read(BACKUP).as_deref(), Some(old.as_str()));
+    let saved = config.read(FILE).unwrap();
     assert!(saved.contains("\"plugin.test.probe.notes#1\""));
     assert!(saved.contains("\"plugin.test.probe.counter\""));
     assert!(saved.contains("\"plugin.test.missing.history\""));

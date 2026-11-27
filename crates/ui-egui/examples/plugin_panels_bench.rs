@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use craft_ui::docking::Action;
+use craft_behavior::dock::Action;
 use effectcraft_ui_egui::EffectcraftApp;
 use effectcraft_ui_egui::bench::Driver;
-use effectcraft_ui_egui::dock::{PanelKind, WorkspaceExt, permissions};
+use effectcraft_ui_egui::dock::{PanelKind, WorkspaceExt};
 use serde_json::json;
 
 const FRAMES: usize = 200;
@@ -59,8 +59,8 @@ fn main() {
     for (index, (plugin, panel)) in panels.iter().enumerate() {
         let kind = PanelKind::plugin(plugin, panel);
         driver.app.show_panel(kind);
-        let rect = [40.0 + 420.0 * index as f32, 80.0, 400.0, 700.0];
-        driver.app.ui.dock.apply(Action::Float { panel: kind, rect }, permissions).expect("the panel floats");
+        let rect = egui::Rect::from_min_size(egui::pos2(40.0 + 420.0 * index as f32, 80.0), egui::vec2(400.0, 700.0));
+        driver.app.apply_dock(Action::float(kind, rect)).expect("the panel floats");
     }
     for _ in 0..60 {
         driver.step();

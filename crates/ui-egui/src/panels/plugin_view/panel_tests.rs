@@ -88,11 +88,11 @@ fn a_float_panel_docked_by_the_user_and_closed_opens_again_where_it_was_left() {
     crate::menus::invoke(harness.state_mut(), &ctx, "window.pluginPanel", show.clone()).unwrap();
     harness.run_steps(2);
     assert!(harness.state().ui.dock.is_floating(inspector), "a Float panel opens floating the first time");
-    let dock = craft_ui::docking::Action::Move { panel: inspector, anchor: PanelKind::Timeline, placement: craft_ui::docking::Placement::Tab { before: None } };
+    let dock = craft_behavior::dock::Action::move_beside(inspector, PanelKind::Timeline, craft_behavior::dock::DockPlacement::tab(None));
     harness.state_mut().dock_command(&ctx, dock).unwrap();
     harness.run_steps(2);
     assert!(!harness.state().ui.dock.is_floating(inspector));
-    harness.state_mut().dock_command(&ctx, craft_ui::docking::Action::Close { panel: inspector }).unwrap();
+    harness.state_mut().dock_command(&ctx, craft_behavior::dock::Action::close(inspector)).unwrap();
     harness.run_steps(2);
     crate::menus::invoke(harness.state_mut(), &ctx, "window.pluginPanel", show).unwrap();
     harness.run_steps(2);

@@ -443,7 +443,7 @@ pub(crate) fn option_bar(app: &mut EffectcraftApp, ui: &mut egui::Ui, x: f32, cy
 
 pub(crate) fn open(app: &mut EffectcraftApp, ctx: &egui::Context, plugin: &str, panel: &str, instance: Option<&str>, close: bool) -> Result<Value, String> {
     use crate::dock::WorkspaceExt;
-    use craft_ui::docking::Action;
+    use craft_behavior::dock::Action;
     let spec = effectcraft_plugin::panel_request(plugin, panel, instance, close)?;
     let instance = match (spec.multiple, instance) {
         (true, Some(key)) => Some(key.to_string()),
@@ -862,7 +862,7 @@ impl craft_plugin_ui::Host for AppHost<'_> {
     }
 
     fn combo_box(&self, ui: &mut egui::Ui, id: egui::IdSalt, label: &str, selected: String, menu: &mut dyn FnMut(&mut egui::Ui)) -> egui::Response {
-        craft_ui::ComboBox::new(id, label).selected_text(selected).show_ui(ui, menu).response
+        egui::ComboBox::new(id, label).selected_text(selected).show_ui(ui, menu).response
     }
 }
 

@@ -112,7 +112,7 @@ fn fresh_note(harness: &mut Harness<'_, EffectcraftApp>, instance: &str) {
     }
     let ctx = harness.ctx.clone();
     let kind = PanelKind::plugin_instance(PROBE, "notes", instance);
-    harness.state_mut().dock_command(&ctx, craft_ui::docking::Action::Close { panel: kind }).unwrap();
+    harness.state_mut().dock_command(&ctx, craft_behavior::dock::Action::close(kind)).unwrap();
     until(harness, "an earlier test's instance forgotten", |h| {
         !h.state().ui.plugin_instances.iter().any(|open| open.plugin == PROBE && open.panel == "notes" && open.instance == instance)
     });
@@ -135,7 +135,7 @@ fn a_closed_notes_instance_is_forgotten_so_the_next_new_notes_starts_empty() {
     until(&mut harness, "note 1 holding its text", |h| shows(h, "note 1: milk"));
     let ctx = harness.ctx.clone();
     let one = PanelKind::plugin_instance(PROBE, "notes", "1");
-    harness.state_mut().dock_command(&ctx, craft_ui::docking::Action::Close { panel: one }).unwrap();
+    harness.state_mut().dock_command(&ctx, craft_behavior::dock::Action::close(one)).unwrap();
     until(&mut harness, "the instance forgotten", |h| !h.state().ui.plugin_instances.iter().any(|open| open.plugin == PROBE && open.panel == "notes"));
     assert_eq!(open(&mut harness, json!({"plugin": PROBE, "panel": "notes"}))["instance"], "1");
     note_shown(&mut harness, "1");
@@ -194,7 +194,7 @@ fn a_notes_instance_named_1_and_a_panel_named_notes_dot_1_keep_their_own_text_an
     until(&mut harness, "the instance keeping its own text beside the dotted panel", |h| shows(h, "note 1: milk"));
     let ctx = harness.ctx.clone();
     let one = PanelKind::plugin_instance(PROBE, "notes", "1");
-    harness.state_mut().dock_command(&ctx, craft_ui::docking::Action::Close { panel: one }).unwrap();
+    harness.state_mut().dock_command(&ctx, craft_behavior::dock::Action::close(one)).unwrap();
     until(&mut harness, "the instance forgotten", |h| !h.state().ui.plugin_instances.iter().any(|open| open.plugin == PROBE && open.panel == "notes"));
     let field = element(&harness, &dotted);
     let input = harness
