@@ -74,8 +74,9 @@ fn a_panel_key_waits_while_a_file_dialog_is_up() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/modal-key-probe");
     let probe =
         bundle(&wasm(&source, "modal-key-probe"), json!({"id": ID, "name": "Modal Shortcut Probe", "version": "1.0.0", "entry": {"wasm": "plugin.wasm"}}));
-    let plugins = effectcraft_plugin::install(&mut s, None);
+    let plugins = effectcraft_plugin::plugins().unwrap();
     plugins.load_for_session(probe.path()).unwrap();
+    effectcraft_plugin::install(&mut s, None);
     let mut harness = harness(s);
     let kind = PanelKind::plugin(ID, "keys");
     until(&mut harness, "the shortcut probe registering", |h| super::running_panel(h.state(), kind).is_some());
