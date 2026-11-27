@@ -170,6 +170,5 @@ The measurements and the ranked list of changes are in `pluginkit/reports/speed-
 - **Optical flow is not trustworthy near the frame edge.** Content entering or leaving the frame has nothing to match, and the coarse levels spread that error inwards: with a 29 pixel shift at 1080p, 0.3 % of pixels within about 60 pixels of the edge are off by more than a pixel (craft-libs `crates/plugin-host/src/kernels/flow.rs`).
 ## From the controls-ui review, not fixed
 
-- **A form field's condition is not validated.** `visible_when("missing", Is::On)` on a form field opens a form that silently hides the field, while the same condition on an effect parameter stops the plugin from loading. `Form::check` (craft-libs `crates/plugin-sdk/src/wire.rs`) should reuse the effect's source, kind and self-reference checks.
 - **A greyed plugin parameter is judged at the playhead.** `prop.set` and the keyframe commands that go through `with_prop` (`crates/engine/src/cmd/prop.rs`) evaluate the condition at the current time, not at the `time` of the write, and `keys.*` commands that move or paste keys do not check it.
 - **`Frame` gained a private field (`drawn`).** Plugin test code that built a `Frame` with a struct literal no longer compiles; use `Frame::new(width, height, origin, pixels, input)` or `Frame::whole`.
