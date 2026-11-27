@@ -188,7 +188,7 @@ fn app_gradient(gradient: &WireGradient) -> Gradient {
     }
 }
 
-fn preset_values(spec: &EffectSpec, values: &BTreeMap<String, Wire>) -> Vec<(String, Value)> {
+pub(crate) fn preset_values(spec: &EffectSpec, values: &BTreeMap<String, Wire>) -> Vec<(String, Value)> {
     spec.params.iter().filter_map(|param| Some((param.id.clone(), Placed::from_wire(param, values.get(&param.id)?.clone())?))).collect()
 }
 
@@ -251,7 +251,7 @@ fn param_state(param: &Param, value: &dyn Fn(&str) -> Option<Value>) -> [bool; 2
     [param.visible(wire), param.enabled(wire)]
 }
 
-fn saved_to_wire(value: &Value) -> Option<Wire> {
+pub(crate) fn saved_to_wire(value: &Value) -> Option<Wire> {
     Some(match value {
         Value::Scalar(n) => Wire::Number(*n),
         Value::Enum(n) => Wire::Number(f64::from(*n)),

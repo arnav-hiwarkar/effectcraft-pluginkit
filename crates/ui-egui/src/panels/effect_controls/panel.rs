@@ -430,7 +430,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 }
             });
             item(ui, "Reset", true, "effect.reset", json!({"layer": lid, "effect": g.uid}));
-            let presets = effectcraft_engine::effects::presets(effect);
+            let presets = app.session.effect_presets(effect);
             if !presets.is_empty() {
                 ui.menu_button(crate::i18n::tr("Presets"), |ui| {
                     for (name, _) in &presets {

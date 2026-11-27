@@ -6,6 +6,7 @@ mod hooks;
 mod locale;
 mod manage;
 mod panels;
+mod presets;
 pub mod viewer;
 
 pub use craft_plugin_host::ui;

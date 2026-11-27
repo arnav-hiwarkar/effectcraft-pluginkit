@@ -944,7 +944,7 @@ fn effect_presets(
     let layer = s.project.comp(cid).and_then(|c| c.layer(lid)).ok_or(EngineError::NoComp)?;
     let g = layer.effects().and_then(|fx| fx.groups().find(|g| g.uid == uid)).ok_or_else(|| bad(cmd, "no such effect"))?;
     let presets = match &g.kind {
-        GroupKind::Effect { effect } => effectcraft_effects::presets(effect),
+        GroupKind::Effect { effect } => s.effect_presets(effect),
         _ => Vec::new(),
     };
     Ok((cid, lid, uid, presets))
@@ -981,6 +981,51 @@ fn apply_preset(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok(())
     })?;
+    Ok(Value::Null)
+}
+
+fn user_presets(s: &Session, cmd: &str) -> Result<std::sync::Arc<dyn crate::plugin_presets::UserPresets>> {
+    s.user_presets.clone().ok_or_else(|| bad(cmd, "plug-in presets are not available in this session"))
+}
+
+fn fx_effect(s: &Session, p: &Value, cmd: &str) -> Result<(effectcraft_project::ItemId, LayerId, Uid, String)> {
+    let (cid, lid, uid) = find_fx(s, p, cmd)?;
+    let layer = s.project.comp(cid).and_then(|c| c.layer(lid)).ok_or(EngineError::NoComp)?;
+    match layer.props.find_group(uid).map(|g| &g.kind) {
+        Some(GroupKind::Effect { effect }) => Ok((cid, lid, uid, effect.clone())),
+        _ => Err(bad(cmd, "no such effect")),
+    }
+}
+
+/// Keeps the effect's parameter values at the current layer time as a user preset of that plug-in
+/// effect, shared with the other apps of the suite.
+fn save_preset(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "effect.savePreset";
+    let name = str_p(p, "name").ok_or_else(|| bad(cmd, "missing `name`"))?;
+    let store = user_presets(s, cmd)?;
+    let (cid, lid, uid, effect) = fx_effect(s, p, cmd)?;
+    let registered = effectcraft_effects::dynamic::get(&effect).ok_or_else(|| bad(cmd, "only a running plug-in effect keeps user presets"))?;
+    let comp = s.project.comp(cid).ok_or(EngineError::NoComp)?;
+    let layer = comp.layer(lid).ok_or(EngineError::NoComp)?;
+    let size = effectcraft_render::effect_bounds(&s.project, comp, layer).0;
+    let lt = layer.layer_time(s.time());
+    let root = layer.props.find_group(uid).ok_or_else(|| bad(cmd, "effect gone"))?;
+    let fraction = |value: effectcraft_keyframe::Value| match value {
+        effectcraft_keyframe::Value::Vec2([x, y]) => effectcraft_keyframe::Value::Vec2([x / size[0].max(1.0), y / size[1].max(1.0)]),
+        effectcraft_keyframe::Value::Vec3([x, y, z]) => effectcraft_keyframe::Value::Vec3([x / size[0].max(1.0), y / size[1].max(1.0), z]),
+        other => other,
+    };
+    let values = registered.effect.params.iter().filter_map(|param| Some((param.id.clone(), fraction(root.prop(&param.id)?.value_at(lt))))).collect();
+    store.save(&effect, name, &values).map_err(|why| bad(cmd, why))?;
+    Ok(json!({"preset": name}))
+}
+
+fn delete_preset(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "effect.deletePreset";
+    let name = str_p(p, "name").ok_or_else(|| bad(cmd, "missing `name`"))?;
+    let store = user_presets(s, cmd)?;
+    let (.., effect) = fx_effect(s, p, cmd)?;
+    store.delete(&effect, name).map_err(|why| bad(cmd, why))?;
     Ok(Value::Null)
 }
 
@@ -1137,6 +1182,24 @@ pub fn specs() -> Vec<CommandSpec> {
             "{layer?, effect, preset: name from effect.presets} — sets the preset's parameters at the current layer time in one undo step",
             has_layers,
             apply_preset
+        ),
+        cmd!(
+            "effect.savePreset",
+            "Save Effect Preset",
+            [],
+            None,
+            "{layer?, effect, name} — keeps a plug-in effect's values at the current layer time as a user preset every Craft app lists",
+            has_layers,
+            save_preset
+        ),
+        cmd!(
+            "effect.deletePreset",
+            "Delete Effect Preset",
+            [],
+            None,
+            "{layer?, effect, name} — removes a user preset; bundled presets stay",
+            has_layers,
+            delete_preset
         ),
         cmd!(
             "effect.swapTintColors",

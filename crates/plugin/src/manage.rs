@@ -569,6 +569,7 @@ pub fn install(session: &mut Session, config_dir: Option<&Path>) -> &'static Plu
     });
     session.plugin_commands = Some(command);
     session.plugin_hooks = Some(crate::hooks::ask);
+    session.user_presets = crate::presets::SuitePresets::open();
     session.set_plugin_items(plugins.items());
     plugins
 }

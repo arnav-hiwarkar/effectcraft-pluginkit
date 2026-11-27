@@ -3216,6 +3216,7 @@ dependencies = [
 name = "effectcraft-plugin"
 version = "0.25.1"
 dependencies = [
+ "craft-ext-store",
  "craft-plugin-host",
  "effectcraft-automation",
  "effectcraft-engine",
