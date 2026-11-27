@@ -835,6 +835,8 @@ fn install_store(session: &mut Session, store: Store) -> &'static Plugins {
         plugins
     });
     session.plugin_commands = Some(command);
+    session.plugin_hooks = Some(crate::hooks::ask);
+    session.user_presets = crate::presets::SuitePresets::open();
     session.set_plugin_items(plugins.items());
     plugins
 }

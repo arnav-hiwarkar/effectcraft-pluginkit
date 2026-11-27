@@ -125,6 +125,7 @@ impl Default for Project {
             render_templates: Default::default(),
             render_prefs: Default::default(),
             plugins: Vec::new(),
+            plugin_refs: Vec::new(),
             plugin_data: BTreeMap::new(),
         }
     }

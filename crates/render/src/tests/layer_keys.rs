@@ -125,6 +125,7 @@ fn a_scene_reader_sampling_other_frames_gets_a_key_per_comp_frame_while_the_scen
         migrate: None,
         param_state: None,
         aux: Vec::new(),
+        identity: None,
     });
     let (mut p, cid, comp) = setup();
     let mut l = solid(&mut p, &comp, [0.4, 0.5, 0.6], 200, 100);
@@ -162,6 +163,7 @@ fn a_frame_reader_above_an_effect_that_reads_another_layer_is_not_cached() {
         state_version: 0,
         migrate: None,
         aux: Vec::new(),
+        identity: None,
         param_state: None,
     });
     let (mut p, cid, comp) = setup();

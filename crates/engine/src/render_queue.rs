@@ -668,6 +668,7 @@ impl Session {
                 [first, ..] => format!("{} items would replace files the project reads; first: {}", refused.len(), first.reason),
             });
         }
+        self.plugins_before_export(items.iter().flatten().map(|(_, path)| path.as_str()))?;
         let ids: Vec<u64> = items.iter().filter_map(|m| m.first().map(|(i, _)| i.id)).collect();
         if let Some(off) = offload {
             let id = crate::offload::next_id();

@@ -35,6 +35,7 @@ fn register() {
         migrate: None,
         param_state: Some(Box::new(|param, value| [true, param != "amount" || value("manual").is_some_and(|v| v.as_bool())])),
         aux: Vec::new(),
+        identity: None,
     });
 }
 

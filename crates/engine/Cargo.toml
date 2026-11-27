@@ -21,6 +21,7 @@ effectcraft-raster = { workspace = true }
 effectcraft-path = { workspace = true }
 effectcraft-text = { workspace = true }
 effectcraft-effects = { workspace = true }
+craft-plugin = { workspace = true }
 effectcraft-render = { workspace = true }
 effectcraft-segment = { workspace = true }
 effectcraft-track = { workspace = true }

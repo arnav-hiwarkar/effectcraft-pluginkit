@@ -205,6 +205,7 @@ impl EffectcraftApp {
         // commands handled here use the right catalog already.
         let language = crate::i18n::language(self);
         crate::i18n::set_current(language);
+        effectcraft_plugin::set_locale(&mut self.session, language);
         // #1089: a font-menu rescan runs off the UI thread. Poll it on the logic tick so the
         // status and the menu update even when the window is not painting.
         crate::panels::text_panels::poll_font_rescan(self, ctx);
