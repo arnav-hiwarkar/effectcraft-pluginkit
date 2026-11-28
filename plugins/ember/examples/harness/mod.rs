@@ -22,7 +22,7 @@ pub fn bundle(kind: Kind) -> PathBuf {
 fn built(kind: Kind) -> PathBuf {
     let root = Path::new(MANIFEST);
     let mut build = Command::new(env!("CARGO"));
-    build.args(["build", "--release", "--quiet", "--manifest-path"]).arg(root.join("Cargo.toml"));
+    build.args(["build", "--release", "--quiet", "--manifest-path"]).arg(root.join("Cargo.toml")).env_remove("CARGO_TARGET_DIR");
     if kind == Kind::Wasm {
         build.args(["--target", "wasm32-unknown-unknown"]);
     }

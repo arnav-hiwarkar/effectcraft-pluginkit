@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-CLI="${CLI:-$HERE/../../target/debug/effectcraft-cli}"
+source "$HERE/../lib.sh"
 export EFFECTCRAFT_CONFIG_DIR="$HERE/.scratch-config"
 mkdir -p "$EFFECTCRAFT_CONFIG_DIR"
 
-cd "$HERE"
-cargo build --offline --release --target wasm32-unknown-unknown --quiet
-mkdir -p dist
-cp plugin.json dist/
-cp target/wasm32-unknown-unknown/release/curves.wasm dist/plugin.wasm
+BUNDLE="$(xtask_plugin "$HERE" --out "$HERE/dist")"
+BUNDLE="${BUNDLE%%$'\n'*}"
 
-CLI="$CLI" BUNDLE="$HERE/dist" OUT="$EFFECTCRAFT_CONFIG_DIR" python3 -I - <<'PY'
+CLI="$CLI" BUNDLE="$BUNDLE" OUT="$EFFECTCRAFT_CONFIG_DIR" python3 -I - <<'PY'
 import json, os, struct, subprocess, sys, zlib
 
 CLI, BUNDLE, OUT = os.environ["CLI"], os.environ["BUNDLE"], os.environ["OUT"]

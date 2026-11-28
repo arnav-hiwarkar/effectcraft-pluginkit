@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 const USAGE: &str = "usage: cargo xtask plugin <plugin-dir> [--native] [--out DIR]
        cargo xtask plugin new <name> [--kind effect|gpu-effect|panel|tool|task|data]
        cargo xtask plugin dev <plugin-dir> [--bridge PORT]
-       cargo xtask plugin render <plugin-dir> [--effect ID] [--set ID=VALUE]... [--in IN.png | --pattern NAME] [--size WxH] [--time S] [--scale F] [--rounds N] [--native] [--out OUT.png]
+       cargo xtask plugin render <plugin-dir> [--effect ID] [--set ID=VALUE]... [--in IN.png | --pattern NAME] [--size WxH] [--time S] [--scale F] [--rounds N] [--compare STORED.png] [--native] [--out OUT.png]
        cargo xtask plugin bench <plugin-dir> [--rounds N]
        cargo xtask plugin check <plugin-dir>";
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
@@ -97,6 +97,14 @@ fn library_name(manifest: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("{}: no `cdylib` library target; add `[lib] crate-type = [\"cdylib\"]` to Cargo.toml", manifest.display()))
 }
 
+fn shared_target_dir(root: &Path, from_env: Option<std::ffi::OsString>) -> PathBuf {
+    from_env.map_or_else(|| root.join("plugins/target"), PathBuf::from)
+}
+
+fn target_dir() -> PathBuf {
+    shared_target_dir(&crate::root(), std::env::var_os("CARGO_TARGET_DIR"))
+}
+
 fn native_file(name: &str) -> String {
     format!("{}{name}{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX)
 }
@@ -129,15 +137,16 @@ fn build(dir: &Path, native: bool, messages: Messages) -> Result<PathBuf, String
     let cargo_manifest = dir.join("Cargo.toml");
     let name = library_name(&cargo_manifest)?;
     let mut command = Command::new(env!("CARGO"));
-    command.args(["build", "--release", "--manifest-path"]).arg(&cargo_manifest);
+    let target = target_dir();
+    command.args(["build", "--release", "--manifest-path"]).arg(&cargo_manifest).env("CARGO_TARGET_DIR", &target);
     if messages == Messages::Short {
         command.args(["--quiet", "--message-format", "short"]);
     }
     let built = if native {
-        dir.join("target/release").join(native_file(&name))
+        target.join("release").join(native_file(&name))
     } else {
         command.args(["--target", WASM_TARGET]).env_remove("CARGO_ENCODED_RUSTFLAGS").env_remove("RUSTFLAGS").env(WASM_RUSTFLAGS, wasm_rustflags());
-        dir.join("target").join(WASM_TARGET).join("release").join(format!("{name}.wasm"))
+        target.join(WASM_TARGET).join("release").join(format!("{name}.wasm"))
     };
     if !command.status().map_err(|e| e.to_string())?.success() {
         return Err(format!("{}: the build failed; the compiler's messages above say where", dir.display()));
@@ -267,6 +276,13 @@ mod tests {
         std::fs::write(dir.join("plugin.wasm"), b"\0asm\x01\0\0\0").unwrap();
         std::fs::write(dir.join("assets/lut/a.cube"), "LUT").unwrap();
         std::fs::write(dir.join("assets/b.txt"), "b").unwrap();
+    }
+
+    #[test]
+    fn every_plugin_builds_into_one_shared_target_dir_unless_cargo_target_dir_names_another() {
+        let root = Path::new("/work/effectcraft");
+        assert_eq!(shared_target_dir(root, None), Path::new("/work/effectcraft/plugins/target"));
+        assert_eq!(shared_target_dir(root, Some("/scratch/t".into())), Path::new("/scratch/t"));
     }
 
     #[test]
