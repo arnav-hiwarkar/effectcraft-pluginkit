@@ -32,7 +32,10 @@ fn open_auto_save_restores_the_tabs_and_saves_over_the_original() {
     std::fs::create_dir_all(&dir).unwrap();
     let (original, autosave, ids) = crashed_run(&dir);
 
-    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(Session::default()));
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1600.0, 1000.0))
+        .with_context_setup(effectcraft_ui_egui::framework::install_headless)
+        .build_eframe(|_| EffectcraftApp::new(Session::default()));
     h.state_mut().offer_recovery(Recovery { project: Some(original.clone()), autosave: Some(autosave.clone()), dirty: true });
     h.run_steps(3);
     let r = h.state().auto.find("recovery.openAutoSave").expect("the Open Auto-Save button").rect;
