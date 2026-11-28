@@ -514,7 +514,9 @@ impl Plugins {
     }
 
     fn with_registry(mut registry: Registry, suite: Option<PathBuf>, safe_mode: bool) -> Plugins {
-        recover(&mut registry);
+        if let Err(error) = recover(&mut registry) {
+            log::warn!("the last run's plug-in marker was not read: {error}");
+        }
         let run_registry = suite.as_deref().map_or_else(|| Registry::open(registry.root()), |root| Registry::for_app(root, APP_ID));
         let mut inner = Inner {
             registry,
@@ -885,22 +887,21 @@ fn migrate_bundle(source: &Registry, target: &mut Registry, existing: &Registry,
 
     let data = target.data_dir(id);
     copy_data(&source.data_dir(id), &data).map_err(|error| BundleError::Io(data, error))?;
-    let Some(consent) = source.consent(id).filter(|_| target.consent(id).is_none()) else { return Ok(()) };
+    let Some(consent) = source.consent(id) else { return Ok(()) };
     if !consent.enabled || consent.quarantined.is_some() {
-        return target.disable(id);
+        return target.import_consent_if_absent(&migrated, &digest, None);
     }
     if let Ok(approved) = source.approved(bundle) {
-        let unsandboxed = approved.bundle.mode == RunMode::Unsandboxed;
-        target.approve_choosing(&migrated, &approved.digest, unsandboxed)?;
+        target.import_consent_if_absent(&migrated, &approved.digest, Some(approved.bundle.mode))?;
     }
     Ok(())
 }
 
-fn recover(registry: &mut Registry) {
-    match registry.recover() {
-        Ok(quarantined) => quarantined.iter().for_each(|id| log::warn!("plug-in `{id}` was turned off: EffectCraft closed unexpectedly while it ran")),
-        Err(error) => log::warn!("the last run's plug-in marker was not read: {error}"),
+fn recover(registry: &mut Registry) -> Result<(), BundleError> {
+    for id in registry.recover()? {
+        log::warn!("plug-in `{id}` was turned off: EffectCraft closed unexpectedly while it ran");
     }
+    Ok(())
 }
 
 fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -921,9 +922,9 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
         return Err("the old plug-in folder is also the shared bundle folder".into());
     }
     target.set_revocations(craft_ext_market::cached_revocations(suite));
-    recover(&mut target);
+    recover(&mut target)?;
     let mut source = Registry::open(legacy);
-    recover(&mut source);
+    recover(&mut source)?;
     let existing = Registry::for_app(suite, APP_ID);
     let mut retry = false;
     for bundle in source.bundles() {
@@ -1312,6 +1313,43 @@ mod tests {
         assert!(target.consent("test.copy-failed").unwrap().enabled);
         assert_eq!(fs::read_to_string(target.data_dir("test.copy-failed").join("settings.json")).unwrap(), "test.copy-failed");
         assert!(!legacy.exists() && legacy.with_extension("migrated").is_dir());
+    }
+
+    #[test]
+    fn migration_cannot_replace_a_shared_consent_committed_after_opening_the_registry() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let id = "test.migration-keeps-choice";
+        let mut source = Registry::open(&root.path().join("Plugins"));
+        let mut launcher = Registry::for_app(&suite, APP_ID);
+        let installed = source.install(&data_bundle(root.path(), id)).unwrap();
+        source.approve(&installed).unwrap();
+        launcher.install(&installed.dir).unwrap();
+        let mut target = Registry::for_app(&suite, APP_ID);
+        assert!(target.consent(id).is_none());
+        launcher.disable(id).unwrap();
+
+        migrate_bundle(&source, &mut target, &launcher, &installed).unwrap();
+
+        let current = launcher.current(id).unwrap();
+        assert_eq!(launcher.grants(&current), Err(Refusal::Disabled));
+    }
+
+    #[test]
+    fn migration_recovers_the_legacy_run_before_importing_consent() {
+        let root = tempfile::tempdir().unwrap();
+        let (legacy, suite) = (root.path().join("Plugins"), root.path().join("suite"));
+        let id = "test.migration-crash";
+        let mut source = Registry::open(&legacy);
+        let installed = source.install(&data_bundle(root.path(), id)).unwrap();
+        source.approve(&installed).unwrap();
+        source.mark_running(&BTreeMap::from([(id.to_string(), installed.folder_digest().unwrap())])).unwrap();
+        drop(source);
+
+        migrate(&legacy, &suite).unwrap();
+
+        let target = Registry::for_app(&suite, APP_ID);
+        assert_eq!(target.grants(&target.current(id).unwrap()), Err(Refusal::Disabled));
     }
 
     #[test]
