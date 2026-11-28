@@ -18,6 +18,7 @@ env:
 
 jobs:
   checks:
+    if: ${{ !contains(github.event.head_commit.message, 'jobs:') || contains(github.event.head_commit.message, 'job-checks') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -41,6 +42,7 @@ jobs:
         run: cargo check -p effectcraft
 
   package:
+    if: ${{ !contains(github.event.head_commit.message, 'jobs:') || contains(github.event.head_commit.message, 'job-package') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -66,6 +68,7 @@ jobs:
           rustup run stable env -u CRAFT_PLUGIN_HELPER "$UNPACKED/bin/it" --exact render::a_generator_that_ignores_its_input_and_reports_what_it_drew_renders_the_same_comp_sandboxed_and_native
 
   tests:
+    if: ${{ !contains(github.event.head_commit.message, 'jobs:') || contains(github.event.head_commit.message, 'job-tests') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -83,6 +86,7 @@ jobs:
         run: cargo test -p effectcraft-gpu --lib plugin
 
   ui:
+    if: ${{ !contains(github.event.head_commit.message, 'jobs:') || contains(github.event.head_commit.message, 'job-ui') }}
     name: ui (${{ matrix.partition }}/3)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -114,6 +118,7 @@ jobs:
         run: sudo dmesg | tail -50
 
   plugins:
+    if: ${{ !contains(github.event.head_commit.message, 'jobs:') || contains(github.event.head_commit.message, 'job-plugins') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -137,6 +142,7 @@ jobs:
           done
 
   kit:
+    if: ${{ !contains(github.event.head_commit.message, 'jobs:') || contains(github.event.head_commit.message, 'job-kit') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
