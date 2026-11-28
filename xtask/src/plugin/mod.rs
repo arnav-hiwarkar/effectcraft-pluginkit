@@ -101,6 +101,26 @@ fn shared_target_dir(root: &Path, from_env: Option<std::ffi::OsString>) -> PathB
     from_env.map_or_else(|| root.join("plugins/target"), PathBuf::from)
 }
 
+fn claim_library_name(target: &Path, name: &str, manifest: &Path) -> Result<(), String> {
+    let owners = target.join("plugin-library-owners");
+    let io = |e: std::io::Error| format!("{}: {e}", owners.display());
+    std::fs::create_dir_all(&owners).map_err(io)?;
+    let manifest = manifest.canonicalize().map_err(|e| format!("{}: {e}", manifest.display()))?;
+    let record = owners.join(name);
+    if let Ok(owner) = std::fs::read_to_string(&record).map(PathBuf::from)
+        && owner != manifest
+        && library_name(&owner).is_ok_and(|owned| owned == name)
+    {
+        return Err(format!(
+            "{} and {} both build a library named `{name}` into {}, so one would overwrite the other's build; give one a different `[lib] name` or set CARGO_TARGET_DIR",
+            manifest.display(),
+            owner.display(),
+            target.display()
+        ));
+    }
+    std::fs::write(&record, manifest.to_string_lossy().as_bytes()).map_err(io)
+}
+
 fn target_dir() -> PathBuf {
     shared_target_dir(&crate::root(), std::env::var_os("CARGO_TARGET_DIR"))
 }
@@ -136,8 +156,9 @@ enum Messages {
 fn build(dir: &Path, native: bool, messages: Messages) -> Result<PathBuf, String> {
     let cargo_manifest = dir.join("Cargo.toml");
     let name = library_name(&cargo_manifest)?;
-    let mut command = Command::new(env!("CARGO"));
     let target = target_dir();
+    claim_library_name(&target, &name, &cargo_manifest)?;
+    let mut command = Command::new(env!("CARGO"));
     command.args(["build", "--release", "--manifest-path"]).arg(&cargo_manifest).env("CARGO_TARGET_DIR", &target);
     if messages == Messages::Short {
         command.args(["--quiet", "--message-format", "short"]);
@@ -283,6 +304,33 @@ mod tests {
         let root = Path::new("/work/effectcraft");
         assert_eq!(shared_target_dir(root, None), Path::new("/work/effectcraft/plugins/target"));
         assert_eq!(shared_target_dir(root, Some("/scratch/t".into())), Path::new("/scratch/t"));
+    }
+
+    fn crate_named(dir: &Path, lib: &str) -> PathBuf {
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+        let manifest = dir.join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            format!("[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[lib]\nname = \"{lib}\"\ncrate-type = [\"cdylib\"]\n[workspace]\n"),
+        )
+        .unwrap();
+        manifest
+    }
+
+    #[test]
+    fn two_live_plugins_with_one_library_name_cannot_share_a_target_dir() {
+        let work = tempfile::tempdir().unwrap();
+        let target = work.path().join("target");
+        let first = crate_named(&work.path().join("first"), "same");
+        let second = crate_named(&work.path().join("second"), "same");
+        let other = crate_named(&work.path().join("other"), "other");
+        assert_eq!(claim_library_name(&target, "same", &first), Ok(()));
+        assert_eq!(claim_library_name(&target, "same", &first), Ok(()));
+        assert_eq!(claim_library_name(&target, "other", &other), Ok(()));
+        assert!(claim_library_name(&target, "same", &second).is_err_and(|e| e.contains("[lib] name")));
+        crate_named(&work.path().join("first"), "renamed");
+        assert_eq!(claim_library_name(&target, "same", &second), Ok(()));
     }
 
     #[test]
