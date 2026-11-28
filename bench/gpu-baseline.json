@@ -1,0 +1,10 @@
+{
+  "cases": {
+    "gpu-stack-1080p": {
+      "pending": true
+    },
+    "mixed-stack-1080p": {
+      "pending": true
+    }
+  }
+}

@@ -28,6 +28,11 @@ macro_rules! counters {
             pub fn fields(&self) -> Vec<(&'static str, u64)> {
                 vec![$((stringify!($field), self.$field),)*]
             }
+
+            /// The higher of each counter of `self` and `other`.
+            pub fn max(self, other: GpuCounters) -> GpuCounters {
+                GpuCounters { $($field: self.$field.max(other.$field),)* }
+            }
         }
     };
 }
