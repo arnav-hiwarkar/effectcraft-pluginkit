@@ -3,7 +3,7 @@
 The plugin kit counts the work on its side (`craft-extensions` `docs/kit/measure.md`): plugin
 calls, bytes into and out of plugin memory, lowered plan steps and WGSL builds. The uploads,
 readbacks and dispatches happen here, in `effectcraft-gpu`, so they are counted here too, and the
-`gpu-bench` job in `.github/workflows/pluginkit.yml` fails when one rises or a frame changes.
+`gpu-bench` job in `.github/workflows/pluginkit.yml` fails when one rises or a frame leaves the CPU render.
 
 ## What is counted
 
@@ -24,7 +24,7 @@ it. Every context counts its own work with relaxed atomics, bumped once per call
 
 ## The bench
 
-`cargo run -p effectcraft-plugin --example gpu_bench -- [--json out.json] [--check bench/gpu-baseline.json]`
+`cargo run --release -p effectcraft-plugin --example gpu_bench -- [--json out.json] [--check bench/gpu-baseline.json]`
 
 It builds the kit's probe plugin for `wasm32-unknown-unknown`, loads it into a headless session and
 renders two 1920×1080, 8 bpc comps with a layer cache, as the app does:
@@ -38,16 +38,18 @@ Levels' gamma is keyframed, so every frame renders. Each case renders one warm-u
 warm frames. The counters are reset before each warm frame; the highest count of each counter over
 the three is reported (a note says when they differed). Each warm frame is compared with the CPU
 render of the same frame and must be within 1/255; the digest is an FNV-1a hash of the three GPU
-frames' f32 bits. A case with no dispatch fails: the GPU declined the frame.
+frames' f32 bits, printed as information only. A case with no dispatch, or with no plugin GPU pass, fails: the GPU
+declined the frame or a plugin effect fell back to the CPU.
 
 The job runs on `ubuntu-24.04` with Mesa's lavapipe, so it never times anything; timings come from
-the owner's Mac. Digests are for that runner.
+the owner's Mac. The counters do not depend on the build profile, so the job runs the release build.
 
 ## Reading the job and updating the baseline
 
 The job prints a table of counters per warm frame, the measured JSON, then the result. It fails
-when a counter is higher than `bench/gpu-baseline.json`, a pixel digest differs, the CPU and GPU
-frames differ by more than 1/255, or a case is missing on either side. A lower counter passes with
+when a counter is higher than `bench/gpu-baseline.json`, the CPU and GPU frames differ by more than
+1/255, a case runs no plugin GPU pass, or a case is missing on either side. A pixel digest that differs
+from the baseline only prints a note: Mesa updates on the runner change the raw GPU floats. A lower counter passes with
 a note: lower the baseline in the same change to keep the gain. A case marked `"pending": true`
 passes and only prints. The artifact `gpu-bench-out` holds `gpu-bench-out.json`, in the
 baseline's shape (`worst` is ignored by the check). To accept a run:

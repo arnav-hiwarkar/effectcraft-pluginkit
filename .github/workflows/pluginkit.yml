@@ -95,7 +95,7 @@ jobs:
         with:
           cache-key: gpu-bench
       - name: GPU counters and pixels of the plugin stacks against the baseline
-        run: cargo run --quiet -p effectcraft-plugin --example gpu_bench -- --json gpu-bench-out.json --check bench/gpu-baseline.json
+        run: cargo run --release --quiet -p effectcraft-plugin --example gpu_bench -- --json gpu-bench-out.json --check bench/gpu-baseline.json
       - name: Upload the measured counters
         if: always()
         uses: actions/upload-artifact@v4

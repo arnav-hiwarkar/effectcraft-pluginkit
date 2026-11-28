@@ -1121,9 +1121,7 @@ impl GpuContext {
     pub(crate) fn yuv_pipe(&self) -> Option<&crate::yuv::YuvPipe> {
         self.yuv
             .get_or_init(|| {
-                self.counters.shader_module();
-                self.counters.compute_pipeline();
-                crate::yuv::YuvPipe::new(&self.device).inspect_err(|e| {
+                crate::yuv::YuvPipe::new(&self.device, &self.counters).inspect_err(|e| {
                     log::warn!(target: "effectcraft_gpu", "yuv420 kernel unavailable: {e}");
                 })
             })
