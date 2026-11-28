@@ -33,7 +33,8 @@ mv "$bin/effectcraft-cli" "$bin/effectcraft-nightly-cli"
 cmp "$stage/bin/effectcraft" "$bin/.effectcraft-nightly/effectcraft"
 cmp "$stage/bin/craft-plugin-helper" "$bin/.effectcraft-nightly/craft-plugin-helper"
 [[ ! -e "$bin/craft-plugin-helper" ]]
-cmp "$stage/bin/effectcraft-cli" "$bin/effectcraft-nightly-cli"
+cmp "$stage/bin/effectcraft-cli" "$bin/.effectcraft-nightly/effectcraft-cli"
+[[ -x "$bin/.effectcraft-nightly/craft-plugin-helper" && -x "$bin/.effectcraft-nightly/effectcraft-cli" ]]
 # The launcher must start the hidden GUI through the Nightly profile; the profile base is fixed
 # here so the recorded arguments are exactly comparable.
 export XDG_DATA_HOME="$work/xdg-data"
@@ -49,6 +50,8 @@ expect() {
     exit 1
   fi
 }
+actual=$(PATH="$bin:$PATH" effectcraft-nightly-cli 'two words' --flag)
+[[ "$actual" == "$(printf '<%s>\n' 'two words' --flag)" ]] || { printf 'the CLI launcher passed:\n%s\n' "$actual" >&2; exit 1; }
 expect "$(profile)"
 expect "$(profile 'project with spaces.ec' '--other-name.ec')" \
   'project with spaces.ec' '--other-name.ec'
