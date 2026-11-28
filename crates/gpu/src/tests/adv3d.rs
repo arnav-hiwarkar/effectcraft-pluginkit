@@ -609,10 +609,10 @@ fn gpu_compositor_draws_split_advanced_3d_runs_and_skies() {
         r.accel = Some(&g);
         // The CPU compositor on the GPU's rasters.
         let hybrid = r.comp_frame_cpu(cid, Tick::ZERO);
-        let before = g.context().transfer_stats().readbacks;
+        let before = g.context().counters().readbacks;
         let gimg = g.render(&r, cid, Tick::ZERO).expect("gpu walk");
         // On the device end to end: the frame's own readback only (no CPU fallback).
-        assert_eq!(g.context().transfer_stats().readbacks - before, 1, "case {case}: readbacks");
+        assert_eq!(g.context().counters().readbacks - before, 1, "case {case}: readbacks");
         let (share, max) = off_share(&hybrid.data, &gimg.data);
         eprintln!("split case {case}: gpu walk vs cpu compositing {:.4} % beyond 1/255 (max {max:.4})", share * 100.0);
         assert!(share <= 0.001, "case {case}: {:.3} % of pixels differ (max {max})", share * 100.0);

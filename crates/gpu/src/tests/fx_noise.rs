@@ -285,7 +285,7 @@ fn median_levels_match_cpu_division() {
                 started.elapsed(),
                 g.ctx.check_health(),
                 g.ctx.unavailable_kernels(),
-                g.ctx.transfer_stats()
+                g.ctx.counters()
             )
         });
         for (level, (want, got)) in image.data.iter().zip(&actual.data).enumerate() {
@@ -329,7 +329,7 @@ fn dust_strict_threshold_boundaries() {
                     started.elapsed(),
                     g.ctx.check_health(),
                     g.ctx.unavailable_kernels(),
-                    g.ctx.transfer_stats()
+                    g.ctx.counters()
                 )
             });
             assert_eq!(gpu.img.data[24], cpu.img.data[24], "radius {radius}, threshold {threshold}");

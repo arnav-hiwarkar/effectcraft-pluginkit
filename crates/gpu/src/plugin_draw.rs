@@ -305,6 +305,7 @@ impl<'a> Stage<'a> {
         let [w, h] = picture.size;
         let upload = || {
             let image = g.image(w, h);
+            g.counters.upload(picture.bytes.len());
             g.queue.write_texture(
                 wgpu::TexelCopyTextureInfo { texture: &image.texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
                 &picture.bytes,
@@ -460,6 +461,7 @@ impl<'a> Stage<'a> {
             under.set_bind_group(0, bind, &[]);
             under.set_bind_group(1, &guard, &[]);
             under.draw(0..3, 0..1);
+            g.counters.draw();
         }
         {
             let mut render = begin(enc, load, depth_view.as_ref(), fresh_depth);
@@ -477,6 +479,7 @@ impl<'a> Stage<'a> {
                 }
                 None => render.draw(0..counts.elements, 0..counts.instances),
             }
+            g.counters.draw();
         }
         if target.stays_open {
             self.canvas = Some(Canvas { target: target.index, colour });

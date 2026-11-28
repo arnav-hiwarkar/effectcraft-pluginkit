@@ -61,6 +61,8 @@ fn pipes(g: &GpuContext) -> &Pipes {
     g.particles.get_or_init(|| {
         let d = &g.device;
         let src = [include_str!("shaders/common.wgsl"), include_str!("shaders/kernels.wgsl"), include_str!("shaders/particles.wgsl")].concat();
+        g.counters.shader_module();
+        g.counters.compute_pipeline();
         let module =
             d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("effectcraft particles"), source: wgpu::ShaderSource::Wgsl(src.into()) });
         let buffer = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
@@ -252,6 +254,8 @@ pub(crate) fn simulate(g: &GpuContext, req: &SimRequest) -> Option<Vec<SimPartic
         pass.set_bind_group(1, &bg, &[]);
         pass.dispatch_workgroups(n.div_ceil(64), 1, 1);
     }
+    g.counters.dispatch();
+    g.counters.readback(size as usize);
     enc.copy_buffer_to_buffer(&next, 0, &read, 0, size);
     g.queue.submit([enc.finish()]);
     #[cfg(test)]
