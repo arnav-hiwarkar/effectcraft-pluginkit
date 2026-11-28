@@ -83,7 +83,7 @@ jobs:
           cargo test -p effectcraft-engine -p effectcraft-project -p effectcraft-effects --lib
           cargo test -p effectcraft-render -p effectcraft-raster -p effectcraft-automation -p effectcraft-script -p effectcraft-cli -p xtask
       - name: GPU plugin tests
-        run: cargo test -p effectcraft-gpu --lib plugin
+        run: cargo test -p effectcraft-gpu --lib -- plugin wgsl_float_literals_fit_f32 opengl_adapters_get_cpu_compositing_at_once
 
   ui:
     if: ${{ !contains(github.event.head_commit.message, 'jobs:') || contains(github.event.head_commit.message, 'job-ui') }}
