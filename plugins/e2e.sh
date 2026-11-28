@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="${1:-$ROOT/target/plugin-e2e}"
-CLI="$ROOT/target/debug/effectcraft-cli"
+source "$(dirname "$0")/lib.sh"
+OUT="${1:-$APP_TARGET/plugin-e2e}"
 cd "$ROOT"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
 for manifest in plugins/*/plugin.json; do
-    cargo run --quiet --package xtask -- plugin "$(dirname "$manifest")"
+    xtask_plugin "$(dirname "$manifest")"
 done
-cargo build --quiet --package effectcraft-cli --package effectcraft-plugin-helper
+build_app_packages --package effectcraft-cli --package effectcraft-plugin-helper
+export CLI
 
 export EFFECTCRAFT_CONFIG_DIR="$OUT/config"
 
@@ -36,25 +36,44 @@ assert plugins and not stopped, f"plugins not running: {stopped}"
 print("PASS", len(plugins), "plugins running:", ", ".join(p["id"] for p in plugins))
 PY
 
-render() {
-    local name="$1" effect="$2" min_bytes="$3"
-    shift 3
-    "$CLI" run comp.new '{"name":"E2E","width":960,"height":540,"duration":2}' "$@" effect.apply "{\"effect\":\"$effect\"}" \
-        --empty --save-as "$OUT/$name.ecproj" > /dev/null
-    "$CLI" render-frame --project "$OUT/$name.ecproj" --time 0.5 --out "$OUT/$name.png" > /dev/null
-    local bytes
-    bytes="$(wc -c < "$OUT/$name.png")"
-    if [ "$bytes" -lt "$min_bytes" ]; then
-        echo "FAIL $name: the frame is $bytes bytes, which is what an unchanged flat frame compresses to"
-        exit 1
-    fi
-    echo "PASS $name rendered ($bytes bytes) -> $OUT/$name.png"
+stored_frames=()
+golden() {
+    local plugin="$1" name="$2"
+    shift 2
+    stored_frames+=("plugins/$plugin/tests/frames/$name.png")
+    xtask_plugin render "plugins/$plugin" "$@" --compare "plugins/$plugin/tests/frames/$name.png" --out "$OUT/golden/$plugin-$name.png" > /dev/null
+    echo "PASS $plugin $name matches its stored frame"
 }
 
-render plasma-beam org.craftkit.plasma-beam.beam 20000 layer.newSolid '{"name":"Dark","color":"#05060a"}'
-if [ -d "$ROOT/plugins/dist/org.craftkit.lumen-glow" ]; then
-    render lumen-glow org.craftkit.lumen-glow.glow 20000 layer.newText '{"text":"GLOW","size":160}'
-fi
+render() {
+    local name="$1" effect="$2"
+    shift 2
+    local comp='{"name":"E2E","width":960,"height":540,"duration":2}'
+    "$CLI" run comp.new "$comp" "$@" --empty --save-as "$OUT/$name-plain.ecproj" > /dev/null
+    "$CLI" run comp.new "$comp" "$@" effect.apply "{\"effect\":\"$effect\"}" --empty --save-as "$OUT/$name.ecproj" > /dev/null
+    "$CLI" render-frame --project "$OUT/$name-plain.ecproj" --time 0.5 --out "$OUT/$name-plain.png" > /dev/null
+    "$CLI" render-frame --project "$OUT/$name.ecproj" --time 0.5 --out "$OUT/$name.png" > /dev/null
+    if cmp -s "$OUT/$name-plain.png" "$OUT/$name.png"; then
+        echo "FAIL $name: the frame with $effect is byte-identical to the frame without it"
+        exit 1
+    fi
+    echo "PASS $name changed the frame -> $OUT/$name.png"
+}
 
-"$ROOT/plugins/glide/verify.sh"
-"$ROOT/plugins/pulse/verify.sh"
+render plasma-beam org.craftkit.plasma-beam.beam layer.newSolid '{"name":"Dark","color":"#05060a"}'
+render lumen-glow org.craftkit.lumen-glow.glow layer.newText '{"text":"GLOW","size":160}'
+
+source "$PLUGINS_DIR/goldens.sh"
+
+for stored in plugins/*/tests/frames/*.png; do
+    case " ${stored_frames[*]} " in
+        *" $stored "*) ;;
+        *)
+            echo "FAIL $stored has no golden line in plugins/goldens.sh"
+            exit 1
+            ;;
+    esac
+done
+
+"$PLUGINS_DIR/glide/verify.sh"
+"$PLUGINS_DIR/pulse/verify.sh"

@@ -3,11 +3,12 @@ use std::time::Duration;
 
 use craft_plugin::{EffectSpec, ParamKind, RunMode, Value};
 use craft_plugin_host::Bundle;
-use craft_plugin_host::testing::{Pattern, Picture, Render, TestPlugin};
+use craft_plugin_host::testing::{Pattern, Picture, Render, TestPlugin, difference};
 
 use super::{Flags, Messages, assemble, plugin_dir};
 
-const VALUED: [&str; 9] = ["--effect", "--set", "--in", "--pattern", "--size", "--time", "--scale", "--out", "--rounds"];
+const VALUED: [&str; 10] = ["--effect", "--set", "--in", "--pattern", "--size", "--time", "--scale", "--out", "--rounds", "--compare"];
+const STORED_FRAME_TOLERANCE: u8 = 1;
 const SIZES: [[u32; 2]; 2] = [[1920, 1080], [3840, 2160]];
 
 pub(super) fn value(id: &str, text: &str, kind: &ParamKind) -> Result<Value, String> {
@@ -122,7 +123,30 @@ pub(super) fn render(root: &Path, args: &[String]) -> Result<(), String> {
     let kind = if mode == RunMode::Sandboxed { "sandboxed" } else { "native" };
     let best = if rounds > 1 { format!("best of {rounds}: ") } else { String::new() };
     println!("rendered `{effect}` at {}x{} in {best}{:.2} ms ({kind}): {}", picture.width, picture.height, millis(took), out.display());
+    if let Some(stored) = flags.one("--compare") {
+        matches_stored_frame(&picture, Path::new(stored))?;
+        println!("matches the stored frame {stored}");
+    }
     Ok(())
+}
+
+fn matches_stored_frame(picture: &Picture, stored: &Path) -> Result<(), String> {
+    let expected = image::open(stored).map_err(|e| format!("{}: {e}", stored.display()))?.to_rgba8();
+    if [expected.width(), expected.height()] != [picture.width, picture.height] {
+        return Err(format!("{} is {}x{} but the render is {}x{}", stored.display(), expected.width(), expected.height(), picture.width, picture.height));
+    }
+    let found = difference(&expected, &picture.rgba8(), picture.width, STORED_FRAME_TOLERANCE);
+    if found.differing == 0 {
+        return Ok(());
+    }
+    let (x, y) = found.first.unwrap_or_default();
+    Err(format!(
+        "{}: {} of {} pixels are off by more than {STORED_FRAME_TOLERANCE}/255 (largest {}/255, first at ({x}, {y}))",
+        stored.display(),
+        found.differing,
+        picture.pixels.len(),
+        found.largest
+    ))
 }
 
 fn millis(duration: Duration) -> f64 {
@@ -168,6 +192,23 @@ mod tests {
     use craft_plugin::Param;
 
     use super::*;
+
+    #[test]
+    fn a_render_matches_its_stored_frame_within_one_level_and_a_wrong_one_reports_where_it_differs() {
+        let dir = tempfile::tempdir().unwrap();
+        let stored = dir.path().join("stored.png");
+        let mut picture = Picture::new(4, 2);
+        picture.pixels.iter_mut().for_each(|pixel| *pixel = [0.2, 0.4, 0.6, 1.0]);
+        picture.save(&stored).unwrap();
+        assert_eq!(matches_stored_frame(&picture, &stored), Ok(()));
+        picture.pixels[0][1] += 1.0 / 255.0;
+        assert_eq!(matches_stored_frame(&picture, &stored), Ok(()));
+        picture.pixels[5] = [1.0, 0.4, 0.6, 1.0];
+        let error = matches_stored_frame(&picture, &stored).unwrap_err();
+        assert!(error.ends_with("1 of 8 pixels are off by more than 1/255 (largest 204/255, first at (1, 1))"), "{error}");
+        let error = matches_stored_frame(&Picture::new(2, 2), &stored).unwrap_err();
+        assert!(error.ends_with("is 4x2 but the render is 2x2"), "{error}");
+    }
 
     #[test]
     fn a_set_value_is_read_as_the_kind_its_parameter_declares_and_a_wrong_value_names_the_parameter_and_what_it_takes() {
