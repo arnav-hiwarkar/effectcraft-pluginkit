@@ -83,7 +83,26 @@ jobs:
           cargo test -p effectcraft-engine -p effectcraft-project -p effectcraft-effects --lib
           cargo test -p effectcraft-render -p effectcraft-raster -p effectcraft-automation -p effectcraft-script -p effectcraft-cli -p xtask
       - name: GPU plugin tests
-        run: cargo test -p effectcraft-gpu --lib plugin
+        run: cargo test -p effectcraft-gpu --lib -- plugin wgsl_float_literals_fit_f32 opengl_adapters_get_cpu_compositing_at_once
+
+  gpu-bench:
+    if: ${{ !contains(github.event.head_commit.message, 'jobs:') || contains(github.event.head_commit.message, 'job-gpu-bench') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: gpu-bench
+      - name: GPU counters and pixels of the plugin stacks against the baseline
+        run: cargo run --release --quiet -p effectcraft-plugin --example gpu_bench -- --json gpu-bench-out.json --check bench/gpu-baseline.json
+      - name: Upload the measured counters
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-bench-out
+          path: gpu-bench-out.json
+          if-no-files-found: ignore
 
   ui:
     if: ${{ !contains(github.event.head_commit.message, 'jobs:') || contains(github.event.head_commit.message, 'job-ui') }}
@@ -128,6 +147,10 @@ jobs:
           cache-key: plugins
       - name: Plugins end to end
         run: ./plugins/e2e.sh
+      - name: Reference plugin frames through the kit test harness
+        run: ./plugins/goldens.sh
+      - name: Plugin manifests pin the workspace kit and check crates keep a current lock file
+        run: python3 plugins/relock-checks.py --check
       - name: New plugin templates and the cookbook
         run: ./plugins/new-plugin-check.sh
       - name: Plugin crate tests

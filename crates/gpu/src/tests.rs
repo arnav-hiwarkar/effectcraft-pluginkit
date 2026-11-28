@@ -178,9 +178,9 @@ fn numerical_effects_remain_resident_on_vulkan() {
         ("ec.transition.ccgridwipe", vec![("completion", n(40.0))]),
         ("ec.stylize.cchextile", vec![("radius", n(9.3))]),
     ] {
-        let before = g.ctx.transfer_stats();
+        let before = g.ctx.counters();
         effect_direct(id, &vals, false);
-        let after = g.ctx.transfer_stats();
+        let after = g.ctx.counters();
         // Full- and half-resolution runs each upload once and download once.
         assert_eq!(after.uploads - before.uploads, 2, "{id}: uploads");
         assert_eq!(after.readbacks - before.readbacks, 2, "{id}: readbacks");
@@ -675,7 +675,7 @@ pub(crate) fn effect_direct(id: &str, vals: &[(&str, Value)], adjustment: bool) 
                 started.elapsed(),
                 g.ctx.check_health(),
                 g.ctx.unavailable_kernels(),
-                g.ctx.transfer_stats()
+                g.ctx.counters()
             )
         });
         if expect_empty {
@@ -1457,9 +1457,9 @@ fn adjustment_footprint_uploads_once_under_time_dependent_effects() {
     let t = |k: u64| Tick::from_seconds_f64(k as f64 / 30.0);
     let mut prev = None;
     for k in 0..4 {
-        let before = g.ctx.transfer_stats().upload_bytes;
+        let before = g.ctx.counters().upload_bytes;
         let img = g.render(&r, s.cid, t(k)).expect("the GPU renders the frame");
-        let up = g.ctx.transfer_stats().upload_bytes - before;
+        let up = g.ctx.counters().upload_bytes - before;
         if k >= 2 {
             assert_eq!(up, 0, "frame {k} uploaded {up} bytes: the footprint was re-keyed");
         }
@@ -1486,9 +1486,9 @@ fn a_static_layer_under_a_time_dependent_effect_uploads_once() {
     let t = |k: u64| Tick::from_seconds_f64(k as f64 / 30.0);
     let mut prev = None;
     for k in 0..4 {
-        let before = g.ctx.transfer_stats().upload_bytes;
+        let before = g.ctx.counters().upload_bytes;
         let img = g.render(&r, s.cid, t(k)).expect("the GPU renders the frame");
-        let up = g.ctx.transfer_stats().upload_bytes - before;
+        let up = g.ctx.counters().upload_bytes - before;
         if k >= 1 {
             assert_eq!(up, 0, "frame {k} uploaded {up} bytes: the source was re-keyed");
         }
@@ -1560,9 +1560,9 @@ fn upload_budget_bounds_the_layer_textures_kept() {
         let mut r = Renderer::new(&s.p, &Pattern, RenderOpts { backend: Backend::Gpu, ..opts() });
         r.accel = Some(g);
         r.cache = Some(cache);
-        let before = g.ctx.transfer_stats().upload_bytes;
+        let before = g.ctx.counters().upload_bytes;
         let img = g.render(&r, s.cid, Tick::from_seconds_f64(k as f64 / 30.0)).expect("the GPU renders the frame");
-        (img.data, g.ctx.transfer_stats().upload_bytes - before)
+        (img.data, g.ctx.counters().upload_bytes - before)
     };
     // The shared context's budget comes back when the test ends, also when a frame fails (#3737
     // review): the GPU lock is held until this thread ends, so no other test sees the change.
@@ -1633,9 +1633,9 @@ fn upload_budget_comes_from_the_memory_rule() {
         let mut r = Renderer::new(&s.p, &Pattern, RenderOpts { backend: Backend::Gpu, ..opts() });
         r.accel = Some(g);
         r.cache = Some(&cache);
-        let before = g.ctx.transfer_stats().upload_bytes;
+        let before = g.ctx.counters().upload_bytes;
         g.render(&r, s.cid, Tick::from_seconds_f64(k as f64 / 30.0)).expect("the GPU renders the frame");
-        g.ctx.transfer_stats().upload_bytes - before
+        g.ctx.counters().upload_bytes - before
     };
     let _ = frame(0);
     let up = frame(1);
@@ -1703,9 +1703,9 @@ fn static_effect_layers_draw_from_the_cache() {
     assert!(r.layer_is_static(&effectcraft_render::EvalCtx::new(&s.p, s.cid, comp, t(2)), layer));
     let mut frames = Vec::new();
     for k in 0..3 {
-        let before = g.ctx.transfer_stats().upload_bytes;
+        let before = g.ctx.counters().upload_bytes;
         frames.push(g.render(&r, s.cid, t(k)).expect("the GPU renders the frame").data);
-        let up = g.ctx.transfer_stats().upload_bytes - before;
+        let up = g.ctx.counters().upload_bytes - before;
         if k == 2 {
             assert_eq!(up, 0, "the cached layer uploaded again");
         }

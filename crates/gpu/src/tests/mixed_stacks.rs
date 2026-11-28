@@ -5,9 +5,9 @@ fn traffic(g: &crate::Gpu, s: &Scene, shared: bool, t: Tick) -> (Image, u64, u64
     let mut r = Renderer::new(&s.p, &Pattern, RenderOpts { backend: Backend::Gpu, ..opts() });
     r.accel = Some(g);
     SHARED_PICTURES.store(shared, std::sync::atomic::Ordering::Relaxed);
-    let before = g.ctx.transfer_stats();
+    let before = g.ctx.counters();
     let img = g.render(&r, s.cid, t);
-    let after = g.ctx.transfer_stats();
+    let after = g.ctx.counters();
     SHARED_PICTURES.store(true, std::sync::atomic::Ordering::Relaxed);
     (img.expect("the GPU renders the frame"), after.upload_bytes - before.upload_bytes, after.readback_bytes - before.readback_bytes)
 }

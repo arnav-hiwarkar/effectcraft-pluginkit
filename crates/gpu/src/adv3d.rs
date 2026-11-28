@@ -27,7 +27,7 @@ pub(crate) struct Pipes {
 }
 
 fn pipes(g: &GpuContext) -> &Pipes {
-    g.adv3d.get_or_init(|| Pipes::new(&g.device, g.adv3d_raster))
+    g.adv3d.get_or_init(|| Pipes::new(&g.device, &g.counters, g.adv3d_raster))
 }
 
 const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -218,8 +218,9 @@ fn storage(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 impl Pipes {
-    fn new(device: &wgpu::Device, raster: bool) -> Pipes {
+    fn new(device: &wgpu::Device, counters: &crate::counters::Counters, raster: bool) -> Pipes {
         let raster = raster.then(|| {
+            counters.shader_module();
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("effectcraft advanced 3d"),
                 source: wgpu::ShaderSource::Wgsl(include_str!("shaders/advanced3d.wgsl").into()),
@@ -246,6 +247,7 @@ impl Pipes {
             ];
             let make = |transparent: bool| {
                 let blend = transparent.then_some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING);
+                counters.render_pipeline();
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some(if transparent { "advanced 3d transparent" } else { "advanced 3d opaque" }),
                     layout: Some(&layout),
@@ -290,7 +292,7 @@ impl Pipes {
             let transparent = make(true);
             (bgl, opaque, transparent)
         });
-        Pipes { raster, post: Post::new(device) }
+        Pipes { raster, post: Post::new(device, counters) }
     }
 }
 
@@ -522,10 +524,12 @@ fn raster_into(e: &mut Enc, s: &Scene) -> Option<(wgpu::Texture, wgpu::Texture)>
         if s.opaque_count > 0 {
             pass.set_pipeline(opaque);
             pass.draw_indexed(0..s.opaque_count, 0, 0..1);
+            g.counters.draw();
         }
         if n > s.opaque_count {
             pass.set_pipeline(transparent);
             pass.draw_indexed(s.opaque_count..n, 0, 0..1);
+            g.counters.draw();
         }
     }
     Some((color, zout))
@@ -630,7 +634,8 @@ pub(crate) struct Post {
 const KERNELS: &[&str] = &["resolve", "radius_of", "boost", "prefix_rows", "gather", "finish", "wire", "occlude"];
 
 impl Post {
-    fn new(device: &wgpu::Device) -> Post {
+    fn new(device: &wgpu::Device, counters: &crate::counters::Counters) -> Post {
+        counters.shader_module();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("effectcraft advanced 3d post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/adv3d.wgsl").into()),
@@ -683,6 +688,7 @@ impl Post {
         let kernels = KERNELS
             .iter()
             .map(|k| {
+                counters.compute_pipeline();
                 let p = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(k),
                     layout: Some(&layout),
@@ -768,6 +774,7 @@ fn dispatch(e: &mut Enc, kernel: &str, u0: [u32; 4], f0: [f32; 4], b: Binds, gro
     pass.set_pipeline(pipe);
     pass.set_bind_group(0, &bg, &[]);
     pass.dispatch_workgroups(groups.0.max(1), groups.1.max(1), 1);
+    g.counters.dispatch();
 }
 
 fn pixel_groups(w: u32, h: u32) -> (u32, u32) {

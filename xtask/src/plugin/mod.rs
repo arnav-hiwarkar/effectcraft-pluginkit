@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 const USAGE: &str = "usage: cargo xtask plugin <plugin-dir> [--native] [--out DIR]
        cargo xtask plugin new <name> [--kind effect|gpu-effect|panel|tool|task|data]
        cargo xtask plugin dev <plugin-dir> [--bridge PORT]
-       cargo xtask plugin render <plugin-dir> [--effect ID] [--set ID=VALUE]... [--in IN.png | --pattern NAME] [--size WxH] [--time S] [--scale F] [--rounds N] [--native] [--out OUT.png]
+       cargo xtask plugin render <plugin-dir> [--effect ID] [--set ID=VALUE]... [--in IN.png | --pattern NAME] [--size WxH] [--time S] [--scale F] [--rounds N] [--compare STORED.png] [--native] [--out OUT.png]
        cargo xtask plugin bench <plugin-dir> [--rounds N]
        cargo xtask plugin check <plugin-dir>";
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
@@ -97,6 +97,34 @@ fn library_name(manifest: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("{}: no `cdylib` library target; add `[lib] crate-type = [\"cdylib\"]` to Cargo.toml", manifest.display()))
 }
 
+fn shared_target_dir(root: &Path, from_env: Option<std::ffi::OsString>) -> PathBuf {
+    from_env.map_or_else(|| root.join("plugins/target"), PathBuf::from)
+}
+
+fn claim_library_name(target: &Path, name: &str, manifest: &Path) -> Result<(), String> {
+    let owners = target.join("plugin-library-owners");
+    let io = |e: std::io::Error| format!("{}: {e}", owners.display());
+    std::fs::create_dir_all(&owners).map_err(io)?;
+    let manifest = manifest.canonicalize().map_err(|e| format!("{}: {e}", manifest.display()))?;
+    let record = owners.join(name);
+    if let Ok(owner) = std::fs::read_to_string(&record).map(PathBuf::from)
+        && owner != manifest
+        && library_name(&owner).is_ok_and(|owned| owned == name)
+    {
+        return Err(format!(
+            "{} and {} both build a library named `{name}` into {}, so one would overwrite the other's build; give one a different `[lib] name` or set CARGO_TARGET_DIR",
+            manifest.display(),
+            owner.display(),
+            target.display()
+        ));
+    }
+    std::fs::write(&record, manifest.to_string_lossy().as_bytes()).map_err(io)
+}
+
+fn target_dir() -> PathBuf {
+    shared_target_dir(&crate::root(), std::env::var_os("CARGO_TARGET_DIR"))
+}
+
 fn native_file(name: &str) -> String {
     format!("{}{name}{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX)
 }
@@ -128,16 +156,18 @@ enum Messages {
 fn build(dir: &Path, native: bool, messages: Messages) -> Result<PathBuf, String> {
     let cargo_manifest = dir.join("Cargo.toml");
     let name = library_name(&cargo_manifest)?;
+    let target = target_dir();
+    claim_library_name(&target, &name, &cargo_manifest)?;
     let mut command = Command::new(env!("CARGO"));
-    command.args(["build", "--release", "--manifest-path"]).arg(&cargo_manifest);
+    command.args(["build", "--release", "--manifest-path"]).arg(&cargo_manifest).env("CARGO_TARGET_DIR", &target);
     if messages == Messages::Short {
         command.args(["--quiet", "--message-format", "short"]);
     }
     let built = if native {
-        dir.join("target/release").join(native_file(&name))
+        target.join("release").join(native_file(&name))
     } else {
         command.args(["--target", WASM_TARGET]).env_remove("CARGO_ENCODED_RUSTFLAGS").env_remove("RUSTFLAGS").env(WASM_RUSTFLAGS, wasm_rustflags());
-        dir.join("target").join(WASM_TARGET).join("release").join(format!("{name}.wasm"))
+        target.join(WASM_TARGET).join("release").join(format!("{name}.wasm"))
     };
     if !command.status().map_err(|e| e.to_string())?.success() {
         return Err(format!("{}: the build failed; the compiler's messages above say where", dir.display()));
@@ -267,6 +297,40 @@ mod tests {
         std::fs::write(dir.join("plugin.wasm"), b"\0asm\x01\0\0\0").unwrap();
         std::fs::write(dir.join("assets/lut/a.cube"), "LUT").unwrap();
         std::fs::write(dir.join("assets/b.txt"), "b").unwrap();
+    }
+
+    #[test]
+    fn every_plugin_builds_into_one_shared_target_dir_unless_cargo_target_dir_names_another() {
+        let root = Path::new("/work/effectcraft");
+        assert_eq!(shared_target_dir(root, None), Path::new("/work/effectcraft/plugins/target"));
+        assert_eq!(shared_target_dir(root, Some("/scratch/t".into())), Path::new("/scratch/t"));
+    }
+
+    fn crate_named(dir: &Path, lib: &str) -> PathBuf {
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+        let manifest = dir.join("Cargo.toml");
+        std::fs::write(
+            &manifest,
+            format!("[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[lib]\nname = \"{lib}\"\ncrate-type = [\"cdylib\"]\n[workspace]\n"),
+        )
+        .unwrap();
+        manifest
+    }
+
+    #[test]
+    fn two_live_plugins_with_one_library_name_cannot_share_a_target_dir() {
+        let work = tempfile::tempdir().unwrap();
+        let target = work.path().join("target");
+        let first = crate_named(&work.path().join("first"), "same");
+        let second = crate_named(&work.path().join("second"), "same");
+        let other = crate_named(&work.path().join("other"), "other");
+        assert_eq!(claim_library_name(&target, "same", &first), Ok(()));
+        assert_eq!(claim_library_name(&target, "same", &first), Ok(()));
+        assert_eq!(claim_library_name(&target, "other", &other), Ok(()));
+        assert!(claim_library_name(&target, "same", &second).is_err_and(|e| e.contains("[lib] name")));
+        crate_named(&work.path().join("first"), "renamed");
+        assert_eq!(claim_library_name(&target, "same", &second), Ok(()));
     }
 
     #[test]

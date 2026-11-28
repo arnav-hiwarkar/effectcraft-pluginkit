@@ -6,14 +6,15 @@ rounds=${ROUNDS:-10}
 out=${OUT:-$here/target/bench}
 jobs=${JOBS:-4}
 export CARGO_TARGET_DIR="$root/target"
+plugin_target="$root/plugins/target"
 mkdir -p "$out/wasm" "$out/native"
 
-cargo build -j "$jobs" --release --quiet --target wasm32-unknown-unknown --manifest-path "$here/Cargo.toml" --target-dir "$here/target"
-cargo build -j "$jobs" --release --quiet --manifest-path "$here/Cargo.toml" --target-dir "$here/target"
-cp "$here/target/wasm32-unknown-unknown/release/retro.wasm" "$out/wasm/plugin.wasm"
+cargo build -j "$jobs" --release --quiet --target wasm32-unknown-unknown --manifest-path "$here/Cargo.toml" --target-dir "$plugin_target"
+cargo build -j "$jobs" --release --quiet --manifest-path "$here/Cargo.toml" --target-dir "$plugin_target"
+cp "$plugin_target/wasm32-unknown-unknown/release/retro.wasm" "$out/wasm/plugin.wasm"
 cp "$here/plugin.json" "$out/wasm/plugin.json"
-lib=$(ls "$here/target/release/" | grep -E '^libretro\.(dylib|so)$|^retro\.dll$' | head -n 1)
-cp "$here/target/release/$lib" "$out/native/$lib"
+lib=$(ls "$plugin_target/release/" | grep -E '^libretro\.(dylib|so)$|^retro\.dll$' | head -n 1)
+cp "$plugin_target/release/$lib" "$out/native/$lib"
 target="$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/macos/')-$(uname -m | sed 's/arm64/aarch64/')"
 sed "s|\"entry\": { \"wasm\": \"plugin.wasm\" }|\"entry\": { \"native\": { \"$target\": \"$lib\" } }|" "$here/plugin.json" > "$out/native/plugin.json"
 

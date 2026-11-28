@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="${1:-$ROOT/target/bench-app}"
-CLI="$ROOT/target/debug/effectcraft-cli"
+source "$(dirname "$0")/lib.sh"
+OUT="${1:-$APP_TARGET/bench-app}"
 N="${N:-7}"
 cd "$ROOT"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
 if [ -z "${SKIP_BUILD:-}" ]; then
-    cargo run --quiet --package xtask -- plugin plugins/lumen-glow
-    cargo build --quiet --package effectcraft-cli
+    xtask_plugin plugins/lumen-glow
+    build_app_packages --package effectcraft-cli
 fi
 export EFFECTCRAFT_CONFIG_DIR="$OUT/config"
 export EFFECTCRAFT_PLUGIN_PATH="$ROOT/plugins/dist/org.craftkit.lumen-glow"

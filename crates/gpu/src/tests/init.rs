@@ -136,9 +136,14 @@ fn initialization_unwind_drains_all_scopes_before_the_next_operation() {
 /// Acceptance for the captured RTX 5090 / FXC failure. Future compiler/shader fixes can
 /// legitimately make FXC succeed; this diagnostic is deliberately outside portable CI.
 /// On OpenGL the compositor declines at once instead of translating its kernels for tens of
-/// seconds and then failing (#243). Skips where there is no OpenGL adapter.
+/// seconds and then failing (#243). Skips where there is no OpenGL adapter, and where the platform
+/// compiles no OpenGL backend even under EFFECTCRAFT_REQUIRE_GPU=1, which requires a GPU, not every backend.
 #[test]
 fn opengl_adapters_get_cpu_compositing_at_once() {
+    if !wgpu::Instance::enabled_backend_features().contains(wgpu::Backends::GL) {
+        eprintln!("initialization tests: this platform compiles no OpenGL backend, explicitly skipping");
+        return;
+    }
     let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
     desc.backends = wgpu::Backends::GL;
     let Some((adapter, device, queue)) = native_device(desc, false) else { return };

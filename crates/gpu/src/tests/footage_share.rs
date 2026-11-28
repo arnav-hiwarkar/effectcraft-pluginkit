@@ -73,13 +73,13 @@ fn shared_scene(depth: BitDepth, layers: usize) -> (Scene, ItemId) {
 fn render_both(g: &crate::Gpu, s: &Scene, src: &Kept, opts: RenderOpts, t: Tick) -> (Image, Image, u64, u64) {
     let mut r = Renderer::new(&s.p, src, RenderOpts { backend: Backend::Gpu, ..opts });
     r.accel = Some(g);
-    let before = g.ctx.transfer_stats().uploads;
+    let before = g.ctx.counters().uploads;
     let on = g.render(&r, s.cid, t).expect("the GPU renders the frame");
-    let uploads = g.ctx.transfer_stats().uploads - before;
+    let uploads = g.ctx.counters().uploads - before;
     SHARED_PICTURES.store(false, std::sync::atomic::Ordering::Relaxed);
-    let before = g.ctx.transfer_stats().uploads;
+    let before = g.ctx.counters().uploads;
     let off = g.render(&r, s.cid, t);
-    let copied = g.ctx.transfer_stats().uploads - before;
+    let copied = g.ctx.counters().uploads - before;
     SHARED_PICTURES.store(true, std::sync::atomic::Ordering::Relaxed);
     (on, off.expect("the GPU renders the frame from per-layer copies"), uploads, copied)
 }

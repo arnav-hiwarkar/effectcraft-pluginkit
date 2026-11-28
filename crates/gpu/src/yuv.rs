@@ -12,8 +12,9 @@ pub(crate) struct YuvPipe {
 }
 
 impl YuvPipe {
-    pub(crate) fn new(device: &wgpu::Device) -> Result<YuvPipe, String> {
+    pub(crate) fn new(device: &wgpu::Device, counters: &crate::counters::Counters) -> Result<YuvPipe, String> {
         crate::context::init_resource(device, "yuv420", || {
+            counters.shader_module();
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("yuv420"),
                 source: wgpu::ShaderSource::Wgsl(include_str!("shaders/yuv.wgsl").into()),
@@ -44,6 +45,7 @@ impl YuvPipe {
             });
             let layout =
                 device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("yuv420"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
+            counters.compute_pipeline();
             let pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("yuv420"),
                 layout: Some(&layout),
@@ -139,6 +141,9 @@ pub(crate) fn record(e: &mut Enc, yp: &YuvPipe, img: &GpuImage, bg: [f32; 3]) ->
         }
         enc.copy_buffer_to_buffer(&out, 0, &stg, 0, size);
     }
+    g.counters.buffer(wgpu::BufferUsages::UNIFORM, params.len());
+    g.counters.dispatch();
+    g.counters.readback(size as usize);
     e.submit();
     Some(stg)
 }
@@ -211,13 +216,22 @@ pub(crate) mod tests {
     #[test]
     fn yuv420_matches_cpu() {
         let Some(g) = crate::tests::gpu() else { return };
-        let yp = super::YuvPipe::new(&g.ctx.device).expect("yuv420 pipe");
+        let yp = super::YuvPipe::new(&g.ctx.device, &g.ctx.counters).expect("yuv420 pipe");
         for (w, h, bg) in [(264u32, 150u32, [0.05, 0.1, 0.2]), (8, 2, [1.0, 1.0, 1.0]), (1928, 6, [0.0, 0.0, 0.0])] {
             let img = noise(w, h, w ^ (h << 16));
             let src = g.ctx.upload_image(&img).expect("upload");
             let got = super::convert(&mut crate::context::Enc::new(&g.ctx), &yp, &src, bg).expect("readback");
             assert_parity(g, &got, &cpu(&img, bg), 0.00005, &format!("noise {w}x{h}"));
         }
+    }
+
+    #[test]
+    fn building_the_pipe_counts_its_module_and_pipeline() {
+        let Some(g) = crate::tests::gpu() else { return };
+        let counters = crate::counters::Counters::default();
+        super::YuvPipe::new(&g.ctx.device, &counters).expect("yuv420 pipe");
+        let built = counters.snapshot();
+        assert!(built.shader_modules > 0 && built.compute_pipelines > 0, "{built:?}");
     }
 
     #[test]
@@ -247,7 +261,7 @@ pub(crate) mod tests {
         let required_limits = wgpu::Limits { max_storage_buffer_binding_size: 4096, max_buffer_size: 4096, ..def };
         let (device, queue) = pollster::block_on(adapter.request_device(&crate::context::device_descriptor(required_limits))).expect("limited device");
         let g = crate::Gpu::new(&adapter, device, queue).expect("limited Gpu");
-        let yp = super::YuvPipe::new(&g.ctx.device).expect("yuv420 pipe");
+        let yp = super::YuvPipe::new(&g.ctx.device, &g.ctx.counters).expect("yuv420 pipe");
         let src = g.ctx.upload_image(&noise(64, 64, 1)).expect("upload");
         assert!(super::convert(&mut crate::context::Enc::new(&g.ctx), &yp, &src, [0.0; 3]).is_none());
         assert!(g.ctx.check_health().is_ok());
@@ -256,7 +270,7 @@ pub(crate) mod tests {
     #[test]
     fn unsupported_sizes_are_not_converted() {
         let Some(g) = crate::tests::gpu() else { return };
-        let yp = super::YuvPipe::new(&g.ctx.device).expect("yuv420 pipe");
+        let yp = super::YuvPipe::new(&g.ctx.device, &g.ctx.counters).expect("yuv420 pipe");
         let src = g.ctx.upload_image(&noise(12, 4, 3)).expect("upload");
         assert!(super::convert(&mut crate::context::Enc::new(&g.ctx), &yp, &src, [0.0; 3]).is_none());
     }
@@ -374,7 +388,7 @@ mod tie_tests {
         eprintln!("Y tie pixels: {}, chroma tie blocks: {}", ties.len(), blocks.len());
         assert!(!blocks.is_empty());
         let Some(g) = crate::tests::gpu() else { return };
-        let yp = super::YuvPipe::new(&g.ctx.device).expect("yuv420 pipe");
+        let yp = super::YuvPipe::new(&g.ctx.device, &g.ctx.counters).expect("yuv420 pipe");
         let w = 1024usize;
         let h = (ties.len().div_ceil(w) + 1) & !1;
         let mut img = Image::new(w as u32, h as u32);

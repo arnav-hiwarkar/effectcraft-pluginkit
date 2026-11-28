@@ -1,0 +1,48 @@
+{
+  "cases": {
+    "gpu-stack-1080p": {
+      "counters": {
+        "buffer_upload_bytes": 64,
+        "buffer_uploads": 1,
+        "compute_pipelines": 0,
+        "dispatches": 10,
+        "draws": 0,
+        "loop_flag_reads": 2,
+        "plugin_layers_copied": 0,
+        "plugin_passes": 2,
+        "readback_bytes": 33177600,
+        "readbacks": 1,
+        "render_pipelines": 0,
+        "shader_modules": 0,
+        "uniform_buffers": 10,
+        "uniform_bytes": 4480,
+        "upload_bytes": 33177600,
+        "uploads": 1
+      },
+      "pixels": "7e81d5ae95b206fc",
+      "worst": 0.0
+    },
+    "mixed-stack-1080p": {
+      "counters": {
+        "buffer_upload_bytes": 64,
+        "buffer_uploads": 1,
+        "compute_pipelines": 0,
+        "dispatches": 10,
+        "draws": 0,
+        "loop_flag_reads": 2,
+        "plugin_layers_copied": 0,
+        "plugin_passes": 2,
+        "readback_bytes": 66933504,
+        "readbacks": 2,
+        "render_pipelines": 0,
+        "shader_modules": 0,
+        "uniform_buffers": 10,
+        "uniform_bytes": 4480,
+        "upload_bytes": 66933504,
+        "uploads": 2
+      },
+      "pixels": "0c032d1337da1b75",
+      "worst": 0.0
+    }
+  }
+}

@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="${1:-$ROOT/target/bench-projects}"
-CLI="$ROOT/target/debug/effectcraft-cli"
+source "$(dirname "$0")/lib.sh"
+OUT="${1:-$APP_TARGET/bench-projects}"
 N="${N:-30}"
 cd "$ROOT"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
 if [ -z "${SKIP_BUILD:-}" ]; then
-    for p in lumen-glow retro halo; do cargo run --quiet --package xtask -- plugin plugins/$p; done
-    cargo build -j 4 --quiet --package effectcraft-cli
+    for p in lumen-glow retro halo; do xtask_plugin plugins/$p; done
+    build_app_packages -j 4 --package effectcraft-cli
 fi
 export EFFECTCRAFT_CONFIG_DIR="$OUT/config"
 export TMPDIR="$OUT"

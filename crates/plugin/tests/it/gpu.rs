@@ -216,9 +216,9 @@ fn a_layer_input_stays_on_the_gpu_after_the_first_frame() {
         renderer.with_accel(Some(gpu)).comp_frame(comp, effectcraft_engine::time::Tick::from_seconds_f64(frame / 24.0))
     };
     let first = render(effectcraft_engine::render::Backend::Gpu, 0.0);
-    let (before, cached) = (gpu.context().transfer_stats(), cache.stats());
+    let (before, cached) = (gpu.context().counters(), cache.stats());
     let second = render(effectcraft_engine::render::Backend::Gpu, 1.0);
-    let (after, now) = (gpu.context().transfer_stats(), cache.stats());
+    let (after, now) = (gpu.context().counters(), cache.stats());
     assert_eq!(
         (now.misses - cached.misses, now.hits - cached.hits),
         (1, 1),
