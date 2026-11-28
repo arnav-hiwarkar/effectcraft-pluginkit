@@ -904,6 +904,13 @@ fn recover(registry: &mut Registry) -> Result<(), BundleError> {
     Ok(())
 }
 
+fn readable(source: &mut Registry) -> Result<(), BundleError> {
+    match source.disable("") {
+        Ok(()) | Err(BundleError::NotInstalled(_)) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let backup = legacy.with_extension("migrated");
     if !legacy.is_dir() || backup.exists() {
@@ -924,6 +931,7 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
     target.set_revocations(craft_ext_market::cached_revocations(suite));
     recover(&mut target)?;
     let mut source = Registry::open(legacy);
+    readable(&mut source)?;
     recover(&mut source)?;
     let existing = Registry::for_app(suite, APP_ID);
     let mut retry = false;
@@ -933,11 +941,6 @@ fn migrate(legacy: &Path, suite: &Path) -> Result<(), Box<dyn std::error::Error>
             retry = true;
             log::warn!("a plug-in in the old store was not moved into the shared store: {error}");
         }
-    }
-    if !legacy.join(craft_ext_store::STORE_FILE).is_file()
-        && fs::read_dir(legacy)?.filter_map(Result::ok).any(|entry| entry.path().join("plugin.json").is_file())
-    {
-        return Err("the registry could not convert the old plug-in folder".into());
     }
     if !retry {
         fs::rename(legacy, backup)?;
@@ -1251,6 +1254,32 @@ mod tests {
         std::fs::create_dir_all(&legacy).unwrap();
         migrate(&legacy, &suite).unwrap();
         assert!(legacy.is_dir());
+    }
+
+    #[test]
+    fn a_truncated_old_store_is_kept_and_migrated_on_a_later_launch() {
+        let root = tempfile::tempdir().unwrap();
+        let (legacy, suite) = (root.path().join("Plugins"), root.path().join("suite"));
+        let id = "test.truncated-store";
+        let mut old = Registry::open(&legacy);
+        let installed = old.install(&data_bundle(root.path(), id)).unwrap();
+        old.approve(&installed).unwrap();
+        drop(old);
+        let store = legacy.join(craft_ext_store::STORE_FILE);
+        let whole = fs::read(&store).unwrap();
+        fs::write(&store, &whole[..whole.len() / 2]).unwrap();
+
+        assert!(migrate(&legacy, &suite).is_err());
+
+        assert_eq!(fs::read(&store).unwrap(), &whole[..whole.len() / 2]);
+        assert!(!legacy.with_extension("migrated").exists());
+        assert!(Registry::for_app(&suite, APP_ID).current(id).is_none());
+
+        fs::write(&store, &whole).unwrap();
+        migrate(&legacy, &suite).unwrap();
+
+        assert!(Registry::for_app(&suite, APP_ID).consent(id).is_some_and(|consent| consent.enabled));
+        assert!(!legacy.exists() && legacy.with_extension("migrated").is_dir());
     }
 
     #[test]
