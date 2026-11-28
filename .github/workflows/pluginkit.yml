@@ -82,6 +82,24 @@ jobs:
       - name: GPU plugin tests
         run: cargo test -p effectcraft-gpu --lib plugin
 
+  gpu-bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: gpu-bench
+      - name: GPU counters and pixels of the plugin stacks against the baseline
+        run: cargo run --quiet -p effectcraft-plugin --example gpu_bench -- --json gpu-bench-out.json --check bench/gpu-baseline.json
+      - name: Upload the measured counters
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-bench-out
+          path: gpu-bench-out.json
+          if-no-files-found: ignore
+
   ui:
     name: ui (${{ matrix.partition }}/3)
     runs-on: ubuntu-24.04
