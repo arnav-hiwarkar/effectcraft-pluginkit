@@ -28,14 +28,16 @@ work from the registry entry.
 | `effectcraft-plugin` | `crates/plugin` | Connects the runtime to EffectCraft: effects, engine commands, and the file rules. |
 | `craft-plugin-ui` | craft-extensions `crates/plugin-ui` | Draws plugin panels, custom controls and viewer marks in egui. The app passes its theme, translations, textures and drag payloads through a `Host`. |
 
-EffectCraft gets the SDK, host, and painter from the `kit` branch of
-[craft-extensions-plugin-beta](https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta).
-`Cargo.lock` records the commit. After the kit changes land, update the app's three packages
-with `cargo update -p craft-plugin -p craft-plugin-host -p craft-plugin-ui`.
+EffectCraft gets the SDK, host, painter and store from
+[craft-extensions-plugin-beta](https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta),
+every crate pinned by the same `rev` in the workspace `Cargo.toml`. To move to a newer kit
+commit, change every `rev`, then run `cargo update` with `-p` for each `craft-plugin*` and
+`craft-ext*` package.
 
 `cargo xtask plugin new` reads the kit source from the app's workspace manifest. The
 standalone reference plugins keep their pinned SDK revision. `cargo xtask kit-rev --check`
-checks that standalone manifests using the old source agree on that revision.
+fails when any manifest pins the kit by branch or tag, when kit crates or `Cargo.lock` name
+different revisions, or when standalone manifests using the old source disagree.
 `cargo xtask kit-rev <sha>` updates those manifests and their lockfiles.
 
 ## How the app and a plugin talk

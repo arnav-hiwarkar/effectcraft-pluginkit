@@ -61,14 +61,14 @@ effectcraft-svg = { path = "crates/svg" }
 effectcraft-engine = { path = "crates/engine" }
 effectcraft-host = { path = "crates/host" }
 effectcraft-plugin = { path = "crates/plugin" }
-craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
-craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
-craft-plugin-ui = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
-craft-plugin-helper = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
-craft-ext-core = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
-craft-ext-store = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
-craft-ext-market = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
-craft-ext-manager = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit", features = ["ui", "store"] }
+craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", rev = "df49f495554a86c01a30c9ea0795a7ae7884383b" }
+craft-plugin-host = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", rev = "df49f495554a86c01a30c9ea0795a7ae7884383b" }
+craft-plugin-ui = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", rev = "df49f495554a86c01a30c9ea0795a7ae7884383b" }
+craft-plugin-helper = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", rev = "df49f495554a86c01a30c9ea0795a7ae7884383b" }
+craft-ext-core = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", rev = "df49f495554a86c01a30c9ea0795a7ae7884383b" }
+craft-ext-store = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", rev = "df49f495554a86c01a30c9ea0795a7ae7884383b" }
+craft-ext-market = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", rev = "df49f495554a86c01a30c9ea0795a7ae7884383b" }
+craft-ext-manager = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", rev = "df49f495554a86c01a30c9ea0795a7ae7884383b", features = ["ui", "store"] }
 effectcraft-ui-egui = { path = "crates/ui-egui" }
 effectcraft-automation = { path = "crates/automation" }
 effectcraft-script = { path = "crates/script" }

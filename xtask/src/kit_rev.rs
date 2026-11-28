@@ -40,38 +40,64 @@ fn bump(root: &Path, sha: &str, refresh: bool) -> Result<(), String> {
 }
 
 fn check(root: &Path) -> Result<(), String> {
-    let manifests = kit_manifests(root)?;
-    let workspace = root.join("Cargo.toml");
-    let workspace = std::fs::read_to_string(&workspace).map_err(|e| format!("Cargo.toml: {e}"))?;
-    let want = match pinned_revs(&workspace).into_iter().next() {
-        Some(rev) => rev,
-        None if moved_kit(&workspace) => {
-            let manifest = manifests.first().ok_or("kit-rev: no standalone manifests pin the old kit")?;
-            let text = std::fs::read_to_string(manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
-            pinned_revs(&text).into_iter().next().ok_or("kit-rev: the standalone kit revision is missing")?
-        }
+    let workspace = std::fs::read_to_string(root.join("Cargo.toml")).map_err(|e| format!("Cargo.toml: {e}"))?;
+    let want = match kit_pins(&workspace).into_iter().next() {
+        Some(Ok(rev)) => rev,
+        Some(Err(line)) => return Err(format!("kit-rev: Cargo.toml pins the kit by branch or tag, not `rev`: {line}")),
         None => return Err("kit-rev: the workspace Cargo.toml has no kit source".into()),
     };
-    let mut drift = Vec::new();
-    for manifest in &manifests {
-        let text = std::fs::read_to_string(manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
-        let other: Vec<String> = pinned_revs(&text).into_iter().filter(|r| *r != want).collect();
-        if !other.is_empty() {
-            drift.push(format!("{} pins {}", display(root, manifest), other.join(", ")));
+    let mut problems = Vec::new();
+    let mut standalone: Option<(String, PathBuf)> = None;
+    for manifest in manifests(root)? {
+        let text = std::fs::read_to_string(&manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
+        let name = display(root, &manifest);
+        for pin in kit_pins(&text) {
+            match pin {
+                Ok(rev) if rev == want => {}
+                Ok(rev) => problems.push(format!("{name} pins the kit at {rev}, not {want}")),
+                Err(line) => problems.push(format!("{name} pins the kit by branch or tag, not `rev`: {line}")),
+            }
+        }
+        for rev in pinned_revs(&text) {
+            match &standalone {
+                None => standalone = Some((rev, manifest.clone())),
+                Some((first, at)) if *first != rev => problems.push(format!("{name} pins the old kit at {rev}, but {} pins {first}", display(root, at))),
+                Some(_) => {}
+            }
         }
     }
-    if drift.is_empty() {
-        println!("kit-rev: {} manifests all pin {want}", manifests.len());
+    let lock = std::fs::read_to_string(root.join("Cargo.lock")).unwrap_or_default();
+    let locked = format!("git+{MOVED_KIT_URL}?rev={want}#{want}");
+    let kit_source = format!("git+{MOVED_KIT_URL}");
+    for source in lock.lines().filter_map(|line| line.trim().strip_prefix("source = \"")?.strip_suffix('"')) {
+        if source.starts_with(&kit_source) && source != locked {
+            problems.push(format!("Cargo.lock has the kit from {source}, not {locked}"));
+        }
+    }
+    problems.dedup();
+    if problems.is_empty() {
+        println!("kit-rev: the kit is pinned at {want} everywhere");
         return Ok(());
     }
-    Err(format!("kit-rev: the expected standalone pin is {want} but {}; run `cargo xtask kit-rev {want}` or bump all together", drift.join("; ")))
+    Err(format!("kit-rev: {}", problems.join("; ")))
 }
 
-fn moved_kit(workspace: &str) -> bool {
-    KIT_PACKAGES.iter().all(|package| {
-        let prefix = format!("{package} = ");
-        workspace.lines().any(|line| line.starts_with(&prefix) && line.contains(MOVED_KIT_URL) && line.contains("branch = \"kit\""))
-    })
+fn kit_pins(text: &str) -> Vec<Result<String, String>> {
+    let source = format!("git = \"{MOVED_KIT_URL}\"");
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with('#') && line.contains(&source))
+        .map(|line| match rev_span(line) {
+            Some((a, b)) if !line.contains("branch = ") && !line.contains("tag = ") => Ok(line[a..b].to_string()),
+            _ => Err(line.trim().to_string()),
+        })
+        .collect()
+}
+
+fn manifests(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut found = Vec::new();
+    walk(root, &mut found, &|_| true)?;
+    found.sort();
+    Ok(found)
 }
 
 fn display(root: &Path, path: &Path) -> String {
@@ -80,20 +106,20 @@ fn display(root: &Path, path: &Path) -> String {
 
 fn kit_manifests(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut found = Vec::new();
-    walk(root, &mut found)?;
+    walk(root, &mut found, &|text| !pinned_revs(text).is_empty())?;
     found.sort();
     Ok(found)
 }
 
-fn walk(dir: &Path, found: &mut Vec<PathBuf>) -> Result<(), String> {
+fn walk(dir: &Path, found: &mut Vec<PathBuf>, keep: &dyn Fn(&str) -> bool) -> Result<(), String> {
     for entry in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.is_dir() {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !SKIPPED_DIRS.contains(&name) {
-                walk(&path, found)?;
+                walk(&path, found, keep)?;
             }
-        } else if path.file_name().is_some_and(|n| n == "Cargo.toml") && !pinned_revs(&std::fs::read_to_string(&path).unwrap_or_default()).is_empty() {
+        } else if path.file_name().is_some_and(|n| n == "Cargo.toml") && keep(&std::fs::read_to_string(&path).unwrap_or_default()) {
             found.push(path);
         }
     }
@@ -168,9 +194,24 @@ mod tests {
         )
     }
 
+    const KIT: &str = "4444444444444444444444444444444444444444";
+
+    fn kit_dep(package: &str, pin: &str) -> String {
+        format!("{package} = {{ git = \"{MOVED_KIT_URL}\", {pin} }}\n")
+    }
+
+    fn lock(rev: &str) -> String {
+        format!("[[package]]\nname = \"craft-plugin\"\nversion = \"0.1.0\"\nsource = \"git+{MOVED_KIT_URL}?rev={rev}#{rev}\"\n")
+    }
+
     fn fixture(second_rev: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("Cargo.toml"), manifest(OLD)).unwrap();
+        let pin = format!("rev = \"{KIT}\"");
+        let workspace = format!("{}{}{}", manifest(OLD), kit_dep("craft-plugin", &pin), kit_dep("craft-ext-store", &pin));
+        std::fs::write(dir.path().join("Cargo.toml"), workspace).unwrap();
+        std::fs::write(dir.path().join("Cargo.lock"), lock(KIT)).unwrap();
+        std::fs::create_dir_all(dir.path().join("crates/probe")).unwrap();
+        std::fs::write(dir.path().join("crates/probe/Cargo.toml"), kit_dep("craft-plugin", &pin)).unwrap();
         std::fs::create_dir_all(dir.path().join("plugins/a")).unwrap();
         std::fs::write(dir.path().join("plugins/a/Cargo.toml"), manifest(second_rev)).unwrap();
         std::fs::create_dir_all(dir.path().join("target/x")).unwrap();
@@ -198,6 +239,37 @@ mod tests {
         let e = check(dir.path()).unwrap_err();
         assert!(e.contains("plugins/a/Cargo.toml") && !e.contains("target"), "{e}");
         assert!(e.contains(OLD) && e.contains("3333333333333333333333333333333333333333"), "{e}");
+    }
+
+    #[test]
+    fn check_refuses_a_branch_pin_of_the_kit() {
+        let dir = fixture(OLD);
+        let manifest = dir.path().join("crates/probe/Cargo.toml");
+        std::fs::write(&manifest, kit_dep("craft-plugin", "branch = \"kit\"")).unwrap();
+        let e = check(dir.path()).unwrap_err();
+        assert!(e.contains("crates/probe/Cargo.toml") && e.contains("branch"), "{e}");
+
+        let workspace = dir.path().join("Cargo.toml");
+        let text = std::fs::read_to_string(&workspace).unwrap().replace(&format!("rev = \"{KIT}\""), "branch = \"kit\"");
+        std::fs::write(&workspace, text).unwrap();
+        assert!(check(dir.path()).is_err());
+    }
+
+    #[test]
+    fn check_refuses_kit_crates_at_different_revs() {
+        let dir = fixture(OLD);
+        assert!(check(dir.path()).is_ok(), "{:?}", check(dir.path()));
+
+        let workspace = dir.path().join("Cargo.toml");
+        let text = std::fs::read_to_string(&workspace).unwrap();
+        std::fs::write(&workspace, format!("{text}{}", kit_dep("craft-ext-market", &format!("rev = \"{NEW}\"")))).unwrap();
+        let e = check(dir.path()).unwrap_err();
+        assert!(e.contains(NEW) && e.contains(KIT), "{e}");
+
+        std::fs::write(&workspace, text).unwrap();
+        std::fs::write(dir.path().join("Cargo.lock"), format!("{}{}", lock(KIT), lock(NEW).replace("craft-plugin", "craft-ext-store"))).unwrap();
+        let e = check(dir.path()).unwrap_err();
+        assert!(e.contains("Cargo.lock") && e.contains(NEW), "{e}");
     }
 
     #[test]

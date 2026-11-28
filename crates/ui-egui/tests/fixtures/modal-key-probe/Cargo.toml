@@ -8,6 +8,6 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", branch = "kit" }
+craft-plugin = { git = "https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta", rev = "df49f495554a86c01a30c9ea0795a7ae7884383b" }
 
 [workspace]

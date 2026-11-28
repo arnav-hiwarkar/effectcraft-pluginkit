@@ -785,10 +785,11 @@ impl Plugins {
                     context: c
                         .context
                         .iter()
-                        .map(|context| match context {
-                            craft_plugin_host::ui::Context::Layers => PluginContext::Layers,
-                            craft_plugin_host::ui::Context::Timeline => PluginContext::Timeline,
-                            craft_plugin_host::ui::Context::Viewer => PluginContext::Viewer,
+                        .filter_map(|context| match context {
+                            craft_plugin_host::ui::Context::Layers => Some(PluginContext::Layers),
+                            craft_plugin_host::ui::Context::Timeline => Some(PluginContext::Timeline),
+                            craft_plugin_host::ui::Context::Viewer => Some(PluginContext::Viewer),
+                            craft_plugin_host::ui::Context::Unknown => None,
                         })
                         .collect(),
                     toolbar: c.toolbar,
