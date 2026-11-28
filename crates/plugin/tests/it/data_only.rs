@@ -75,6 +75,37 @@ fn dir_of(dir: &Path, file: &str) -> String {
 }
 
 #[test]
+fn stable_and_legacy_lut_values_resolve_against_the_approved_release_after_collection() {
+    let _exclusive = super::exclusive();
+    let root = tempfile::tempdir().unwrap();
+    let plugins = Plugins::open(&root.path().join("Plugins"), false);
+    let id = "test.data-lut-update";
+    let (_source, dir) = pack(id, &[("look.cube", SWAP_RED_AND_BLUE)], json!([]));
+    let old = plugins.install(&dir).unwrap();
+    let legacy = dir_of(&old.path, "look.cube");
+    let stable = contributed::luts().into_iter().find(|lut| lut.owner == id).unwrap().reference();
+    let load = |src| effectcraft_engine::effects::load_lut(src).map(|lut| lut.apply([1.0, 0.0, 0.0]));
+    assert_eq!(load(&stable), Some([0.0, 0.0, 1.0]));
+
+    let manifest = dir.join("plugin.json");
+    let mut contents: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    contents["version"] = json!("2.0.0");
+    std::fs::write(manifest, contents.to_string()).unwrap();
+    std::fs::write(dir.join("look.cube"), "LUT_1D_SIZE 2\n0 0 0\n1 1 1\n").unwrap();
+    plugins.install(&dir).unwrap();
+    let (_other, other) = pack("test.data-trigger-collection", &[("other.cube", SWAP_RED_AND_BLUE)], json!([]));
+    plugins.install(&other).unwrap();
+    assert!(!old.path.exists());
+
+    assert_eq!(load(&stable), Some([1.0, 0.0, 0.0]));
+    assert_eq!(load(&legacy), load(&stable));
+    plugins.uninstall(id).unwrap();
+    assert_eq!(load(&stable), None);
+    assert_eq!(load(&legacy), None);
+    plugins.uninstall("test.data-trigger-collection").unwrap();
+}
+
+#[test]
 fn a_data_only_bundle_survives_a_restart_without_asking_again() {
     let _exclusive = super::exclusive();
     let id = "test.data-restart";
@@ -127,11 +158,7 @@ fn a_preset_may_name_only_files_inside_its_own_bundle() {
     app.plugins.install(&dir).unwrap();
     let presets = effectcraft_engine::effects::presets("ec.utility.applylut");
     let (_, values) = presets.iter().find(|(name, _)| name == "Look").unwrap();
-    let path = std::fs::canonicalize(
-        effectcraft_plugin::Plugins::list(app.plugins).iter().find(|info| info.id == "test.preset-file-inside").unwrap().path.join("swap.cube"),
-    )
-    .unwrap();
-    assert_eq!(values[0].1, effectcraft_engine::keyframe::Value::Str(path.to_string_lossy().into_owned()));
+    assert_eq!(values[0].1, effectcraft_engine::keyframe::Value::Str("craft-lut:test.preset-file-inside/swap.cube".into()));
     app.plugins.uninstall("test.preset-file-inside").unwrap();
 }
 

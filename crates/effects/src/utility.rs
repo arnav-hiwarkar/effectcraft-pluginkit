@@ -428,6 +428,8 @@ pub fn lut_file(src: &str) -> Option<&str> {
 /// from (an OCIO config's also the LUTs it names, and the places it looked for missing ones; an
 /// `.ocio` config not read yet is read), else the file it names.
 pub fn lut_files(src: &str) -> Vec<String> {
+    let Some(resolved) = crate::contributed::resolve_lut(src) else { return Vec::new() };
+    let src = resolved.as_ref();
     // A config not read yet is read now: the LUTs it names are its files from the first render.
     if crate::ocio_config::cached_files(src).is_none()
         && lut_file(src).is_some_and(|p| std::path::Path::new(p).extension().is_some_and(|e| e.eq_ignore_ascii_case("ocio")))
@@ -444,6 +446,8 @@ pub fn lut_files(src: &str) -> Vec<String> {
 /// `metadata` call) on every load and read again once its size or modification time moved (see
 /// [`crate::file_cache`]); inline text is its own content.
 pub fn load_lut(src: &str) -> Option<Arc<Lut>> {
+    let resolved = crate::contributed::resolve_lut(src)?;
+    let src = resolved.as_ref();
     if src.trim().is_empty() {
         return None;
     }

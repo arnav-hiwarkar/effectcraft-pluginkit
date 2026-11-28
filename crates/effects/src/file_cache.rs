@@ -346,8 +346,12 @@ fn follow(files: &Files, stale: bool) {
         followed().trim(&held, files);
     }
     if moved || stale {
-        GENERATION.fetch_add(1, Ordering::AcqRel);
+        invalidate_lut_frames();
     }
+}
+
+pub(crate) fn invalidate_lut_frames() {
+    GENERATION.fetch_add(1, Ordering::AcqRel);
 }
 
 /// Changes each time a file a cached load read is found changed on disk (by a load itself or
@@ -376,7 +380,7 @@ pub fn check_lut_files() -> u64 {
         for c in &caches {
             c.forget_file(&path);
         }
-        GENERATION.fetch_add(1, Ordering::AcqRel);
+        invalidate_lut_frames();
     }
     lut_generation()
 }

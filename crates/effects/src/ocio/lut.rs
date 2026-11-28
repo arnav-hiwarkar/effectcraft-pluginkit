@@ -224,6 +224,8 @@ pub(crate) fn cached_files(src: &str) -> Option<Vec<String>> {
 /// `metadata` call) on every load and read again once its size or modification time moved (see
 /// [`crate::file_cache`]); inline content is its own content.
 pub fn load_file(src: &str) -> Option<Arc<FileXform>> {
+    let resolved = crate::contributed::resolve_lut(src)?;
+    let src = resolved.as_ref();
     let src_t = src.trim();
     if src_t.is_empty() {
         return None;

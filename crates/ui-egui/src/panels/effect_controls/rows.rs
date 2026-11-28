@@ -519,10 +519,10 @@ fn value_file(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value: &
         }
     }
     app.auto.add(&format!("effectControls.prop.{uid}.choose"), br, &prop.name);
-    let library = match &prop.ui {
-        ParamUi::File { filters } if filters.iter().any(|f| f == "cube") => effectcraft_engine::effects::contributed::luts(),
-        _ => Vec::new(),
-    };
+    use effectcraft_engine::effects::contributed;
+    let cube = matches!(&prop.ui, ParamUi::File { filters } if filters.iter().any(|f| f == "cube"));
+    let library = if cube { contributed::luts() } else { Vec::new() };
+    let resolved = cube.then(|| contributed::resolve_lut(s)).flatten();
     let mut name_x = br.max.x + 8.0;
     if !library.is_empty() {
         let lr = Rect::from_min_size(pos2(br.max.x + 6.0, cy - 9.0), vec2(64.0, 18.0));
@@ -534,17 +534,19 @@ fn value_file(app: &mut EffectcraftApp, ui: &mut egui::Ui, cx: &PropCx, value: &
         app.auto.add(&format!("effectControls.prop.{uid}.library"), lr, &prop.name);
         let names: Vec<String> = library.iter().map(|lut| lut.name.clone()).collect();
         let entry_ids: Vec<String> = library.iter().map(|lut| format!("effectControls.prop.{uid}.library.{}.{}", lut.owner, lut.name)).collect();
-        let current = library.iter().position(|lut| &lut.path == s);
+        let current = library.iter().position(|lut| resolved.as_deref() == Some(&lut.path));
         if let Some(i) = widgets::popup_menu_named(ui, pop, lr.left_bottom(), &names, current, Some((&mut app.auto, &entry_ids))) {
-            actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": uid, "value": library[i].path})));
+            actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": uid, "value": library[i].reference()})));
         }
     }
     let shown = if s.trim().is_empty() {
         crate::i18n::tr("None").to_string()
     } else if s.contains('\n') {
         prop.name.clone()
+    } else if cube && resolved.is_none() && contributed::is_lut_reference(s) {
+        format!("{} · {}", crate::i18n::tr("Missing LUT"), effectcraft_engine::sequence::file_name(s))
     } else {
-        effectcraft_engine::sequence::file_name(s)
+        effectcraft_engine::sequence::file_name(resolved.as_deref().unwrap_or(s))
     };
     let nr = Rect::from_min_max(pos2(name_x, r.min.y), pos2(r.max.x - 8.0, r.max.y));
     let np = p.with_clip_rect(nr.intersect(p.clip_rect()));

@@ -9,7 +9,7 @@ const MAX_LUT_BYTES: u64 = 256 << 20;
 
 pub(crate) struct Checked {
     presets: Vec<(String, String, contributed::PresetValues)>,
-    luts: Vec<(String, String)>,
+    luts: Vec<(String, String, String)>,
 }
 
 pub(crate) fn check(bundle: &Bundle) -> Result<Checked, String> {
@@ -87,7 +87,7 @@ fn wanted(default: &Value) -> &'static str {
     }
 }
 
-fn lut(bundle: &Bundle, file: &str) -> Result<(String, String), String> {
+fn lut(bundle: &Bundle, file: &str) -> Result<(String, String, String), String> {
     let path = bundle.dir.join(file);
     let size = std::fs::metadata(&path).map_err(|e| format!("LUT `{file}`: {e}"))?.len();
     if size > MAX_LUT_BYTES {
@@ -98,7 +98,7 @@ fn lut(bundle: &Bundle, file: &str) -> Result<(String, String), String> {
         format!("LUT `{file}` is not a valid .cube file: it needs LUT_1D_SIZE or LUT_3D_SIZE (2 to 256) and exactly that many rows of three numbers")
     })?;
     let stem = file.strip_suffix(".cube").or_else(|| file.strip_suffix(".CUBE")).unwrap_or(file);
-    Ok((format!("{} / {stem}", bundle.manifest.name), path.to_string_lossy().into_owned()))
+    Ok((format!("{} / {stem}", bundle.manifest.name), file.into(), path.to_string_lossy().into_owned()))
 }
 
 fn bundle_file(bundle: &Bundle, text: &str) -> Result<String, String> {
@@ -118,6 +118,9 @@ fn bundle_file(bundle: &Bundle, text: &str) -> Result<String, String> {
     let size = std::fs::metadata(&path).map_err(outside)?.len();
     if size > MAX_LUT_BYTES {
         return Err(format!("`{text}` is {size} bytes; the limit is {MAX_LUT_BYTES}"));
+    }
+    if let Some(file) = bundle.manifest.contributes.luts.iter().find(|file| Path::new(file) == relative) {
+        return Ok(contributed::lut_reference(&bundle.manifest.id, file));
     }
     Ok(path.to_string_lossy().into_owned())
 }

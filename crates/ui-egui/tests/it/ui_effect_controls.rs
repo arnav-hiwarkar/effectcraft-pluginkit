@@ -1870,7 +1870,11 @@ fn a_missing_plugin_effect_shows_a_placeholder_with_a_find_action_and_keeps_its_
 fn lut_library_opens_by_keyboard_and_entries_are_chosen_by_id() {
     use effectcraft_engine::effects::contributed;
     let owner = "lut-library-ids-test";
-    contributed::replace(owner, Vec::new(), vec![("warm".into(), "/packs/warm.cube".into()), ("cool".into(), "/packs/cool.cube".into())]);
+    contributed::replace(
+        owner,
+        Vec::new(),
+        vec![("warm".into(), "warm.cube".into(), "/packs/warm.cube".into()), ("cool".into(), "cool.cube".into(), "/packs/cool.cube".into())],
+    );
     let mut s = Session::default();
     s.execute("comp.new", json!({"name": "Main", "width": 64, "height": 36, "frameRate": 30, "duration": 2})).unwrap();
     let lid = s.execute("layer.newSolid", json!({"name": "Grey", "color": "#808080"})).unwrap()["layer"].as_u64().unwrap();
@@ -1902,7 +1906,7 @@ fn lut_library_opens_by_keyboard_and_entries_are_chosen_by_id() {
     let at = rect_of(&h, &entry).center();
     click(&mut h, at);
     h.run_steps(3);
-    assert_eq!(value(&h), "/packs/cool.cube");
+    assert_eq!(value(&h), "craft-lut:lut-library-ids-test/cool.cube");
     h.get_by_label("Library").focus();
     h.run_steps(2);
     h.key_press(egui::Key::Enter);
@@ -1911,8 +1915,18 @@ fn lut_library_opens_by_keyboard_and_entries_are_chosen_by_id() {
     h.run_steps(2);
     h.key_press(egui::Key::Enter);
     h.run_steps(3);
-    assert_eq!(value(&h), "/packs/warm.cube");
+    assert_eq!(value(&h), "craft-lut:lut-library-ids-test/warm.cube");
     contributed::remove(owner);
+    h.run_steps(3);
+    assert_eq!(value(&h), "craft-lut:lut-library-ids-test/warm.cube");
+    assert!(
+        h.state()
+            .auto
+            .previous
+            .iter()
+            .chain(&h.state().auto.elements)
+            .any(|element| { element.id == format!("effectControls.prop.{prop}.value") && element.label == "Missing LUT · warm.cube" })
+    );
 }
 
 #[test]
