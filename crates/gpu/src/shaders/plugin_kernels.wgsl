@@ -461,7 +461,7 @@ fn craft_flow_track(@builtin(global_invocation_id) id: vec3<u32>) {
     let det = sxx * syy - xy * xy;
     let nu = xy * yt - syy * xt;
     let nv = xy * xt - sxx * yt;
-    let largest = 3.40282347e+38;
+    let largest = 3.4028234663852886e38;
     if (!(det > 0.0 && det <= largest && abs(nu) <= largest && abs(nv) <= largest)) {
         store(id.xy, vec4<f32>(start, 0.0, 1.0));
         return;
