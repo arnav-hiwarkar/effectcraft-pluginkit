@@ -36,15 +36,6 @@ assert plugins and not stopped, f"plugins not running: {stopped}"
 print("PASS", len(plugins), "plugins running:", ", ".join(p["id"] for p in plugins))
 PY
 
-stored_frames=()
-golden() {
-    local plugin="$1" name="$2"
-    shift 2
-    stored_frames+=("plugins/$plugin/tests/frames/$name.png")
-    xtask_plugin render "plugins/$plugin" "$@" --compare "plugins/$plugin/tests/frames/$name.png" --out "$OUT/golden/$plugin-$name.png" > /dev/null
-    echo "PASS $plugin $name matches its stored frame"
-}
-
 render() {
     local name="$1" effect="$2"
     shift 2
@@ -62,18 +53,6 @@ render() {
 
 render plasma-beam org.craftkit.plasma-beam.beam layer.newSolid '{"name":"Dark","color":"#05060a"}'
 render lumen-glow org.craftkit.lumen-glow.glow layer.newText '{"text":"GLOW","size":160}'
-
-source "$PLUGINS_DIR/goldens.sh"
-
-for stored in plugins/*/tests/frames/*.png; do
-    case " ${stored_frames[*]} " in
-        *" $stored "*) ;;
-        *)
-            echo "FAIL $stored has no golden line in plugins/goldens.sh"
-            exit 1
-            ;;
-    esac
-done
 
 "$PLUGINS_DIR/glide/verify.sh"
 "$PLUGINS_DIR/pulse/verify.sh"

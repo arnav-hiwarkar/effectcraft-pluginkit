@@ -1,3 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+OUT="${1:-$APP_TARGET/plugin-goldens}"
+cd "$ROOT"
+rm -rf "$OUT"
+mkdir -p "$OUT"
+
+stored_frames=()
+golden() {
+    local plugin="$1" name="$2"
+    shift 2
+    stored_frames+=("plugins/$plugin/tests/frames/$name.png")
+    xtask_plugin render "plugins/$plugin" "$@" --compare "plugins/$plugin/tests/frames/$name.png" --out "$OUT/golden/$plugin-$name.png" > /dev/null
+    echo "PASS $plugin $name: the kit test harness render matches its stored frame"
+}
+
 golden cookbook tint --effect tint --set amount=100
 golden cookbook blur-checker --effect blur --pattern checker --size 160x90 --set radius=6
 golden cookbook glow --effect glow --set radius=24
@@ -18,3 +35,13 @@ golden plasma-beam electric-distorted --effect beam --time 1.25 --set preset=2 -
 golden retro crt-default --effect crt --set Screen/curvature=0.1 --set Signal/noise=0
 golden retro crt-slot-wide-glow --effect crt --set Mask/mask=1 --set 'Phosphor Glow/glow_radius=45' --set Signal/noise=0
 golden retro neon --effect neon --set Bloom/intensity=3
+
+for stored in plugins/*/tests/frames/*.png; do
+    case " ${stored_frames[*]} " in
+        *" $stored "*) ;;
+        *)
+            echo "FAIL $stored has no golden line in plugins/goldens.sh"
+            exit 1
+            ;;
+    esac
+done

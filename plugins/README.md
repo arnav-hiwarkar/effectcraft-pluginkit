@@ -148,7 +148,11 @@ plugin under a name that clashes with a type the templates or the SDK use (`sett
 stops if one of those folders already exists.
 
 `plugins/e2e.sh` builds every plugin here, installs Plasma Beam from its `.craftplugin` file, loads the other
-bundles in `effectcraft-cli`, renders a frame with each effect and runs `glide/verify.sh`.
+bundles in `effectcraft-cli`, renders a frame with each effect and runs `glide/verify.sh` and `pulse/verify.sh`.
+`plugins/goldens.sh` renders each stored frame in `plugins/*/tests/frames/` through the kit's test harness
+(`cargo xtask plugin render --compare`), not through EffectCraft's renderer, and fails when one differs or has no
+line in the script. `plugins/relock-checks.py` relocks the check crates at the workspace's kit revision;
+`--check` only verifies, and also fails when a plugin manifest pins a different kit repository or revision.
 
 Forge 3D draws only on the GPU: with GPU Acceleration off it leaves the layer as it is. Files in a plugin's
 `assets/` folder are copied into its bundle; Forge 3D reads `assets/gem.obj` from there. That model is our

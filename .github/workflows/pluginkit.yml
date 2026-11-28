@@ -128,11 +128,10 @@ jobs:
           cache-key: plugins
       - name: Plugins end to end
         run: ./plugins/e2e.sh
-      - name: Plugin check crates keep a current lock file
-        run: |
-          for manifest in plugins/*/check/Cargo.toml; do
-            cargo metadata --locked --format-version 1 --manifest-path "$manifest" > /dev/null || { echo "$manifest: its Cargo.lock is stale; run plugins/relock-checks.py and commit the result"; exit 1; }
-          done
+      - name: Reference plugin frames through the kit test harness
+        run: ./plugins/goldens.sh
+      - name: Plugin manifests pin the workspace kit and check crates keep a current lock file
+        run: python3 plugins/relock-checks.py --check
       - name: New plugin templates and the cookbook
         run: ./plugins/new-plugin-check.sh
       - name: Plugin crate tests
