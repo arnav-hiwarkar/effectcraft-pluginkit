@@ -104,6 +104,10 @@ fn open(hold: Hold, id: &str, permissions: &[&str]) -> App {
     App { session, plugins, bundle, id: id.to_string(), _hold: hold }
 }
 
+fn approve(plugins: &Plugins, shown: &effectcraft_plugin::PluginInfo) -> effectcraft_plugin::PluginInfo {
+    plugins.approve(&shown.id, shown.digest.as_deref().unwrap(), shown.installation.as_deref().unwrap()).unwrap()
+}
+
 impl App {
     fn run(&mut self, command: &str) -> Result<(), String> {
         effectcraft_plugin::run_command(&mut self.session, &self.id, command)

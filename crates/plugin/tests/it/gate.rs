@@ -230,17 +230,18 @@ fn changing_how_an_updated_plugin_runs_does_not_grant_permissions_the_user_has_n
         std::fs::write(source.path().join("plugin.json"), manifest.to_string()).unwrap();
     };
     write("1.0.0", &[]);
-    app.plugins.install(source.path()).unwrap();
-    app.plugins.approve(id).unwrap();
+    let shown = app.plugins.install(source.path()).unwrap();
+    super::approve(app.plugins, &shown);
     assert!(app.plugins.get(id).is_some());
 
     write("1.1.0", &["document.read"]);
-    app.plugins.install(source.path()).unwrap();
-    assert!(app.plugins.get(id).is_none(), "the update waits for approval");
+    let pending = app.plugins.install(source.path()).unwrap();
+    assert_eq!(pending.state, effectcraft_plugin::PluginState::NeedsApproval);
+    assert_eq!(app.plugins.get(id).unwrap().bundle.manifest.version, "1.0.0");
     app.plugins.set_sandboxed(id, true).unwrap();
-    assert!(app.plugins.get(id).is_none(), "choosing the sandbox started a plugin whose new permission was never approved");
+    assert_eq!(app.plugins.get(id).unwrap().bundle.manifest.version, "1.0.0");
 
-    app.plugins.approve(id).unwrap();
+    super::approve(app.plugins, &pending);
     let granted: Vec<&str> = app.plugins.get(id).unwrap().bundle.manifest.permissions.iter().map(|p| p.name()).collect();
     assert_eq!(granted, ["document.read"]);
     app.plugins.uninstall(id).unwrap();

@@ -52,7 +52,11 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         plugin!("plugin.list", "List Plug-ins", "{} — every plug-in with its state, permissions, effects, panels and commands"),
         plugin!("plugin.install", "Install Plug-in...", "{path: .craftplugin file or plug-in folder} — installs it; it runs after plugin.approve"),
-        plugin!("plugin.approve", "Allow and Enable Plug-in", "{id} — grants the permissions the plug-in asks for and starts it"),
+        plugin!(
+            "plugin.approve",
+            "Allow and Enable Plug-in",
+            "{id, digest, installation} — grants the permissions for the release shown by plugin.install or plugin.list"
+        ),
         plugin!(
             "plugin.setSandbox",
             "Set Plug-in Sandbox",

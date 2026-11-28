@@ -130,8 +130,8 @@ build in the same package.
 To install the package, use **Window ▸ Plug-ins ▸ Manage Plug-ins ▸ Install Plug-in...** and approve it, or:
 
 ```sh
-effectcraft-cli exec plugin.install '{"path": "plugins/dist/org.craftkit.lumen-glow-<version>.craftplugin"}'
-effectcraft-cli exec plugin.approve '{"id": "org.craftkit.lumen-glow"}'
+shown=$(effectcraft-cli exec plugin.install '{"path": "plugins/dist/org.craftkit.lumen-glow-<version>.craftplugin"}' --json)
+effectcraft-cli exec plugin.approve "$(jq -c '{id, digest, installation}' <<< "$shown")"
 ```
 
 To try an unpacked folder without installing it, list the folders in `EFFECTCRAFT_PLUGIN_PATH`, separated like `PATH`:

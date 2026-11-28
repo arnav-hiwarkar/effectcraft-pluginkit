@@ -1384,8 +1384,8 @@ A plugin whose manifest has no `wasm` entry is native only. The user sees the wa
 it, and `plugin.load` and `EFFECTCRAFT_PLUGIN_PATH` refuse it. Install it and approve it instead:
 
 ```sh
-effectcraft-cli exec plugin.install '{"path": "plugins/dist/com.example.tint-0.1.0.craftplugin"}'
-effectcraft-cli exec plugin.approve '{"id": "com.example.tint"}'
+shown=$(effectcraft-cli exec plugin.install '{"path": "plugins/dist/com.example.tint-0.1.0.craftplugin"}' --json)
+effectcraft-cli exec plugin.approve "$(jq -c '{id, digest, installation}' <<< "$shown")"
 ```
 
 The approval covers these exact files. After a rebuild, raise `version` in `plugin.json` before installing

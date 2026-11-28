@@ -1152,7 +1152,7 @@ reason has still landed.
 |---|---|---|
 | `plugin.list` | | Every plugin with its state, permissions, effects, panels, and commands (each command with `enabled` and, once the plugin set it, `checked`) |
 | `plugin.install` | `path` | Installs a `.craftplugin` file or a bundle folder into the plugin folder. The plugin waits for approval. |
-| `plugin.approve` | `id` | Grants the permissions the plugin asks for, for exactly the installed files, and starts it. Also turns back on a plugin turned off after the app closed unexpectedly |
+| `plugin.approve` | `id`, `digest`, `installation` | Grants permissions for the release identified by the values returned by `plugin.install` or `plugin.list`. Can also re-enable a quarantined release. |
 | `plugin.setSandbox` | `id`, `sandboxed` | For a plugin with a WebAssembly and a native build: `false` runs the native build for this version, `true` runs the sandboxed one |
 | `plugin.disable` | `id` | Stops the plugin and keeps it installed |
 | `plugin.uninstall` | `id` | Removes the plugin and its approval |
