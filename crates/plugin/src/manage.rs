@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use craft_ext_core::catalogue::{Revocation, Severity};
 use craft_ext_market::SNAPSHOT;
-use craft_ext_store::{APPS_DIR, Consent, location};
+use craft_ext_store::{APPS_DIR, Consent, Source, location};
 
 use craft_plugin_host::PluginImage;
 use craft_plugin_host::ui::PanelPlace;
@@ -863,9 +863,11 @@ fn copy_data(from: &Path, to: &Path) -> std::io::Result<()> {
 fn migrate_bundle(source: &Registry, target: &mut Registry, existing: &Registry, bundle: &Bundle) -> Result<(), BundleError> {
     let id = &bundle.manifest.id;
     let digest = bundle.folder_digest().ok_or_else(|| BundleError::NotInstalled(id.clone()))?;
-    let migrated = match existing.current(id) {
-        Some(current) => current,
-        None => match target.install_checked(&bundle.dir, |staged| {
+    let is_current = source.current(id).and_then(|current| current.folder_digest()).as_deref() == Some(&digest);
+    let catalogue = source.origin(id).filter(|origin| is_current && origin.source == Source::Store);
+    let install = |target: &mut Registry| match catalogue {
+        Some(origin) => target.install_from_store(&bundle.dir, origin),
+        None => target.install_checked(&bundle.dir, |staged| {
             if existing.current(id).is_some() {
                 return Err(format!("the shared store already has a plug-in `{id}`"));
             }
@@ -873,7 +875,11 @@ fn migrate_bundle(source: &Registry, target: &mut Registry, existing: &Registry,
                 return Err(format!("the old plug-in `{id}` changed during migration"));
             }
             Ok(())
-        }) {
+        }),
+    };
+    let migrated = match existing.current(id) {
+        Some(current) => current,
+        None => match install(target) {
             Ok(installed) => installed,
             Err(BundleError::Rejected(_)) if existing.current(id).is_some() => return Ok(()),
             Err(BundleError::Refused(_, Refusal::Revoked(_)) | BundleError::WouldReplaceStorePackage(_)) => return Ok(()),
@@ -1176,6 +1182,7 @@ mod build_plugin;
 mod tests {
     use super::*;
     use craft_ext_core::version::VersionReq;
+    use craft_ext_store::Origin;
     use craft_plugin_host::TaskStatus;
 
     #[test]
@@ -1280,6 +1287,27 @@ mod tests {
 
         assert!(Registry::for_app(&suite, APP_ID).consent(id).is_some_and(|consent| consent.enabled));
         assert!(!legacy.exists() && legacy.with_extension("migrated").is_dir());
+    }
+
+    #[test]
+    fn a_migrated_catalogue_install_keeps_its_origin_for_digest_revocations_and_updates() {
+        let root = tempfile::tempdir().unwrap();
+        let (legacy, suite) = (root.path().join("Plugins"), root.path().join("suite"));
+        let id = "test.catalogue-migrated";
+        let origin = Origin::store("aa", "vendor");
+        let mut old = Registry::open(&legacy);
+        let installed = old.install_from_store(&data_bundle(root.path(), id), origin.clone()).unwrap();
+        old.approve(&installed).unwrap();
+        drop(old);
+
+        migrate(&legacy, &suite).unwrap();
+
+        let mut target = Registry::for_app(&suite, APP_ID);
+        assert_eq!(target.origin(id), Some(origin));
+        let migrated = target.current(id).unwrap();
+        assert!(target.approved(&migrated).is_ok());
+        target.set_revocations(vec![Revocation { id: None, sha256: Some("aa".into()), ..disable_revocation(id) }]);
+        assert_eq!(target.approved(&migrated).err(), Some(Refusal::Revoked(Severity::Disable)));
     }
 
     #[test]
