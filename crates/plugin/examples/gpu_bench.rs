@@ -40,7 +40,7 @@ const CASES: &[Case] = &[
 
 struct Measured {
     counters: GpuCounters,
-    steady: bool,
+    unsteady: Vec<(&'static str, Vec<u64>)>,
     pixels: String,
     worst: f32,
 }
@@ -119,8 +119,8 @@ fn run() -> Result<bool, String> {
             println!("FAIL {name}: no dispatch ran, the frame rendered on the CPU");
             ok = false;
         }
-        if !m.steady {
-            println!("note {name}: warm frames counted differently; the highest count of each is reported");
+        for (counter, per_frame) in &m.unsteady {
+            println!("note {name}: {counter} per warm frame was {per_frame:?}; the highest is reported");
         }
     }
     if let Some(path) = &args.check {
@@ -181,9 +181,15 @@ fn measure(gpu: &Gpu, session: &Session, comp: ItemId) -> Result<Measured, Strin
         worst = worst.max(worst_difference(&on_gpu, &on_cpu)?);
     }
     let first = frames.first().copied().unwrap_or_default();
-    let steady = frames.iter().all(|f| *f == first);
+    let unsteady = first
+        .fields()
+        .into_iter()
+        .enumerate()
+        .map(|(row, (counter, _))| (counter, frames.iter().map(|f| f.fields().get(row).map_or(0, |field| field.1)).collect::<Vec<_>>()))
+        .filter(|(_, per_frame)| per_frame.windows(2).any(|pair| pair[0] != pair[1]))
+        .collect();
     let counters = frames.iter().fold(GpuCounters::default(), |most, f| most.max(*f));
-    Ok(Measured { counters, steady, pixels: format!("{:016x}", digest.0), worst })
+    Ok(Measured { counters, unsteady, pixels: format!("{:016x}", digest.0), worst })
 }
 
 fn worst_difference(a: &Image, b: &Image) -> Result<f32, String> {
