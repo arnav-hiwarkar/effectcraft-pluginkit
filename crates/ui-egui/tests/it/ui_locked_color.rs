@@ -37,11 +37,18 @@ fn invoke(h: &mut Harness<'_, EffectcraftApp>, command: &str, params: Value) {
     h.run_steps(3);
 }
 
-fn locked_center(h: &Harness<'_, EffectcraftApp>, images: &Images) -> [u8; 4] {
-    let (_, texture) = h.ctx.data(|d| d.get_temp::<(u64, egui::TextureHandle)>(egui::Id::unique("viewer-locked"))).unwrap();
-    let images = images.borrow();
-    let image = images.get(&texture.id()).unwrap();
-    image.pixels[(image.size[1] / 2) * image.size[0] + image.size[0] / 2].to_array()
+fn locked_center(h: &mut Harness<'_, EffectcraftApp>, images: &Images, want: [u8; 4]) -> [u8; 4] {
+    let mut center = None;
+    for _ in 0..400 {
+        h.step();
+        let texture = effectcraft_ui_egui::panels::viewers::texture(h.state(), effectcraft_ui_egui::panels::viewers::LOCKED_PANE);
+        center = texture.and_then(|t| images.borrow().get(&t).map(|i| i.pixels[(i.size[1] / 2) * i.size[0] + i.size[0] / 2].to_array()));
+        if center == Some(want) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    center.unwrap()
 }
 
 fn expected_center(h: &mut Harness<'_, EffectcraftApp>) -> [u8; 4] {
@@ -71,15 +78,15 @@ fn locked_viewer_follows_display_profile_and_simulation() {
     h.run_steps(3);
     invoke(&mut h, "view.splitLockedViewer", json!({}));
     let first = expected_center(&mut h);
-    assert_eq!(locked_center(&h, &images), first);
+    assert_eq!(locked_center(&mut h, &images, first), first);
 
     invoke(&mut h, "prefs.set", json!({"key": "previews.displayProfile", "value": "p3"}));
     let after_display = expected_center(&mut h);
     assert_ne!(after_display, first);
-    assert_eq!(locked_center(&h, &images), after_display);
+    assert_eq!(locked_center(&mut h, &images, after_display), after_display);
 
     invoke(&mut h, "view.simulateOutput", json!({"profile": "rec709", "preserveRgb": true}));
     let after_sim = expected_center(&mut h);
     assert_ne!(after_sim, after_display);
-    assert_eq!(locked_center(&h, &images), after_sim);
+    assert_eq!(locked_center(&mut h, &images, after_sim), after_sim);
 }
