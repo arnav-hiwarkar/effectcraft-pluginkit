@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use effectcraft_plugin::{PluginInfo, PluginState, Plugins};
@@ -26,8 +26,9 @@ fn plugins_that_were_live_when_the_app_closed_unexpectedly_stay_off_until_turned
     let root = tempfile::tempdir().unwrap();
     let id = "test.trust-crash";
     let (first, _source) = installed(root.path(), id);
+    let running = first.get(id).unwrap().bundle.folder_digest().unwrap();
     drop(first);
-    craft_plugin_host::Registry::open(root.path()).mark_running(&BTreeSet::from([id.to_string()])).unwrap();
+    craft_plugin_host::Registry::open(root.path()).mark_running(&BTreeMap::from([(id.to_string(), running)])).unwrap();
 
     let next = Plugins::open(root.path(), false);
     assert!(next.get(id).is_none());
@@ -36,6 +37,30 @@ fn plugins_that_were_live_when_the_app_closed_unexpectedly_stay_off_until_turned
     assert_eq!(info.error.as_deref(), Some("it was turned off because the app closed unexpectedly while it ran unsandboxed"));
     next.approve(id).unwrap();
     assert_eq!(listed(&next, id).state, PluginState::Running);
+}
+
+#[test]
+fn an_uninstalled_bundle_stays_on_disk_until_its_running_handle_is_dropped() {
+    let _exclusive = super::exclusive();
+    let root = tempfile::tempdir().unwrap();
+    let id = "test.trust-lease";
+    let (plugins, source) = installed(root.path(), id);
+    let running = plugins.get(id).unwrap();
+    let digest = running.bundle.folder_digest().unwrap();
+    let folder = root.path().join(id).join(digest);
+    assert_eq!(running.bundle.dir, folder);
+
+    plugins.uninstall(id).unwrap();
+    assert!(plugins.get(id).is_none());
+    assert!(folder.join("probe.wasm").is_file());
+    drop(running);
+
+    let manifest = source.path().join("plugin.json");
+    let mut contents: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    contents["version"] = json!("1.1.0");
+    std::fs::write(manifest, contents.to_string()).unwrap();
+    plugins.install(source.path()).unwrap();
+    assert!(!folder.exists());
 }
 
 #[test]
