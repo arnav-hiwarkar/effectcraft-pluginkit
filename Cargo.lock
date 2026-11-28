@@ -271,7 +271,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -1547,7 +1547,7 @@ dependencies = [
 [[package]]
 name = "craft-ext-core"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#34afe438c4b60b3e73f357035c166b4183edc657"
+source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#a3dd6980e6346631f293c17129dca888d2531d70"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -1558,7 +1558,7 @@ dependencies = [
 [[package]]
 name = "craft-ext-manager"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#34afe438c4b60b3e73f357035c166b4183edc657"
+source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#a3dd6980e6346631f293c17129dca888d2531d70"
 dependencies = [
  "craft-ext-core",
  "craft-ext-market",
@@ -1571,7 +1571,7 @@ dependencies = [
 [[package]]
 name = "craft-ext-market"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#34afe438c4b60b3e73f357035c166b4183edc657"
+source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#a3dd6980e6346631f293c17129dca888d2531d70"
 dependencies = [
  "craft-ext-core",
  "craft-ext-store",
@@ -1582,7 +1582,7 @@ dependencies = [
 [[package]]
 name = "craft-ext-store"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#34afe438c4b60b3e73f357035c166b4183edc657"
+source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#a3dd6980e6346631f293c17129dca888d2531d70"
 dependencies = [
  "craft-ext-core",
  "craft-plugin",
@@ -1821,7 +1821,7 @@ dependencies = [
 [[package]]
 name = "craft-plugin"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#34afe438c4b60b3e73f357035c166b4183edc657"
+source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#a3dd6980e6346631f293c17129dca888d2531d70"
 dependencies = [
  "semver",
  "serde",
@@ -1831,7 +1831,7 @@ dependencies = [
 [[package]]
 name = "craft-plugin-helper"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#34afe438c4b60b3e73f357035c166b4183edc657"
+source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#a3dd6980e6346631f293c17129dca888d2531d70"
 dependencies = [
  "bytemuck",
  "craft-plugin",
@@ -1851,7 +1851,7 @@ dependencies = [
 [[package]]
 name = "craft-plugin-host"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#34afe438c4b60b3e73f357035c166b4183edc657"
+source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#a3dd6980e6346631f293c17129dca888d2531d70"
 dependencies = [
  "bytemuck",
  "craft-ext-store",
@@ -1874,7 +1874,7 @@ dependencies = [
 [[package]]
 name = "craft-plugin-ui"
 version = "0.1.0"
-source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#34afe438c4b60b3e73f357035c166b4183edc657"
+source = "git+https://github.com/arnav-hiwarkar/craft-extensions-plugin-beta?branch=kit#a3dd6980e6346631f293c17129dca888d2531d70"
 dependencies = [
  "craft-plugin",
  "egui",
@@ -2653,7 +2653,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3804,7 +3804,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5886,7 +5886,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7511,7 +7511,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7524,7 +7524,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7581,7 +7581,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8619,7 +8619,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9919,7 +9919,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
