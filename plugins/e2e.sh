@@ -20,8 +20,9 @@ if [ -z "$PACKAGE" ]; then
     echo "FAIL no .craftplugin file for $INSTALLED_ID in plugins/dist"
     exit 1
 fi
-"$CLI" exec plugin.install "{\"path\":\"$PACKAGE\"}" > /dev/null
-"$CLI" exec plugin.approve "{\"id\":\"$INSTALLED_ID\"}" > /dev/null
+installed=$("$CLI" exec plugin.install "{\"path\":\"$PACKAGE\"}" --json)
+approval=$(jq -ce '{id, digest, installation} | select(.digest != null and .installation != null)' <<< "$installed")
+"$CLI" exec plugin.approve "$approval" > /dev/null
 echo "PASS installed $INSTALLED_ID from $(basename "$PACKAGE")"
 
 EFFECTCRAFT_PLUGIN_PATH="$(find "$ROOT/plugins/dist" -mindepth 1 -maxdepth 1 -type d ! -name "$INSTALLED_ID" | sort | paste -sd: -)"

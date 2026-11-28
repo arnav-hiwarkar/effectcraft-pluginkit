@@ -523,8 +523,8 @@ fn native_lanes_probe(app: &App) -> String {
         "permissions": ["document.read"]
     });
     std::fs::write(source.path().join("plugin.json"), manifest.to_string()).unwrap();
-    app.plugins.install(source.path()).unwrap();
-    app.plugins.approve(id).unwrap();
+    let shown = app.plugins.install(source.path()).unwrap();
+    super::approve(app.plugins, &shown);
     id.into()
 }
 

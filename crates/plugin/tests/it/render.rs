@@ -544,7 +544,7 @@ fn a_gradient_edited_past_the_stop_limit_reaches_the_plugin_cut_with_one_warning
     assert!(warnings[0].contains("gradient parameter `ramp` has 6 stops beyond the limit of 64"), "{warnings:?}");
 }
 
-fn probe_native() -> std::path::PathBuf {
+pub(crate) fn probe_native() -> std::path::PathBuf {
     let probe = craft_plugin_host::testing::probe_dir();
     let artifact = format!("{}probe{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
     crate::build_plugin::build(probe, &artifact, None)
@@ -563,8 +563,8 @@ pub(crate) fn native_probe(app: &App) -> &'static str {
         let entry = json!({"wasm": "probe.wasm", "native": {format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH): file}});
         let manifest = json!({"id": native, "name": "Probe", "version": "1.0.0", "entry": entry});
         std::fs::write(source.path().join("plugin.json"), manifest.to_string()).unwrap();
-        app.plugins.install(source.path()).unwrap();
-        app.plugins.approve(native).unwrap();
+        let shown = app.plugins.install(source.path()).unwrap();
+        super::approve(app.plugins, &shown);
         app.plugins.set_sandboxed(native, false).unwrap();
         assert!(app.plugins.get(native).is_some(), "the native probe runs");
         native.to_string()

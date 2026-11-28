@@ -10,8 +10,8 @@ fn installed(root: &Path, id: &str) -> (Plugins, tempfile::TempDir) {
     let manifest = json!({"id": id, "name": "Trust", "version": "1.0.0", "entry": {"wasm": "probe.wasm"}});
     std::fs::write(source.path().join("plugin.json"), manifest.to_string()).unwrap();
     let plugins = Plugins::open(root, false);
-    plugins.install(source.path()).unwrap();
-    plugins.approve(id).unwrap();
+    let shown = plugins.install(source.path()).unwrap();
+    super::approve(&plugins, &shown);
     assert!(plugins.get(id).is_some());
     (plugins, source)
 }
@@ -35,7 +35,7 @@ fn plugins_that_were_live_when_the_app_closed_unexpectedly_stay_off_until_turned
     let info = listed(&next, id);
     assert_eq!(info.state, PluginState::Quarantined);
     assert_eq!(info.error.as_deref(), Some("it was turned off because the app closed unexpectedly while it ran unsandboxed"));
-    next.approve(id).unwrap();
+    super::approve(&next, &info);
     assert_eq!(listed(&next, id).state, PluginState::Running);
 }
 
@@ -61,6 +61,70 @@ fn an_uninstalled_bundle_stays_on_disk_until_its_running_handle_is_dropped() {
     std::fs::write(manifest, contents.to_string()).unwrap();
     plugins.install(source.path()).unwrap();
     assert!(!folder.exists());
+}
+
+#[test]
+fn approval_requires_the_reviewed_digest_and_installation() {
+    let app = super::app_exclusive("test.trust-approval", &[]);
+    let mut session = app.session;
+    let id = "test.trust-reviewed";
+    let source = tempfile::tempdir().unwrap();
+    std::fs::copy(super::probe_wasm(), source.path().join("probe.wasm")).unwrap();
+    let manifest = |version| json!({"id": id, "name": "Reviewed", "version": version, "entry": {"wasm": "probe.wasm"}}).to_string();
+    let install = |session: &mut effectcraft_engine::Session| session.execute_checked("plugin.install", json!({"path": source.path()})).unwrap();
+    let approval = |shown: &serde_json::Value| json!({"id": id, "digest": shown["digest"], "installation": shown["installation"]});
+    std::fs::write(source.path().join("plugin.json"), manifest("1.0.0")).unwrap();
+    let old = install(&mut session);
+
+    std::fs::write(source.path().join("plugin.json"), manifest("2.0.0")).unwrap();
+    let new = install(&mut session);
+    assert_ne!(old["digest"], new["digest"]);
+    assert!(session.execute_checked("plugin.approve", json!({"id": id})).is_err());
+    assert!(session.execute_checked("plugin.approve", approval(&old)).is_err());
+    assert!(app.plugins.get(id).is_none());
+
+    app.plugins.uninstall(id).unwrap();
+    let reinstalled = install(&mut session);
+    assert_eq!(new["digest"], reinstalled["digest"]);
+    assert_ne!(new["installation"], reinstalled["installation"]);
+    assert!(session.execute_checked("plugin.approve", approval(&new)).is_err());
+    assert!(app.plugins.get(id).is_none());
+    let listed = session.execute_checked("plugin.list", json!({})).unwrap();
+    let shown = listed.as_array().unwrap().iter().find(|item| item["id"] == id).unwrap();
+    assert_eq!(approval(shown), approval(&reinstalled));
+    session.execute_checked("plugin.approve", approval(shown)).unwrap();
+    assert_eq!(app.plugins.get(id).unwrap().bundle.manifest.version, "2.0.0");
+    app.plugins.uninstall(id).unwrap();
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn a_native_run_marker_survives_refresh_and_quarantines_the_run_after_an_unclean_exit() {
+    let _exclusive = super::exclusive();
+    super::native_helper::stage_helper();
+    let root = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let library = super::render::probe_native();
+    let file = library.file_name().unwrap();
+    std::fs::copy(&library, source.path().join(file)).unwrap();
+    let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    let id = "test.trust-native-marker";
+    let manifest = json!({"id": id, "name": "Native", "version": "1.0.0", "entry": {"native": {target: file.to_str().unwrap()}}});
+    std::fs::write(source.path().join("plugin.json"), manifest.to_string()).unwrap();
+    let first = Plugins::open(root.path(), false);
+    let shown = first.install(source.path()).unwrap();
+    assert_eq!(super::approve(&first, &shown).state, PluginState::Running);
+
+    first.reload();
+    let concurrent = Plugins::open(root.path(), false);
+    assert_eq!(listed(&concurrent, id).state, PluginState::Running);
+    concurrent.end_run();
+    drop(concurrent);
+    drop(first);
+
+    let recovered = Plugins::open(root.path(), false);
+    assert_eq!(listed(&recovered, id).state, PluginState::Quarantined);
+    assert!(recovered.get(id).is_none());
 }
 
 #[test]
