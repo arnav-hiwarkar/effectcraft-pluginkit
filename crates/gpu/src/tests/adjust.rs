@@ -161,11 +161,11 @@ fn a_run_of_cpu_effects_between_gpu_effects_reads_back_once_and_uploads_once() {
     assert_eq!((split.gpu, split.cpu), (2, 2), "the stack is GPU, CPU, CPU, GPU");
     let mut e = crate::context::Enc::new(&g.ctx);
     let img = e.image(80, 50);
-    let before = g.ctx.transfer_stats();
+    let before = g.ctx.counters();
     let mut fx = crate::effects::GpuFx::new(&mut e, img, [0.0, 0.0], 1.0, None);
     r.run_effects_on(&ctx, adj, true, &mut fx);
     let (out, _, _) = fx.finish().expect("the stack runs");
-    let after = g.ctx.transfer_stats();
+    let after = g.ctx.counters();
     assert_eq!((out.width, out.height), (80, 50));
     assert_eq!((after.readbacks - before.readbacks, after.uploads - before.uploads), (1, 1), "readbacks and uploads");
 }

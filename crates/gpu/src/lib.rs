@@ -57,6 +57,7 @@ mod adv3d;
 mod bokeh;
 mod classic3d;
 mod context;
+mod counters;
 pub mod deferred;
 mod diagnostics;
 mod effects;
@@ -94,7 +95,8 @@ mod yuv;
 
 use std::sync::Arc;
 
-pub use context::{GpuContext, GpuImage, TransferStats};
+pub use context::{GpuContext, GpuImage};
+pub use counters::GpuCounters;
 pub use diagnostics::{ScopedError, ScopedErrorObserver};
 use effectcraft_effects::Buf;
 use effectcraft_project::ItemId;

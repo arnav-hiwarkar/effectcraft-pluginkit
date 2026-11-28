@@ -139,6 +139,9 @@ pub(crate) fn record(e: &mut Enc, yp: &YuvPipe, img: &GpuImage, bg: [f32; 3]) ->
         }
         enc.copy_buffer_to_buffer(&out, 0, &stg, 0, size);
     }
+    g.counters.buffer(wgpu::BufferUsages::UNIFORM, params.len());
+    g.counters.dispatch();
+    g.counters.readback(size as usize);
     e.submit();
     Some(stg)
 }

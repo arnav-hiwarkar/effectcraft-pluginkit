@@ -106,6 +106,7 @@ fn record(
     let missing = || "the plan names an image or a kernel it does not have".to_string();
     let mut compute = pipelines.iter();
     for (n, pass) in program.passes.iter().enumerate() {
+        e.g.counters.plugin_pass();
         let read = |slot: GpuSlot| index(slot, program).and_then(|at| images.get(at).cloned().flatten()).ok_or_else(missing);
         let src = read(pass.src)?;
         let aux = pass.aux.map(read).transpose()?;
@@ -162,7 +163,7 @@ fn layer_image(e: &mut Enc, ctx: &EffectCtx, frame: &GBuf, param: &str) -> Optio
     }
     let fitted = fitted(e, ctx, frame, param, true, false)?;
     if fitted.is_some() {
-        e.g.transfers.layers_copied.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        e.g.counters.plugin_layer_copied();
     }
     Some(fitted.unwrap_or_else(|| e.zeros(w, h)))
 }

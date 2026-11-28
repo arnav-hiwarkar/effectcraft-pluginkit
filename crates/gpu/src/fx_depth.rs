@@ -317,6 +317,7 @@ fn upload_plane(e: &Enc, p: &CryptoPlane) -> Option<GpuImage> {
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
+    g.counters.upload(p.data.len() * 4);
     g.queue.write_texture(
         wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
         bytemuck::cast_slice(&p.data),

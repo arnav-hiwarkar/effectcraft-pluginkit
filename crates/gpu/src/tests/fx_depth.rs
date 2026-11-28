@@ -302,9 +302,9 @@ fn crypto_direct(host: &AuxHost, vals: &[(&str, Value)], scale: f64) -> Option<(
     };
     let cpu = (spec.render)(&ctx(), buf.clone());
     let planes = || crate::fx_depth::PLANE_UPLOADS.lock().unwrap().len();
-    let (before, uploads) = (planes(), g.ctx.transfer_stats().uploads);
+    let (before, uploads) = (planes(), g.ctx.counters().uploads);
     let out = effectcraft_render::Accelerator::effects(g, &[effectcraft_render::FxStep { spec, ctx: ctx() }], &buf, None).expect("the GPU runs the effect");
-    let uploads = g.ctx.transfer_stats().uploads - uploads;
+    let uploads = g.ctx.counters().uploads - uploads;
     let uploaded = crate::fx_depth::PLANE_UPLOADS.lock().unwrap()[before..].to_vec();
     Some((out.img, cpu.img, uploaded, uploads))
 }

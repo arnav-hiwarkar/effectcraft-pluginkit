@@ -1628,11 +1628,11 @@ fn bench_gpu(s: &Session, args: &Args) -> Result<(), Failure> {
             let gcache = LayerCache::default();
             // Traffic in steady state: after the frame that fills the layer cache.
             std::hint::black_box(mk(Backend::Gpu, Some(&gcache)));
-            let t0 = gpu.context().transfer_stats();
+            let t0 = gpu.context().counters();
             let gpu_warm = time_ms(n, || {
                 std::hint::black_box(mk(Backend::Gpu, Some(&gcache)));
             });
-            let t1 = gpu.context().transfer_stats();
+            let t1 = gpu.context().counters();
             let per = |b: u64| b as f64 / (n + 1) as f64 / (1u64 << 20) as f64;
             let traffic = format!("{:.1}/{:.1}", per(t1.upload_bytes - t0.upload_bytes), per(t1.readback_bytes - t0.readback_bytes));
             // Auto: warm-up frames on both sides, then the measured choice.

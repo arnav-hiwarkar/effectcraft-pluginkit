@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex, Weak};
 use effectcraft_effects::Buf;
 use effectcraft_raster::Image;
 
+use crate::counters::{Counters, GpuCounters};
+
 /// Compute entry points in `kernels.wgsl` (one pipeline each).
 const ENTRIES: &[&str] = &[
     "warp_blend",
@@ -88,16 +90,24 @@ const FAMILIES: &[(&str, &[&str], &[&str])] = &[
 ];
 
 /// Module `label`: `BASE_WGSL` followed by `files`.
-fn kernel_module(device: &wgpu::Device, label: &str, files: &[&str]) -> Result<wgpu::ShaderModule, String> {
+fn kernel_module(device: &wgpu::Device, counters: &Counters, label: &str, files: &[&str]) -> Result<wgpu::ShaderModule, String> {
     let src: String = BASE_WGSL.iter().chain(files).copied().collect();
     init_resource(device, &format!("{label} shader module"), || {
+        counters.shader_module();
         device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(label), source: wgpu::ShaderSource::Wgsl(src.into()) })
     })
 }
 
 /// Compute pipeline `entry` of `module`; a shader compiler rejecting it (FXC, #613) is an `Err`.
-fn build_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, entry: &str) -> Result<wgpu::ComputePipeline, String> {
+fn build_pipeline(
+    device: &wgpu::Device,
+    counters: &Counters,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    entry: &str,
+) -> Result<wgpu::ComputePipeline, String> {
     init_resource(device, entry, || {
+        counters.compute_pipeline();
         device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(entry),
             layout: Some(layout),
@@ -339,26 +349,6 @@ pub(crate) struct Pool {
 /// In-`Enc` texture reuse ([`Pool::owned`]); tests turn it off to compare.
 pub(crate) static TEXTURE_REUSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
-/// Counts of uploads (CPU → GPU) and readbacks (GPU → CPU).
-#[derive(Default)]
-pub(crate) struct Transfers {
-    ups: std::sync::atomic::AtomicU64,
-    up_bytes: std::sync::atomic::AtomicU64,
-    downs: std::sync::atomic::AtomicU64,
-    down_bytes: std::sync::atomic::AtomicU64,
-    pub(crate) layers_copied: std::sync::atomic::AtomicU64,
-}
-
-/// A snapshot of [`GpuContext::transfer_stats`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TransferStats {
-    pub uploads: u64,
-    pub upload_bytes: u64,
-    pub readbacks: u64,
-    pub readback_bytes: u64,
-    pub plugin_layers_copied: u64,
-}
-
 /// `WGPU_ADAPTER_NAME` trimmed; empty or whitespace-only counts as unset (an empty
 /// substring would otherwise match the first adapter and skip the power preference).
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -425,15 +415,6 @@ fn power_pref_from_env() -> wgpu::PowerPreference {
 #[cfg(target_arch = "wasm32")]
 async fn adapter_by_name(_: &wgpu::Instance) -> Option<Result<wgpu::Adapter, String>> {
     None
-}
-
-impl Transfers {
-    fn count(&self, up: bool, bytes: usize) {
-        use std::sync::atomic::Ordering::Relaxed;
-        let (n, b) = if up { (&self.ups, &self.up_bytes) } else { (&self.downs, &self.down_bytes) };
-        n.fetch_add(1, Relaxed);
-        b.fetch_add(bytes as u64, Relaxed);
-    }
 }
 
 fn tex_bytes(t: &wgpu::Texture) -> usize {
@@ -782,7 +763,7 @@ pub struct GpuContext {
     upload_full_warned: std::sync::atomic::AtomicBool,
     pool: Arc<Mutex<Pool>>,
     /// CPU ↔ GPU traffic (diagnostics: `bench --gpu`).
-    pub(crate) transfers: Transfers,
+    pub(crate) counters: Counters,
     /// Readback staging buffers by size.
     staging: Mutex<HashMap<u64, Vec<wgpu::Buffer>>>,
     /// Transparent read-only images by size (see [`Enc::zeros`]).
@@ -896,6 +877,7 @@ pub(crate) fn device_descriptor(required_limits: wgpu::Limits) -> wgpu::DeviceDe
 impl GpuContext {
     /// [`buffer_init`] on this context's device.
     pub(crate) fn buffer_init(&self, label: Option<&str>, contents: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
+        self.counters.buffer(usage, contents.len());
         buffer_init(&self.device, &self.queue, label, contents, usage)
     }
 
@@ -944,7 +926,8 @@ impl GpuContext {
         if let Some(why) = &adv3d_unsupported {
             log::info!("gpu {name}: Advanced 3D renders on the CPU ({why})");
         }
-        let module = kernel_module(&device, "effectcraft kernels", &[])?;
+        let counters = Counters::default();
+        let module = kernel_module(&device, &counters, "effectcraft kernels", &[])?;
         let bgl = init_resource(&device, "kernels bind-group layout", || {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("effectcraft kernels"),
@@ -1001,17 +984,17 @@ impl GpuContext {
         // doesn't build is left out (its 3D runs render on the CPU), and effect kernels are built
         // on first use (`GpuContext::pipeline`); one that doesn't build leaves its effects to the
         // CPU (see `Enc::take_missing`).
-        let sky = kernel_module(&device, "effectcraft sky", &[include_str!("shaders/sky.wgsl")])?;
+        let sky = kernel_module(&device, &counters, "effectcraft sky", &[include_str!("shaders/sky.wgsl")])?;
         let mut pipelines = ENTRIES
             .iter()
             .map(|e| (e, &module))
             .chain(crate::adv3d::SKY_KERNELS.iter().map(|e| (e, &sky)))
-            .map(|(e, module)| Ok((*e, build_pipeline(&device, module, &layout, e)?)))
+            .map(|(e, module)| Ok((*e, build_pipeline(&device, &counters, module, &layout, e)?)))
             .collect::<Result<HashMap<_, _>, String>>()?;
         let mut unavailable = vec![];
-        let classic3d = kernel_module(&device, "effectcraft classic3d", &[include_str!("shaders/classic3d.wgsl")]);
+        let classic3d = kernel_module(&device, &counters, "effectcraft classic3d", &[include_str!("shaders/classic3d.wgsl")]);
         for e in EXT_ENTRIES {
-            match classic3d.as_ref().map_err(Clone::clone).and_then(|m| build_pipeline(&device, m, &layout_ext, e)) {
+            match classic3d.as_ref().map_err(Clone::clone).and_then(|m| build_pipeline(&device, &counters, m, &layout_ext, e)) {
                 Ok(p) => {
                     pipelines.insert(*e, p);
                 }
@@ -1024,8 +1007,9 @@ impl GpuContext {
         #[cfg(test)]
         {
             // The numerical probe (tests) calls `fx_stylize.wgsl` helpers.
-            let probe = kernel_module(&device, "effectcraft math probe", &[include_str!("shaders/fx_stylize.wgsl"), crate::tests::MATH_PROBE_SHADER])?;
-            pipelines.insert("math_probe", build_pipeline(&device, &probe, &layout, "math_probe")?);
+            let probe =
+                kernel_module(&device, &counters, "effectcraft math probe", &[include_str!("shaders/fx_stylize.wgsl"), crate::tests::MATH_PROBE_SHADER])?;
+            pipelines.insert("math_probe", build_pipeline(&device, &counters, &probe, &layout, "math_probe")?);
         }
         let effect_pipelines =
             FAMILIES.iter().enumerate().flat_map(|(family, (_, _, kernels))| kernels.iter().map(move |e| (*e, (family, std::sync::OnceLock::new())))).collect();
@@ -1111,7 +1095,7 @@ impl GpuContext {
             upload_full_warned: Default::default(),
             pool,
             staging: Default::default(),
-            transfers: Default::default(),
+            counters,
             zeros: Default::default(),
             adv3d: std::sync::OnceLock::new(),
             yuv: std::sync::OnceLock::new(),
@@ -1137,6 +1121,8 @@ impl GpuContext {
     pub(crate) fn yuv_pipe(&self) -> Option<&crate::yuv::YuvPipe> {
         self.yuv
             .get_or_init(|| {
+                self.counters.shader_module();
+                self.counters.compute_pipeline();
                 crate::yuv::YuvPipe::new(&self.device).inspect_err(|e| {
                     log::warn!(target: "effectcraft_gpu", "yuv420 kernel unavailable: {e}");
                 })
@@ -1593,7 +1579,7 @@ impl GpuContext {
             return None;
         };
         let built = cell.get_or_init(|| {
-            let built = self.family_module(*family).and_then(|module| build_pipeline(&self.device, module, &self.layout, e));
+            let built = self.family_module(*family).and_then(|module| build_pipeline(&self.device, &self.counters, module, &self.layout, e));
             if let Err(why) = &built {
                 log::warn!("gpu {}: kernel {e} unavailable, its effects render on the CPU: {why}", self.name);
             }
@@ -1619,8 +1605,12 @@ impl GpuContext {
         }
         let compile = || {
             let source: String = PLUGIN_PRELUDE.iter().copied().chain([wgsl]).collect();
-            let build =
-                |source| init_resource(&self.device, effect, || self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(effect), source }));
+            let build = |source| {
+                init_resource(&self.device, effect, || {
+                    self.counters.shader_module();
+                    self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(effect), source })
+                })
+            };
             let plain = || build(wgpu::ShaderSource::Wgsl(source.as_str().into()));
             let module = match crate::guard::cap_loops(&source) {
                 Ok(capped) => build(wgpu::ShaderSource::Naga(std::borrow::Cow::Owned(capped))).map_err(|why| plain().err().unwrap_or(why)),
@@ -1656,7 +1646,11 @@ impl GpuContext {
                     return Err(format!("more than {MAX_PLUGIN_KERNELS} kernel names"));
                 }
                 let layout = &self.loop_guard().1;
-                let pipeline = shader.pipelines.entry(kernel.to_string()).or_insert_with(|| build_pipeline(&self.device, module, layout, kernel)).clone()?;
+                let pipeline = shader
+                    .pipelines
+                    .entry(kernel.to_string())
+                    .or_insert_with(|| build_pipeline(&self.device, &self.counters, module, layout, kernel))
+                    .clone()?;
                 built.push(pipeline);
             }
             Ok(built)
@@ -1688,6 +1682,7 @@ impl GpuContext {
             }
             let source: String = PLUGIN_PRELUDE.iter().copied().chain([HOST_KERNELS, wgsl]).collect();
             let module = init_resource(&self.device, "host kernels", || {
+                self.counters.shader_module();
                 self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("host kernels"), source: wgpu::ShaderSource::Wgsl(source.into()) })
             });
             plugins.host.insert(wgsl.to_string(), HostModule { module, pipelines: HashMap::new(), used: clock });
@@ -1698,7 +1693,7 @@ impl GpuContext {
         if let Some(built) = host.pipelines.get(entry) {
             return built.clone();
         }
-        let built = build_pipeline(&self.device, &module, &self.layout, entry);
+        let built = build_pipeline(&self.device, &self.counters, &module, &self.layout, entry);
         host.pipelines.insert(entry.to_string(), built.clone());
         built
     }
@@ -1714,7 +1709,12 @@ impl GpuContext {
             if !shader.draws.contains_key(key) && shader.draws.len() >= MAX_PLUGIN_KERNELS {
                 return Err(format!("more than {MAX_PLUGIN_KERNELS} kinds of draw pass"));
             }
-            let build = || init_resource(&self.device, &key.kernel, || crate::plugin_draw::pipeline(self, module, key));
+            let build = || {
+                init_resource(&self.device, &key.kernel, || {
+                    self.counters.render_pipeline();
+                    crate::plugin_draw::pipeline(self, module, key)
+                })
+            };
             shader.draws.entry(key.clone()).or_insert_with(build).clone()
         })
     }
@@ -1736,7 +1736,7 @@ impl GpuContext {
             let median = [self.median_kernel.source()];
             let extra: &[&str] = if *label == MEDIAN_FAMILY { &median } else { &[] };
             let files: Vec<&str> = files.iter().chain(extra).copied().collect();
-            kernel_module(&self.device, label, &files)
+            kernel_module(&self.device, &self.counters, label, &files)
         })
         .as_ref()
         .map_err(Clone::clone)
@@ -1823,7 +1823,7 @@ impl GpuContext {
             upload_full_warned: Default::default(),
             pool: self.pool.clone(),
             staging: Default::default(),
-            transfers: Default::default(),
+            counters: Default::default(),
             zeros: Default::default(),
             adv3d: std::sync::OnceLock::new(),
             adv3d_raster: self.adv3d_raster,
@@ -1912,17 +1912,14 @@ impl GpuContext {
         self.upload_budget.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Uploads and readbacks so far (images; uploads of cached layers count once).
-    pub fn transfer_stats(&self) -> TransferStats {
-        use std::sync::atomic::Ordering::Relaxed;
-        let t = &self.transfers;
-        TransferStats {
-            uploads: t.ups.load(Relaxed),
-            upload_bytes: t.up_bytes.load(Relaxed),
-            readbacks: t.downs.load(Relaxed),
-            readback_bytes: t.down_bytes.load(Relaxed),
-            plugin_layers_copied: t.layers_copied.load(Relaxed),
-        }
+    /// The GPU work this context counted since it was made or [`GpuContext::reset_counters`].
+    pub fn counters(&self) -> GpuCounters {
+        self.counters.snapshot()
+    }
+
+    /// Zero every counter of [`GpuContext::counters`].
+    pub fn reset_counters(&self) {
+        self.counters.reset();
     }
 
     /// Bytes of working textures the pool keeps for reuse (see [`GpuContext::trim_pool`]).
@@ -2002,7 +1999,7 @@ impl GpuContext {
         if !self.fits(img.width, img.height) {
             return None;
         }
-        self.transfers.count(true, img.data.len() * 16);
+        self.counters.upload(img.data.len() * 16);
         // A texture from the pool's shared free list: no open encoder can still read it, and the
         // copy below runs before anything recorded after this call.
         let (g, _) = self.pooled(img.width, img.height, UPLOAD_OWNER);
@@ -2238,6 +2235,7 @@ impl<'g> Enc<'g> {
     }
 
     pub(crate) fn read_loop_flag(&mut self, guard: &crate::guard::ShaderGuard) {
+        self.g.counters.loop_flag_read();
         let read = guard.copy(&self.g.device, self.encoder());
         self.guards.push(read);
     }
@@ -2372,6 +2370,7 @@ impl<'g> Enc<'g> {
             }
             pass.dispatch_workgroups(groups.0.max(1), groups.1.max(1), 1);
         }
+        g.counters.dispatch();
         self.pending += 1;
         // Keep command buffers (and the transient textures they hold) bounded.
         if self.pending >= 256 {
@@ -2512,7 +2511,7 @@ impl<'g> Enc<'g> {
         }
         let layout =
             crate::readback::Layout::new(w, h, bpp, self.g.device.limits().max_buffer_size).map_err(|e| log::error!("gpu texture readback: {e}")).ok()?;
-        self.g.transfers.count(false, layout.len);
+        self.g.counters.readback(layout.len);
         let row = layout.row as usize;
         let padded = layout.stride;
         let size = layout.size;
@@ -2602,7 +2601,7 @@ impl<'g> Enc<'g> {
             Lookup::Ready(r) => return Some(r),
             Lookup::InFlight => {}
             Lookup::Absent => {
-                self.g.transfers.count(false, img.width as usize * img.height as usize * 16);
+                self.g.counters.readback(img.width as usize * img.height as usize * 16);
                 let done = d.start(key, img.width, img.height, offset, scale);
                 self.read_texture_async(&img.texture, img.width, img.height, 16, done);
             }
@@ -2686,6 +2685,7 @@ impl<'g> Enc<'g> {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bg, &[]);
             pass.dispatch_workgroups(w.div_ceil(16), h.div_ceil(16), 1);
+            g.counters.dispatch();
         }
         tex
     }

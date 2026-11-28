@@ -957,7 +957,7 @@ mod tests {
         };
         let key = harness.state().viewer_shown.unwrap().1;
         assert_eq!(key.scale, 1000);
-        let before = gpu.context().transfer_stats();
+        let before = gpu.context().counters();
         uploads.lock().unwrap().clear();
         harness.state_mut().session.execute("prop.addKey", gamma(1.0, 0.6)).unwrap();
         let busy_before = crate::frames::GPU_BUSY_FALLBACKS.load(std::sync::atomic::Ordering::SeqCst);
@@ -972,7 +972,7 @@ mod tests {
             crate::frames::gpu_slots_busy(),
             crate::frames::GPU_BUSY_FALLBACKS.load(std::sync::atomic::Ordering::SeqCst) - busy_before,
         );
-        let shown = gpu.context().transfer_stats();
+        let shown = gpu.context().counters();
         assert_eq!((shown.readbacks, shown.readback_bytes), (before.readbacks, before.readback_bytes), "nothing read back to show it");
         let frame_uploads = uploads.lock().unwrap().iter().filter(|s| s[0] * s[1] >= 320 * 180).count();
         assert_eq!(frame_uploads, 0, "no frame-sized texture uploaded to show it");
@@ -980,10 +980,10 @@ mod tests {
         harness.state_mut().session.state.viewer.channel = effectcraft_engine::viewer::Channel::Green;
         harness.run_steps(3);
         assert!(harness.state().viewer_display_texture().is_some(), "Show Channel and exposure ran on the device");
-        assert_eq!(gpu.context().transfer_stats().readback_bytes, before.readback_bytes, "nor for the channel and exposure view");
+        assert_eq!(gpu.context().counters().readback_bytes, before.readback_bytes, "nor for the channel and exposure view");
         let sample = press_sampling_viewer(&mut harness).unwrap();
         press_sampling_viewer(&mut harness).unwrap();
-        let picked = gpu.context().transfer_stats();
+        let picked = gpu.context().counters();
         assert_eq!(
             (picked.readbacks - shown.readbacks, picked.readback_bytes - shown.readback_bytes),
             (1, 320 * 180 * 4),
