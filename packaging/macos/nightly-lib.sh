@@ -3,6 +3,9 @@
 # Stable packaging (package.sh, verify.sh) does not source this file. The text checks take tool output
 # as arguments, so packaging/macos/nightly_sign_tests.py runs them without macOS.
 
+# shellcheck source=../helper.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../helper.sh"
+
 MAC_NIGHTLY_APP='EffectCraft Nightly.app'
 MAC_NIGHTLY_ID='ai.storyteller.effectcraft.nightly'
 # The release environment's names, as stable release.yml passes them (packaging/macos/import-cert.sh).
@@ -73,7 +76,7 @@ PY
 }
 
 # An unpacked payload directory holds exactly the GUI-only Nightly bundle: one thin arm64 EffectCraft
-# executable, the Nightly identity and the exact version (no numeric fallback), no CLI, no links or special
+# executable with its thin arm64 plug-in helper, the Nightly identity and the exact version (no numeric fallback), no CLI, no links or special
 # files, no document or URL types.
 mac_nightly_check_bundle() {
   local payload="$1" version="$2" app entries plist key value
@@ -81,9 +84,11 @@ mac_nightly_check_bundle() {
   entries="$(ls -A "$payload")"
   [[ "$entries" == "$MAC_NIGHTLY_APP" && -d "$app" && ! -L "$app" ]] || mac_nightly_die "the archive must hold exactly $MAC_NIGHTLY_APP"
   [[ -z "$(find "$payload" ! -type f ! -type d -print -quit)" ]] || mac_nightly_die 'the bundle contains links or special files'
-  [[ "$(ls -A "$app/Contents/MacOS")" == EffectCraft ]] || mac_nightly_die 'Contents/MacOS must hold only the EffectCraft GUI (no CLI)'
-  [[ -f "$app/Contents/MacOS/EffectCraft" && -x "$app/Contents/MacOS/EffectCraft" ]] || mac_nightly_die 'missing executable GUI'
-  [[ "$(lipo -archs "$app/Contents/MacOS/EffectCraft")" == arm64 ]] || mac_nightly_die 'the GUI must be thin arm64'
+  [[ "$(LC_ALL=C ls -A "$app/Contents/MacOS")" == $'EffectCraft\ncraft-plugin-helper' ]] || mac_nightly_die 'Contents/MacOS must hold only the EffectCraft GUI and its plug-in helper (no CLI)'
+  for executable in EffectCraft craft-plugin-helper; do
+    [[ -f "$app/Contents/MacOS/$executable" && -x "$app/Contents/MacOS/$executable" ]] || mac_nightly_die "missing executable $executable"
+    [[ "$(lipo -archs "$app/Contents/MacOS/$executable")" == arm64 ]] || mac_nightly_die "$executable must be thin arm64"
+  done
   plist="$app/Contents/Info.plist"
   for key in CFBundleIdentifier CFBundleExecutable EffectCraftVersion; do
     value="$(plutil -extract "$key" raw -o - "$plist")" || mac_nightly_die "Info.plist has no $key"

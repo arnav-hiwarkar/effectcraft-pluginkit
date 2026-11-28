@@ -109,13 +109,15 @@ rustPlatform.buildRustPackage {
     allowBuiltinFetchGit = true;
   };
 
-  # Both binaries, as the .deb/.rpm install them (`packaging/linux/package.sh`).
+  # The binaries the .deb/.rpm install (`packaging/linux/package.sh`).
   cargoBuildFlags = [
     "--locked"
     "-p"
     "effectcraft"
     "-p"
     "effectcraft-cli"
+    "-p"
+    "effectcraft-plugin-helper"
   ];
 
   doCheck = false;

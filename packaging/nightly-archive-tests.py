@@ -32,6 +32,7 @@ class ArchivePolicy(unittest.TestCase):
         self.required = {
             "effectcraft",
             "effectcraft-bin",
+            "craft-plugin-helper",
             "effectcraft-nightly.png",
             "README.md",
             "LICENSE-MIT",
@@ -41,7 +42,7 @@ class ArchivePolicy(unittest.TestCase):
         }
         for name in self.required:
             (self.stage / name).write_bytes(b"generated fixture: " + name.encode())
-        for name in ("effectcraft", "effectcraft-bin"):
+        for name in ("effectcraft", "effectcraft-bin", "craft-plugin-helper"):
             (self.stage / name).chmod(0o755)
 
     def test_flat_regular_ustar_with_all_notices(self):

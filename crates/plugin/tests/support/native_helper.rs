@@ -10,6 +10,9 @@ pub(crate) fn stage_helper() {
         let built = build_helper();
         let test = std::env::current_exe().expect("the test executable has a path");
         let beside_test = test.with_file_name("craft-plugin-helper");
+        if beside_test.is_file() && !beside_test.is_symlink() {
+            return;
+        }
         let staged = beside_test.with_extension(format!("{}", std::process::id()));
         link(&built, &staged);
         std::fs::rename(&staged, &beside_test).expect("the helper is staged beside the test executable");

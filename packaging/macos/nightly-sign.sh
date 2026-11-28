@@ -110,7 +110,8 @@ staple() {
   done
 }
 
-# Inside-out: the executable, then the bundle (no --deep on the final signature).
+# Inside-out: the helper and the executable, then the bundle (no --deep on the final signature).
+sign --options runtime --entitlements "$HERE/entitlements-helper.plist" "$APP/Contents/MacOS/$HELPER_NAME"
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/EffectCraft"
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"

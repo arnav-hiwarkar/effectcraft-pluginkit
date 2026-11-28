@@ -39,10 +39,31 @@ jobs:
         run: cargo run --quiet --package xtask -- wasm
       - name: Desktop app builds
         run: cargo check -p effectcraft
-      - name: Plugin helper builds beside the app binary
+
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust
+        with:
+          cache-key: package
+      - name: Build the app, the CLI and the plugin helper
+        run: cargo build -p effectcraft -p effectcraft-cli -p effectcraft-plugin-helper
+      - name: Package the Linux tarball
+        run: EFFECTCRAFT_BIN_DIR=target/debug packaging/linux/package.sh --skip-build --formats tar
+      - name: The helper is beside the app and the CLI in the tarball
         run: |
-          cargo build -p effectcraft-plugin-helper
-          test -x target/debug/craft-plugin-helper
+          unpacked="$RUNNER_TEMP/unpacked"
+          mkdir "$unpacked"
+          tar -xzf dist/release/effectcraft-*-linux-*.tar.gz -C "$unpacked" --strip-components=1
+          bash -c '. packaging/env.sh && require_helper_beside "$1/bin/effectcraft" "$1/bin/effectcraft-cli"' _ "$unpacked"
+          echo "UNPACKED=$unpacked" >> "$GITHUB_ENV"
+      - name: A native plugin runs through the helper found beside the app
+        run: |
+          exe=$(cargo test -p effectcraft-plugin --test it --no-run --message-format=json | jq -r 'select(.reason == "compiler-artifact" and .target.name == "it" and .executable != null) | .executable')
+          cp "$exe" "$UNPACKED/bin/it"
+          rustup run stable env -u CRAFT_PLUGIN_HELPER "$UNPACKED/bin/it" --exact render::a_generator_that_ignores_its_input_and_reports_what_it_drew_renders_the_same_comp_sandboxed_and_native
 
   tests:
     runs-on: ubuntu-24.04

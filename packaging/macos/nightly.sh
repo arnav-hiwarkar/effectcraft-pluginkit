@@ -36,6 +36,8 @@ APP="$NIGHTLY_WORK/stage/$MAC_NIGHTLY_APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$NIGHTLY_GUI" "$APP/Contents/MacOS/EffectCraft"
 chmod 755 "$APP/Contents/MacOS/EffectCraft"
+cp "$NIGHTLY_HELPER" "$APP/Contents/MacOS/$HELPER_NAME"
+chmod 755 "$APP/Contents/MacOS/$HELPER_NAME"
 cp "$ROOT/assets/app-icon/effectcraft-nightly.icns" "$APP/Contents/Resources/effectcraft-nightly.icns"
 nightly_copy_notices "$APP/Contents/Resources"
 # The private mktemp cwd is the helper authority root: stage the template inside it.

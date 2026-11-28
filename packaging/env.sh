@@ -41,6 +41,9 @@ export EFFECTCRAFT_BUILD_SHA
 export EFFECTCRAFT_BUILD_DATE="${EFFECTCRAFT_BUILD_DATE:-$(date -u +%Y-%m-%d)}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 
+# shellcheck source=helper.sh
+. "$ROOT/packaging/helper.sh"
+
 # Emit a GitHub Actions warning (plain stderr outside Actions).
 warn() {
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then echo "::warning::$*"; else echo "warning: $*" >&2; fi

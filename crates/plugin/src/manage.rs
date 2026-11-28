@@ -14,7 +14,7 @@ use craft_plugin_host::PluginImage;
 use craft_plugin_host::ui::PanelPlace;
 use craft_plugin_host::{Bundle, BundleError, EffectRegistry, Limits, Permission, Plugin, Refusal, Registry, RunMode, TaskState};
 use effectcraft_engine::{EngineError, PluginContext, PluginItem, Session};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::data_only;
@@ -72,13 +72,14 @@ impl Loaded {
     }
 }
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginState {
     Running,
     NeedsApproval,
     Disabled,
     Quarantined,
+    Unavailable,
     Failed,
 }
 
@@ -142,7 +143,10 @@ struct Inner {
     loaded: BTreeMap<String, Arc<Loaded>>,
     data: BTreeSet<String>,
     failed: BTreeMap<String, String>,
+    unavailable: BTreeSet<String>,
+    catalogue_disabled: BTreeMap<String, bool>,
     refused: BTreeMap<String, Refusal>,
+    native_supported: bool,
     safe_mode: bool,
 }
 
@@ -178,6 +182,7 @@ impl Inner {
         if self.safe_mode {
             return;
         }
+        self.catalogue_disabled.insert(id.clone(), self.catalogue_disables(bundle));
         let (bundle, grants, digest) = if self.is_session_only(&id) {
             match Bundle::read(&bundle.dir) {
                 Ok((read, digest)) if read.manifest.id == id => {
@@ -225,6 +230,10 @@ impl Inner {
             }
             return;
         }
+        if bundle.mode != RunMode::Sandboxed && !self.native_supported {
+            self.unavailable.insert(id);
+            return;
+        }
         let loaded = load(&self.registry, &bundle, &digest, grants);
         match loaded {
             Ok(loaded) => {
@@ -240,6 +249,8 @@ impl Inner {
 
     fn stop(&mut self, id: &str) {
         self.failed.remove(id);
+        self.catalogue_disabled.remove(id);
+        self.unavailable.remove(id);
         self.refused.remove(id);
         if self.data.remove(id) {
             data_only::unregister(id);
@@ -273,20 +284,29 @@ impl Inner {
         self.reconcile_store_with(restart, craft_ext_market::cached_revocations)
     }
 
+    fn catalogue_disables(&self, bundle: &Bundle) -> bool {
+        self.registry.revocation(&bundle.manifest).is_some_and(|revocation| revocation.severity >= Severity::Disable)
+    }
+
+    fn catalogue_changed(&self) -> BTreeSet<String> {
+        let installed = self.installed().into_iter().filter(|bundle| !self.is_session_only(&bundle.manifest.id));
+        let effective = installed.chain(self.session_only.iter().cloned());
+        let moved = |bundle: &Bundle| self.catalogue_disabled.get(&bundle.manifest.id).is_some_and(|last| *last != self.catalogue_disables(bundle));
+        effective.filter(moved).map(|bundle| bundle.manifest.id).collect()
+    }
+
     fn reconcile_store_with(&mut self, restart: Option<&str>, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) -> bool {
-        if self.refresh_store(read_revocations) {
-            self.reload_bundles();
-            return true;
-        }
+        self.refresh_store(read_revocations);
+        let mut forced = self.catalogue_changed();
+        forced.extend(restart.map(String::from));
         let bundles = self.installed();
         let now = self.installed_state(&bundles);
-        let mut changed: BTreeSet<&str> =
-            self.seen.keys().chain(now.keys()).filter(|id| self.seen.get(*id) != now.get(*id) && !self.is_session_only(id)).map(String::as_str).collect();
-        changed.extend(restart);
+        let mut changed: BTreeSet<String> =
+            self.seen.keys().chain(now.keys()).filter(|id| self.seen.get(*id) != now.get(*id) && !self.is_session_only(id)).cloned().collect();
+        changed.extend(forced.iter().cloned());
         let mut starts: Vec<Bundle> =
-            bundles.into_iter().filter(|bundle| changed.contains(bundle.manifest.id.as_str()) && !self.is_session_only(&bundle.manifest.id)).collect();
-        starts.extend(self.session_only.iter().filter(|bundle| restart == Some(bundle.manifest.id.as_str())).cloned());
-        let changed: Vec<String> = changed.into_iter().map(String::from).collect();
+            bundles.into_iter().filter(|bundle| changed.contains(&bundle.manifest.id) && !self.is_session_only(&bundle.manifest.id)).collect();
+        starts.extend(self.session_only.iter().filter(|bundle| forced.contains(&bundle.manifest.id)).cloned());
         changed.iter().for_each(|id| self.stop(id));
         starts.sort_by_key(|bundle| bundle.manifest.is_data_only());
         starts.iter().for_each(|bundle| self.start(bundle));
@@ -294,20 +314,16 @@ impl Inner {
         !changed.is_empty()
     }
 
-    fn refresh_store(&mut self, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) -> bool {
-        let Some(suite) = &self.suite else { return false };
+    fn refresh_store(&mut self, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) {
+        let Some(suite) = &self.suite else { return };
         self.generation = self.registry.generation();
         self.registry = Registry::for_app(suite, APP_ID);
         let modified = catalogue_modified(suite);
-        let mut changed = false;
         if modified != self.catalogue_modified {
-            let revocations = read_revocations(suite);
-            changed = self.revocations != revocations;
-            self.revocations = revocations;
+            self.revocations = read_revocations(suite);
             self.catalogue_modified = modified;
         }
         self.registry.set_revocations(self.revocations.clone());
-        changed
     }
 
     fn poll_store(&mut self, read_revocations: impl FnOnce(&Path) -> Vec<Revocation>) -> bool {
@@ -343,6 +359,8 @@ impl Inner {
         let running: Vec<String> = self.loaded.keys().chain(&self.data).cloned().collect();
         running.iter().for_each(|id| self.stop(id));
         self.failed.clear();
+        self.catalogue_disabled.clear();
+        self.unavailable.clear();
         self.refused.clear();
         bundles.retain(|bundle| !self.is_session_only(&bundle.manifest.id));
         bundles.extend(self.session_only.iter().cloned());
@@ -368,6 +386,7 @@ impl Inner {
         let (state, error) = match (running, failed, self.refused.get(&manifest.id)) {
             (true, ..) => (PluginState::Running, None),
             (false, Some(error), _) => (PluginState::Failed, Some(error)),
+            (false, None, _) if self.unavailable.contains(&manifest.id) => (PluginState::Unavailable, Some(NATIVE_UNAVAILABLE.to_string())),
             (false, None, Some(Refusal::Disabled)) => (PluginState::Disabled, None),
             (false, None, Some(refusal @ Refusal::Quarantined(_))) => (PluginState::Quarantined, Some(refusal.to_string())),
             (false, None, Some(Refusal::NotApproved)) => (PluginState::NeedsApproval, None),
@@ -418,6 +437,8 @@ fn local_effect<'a>(plugin: &str, loaded: &'a Loaded, effect_id: &str) -> Option
     loaded.plugin.contributions().effects.iter().map(|e| e.id.as_str()).find(|local| effects::effect_id(plugin, local) == effect_id)
 }
 
+const NATIVE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+const NATIVE_UNAVAILABLE: &str = "native plug-ins run only on Linux and macOS, so this one cannot start on this system";
 const SAFE_MODE_NOTE: &str = "EffectCraft started in safe mode, so no plug-ins were started";
 pub const APP_ID: &str = "effectcraft";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -468,7 +489,10 @@ impl Plugins {
             loaded: BTreeMap::new(),
             data: BTreeSet::new(),
             failed: BTreeMap::new(),
+            unavailable: BTreeSet::new(),
+            catalogue_disabled: BTreeMap::new(),
             refused: BTreeMap::new(),
+            native_supported: NATIVE_SUPPORTED,
             safe_mode,
         };
         inner.reload();
@@ -1104,8 +1128,14 @@ fn command(session: &mut Session, id: &str, params: &Value) -> effectcraft_engin
 }
 
 #[cfg(test)]
+#[path = "../tests/support/build_plugin.rs"]
+mod build_plugin;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use craft_ext_core::version::VersionReq;
+    use craft_plugin_host::TaskStatus;
 
     #[test]
     fn approval_refuses_a_bundle_replaced_after_it_was_classified() {
@@ -1133,16 +1163,31 @@ mod tests {
         bundle
     }
 
-    fn disable_revocation(id: &str) -> Revocation {
+    fn revocation(id: &str, severity: Severity) -> Revocation {
         Revocation {
             id: craft_ext_core::id::ExtensionId::new(id).ok(),
             versions: None,
             sha256: None,
             vendor: None,
-            severity: Severity::Disable,
+            severity,
             reason: "stolen keys".into(),
             date: "2026-11-27".into(),
         }
+    }
+
+    fn disable_revocation(id: &str) -> Revocation {
+        revocation(id, Severity::Disable)
+    }
+
+    fn probe_bundle(dir: &Path, id: &str, version: &str, entry: serde_json::Value) -> PathBuf {
+        static PROBE: OnceLock<PathBuf> = OnceLock::new();
+        let wasm = PROBE.get_or_init(|| build_plugin::wasm(craft_plugin_host::testing::probe_dir(), "probe"));
+        let bundle = dir.join(id);
+        fs::create_dir_all(&bundle).unwrap();
+        fs::copy(wasm, bundle.join("probe.wasm")).unwrap();
+        let manifest = json!({"id": id, "name": "Probe", "version": version, "entry": entry});
+        fs::write(bundle.join("plugin.json"), manifest.to_string()).unwrap();
+        bundle
     }
 
     #[test]
@@ -1307,6 +1352,115 @@ mod tests {
         inner.reload_bundles();
         assert_eq!(inner.refused.get("test.revoked"), Some(&Refusal::Revoked(Severity::Disable)));
         assert!(!inner.data.contains("test.revoked"));
+    }
+
+    #[test]
+    fn a_catalogue_revocation_stops_the_plugin_it_disables_and_leaves_the_others_running_with_their_tasks() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let mut registry = Registry::for_app(&suite, APP_ID);
+        for id in ["test.revocation-kept", "test.revocation-disabled"] {
+            let installed = registry.install(&probe_bundle(root.path(), id, "1.0.0", json!({"wasm": "probe.wasm"}))).unwrap();
+            registry.approve(&installed).unwrap();
+        }
+        let plugins = Plugins::with_registry(registry, Some(suite.clone()), false);
+        let mut inner = plugins.lock();
+        let kept = inner.loaded.get("test.revocation-kept").cloned().expect("the plugin the revocation does not touch runs");
+        assert!(inner.loaded.contains_key("test.revocation-disabled"));
+        let mut session = effectcraft_host::session();
+        let task = kept.plugin.start("forever", Value::Null, &SessionHost::new(&mut session, &kept)).unwrap();
+        assert_eq!(kept.plugin.tasks().iter().map(|state| (state.id, state.status)).collect::<Vec<_>>(), vec![(task, TaskStatus::Running)]);
+
+        let catalogue = suite.join(craft_ext_store::CATALOGUE_DIR);
+        fs::create_dir_all(&catalogue).unwrap();
+        fs::write(catalogue.join(SNAPSHOT), "").unwrap();
+        let revocations = vec![revocation("test.revocation-kept", Severity::Advisory), disable_revocation("test.revocation-disabled")];
+        assert!(inner.reconcile_store_with(None, |_| revocations));
+
+        assert!(!inner.loaded.contains_key("test.revocation-disabled"));
+        assert_eq!(inner.refused.get("test.revocation-disabled"), Some(&Refusal::Revoked(Severity::Disable)));
+        assert!(Arc::ptr_eq(&kept, inner.loaded.get("test.revocation-kept").expect("the other plugin still runs")));
+        assert_eq!(kept.plugin.tasks().iter().map(|state| (state.id, state.status)).collect::<Vec<_>>(), vec![(task, TaskStatus::Running)]);
+        kept.plugin.cancel_all();
+    }
+
+    #[test]
+    fn a_revocation_of_an_installed_release_a_session_copy_shadows_leaves_the_session_copy_running() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let mut registry = Registry::for_app(&suite, APP_ID);
+        let id = "test.shadowed";
+        let installed = registry.install(&probe_bundle(&root.path().join("installed"), id, "1.0.0", json!({"wasm": "probe.wasm"}))).unwrap();
+        registry.approve(&installed).unwrap();
+        let plugins = Plugins::with_registry(registry, Some(suite.clone()), false);
+        plugins.load_for_session(&probe_bundle(&root.path().join("session"), id, "2.0.0", json!({"wasm": "probe.wasm"}))).unwrap();
+        let mut inner = plugins.lock();
+        let session_copy = inner.loaded.get(id).cloned().expect("the session copy runs");
+        assert_eq!(session_copy.bundle.manifest.version, "2.0.0");
+        let mut session = effectcraft_host::session();
+        let task = session_copy.plugin.start("forever", Value::Null, &SessionHost::new(&mut session, &session_copy)).unwrap();
+
+        let catalogue = suite.join(craft_ext_store::CATALOGUE_DIR);
+        fs::create_dir_all(&catalogue).unwrap();
+        fs::write(catalogue.join(SNAPSHOT), "").unwrap();
+        let first_release = Revocation { versions: VersionReq::parse("=1.0.0").ok(), ..disable_revocation(id) };
+        assert!(!inner.reconcile_store_with(None, |_| vec![first_release]));
+
+        assert!(Arc::ptr_eq(&session_copy, inner.loaded.get(id).expect("the session copy still runs")));
+        assert_eq!(session_copy.plugin.tasks().iter().map(|state| (state.id, state.status)).collect::<Vec<_>>(), vec![(task, TaskStatus::Running)]);
+        session_copy.plugin.cancel_all();
+    }
+
+    #[test]
+    fn a_plugin_refused_by_archive_digest_loads_again_when_a_differently_packed_archive_replaces_it() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let mut registry = Registry::for_app(&suite, APP_ID);
+        let id = "test.repacked";
+        let installed = registry.install(&data_bundle(root.path(), id)).unwrap();
+        registry.approve(&installed).unwrap();
+        let origin = installed.dir.join(".origin.json");
+        let packed_as = |digest: &str| fs::write(&origin, serde_json::to_vec(&craft_ext_store::Origin::store(digest, "vendor")).unwrap()).unwrap();
+        packed_as("aa");
+        let plugins = Plugins::with_registry(registry, Some(suite.clone()), false);
+        let mut inner = plugins.lock();
+        assert!(inner.data.contains(id));
+
+        let catalogue = suite.join(craft_ext_store::CATALOGUE_DIR);
+        fs::create_dir_all(&catalogue).unwrap();
+        fs::write(catalogue.join(SNAPSHOT), "").unwrap();
+        let archive = Revocation { id: None, sha256: Some("aa".into()), ..disable_revocation(id) };
+        assert!(inner.reconcile_store_with(None, |_| vec![archive]));
+        assert_eq!(inner.refused.get(id), Some(&Refusal::Revoked(Severity::Disable)));
+
+        packed_as("bb");
+        assert!(inner.reconcile_store_with(None, |_| unreachable!("the catalogue file did not change")));
+        assert!(inner.data.contains(id));
+        assert_eq!(inner.refused.get(id), None);
+    }
+
+    #[test]
+    fn a_native_plugin_is_unavailable_where_native_plugins_cannot_run_and_a_sandboxed_one_still_starts() {
+        let root = tempfile::tempdir().unwrap();
+        let suite = root.path().join("suite");
+        let mut registry = Registry::for_app(&suite, APP_ID);
+        let native_entry = json!({"wasm": "probe.wasm", "native": {format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH): "probe.wasm"}});
+        for (id, entry, native) in [("test.unavailable-native", native_entry, true), ("test.unavailable-sandboxed", json!({"wasm": "probe.wasm"}), false)] {
+            let installed = registry.install(&probe_bundle(root.path(), id, "1.0.0", entry)).unwrap();
+            registry.approve(&installed).unwrap();
+            if native {
+                registry.set_unsandboxed(&installed.manifest, true).unwrap();
+            }
+        }
+        let plugins = Plugins::with_registry(registry, Some(suite), false);
+        plugins.lock().native_supported = false;
+        plugins.reload();
+
+        let listed = |id: &str| plugins.list().into_iter().find(|info| info.id == id).unwrap();
+        let native = listed("test.unavailable-native");
+        assert_eq!(native.state, PluginState::Unavailable);
+        assert_eq!(native.error.as_deref(), Some(NATIVE_UNAVAILABLE));
+        assert_eq!(listed("test.unavailable-sandboxed").state, PluginState::Running);
     }
 
     #[test]

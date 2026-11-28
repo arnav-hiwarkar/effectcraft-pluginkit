@@ -69,12 +69,12 @@ echo "==> EffectCraft $VERSION for Linux $ARCH ($FORMATS, channel=${EFFECTCRAFT_
 
 if [[ "$SKIP_BUILD" = 0 ]]; then
   if [[ -n "${CROSS_TARGET:-}" ]]; then
-    (cd "$ROOT" && cargo build --release --locked -p effectcraft -p effectcraft-cli --target "$CROSS_TARGET")
+    (cd "$ROOT" && cargo build --release --locked -p effectcraft -p effectcraft-cli -p "$HELPER_PACKAGE" --target "$CROSS_TARGET")
   else
-    (cd "$ROOT" && cargo build --release --locked -p effectcraft -p effectcraft-cli)
+    (cd "$ROOT" && cargo build --release --locked -p effectcraft -p effectcraft-cli -p "$HELPER_PACKAGE")
   fi
 fi
-BIN="$CARGO_TARGET_DIR/${CROSS_TARGET:+$CROSS_TARGET/}release"
+BIN="${EFFECTCRAFT_BIN_DIR:-$CARGO_TARGET_DIR/${CROSS_TARGET:+$CROSS_TARGET/}release}"
 WORK="$CARGO_TARGET_DIR/linux-package"
 STAGE="$WORK/root"
 rm -rf "$WORK"
@@ -82,7 +82,9 @@ rm -rf "$WORK"
 # ---- stage an FHS tree (shared by every format) -------------------------------------------------
 install -Dm755 "$BIN/effectcraft" "$STAGE/usr/bin/effectcraft"
 install -Dm755 "$BIN/effectcraft-cli" "$STAGE/usr/bin/effectcraft-cli"
-"${CROSS_COMPILE:-}strip" "$STAGE/usr/bin/effectcraft" "$STAGE/usr/bin/effectcraft-cli" 2>/dev/null || true
+install -Dm755 "$BIN/$HELPER_NAME" "$STAGE/usr/bin/$HELPER_NAME"
+"${CROSS_COMPILE:-}strip" "$STAGE/usr/bin/effectcraft" "$STAGE/usr/bin/effectcraft-cli" "$STAGE/usr/bin/$HELPER_NAME" 2>/dev/null || true
+require_helper_beside "$STAGE/usr/bin/effectcraft" "$STAGE/usr/bin/effectcraft-cli"
 install -Dm644 "$HERE/$APP_ID.desktop" "$STAGE/usr/share/applications/$APP_ID.desktop"
 if [[ "$IS_NIGHTLY" = 1 ]]; then
   sed -e 's|^StartupWMClass=.*|StartupWMClass=ai.storyteller.effectcraft.nightly-v1|' \
@@ -152,6 +154,8 @@ if has deb || has rpm; then
     rm -rf "$NFPM_STAGE"
     cp -R "$STAGE" "$NFPM_STAGE"
     install -Dm755 "$NFPM_STAGE/usr/bin/effectcraft" "$NFPM_STAGE/usr/lib/effectcraft-nightly/effectcraft"
+    install -Dm755 "$NFPM_STAGE/usr/bin/$HELPER_NAME" "$NFPM_STAGE/usr/lib/effectcraft-nightly/$HELPER_NAME"
+    rm -f "$NFPM_STAGE/usr/bin/$HELPER_NAME"
     # The Nightly build refuses EFFECTCRAFT_CONFIG_DIR: every launcher passes the Launcher's own
     # profile protocol instead, so settings, logs, plug-ins and caches are the Nightly's own.
     # A version query and an already-selected profile pass through, because after `--` they are
@@ -181,6 +185,7 @@ fi
 exec /usr/lib/effectcraft-nightly/effectcraft-cli "$@"
 CLI_WRAPPER
     chmod 755 "$NFPM_STAGE/usr/bin/$NFPM_CLI"
+    require_helper_beside "$NFPM_STAGE/usr/lib/effectcraft-nightly/effectcraft" "$NFPM_STAGE/usr/lib/effectcraft-nightly/effectcraft-cli"
     mv "$NFPM_STAGE/usr/share/doc/effectcraft" "$NFPM_STAGE/usr/share/doc/$NFPM_NAME"
     sed -e "s#^Exec=effectcraft\([[:space:]]\|$\)#Exec=$NFPM_BIN\1#" \
         -e "s|^TryExec=effectcraft$|TryExec=$NFPM_BIN|" \
@@ -207,8 +212,11 @@ CLI_WRAPPER
   DROP_LIB_TREE=
   # shellcheck disable=SC2016
   [[ -d "$NFPM_STAGE/usr/lib" ]] || DROP_LIB_TREE='\|^  - src: \${STAGE}/usr/lib/|,+2d;'
+  DROP_HELPER_ENTRY=
   # shellcheck disable=SC2016
-  sed "${DROP_LIB_TREE}s|\${STAGE}|$NFPM_STAGE|g;s|\${NFPM_BIN}|$NFPM_BIN|g;s|\${NFPM_CLI}|$NFPM_CLI|g" "$HERE/nfpm.yaml" >"$WORK/nfpm.yaml"
+  [[ -e "$NFPM_STAGE/usr/bin/$HELPER_NAME" ]] || DROP_HELPER_ENTRY='\|^  - src: \${STAGE}/usr/bin/\${HELPER_NAME}|,+2d;'
+  # shellcheck disable=SC2016
+  sed "${DROP_LIB_TREE}${DROP_HELPER_ENTRY}s|\${STAGE}|$NFPM_STAGE|g;s|\${NFPM_BIN}|$NFPM_BIN|g;s|\${NFPM_CLI}|$NFPM_CLI|g;s|\${HELPER_NAME}|$HELPER_NAME|g" "$HERE/nfpm.yaml" >"$WORK/nfpm.yaml"
   for fmt in deb rpm; do
     if has "$fmt"; then (cd "$ROOT" && nfpm package -f "$WORK/nfpm.yaml" -p "$fmt" -t "$DIST/$BASENAME.$fmt"); fi
   done
@@ -253,6 +261,7 @@ APPRUN
     chmod 755 "$APPDIR/AppRun"
     # The headless CLI keeps the settings-folder variable, which is the only profile it honours.
     install -Dm755 "$APPDIR/usr/bin/effectcraft-cli" "$APPDIR/usr/lib/effectcraft-nightly/effectcraft-cli"
+    install -Dm755 "$APPDIR/usr/bin/$HELPER_NAME" "$APPDIR/usr/lib/effectcraft-nightly/$HELPER_NAME"
     cat >"$APPDIR/usr/bin/effectcraft-cli" <<'APPRUN_CLI'
 #!/bin/sh
 set -eu
@@ -263,6 +272,7 @@ fi
 exec "$(dirname "$0")/../lib/effectcraft-nightly/effectcraft-cli" "$@"
 APPRUN_CLI
     chmod 755 "$APPDIR/usr/bin/effectcraft-cli"
+    require_helper_beside "$APPDIR/usr/bin/effectcraft" "$APPDIR/usr/lib/effectcraft-nightly/effectcraft-cli"
     APPIMAGE_ID="$APP_ID.nightly-v1"
     sed -e "s|^Icon=$APP_ID$|Icon=$APPIMAGE_ID|" \
         -e "s|^Name=EffectCraft$|Name=EffectCraft Nightly|" \
